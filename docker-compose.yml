@@ -8,6 +8,8 @@ services:
     volumes:
       - ./pool:/app/pool
       - ./data:/app/data
+    env_file:
+      - .env
     environment:
       - POOL_DIR=/app/pool
       - PROXY_DB_PATH=/app/data/proxy.db
