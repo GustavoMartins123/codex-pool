@@ -172,10 +172,9 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 	if requestType == "image_gen" {
 		requestID = fmt.Sprintf("image_gen/%d/%s/12", time.Now().UnixMilli(), uuid.NewString())
 	}
-	if conversationID == "" {
-		conversationID = antigravitySessionID(gemini)
-	}
-	gemini["sessionId"] = conversationID
+	delete(root, "previous_response_id")
+	delete(root, "prompt_cache_key")
+	gemini["sessionId"] = antigravityFormatSessionID(conversationID, gemini)
 	envelope := map[string]any{
 		"model": upstreamModel, "userAgent": "antigravity", "requestType": requestType,
 		"project": projectID, "requestId": requestID, "request": gemini,
@@ -213,6 +212,19 @@ func antigravitySessionID(request map[string]any) string {
 	if seed == "" {
 		seed = uuid.NewString()
 	}
+	return antigravitySessionIDFromSeed(seed)
+}
+
+func isAntigravitySessionID(id string) bool {
+	id = strings.TrimSpace(id)
+	if !strings.HasPrefix(id, "-") {
+		return false
+	}
+	val, err := strconv.ParseInt(id, 10, 64)
+	return err == nil && val < 0
+}
+
+func antigravitySessionIDFromSeed(seed string) string {
 	sum := sha256.Sum256([]byte(seed))
 	value := int64(0)
 	for _, b := range sum[:8] {
@@ -221,7 +233,21 @@ func antigravitySessionID(request map[string]any) string {
 	if value > 0 {
 		value = -value
 	}
+	if value == 0 {
+		value = -1
+	}
 	return strconv.FormatInt(value, 10)
+}
+
+func antigravityFormatSessionID(conversationID string, request map[string]any) string {
+	conversationID = strings.TrimSpace(conversationID)
+	if isAntigravitySessionID(conversationID) {
+		return conversationID
+	}
+	if conversationID != "" {
+		return antigravitySessionIDFromSeed(conversationID)
+	}
+	return antigravitySessionID(request)
 }
 
 func cloneAnyMap(input map[string]any) map[string]any {
@@ -1351,6 +1377,9 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(unwrapped)
 			return true
+		}
+		if conversationID != "" {
+			h.pool.pin(conversationID, account.ID)
 		}
 		h.writeAntigravityResponse(w, resp, prepared, replayScope, account, userID, originID, reqID)
 		return true

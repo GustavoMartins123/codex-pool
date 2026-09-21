@@ -101,7 +101,7 @@ func TestPrepareAntigravityUnwrapsCodeAssistEnvelope(t *testing.T) {
 	if parts[0].(map[string]any)["text"] != "hi" {
 		t.Fatalf("contents lost: %#v", contents)
 	}
-	if inner["sessionId"] != "conv-1" {
+	if !strings.HasPrefix(inner["sessionId"].(string), "-") {
 		t.Fatalf("sessionId = %v", inner["sessionId"])
 	}
 	if envelope["project"] != "project-1" {

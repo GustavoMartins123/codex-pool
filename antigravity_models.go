@@ -498,6 +498,15 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 	now := time.Now()
 	pinKey := "antigravity:" + model + ":" + conversationID
 	if conversationID != "" {
+		// If conversation was previously pinned to an account of another provider, unpin it
+		if pinnedID := p.convPin[conversationID]; pinnedID != "" {
+			for _, account := range p.accounts {
+				if account.ID == pinnedID && account.Type != AccountTypeAntigravity {
+					delete(p.convPin, conversationID)
+					break
+				}
+			}
+		}
 		if pinnedID := p.convPin[pinKey]; pinnedID != "" && (exclude == nil || !exclude[pinnedID]) {
 			for _, account := range p.accounts {
 				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !antigravityModels.Supports(account.ID, model) {
@@ -513,6 +522,21 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				}
 			}
 			delete(p.convPin, pinKey)
+		} else if pinnedID := p.convPin[conversationID]; pinnedID != "" && (exclude == nil || !exclude[pinnedID]) {
+			for _, account := range p.accounts {
+				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !antigravityModels.Supports(account.ID, model) {
+					continue
+				}
+				account.mu.Lock()
+				until := account.ModelRateLimits[model]
+				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
+				eligible := !account.Dead && !account.Disabled && !account.NeedsVerification && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+				account.mu.Unlock()
+				if eligible {
+					p.convPin[pinKey] = account.ID
+					return account
+				}
+			}
 		}
 	}
 	var best *Account
@@ -533,6 +557,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 	}
 	if best != nil && conversationID != "" {
 		p.convPin[pinKey] = best.ID
+		p.convPin[conversationID] = best.ID
 	}
 	return best
 }
