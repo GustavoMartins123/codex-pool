@@ -1,0 +1,23 @@
+{
+  "name": "large_request",
+  "description": "Large prompt payload to measure spooling, parsing and throughput",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a senior system architect evaluating high-throughput distributed architectures, memory consistency models, consensus algorithms including Paxos and Raft, network partitioning guarantees under the CAP theorem, distributed transactions using two-phase commit, vector clock tracking for causal ordering, and stream processing with exactly-once delivery guarantees."
+      },
+      {
+        "role": "user",
+        "content": "Provide an in-depth technical analysis comparing Raft leader election with Paxos synod consensus when running in geo-replicated data centers with cross-region network latency and intermittent link flapping. Detail how log compaction, snapshot replication, and membership changes are handled under both protocols, and provide concrete trade-offs for latency, availability, and failure recovery times."
+      }
+    ],
+    "stream": false
+  }
+}

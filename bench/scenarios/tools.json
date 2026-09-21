@@ -1,0 +1,42 @@
+{
+  "name": "tools",
+  "description": "Function calling request measuring schema translation and tool execution",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the current weather and forecast in Tokyo?"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_current_weather",
+          "description": "Get current weather conditions and forecast for a given city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "location": {
+                "type": "string",
+                "description": "The city and state, e.g. San Francisco, CA"
+              },
+              "unit": {
+                "type": "string",
+                "enum": ["celsius", "fahrenheit"]
+              }
+            },
+            "required": ["location"]
+          }
+        }
+      }
+    ],
+    "stream": false
+  }
+}

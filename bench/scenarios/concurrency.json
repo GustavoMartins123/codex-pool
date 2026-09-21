@@ -1,0 +1,21 @@
+{
+  "name": "concurrency",
+  "description": "Concurrent parallel requests to evaluate queueing and throughput",
+  "concurrency": 4,
+  "iterations": 8,
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Concurrent worker ping"
+      }
+    ],
+    "stream": true
+  }
+}

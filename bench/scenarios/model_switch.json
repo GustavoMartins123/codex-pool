@@ -1,0 +1,40 @@
+{
+  "name": "model_switch",
+  "description": "Switching model within or across sequential requests",
+  "steps": [
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5.4",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Draft an outline for an API specification."
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Review the previous draft and suggest security best practices."
+          }
+        ],
+        "stream": false
+      }
+    }
+  ]
+}

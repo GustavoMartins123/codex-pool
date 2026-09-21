@@ -1,0 +1,19 @@
+{
+  "name": "streaming",
+  "description": "Streaming SSE request measuring TTFT and chunk delivery rate",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Count from 1 to 10 with a brief comment on each number."
+      }
+    ],
+    "stream": true
+  }
+}

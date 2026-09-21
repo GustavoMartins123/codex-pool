@@ -1,0 +1,19 @@
+{
+  "name": "simple_request",
+  "description": "Minimal prompt to measure roundtrip latency and basic overhead",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "ping"
+      }
+    ],
+    "stream": false
+  }
+}

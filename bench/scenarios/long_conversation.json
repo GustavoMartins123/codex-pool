@@ -1,0 +1,84 @@
+{
+  "name": "long_conversation",
+  "description": "Multi-turn conversation with accumulating context and pinning",
+  "steps": [
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5.4",
+        "conversation_id": "bench-long-conv-id",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Turn 1: Remember key 94812."
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5.4",
+        "conversation_id": "bench-long-conv-id",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Turn 1: Remember key 94812."
+          },
+          {
+            "role": "assistant",
+            "content": "I have stored key 94812 in memory."
+          },
+          {
+            "role": "user",
+            "content": "Turn 2: What was the key?"
+          }
+        ],
+        "stream": false
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "model": "gpt-5.4",
+        "conversation_id": "bench-long-conv-id",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Turn 1: Remember key 94812."
+          },
+          {
+            "role": "assistant",
+            "content": "I have stored key 94812 in memory."
+          },
+          {
+            "role": "user",
+            "content": "Turn 2: What was the key?"
+          },
+          {
+            "role": "assistant",
+            "content": "The key was 94812."
+          },
+          {
+            "role": "user",
+            "content": "Turn 3: Append '-confirmed' to it."
+          }
+        ],
+        "stream": false
+      }
+    }
+  ]
+}

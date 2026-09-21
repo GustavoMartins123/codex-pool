@@ -1,0 +1,38 @@
+{
+  "name": "web_search",
+  "description": "Request with web search capabilities enabled",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What are the latest developments in large language model reasoning benchmarks announced this week?"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "web_search",
+          "description": "Search the web for real-time and recent news",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Search query"
+              }
+            },
+            "required": ["query"]
+          }
+        }
+      }
+    ],
+    "stream": false
+  }
+}

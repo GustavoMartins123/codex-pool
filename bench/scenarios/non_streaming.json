@@ -1,0 +1,19 @@
+{
+  "name": "non_streaming",
+  "description": "Standard non-streaming request measuring full response generation",
+  "method": "POST",
+  "path": "/v1/chat/completions",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "model": "gpt-5.4",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Summarize the key differences between synchronous and asynchronous I/O in three bullet points."
+      }
+    ],
+    "stream": false
+  }
+}
