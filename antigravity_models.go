@@ -464,63 +464,93 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 }
 
 func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSnapshot {
-	var minRemaining *float64
-	var earliestReset time.Time
+	var minRemainingGemini *float64
+	var earliestResetGemini time.Time
 
-	// Priority 1: Check Gemini models specifically
+	var minRemainingClaude *float64
+	var earliestResetClaude time.Time
+
 	for id, model := range snapshot.Models {
-		if !strings.Contains(strings.ToLower(id), "gemini") {
-			continue
-		}
-		if model.Quota.RemainingFraction != nil {
-			rem := *model.Quota.RemainingFraction
-			if minRemaining == nil || rem < *minRemaining {
-				minRemaining = &rem
-			}
-		}
-		if !model.Quota.ResetTime.IsZero() {
-			if earliestReset.IsZero() || model.Quota.ResetTime.Before(earliestReset) {
-				earliestReset = model.Quota.ResetTime
-			}
-		}
-	}
-
-	// Priority 2: Check all models if no Gemini model reported quota
-	if minRemaining == nil && earliestReset.IsZero() {
-		for _, model := range snapshot.Models {
+		lower := strings.ToLower(id)
+		if strings.Contains(lower, "gemini") {
 			if model.Quota.RemainingFraction != nil {
 				rem := *model.Quota.RemainingFraction
-				if minRemaining == nil || rem < *minRemaining {
-					minRemaining = &rem
+				if minRemainingGemini == nil || rem < *minRemainingGemini {
+					minRemainingGemini = &rem
 				}
 			}
 			if !model.Quota.ResetTime.IsZero() {
-				if earliestReset.IsZero() || model.Quota.ResetTime.Before(earliestReset) {
-					earliestReset = model.Quota.ResetTime
+				if earliestResetGemini.IsZero() || model.Quota.ResetTime.Before(earliestResetGemini) {
+					earliestResetGemini = model.Quota.ResetTime
+				}
+			}
+		} else if strings.Contains(lower, "claude") {
+			if model.Quota.RemainingFraction != nil {
+				rem := *model.Quota.RemainingFraction
+				if minRemainingClaude == nil || rem < *minRemainingClaude {
+					minRemainingClaude = &rem
+				}
+			}
+			if !model.Quota.ResetTime.IsZero() {
+				if earliestResetClaude.IsZero() || model.Quota.ResetTime.Before(earliestResetClaude) {
+					earliestResetClaude = model.Quota.ResetTime
 				}
 			}
 		}
 	}
 
-	usedFraction := float64(0)
-	if minRemaining != nil {
-		usedFraction = 1.0 - *minRemaining
-		if usedFraction < 0 {
-			usedFraction = 0
+	// Fallback: if no Gemini model reported quota, scan all models
+	if minRemainingGemini == nil && earliestResetGemini.IsZero() {
+		for _, model := range snapshot.Models {
+			if model.Quota.RemainingFraction != nil {
+				rem := *model.Quota.RemainingFraction
+				if minRemainingGemini == nil || rem < *minRemainingGemini {
+					minRemainingGemini = &rem
+				}
+			}
+			if !model.Quota.ResetTime.IsZero() {
+				if earliestResetGemini.IsZero() || model.Quota.ResetTime.Before(earliestResetGemini) {
+					earliestResetGemini = model.Quota.ResetTime
+				}
+			}
 		}
-		if usedFraction > 1 {
-			usedFraction = 1
+	}
+
+	primaryUsed := float64(0)
+	if minRemainingGemini != nil {
+		primaryUsed = 1.0 - *minRemainingGemini
+		if primaryUsed < 0 {
+			primaryUsed = 0
+		}
+		if primaryUsed > 1 {
+			primaryUsed = 1
+		}
+	}
+
+	secondaryUsed := float64(0)
+	if minRemainingClaude != nil {
+		secondaryUsed = 1.0 - *minRemainingClaude
+		if secondaryUsed < 0 {
+			secondaryUsed = 0
+		}
+		if secondaryUsed > 1 {
+			secondaryUsed = 1
 		}
 	}
 
 	return UsageSnapshot{
-		PrimaryUsed:          usedFraction,
-		PrimaryUsedPercent:   usedFraction,
-		PrimaryWindowMinutes: 1440,
-		PrimaryResetAt:       earliestReset,
-		RetrievedAt:          snapshot.FetchedAt,
-		Source:               "antigravity",
-		primarySet:           minRemaining != nil || !earliestReset.IsZero(),
+		PrimaryUsed:            primaryUsed,
+		PrimaryUsedPercent:     primaryUsed,
+		PrimaryWindowMinutes:   1440,
+		PrimaryResetAt:         earliestResetGemini,
+		SecondaryUsed:          secondaryUsed,
+		SecondaryUsedPercent:   secondaryUsed,
+		SecondaryWindowMinutes: 1440,
+		SecondaryResetAt:       earliestResetClaude,
+		RetrievedAt:            snapshot.FetchedAt,
+		Source:                 "antigravity",
+		primarySet:             minRemainingGemini != nil || !earliestResetGemini.IsZero(),
+		secondarySet:           minRemainingClaude != nil || !earliestResetClaude.IsZero(),
 	}
 }
 

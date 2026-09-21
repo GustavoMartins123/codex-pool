@@ -53,23 +53,32 @@ export interface WeeklyQuotaEstimate {
 // non-zero reading is mostly quantization noise: 1% after 23 minutes in a
 // seven-day window naively becomes 62.6%/day. Acquire a longer baseline before
 // extrapolating it into routing-capacity advice.
-export function weeklyQuotaEstimate(account: Pick<AccountStats,
-  "secondary_window_used_pct" | "secondary_reset_minutes" | "secondary_window_minutes"
->): WeeklyQuotaEstimate | null {
-  const windowMinutes = account.secondary_window_minutes > 0 ? account.secondary_window_minutes : 7 * 1440;
-  const elapsedMinutes = windowMinutes - account.secondary_reset_minutes;
-  const minimumElapsedMinutes = windowMinutes / 100;
-  if (elapsedMinutes < minimumElapsedMinutes || elapsedMinutes > windowMinutes || account.secondary_window_used_pct < 0) return null;
+export function quotaEstimate(
+  usedPct: number,
+  resetMinutes: number,
+  windowMinutes: number,
+): WeeklyQuotaEstimate | null {
+  const effectiveWindow = windowMinutes > 0 ? windowMinutes : 1440;
+  const elapsedMinutes = effectiveWindow - resetMinutes;
+  const minimumElapsedMinutes = effectiveWindow / 100;
+  if (elapsedMinutes < minimumElapsedMinutes || elapsedMinutes > effectiveWindow || usedPct < 0) return null;
 
-  const burnPerMinute = account.secondary_window_used_pct / elapsedMinutes;
-  const loadEquivalent = (account.secondary_window_used_pct / 100) * (windowMinutes / elapsedMinutes);
+  const burnPerMinute = usedPct / elapsedMinutes;
+  const loadEquivalent = (usedPct / 100) * (effectiveWindow / elapsedMinutes);
   return {
     elapsedMinutes,
     burnPerDay: burnPerMinute * 1440,
     loadEquivalent,
     projectedFinalPct: loadEquivalent * 100,
-    fullInMinutes: burnPerMinute > 0 ? (100 - account.secondary_window_used_pct) / burnPerMinute : Number.POSITIVE_INFINITY,
+    fullInMinutes: burnPerMinute > 0 ? (100 - usedPct) / burnPerMinute : Number.POSITIVE_INFINITY,
   };
+}
+
+export function weeklyQuotaEstimate(account: Pick<AccountStats,
+  "secondary_window_used_pct" | "secondary_reset_minutes" | "secondary_window_minutes"
+>): WeeklyQuotaEstimate | null {
+  const windowMinutes = account.secondary_window_minutes > 0 ? account.secondary_window_minutes : 7 * 1440;
+  return quotaEstimate(account.secondary_window_used_pct, account.secondary_reset_minutes, windowMinutes);
 }
 
 export interface PeakCell {

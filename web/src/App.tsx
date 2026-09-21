@@ -80,6 +80,7 @@ import {
   originConcentration,
   peakHeatmap,
   weeklyQuotaEstimate,
+  quotaEstimate,
   type AccountFlow,
   type CapacityForecast,
 } from "./insights";
@@ -196,21 +197,26 @@ function paceLabel(paceRatio?: number) {
 }
 
 function WeeklyPace({ account }: { account: AccountStats }) {
-  if (!account.secondary_window_available) {
+  const usePrimary = account.type === "antigravity" || (!account.secondary_window_available && account.primary_window_available);
+  const available = usePrimary ? account.primary_window_available : account.secondary_window_available;
+  if (!available) {
     return <span className="quota-limit unavailable">N/A</span>;
   }
-  const windowMinutes = account.secondary_window_minutes > 0 ? account.secondary_window_minutes : 7 * 1440;
+  const usedPct = usePrimary ? account.primary_window_used_pct : account.secondary_window_used_pct;
+  const resetMinutes = usePrimary ? account.primary_reset_minutes : account.secondary_reset_minutes;
+  const rawWindow = usePrimary ? account.primary_window_minutes : account.secondary_window_minutes;
+  const windowMinutes = rawWindow > 0 ? rawWindow : (usePrimary ? 1440 : 7 * 1440);
   const windowDays = windowMinutes / 1440;
   const budgetPerDay = 100 / windowDays;
-  const estimate = weeklyQuotaEstimate(account);
-  if (!estimate || account.secondary_window_used_pct <= 0) {
+  const estimate = quotaEstimate(usedPct, resetMinutes, windowMinutes);
+  if (!estimate || usedPct <= 0) {
     return (
-      <span className="quota-limit acquiring" aria-label={`Weekly budget ${budgetPerDay.toFixed(1)} percent per day; not enough history to forecast`}>
+      <span className="quota-limit acquiring" aria-label={`${windowDays >= 7 ? "Weekly" : "Daily"} budget ${budgetPerDay.toFixed(1)} percent per day; not enough history to forecast`}>
         <b>—</b><small>{budgetPerDay.toFixed(1)}% daily budget</small><em>Not enough history</em>
       </span>
     );
   }
-  const exhaustsEarly = estimate.fullInMinutes < account.secondary_reset_minutes;
+  const exhaustsEarly = estimate.fullInMinutes < resetMinutes;
   const forecast = exhaustsEarly ? `FULL IN ${formatReset(Math.max(1, Math.floor(estimate.fullInMinutes)))}` : "LASTS TO RESET";
   return (
     <span className={classNames("quota-limit", exhaustsEarly ? "fast" : "safe")} aria-label={`Burning ${estimate.burnPerDay.toFixed(1)} percent per day against a ${budgetPerDay.toFixed(1)} percent daily budget. ${forecast.toLowerCase()}.`}>
@@ -2554,8 +2560,8 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status}</span>
                 <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
                 <span className="account-windows" data-label="Reset windows">
-                  <ResetWindow label="Primary" available={account.primary_window_available} used={account.primary_window_used_pct} resetMinutes={account.primary_reset_minutes} compact />
-                  <ResetWindow label="Weekly" available={account.secondary_window_available} used={account.secondary_window_used_pct} resetMinutes={account.secondary_reset_minutes} compact />
+                  <ResetWindow label={account.type === "antigravity" ? "Gemini" : "Primary"} available={account.primary_window_available} used={account.primary_window_used_pct} resetMinutes={account.primary_reset_minutes} compact />
+                  <ResetWindow label={account.type === "antigravity" ? "Claude" : "Weekly"} available={account.secondary_window_available} used={account.secondary_window_used_pct} resetMinutes={account.secondary_reset_minutes} compact />
                 </span>
                 <span data-label="24h burn">{formatTokens(accountThroughput(account))}</span>
                 <strong data-label="Return">{account.subscription_spend ? `${account.roi.toFixed(2)}×` : "—"}</strong>
@@ -2580,8 +2586,8 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 <div className="inspector-provider" style={{ color: providerDisplay(selectedAccount.type).color }}>{providerDisplay(selectedAccount.type).label} · {selectedAccount.plan_type}</div>
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
                 <div className="inspector-windows" aria-label="Account usage reset windows">
-                  <ResetWindow label="Primary window" available={selectedAccount.primary_window_available} used={selectedAccount.primary_window_used_pct} resetMinutes={selectedAccount.primary_reset_minutes} paceRatio={selectedAccount.primary_pace_ratio} showPace />
-                  <ResetWindow label="Weekly window" available={selectedAccount.secondary_window_available} used={selectedAccount.secondary_window_used_pct} resetMinutes={selectedAccount.secondary_reset_minutes} paceRatio={selectedAccount.secondary_pace_ratio} showPace />
+                  <ResetWindow label={selectedAccount.type === "antigravity" ? "Gemini window" : "Primary window"} available={selectedAccount.primary_window_available} used={selectedAccount.primary_window_used_pct} resetMinutes={selectedAccount.primary_reset_minutes} paceRatio={selectedAccount.primary_pace_ratio} showPace />
+                  <ResetWindow label={selectedAccount.type === "antigravity" ? "Claude window" : "Weekly window"} available={selectedAccount.secondary_window_available} used={selectedAccount.secondary_window_used_pct} resetMinutes={selectedAccount.secondary_reset_minutes} paceRatio={selectedAccount.secondary_pace_ratio} showPace />
                 </div>
                 {selectedAccount.type === "codex" && (
                   <section className="inspector-reset-credits" aria-label="Banked usage resets">

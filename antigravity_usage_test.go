@@ -158,3 +158,60 @@ func TestAntigravityAccountLoadInitializesUsage(t *testing.T) {
 		t.Errorf("account.Usage.PrimaryResetAt = %v, want %v", account.Usage.PrimaryResetAt, resetTime)
 	}
 }
+
+func TestAntigravityUsageExtractsBothGeminiAndClaudeWindows(t *testing.T) {
+	geminiReset := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	claudeReset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+	geminiRem := 0.70
+	claudeRem := 1.0
+
+	snapshot := AntigravityAccountSnapshot{
+		FetchedAt: time.Now(),
+		Models: map[string]AntigravityModelInfo{
+			"gemini-3.8-flash-high": {
+				ID: "gemini-3.8-flash-high",
+				Quota: AntigravityQuotaInfo{
+					RemainingFraction: &geminiRem,
+					ResetTime:         geminiReset,
+				},
+			},
+			"claude-sonnet-4-6": {
+				ID: "claude-sonnet-4-6",
+				Quota: AntigravityQuotaInfo{
+					RemainingFraction: &claudeRem,
+					ResetTime:         claudeReset,
+				},
+			},
+		},
+	}
+
+	usage := extractAntigravityAccountUsage(snapshot)
+
+	// Primary window should track Gemini
+	if usage.PrimaryUsedPercent < 0.299 || usage.PrimaryUsedPercent > 0.301 {
+		t.Errorf("PrimaryUsedPercent = %v, want 0.30", usage.PrimaryUsedPercent)
+	}
+	if usage.PrimaryResetAt != geminiReset {
+		t.Errorf("PrimaryResetAt = %v, want %v", usage.PrimaryResetAt, geminiReset)
+	}
+	if usage.PrimaryWindowMinutes != 1440 {
+		t.Errorf("PrimaryWindowMinutes = %v, want 1440", usage.PrimaryWindowMinutes)
+	}
+	if !usagePrimaryWindowAvailable(usage) {
+		t.Errorf("usagePrimaryWindowAvailable should be true")
+	}
+
+	// Secondary window should track Claude on Antigravity
+	if usage.SecondaryUsedPercent != 0.0 {
+		t.Errorf("SecondaryUsedPercent = %v, want 0.0", usage.SecondaryUsedPercent)
+	}
+	if usage.SecondaryResetAt != claudeReset {
+		t.Errorf("SecondaryResetAt = %v, want %v", usage.SecondaryResetAt, claudeReset)
+	}
+	if usage.SecondaryWindowMinutes != 1440 {
+		t.Errorf("SecondaryWindowMinutes = %v, want 1440", usage.SecondaryWindowMinutes)
+	}
+	if !usageSecondaryWindowAvailable(usage) {
+		t.Errorf("usageSecondaryWindowAvailable should be true")
+	}
+}
