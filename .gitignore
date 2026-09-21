@@ -5,6 +5,7 @@
 .vscode/
 .env
 .env.*
+!.env.example
 .air.toml
 .conductor/
 .claude/

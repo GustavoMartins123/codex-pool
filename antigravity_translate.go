@@ -1667,6 +1667,10 @@ func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUs
 	if usage == nil {
 		return
 	}
+	if account != nil {
+		usage.AccountID = account.ID
+		usage.PlanType = account.PlanType
+	}
 	usage.Model, usage.UserID, usage.OriginID, usage.RequestID, usage.AccountType = model, userID, originID, reqID, AccountTypeAntigravity
 	h.recordUsage(account, *usage)
 }

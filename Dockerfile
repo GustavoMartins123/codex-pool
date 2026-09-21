@@ -8,7 +8,7 @@ RUN npm run build
 
 FROM golang:1.25-bookworm AS build
 WORKDIR /src
-ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
+ENV CGO_ENABLED=1
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ libc6-dev && rm -rf /var/lib/apt/lists/*
 COPY go.mod go.sum ./
 RUN go mod download
@@ -18,7 +18,7 @@ RUN go build -trimpath -ldflags='-s -w' -o /out/codex-pool .
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
- && groupadd --system codex && useradd --system --gid codex --home-dir /app codex
+ && groupadd -g 1000 codex && useradd -u 1000 -g codex --home-dir /app codex
 WORKDIR /app
 COPY --from=build /out/codex-pool /app/codex-pool
 RUN mkdir -p /app/data /app/pool /app/tmp && chown -R codex:codex /app

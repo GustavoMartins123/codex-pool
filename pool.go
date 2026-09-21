@@ -2045,6 +2045,7 @@ type UsagePoolStats struct {
 	GeminiCount      int            `json:"gemini_count"`
 	ClaudeCount      int            `json:"claude_count"`
 	ZAICount         int            `json:"zai_count"`
+	AntigravityCount int            `json:"antigravity_count"`
 	AvgPrimaryUsed   float64        `json:"avg_primary_used"`
 	AvgSecondaryUsed float64        `json:"avg_secondary_used"`
 	MinSecondaryUsed float64        `json:"min_secondary_used"`
@@ -2150,6 +2151,8 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 			stats.ClaudeCount++
 		case AccountTypeZAI:
 			stats.ZAICount++
+		case AccountTypeAntigravity:
+			stats.AntigravityCount++
 		}
 
 		// Determine status
@@ -2203,7 +2206,7 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 			ps = &codexStats
 		case AccountTypeClaude:
 			ps = &claudeStats
-		case AccountTypeGemini:
+		case AccountTypeGemini, AccountTypeAntigravity:
 			ps = &geminiStats
 		}
 		if ps != nil {

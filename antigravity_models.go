@@ -463,6 +463,67 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 	return AntigravityAccountSnapshot{}, lastErr
 }
 
+func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSnapshot {
+	var minRemaining *float64
+	var earliestReset time.Time
+
+	// Priority 1: Check Gemini models specifically
+	for id, model := range snapshot.Models {
+		if !strings.Contains(strings.ToLower(id), "gemini") {
+			continue
+		}
+		if model.Quota.RemainingFraction != nil {
+			rem := *model.Quota.RemainingFraction
+			if minRemaining == nil || rem < *minRemaining {
+				minRemaining = &rem
+			}
+		}
+		if !model.Quota.ResetTime.IsZero() {
+			if earliestReset.IsZero() || model.Quota.ResetTime.Before(earliestReset) {
+				earliestReset = model.Quota.ResetTime
+			}
+		}
+	}
+
+	// Priority 2: Check all models if no Gemini model reported quota
+	if minRemaining == nil && earliestReset.IsZero() {
+		for _, model := range snapshot.Models {
+			if model.Quota.RemainingFraction != nil {
+				rem := *model.Quota.RemainingFraction
+				if minRemaining == nil || rem < *minRemaining {
+					minRemaining = &rem
+				}
+			}
+			if !model.Quota.ResetTime.IsZero() {
+				if earliestReset.IsZero() || model.Quota.ResetTime.Before(earliestReset) {
+					earliestReset = model.Quota.ResetTime
+				}
+			}
+		}
+	}
+
+	usedFraction := float64(0)
+	if minRemaining != nil {
+		usedFraction = 1.0 - *minRemaining
+		if usedFraction < 0 {
+			usedFraction = 0
+		}
+		if usedFraction > 1 {
+			usedFraction = 1
+		}
+	}
+
+	return UsageSnapshot{
+		PrimaryUsed:          usedFraction,
+		PrimaryUsedPercent:   usedFraction,
+		PrimaryWindowMinutes: 1440,
+		PrimaryResetAt:       earliestReset,
+		RetrievedAt:          snapshot.FetchedAt,
+		Source:               "antigravity",
+		primarySet:           minRemaining != nil || !earliestReset.IsZero(),
+	}
+}
+
 func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) error {
 	snapshot, err := fetchAntigravityModels(ctx, transport, account, bases...)
 	if err != nil {
@@ -470,6 +531,11 @@ func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, acc
 	}
 	previous, hadPrevious := antigravityModels.AccountSnapshot(account.ID)
 	antigravityModels.ReplaceAccount(account.ID, snapshot)
+	if account != nil {
+		account.mu.Lock()
+		account.Usage = extractAntigravityAccountUsage(snapshot)
+		account.mu.Unlock()
+	}
 	if hadPrevious && antigravitySnapshotsEquivalent(previous, snapshot) {
 		return nil
 	}

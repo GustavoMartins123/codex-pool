@@ -150,6 +150,13 @@ func (h *proxyHandler) pollUpstreamUsage() {
 					log.Printf("google refresh %s: success", a.ID)
 				}
 			}
+			if accType == AccountTypeAntigravity {
+				if snapshot, ok := antigravityModels.AccountSnapshot(a.ID); ok {
+					a.mu.Lock()
+					a.Usage = extractAntigravityAccountUsage(snapshot)
+					a.mu.Unlock()
+				}
+			}
 			continue
 		}
 
