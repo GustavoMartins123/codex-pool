@@ -33,6 +33,8 @@ config.toml
 *.db-wal
 *.sqlite
 *.log
+.pool-key
+*.key
 
 # Build artifacts
 codex-pool
