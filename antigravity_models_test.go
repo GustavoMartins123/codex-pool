@@ -123,24 +123,31 @@ func TestParseAntigravityModelSnapshotRepairsKnownMetadataGaps(t *testing.T) {
 func TestFetchAntigravityModelsUsesDailyThenProductionAndEmptyBody(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example.test")
 	production, _ := url.Parse("https://prod.example.test")
-	var hosts []string
+	var requests []string
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		hosts = append(hosts, req.URL.Host)
+		requests = append(requests, req.URL.Host+req.URL.Path)
 		body, _ := io.ReadAll(req.Body)
+		if req.URL.Path == "/v1internal:retrieveUserQuotaSummary" {
+			if string(body) != `{"project":"project-1"}` {
+				t.Fatalf("quota summary request body = %s", body)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"groups":[{"displayName":"Gemini Models","buckets":[{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.4},{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.5}]}]}`)), Header: make(http.Header)}, nil
+		}
 		if string(body) != `{}` {
-			t.Fatalf("request body = %s", body)
+			t.Fatalf("model request body = %s", body)
 		}
 		if req.URL.Host == daily.Host {
 			return &http.Response{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable", Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
 		}
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"models":{"gemini-live":{"displayName":"Gemini Live"}}}`)), Header: make(http.Header)}, nil
 	})
-	snapshot, err := fetchAntigravityModels(context.Background(), transport, &Account{AccessToken: "token"}, daily, production)
+	snapshot, err := fetchAntigravityModels(context.Background(), transport, &Account{AccessToken: "token", ProjectID: "project-1"}, daily, production)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(hosts, ",") != "daily.example.test,prod.example.test" || snapshot.Models["gemini-live"].DisplayName != "Gemini Live" {
-		t.Fatalf("hosts=%v snapshot=%#v", hosts, snapshot)
+	wantRequests := "daily.example.test/v1internal:fetchAvailableModels,prod.example.test/v1internal:fetchAvailableModels,daily.example.test/v1internal:retrieveUserQuotaSummary"
+	if strings.Join(requests, ",") != wantRequests || snapshot.Models["gemini-live"].DisplayName != "Gemini Live" || snapshot.QuotaSummary == nil {
+		t.Fatalf("requests=%v snapshot=%#v", requests, snapshot)
 	}
 }
 

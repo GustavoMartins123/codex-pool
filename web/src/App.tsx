@@ -171,7 +171,7 @@ function tokenThroughput(row: { account_type: Provider | "unknown"; input_tokens
 }
 
 function accountThroughput(account: AccountStats) {
-  return account.total_input_tokens + account.total_output_tokens + (account.type === "claude" ? account.total_cached_tokens : 0);
+  return account.last_24h_tokens ?? 0;
 }
 
 function formatReset(minutes: number) {
@@ -197,7 +197,7 @@ function paceLabel(paceRatio?: number) {
 }
 
 function WeeklyPace({ account }: { account: AccountStats }) {
-  const usePrimary = account.type === "antigravity" || (!account.secondary_window_available && account.primary_window_available);
+  const usePrimary = !account.secondary_window_available && account.primary_window_available;
   const available = usePrimary ? account.primary_window_available : account.secondary_window_available;
   if (!available) {
     return <span className="quota-limit unavailable">N/A</span>;
@@ -2560,8 +2560,8 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status}</span>
                 <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
                 <span className="account-windows" data-label="Reset windows">
-                  <ResetWindow label={account.type === "antigravity" ? "Gemini" : "Primary"} available={account.primary_window_available} used={account.primary_window_used_pct} resetMinutes={account.primary_reset_minutes} compact />
-                  <ResetWindow label={account.type === "antigravity" ? "Claude" : "Weekly"} available={account.secondary_window_available} used={account.secondary_window_used_pct} resetMinutes={account.secondary_reset_minutes} compact />
+                  <ResetWindow label={account.type === "antigravity" ? "5 hour" : "Primary"} available={account.primary_window_available} used={account.primary_window_used_pct} resetMinutes={account.primary_reset_minutes} compact />
+                  <ResetWindow label="Weekly" available={account.secondary_window_available} used={account.secondary_window_used_pct} resetMinutes={account.secondary_reset_minutes} compact />
                 </span>
                 <span data-label="24h burn">{formatTokens(accountThroughput(account))}</span>
                 <strong data-label="Return">{account.subscription_spend ? `${account.roi.toFixed(2)}×` : "—"}</strong>
@@ -2586,8 +2586,8 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 <div className="inspector-provider" style={{ color: providerDisplay(selectedAccount.type).color }}>{providerDisplay(selectedAccount.type).label} · {selectedAccount.plan_type}</div>
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
                 <div className="inspector-windows" aria-label="Account usage reset windows">
-                  <ResetWindow label={selectedAccount.type === "antigravity" ? "Gemini window" : "Primary window"} available={selectedAccount.primary_window_available} used={selectedAccount.primary_window_used_pct} resetMinutes={selectedAccount.primary_reset_minutes} paceRatio={selectedAccount.primary_pace_ratio} showPace />
-                  <ResetWindow label={selectedAccount.type === "antigravity" ? "Claude window" : "Weekly window"} available={selectedAccount.secondary_window_available} used={selectedAccount.secondary_window_used_pct} resetMinutes={selectedAccount.secondary_reset_minutes} paceRatio={selectedAccount.secondary_pace_ratio} showPace />
+                  <ResetWindow label={selectedAccount.type === "antigravity" ? "5 hour window" : "Primary window"} available={selectedAccount.primary_window_available} used={selectedAccount.primary_window_used_pct} resetMinutes={selectedAccount.primary_reset_minutes} paceRatio={selectedAccount.primary_pace_ratio} showPace />
+                  <ResetWindow label="Weekly window" available={selectedAccount.secondary_window_available} used={selectedAccount.secondary_window_used_pct} resetMinutes={selectedAccount.secondary_reset_minutes} paceRatio={selectedAccount.secondary_pace_ratio} showPace />
                 </div>
                 {selectedAccount.type === "codex" && (
                   <section className="inspector-reset-credits" aria-label="Banked usage resets">

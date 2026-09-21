@@ -38,11 +38,38 @@ type AntigravityModelInfo struct {
 	Raw                map[string]json.RawMessage `json:"raw,omitempty"`
 }
 
+type AntigravityQuotaBucket struct {
+	BucketID          string    `json:"bucket_id,omitempty"`
+	DisplayName       string    `json:"display_name,omitempty"`
+	Description       string    `json:"description,omitempty"`
+	Window            string    `json:"window,omitempty"`
+	RemainingFraction *float64  `json:"remaining_fraction,omitempty"`
+	RemainingAmount   *int64    `json:"remaining_amount,omitempty"`
+	Disabled          bool      `json:"disabled,omitempty"`
+	ResetTime         time.Time `json:"reset_time,omitempty"`
+}
+
+type AntigravityQuotaGroup struct {
+	DisplayName string                     `json:"display_name,omitempty"`
+	Description string                     `json:"description,omitempty"`
+	Buckets     []AntigravityQuotaBucket   `json:"buckets,omitempty"`
+	Raw         map[string]json.RawMessage `json:"raw,omitempty"`
+}
+
+type AntigravityQuotaSummary struct {
+	FetchedAt   time.Time                  `json:"fetched_at"`
+	Description string                     `json:"description,omitempty"`
+	Buckets     []AntigravityQuotaBucket   `json:"buckets,omitempty"`
+	Groups      []AntigravityQuotaGroup    `json:"groups,omitempty"`
+	Raw         map[string]json.RawMessage `json:"raw,omitempty"`
+}
+
 type AntigravityAccountSnapshot struct {
-	FetchedAt  time.Time                       `json:"fetched_at"`
-	Models     map[string]AntigravityModelInfo `json:"models"`
-	Deprecated map[string]string               `json:"deprecated_model_ids,omitempty"`
-	Raw        map[string]json.RawMessage      `json:"raw,omitempty"`
+	FetchedAt    time.Time                       `json:"fetched_at"`
+	Models       map[string]AntigravityModelInfo `json:"models"`
+	Deprecated   map[string]string               `json:"deprecated_model_ids,omitempty"`
+	QuotaSummary *AntigravityQuotaSummary        `json:"quota_summary,omitempty"`
+	Raw          map[string]json.RawMessage      `json:"raw,omitempty"`
 }
 
 type AntigravityCatalogModel struct {
@@ -455,7 +482,14 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 			lastErr = fmt.Errorf("fetchAvailableModels failed: %s: %s", resp.Status, safeText(responseBody))
 			continue
 		}
-		return parseAntigravityModelSnapshot(responseBody, time.Now())
+		snapshot, err := parseAntigravityModelSnapshot(responseBody, time.Now())
+		if err != nil {
+			return AntigravityAccountSnapshot{}, err
+		}
+		if summary, summaryErr := fetchAntigravityQuotaSummary(ctx, transport, account, bases...); summaryErr == nil {
+			snapshot.QuotaSummary = &summary
+		}
+		return snapshot, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("fetchAvailableModels has no configured upstream")
@@ -463,103 +497,220 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 	return AntigravityAccountSnapshot{}, lastErr
 }
 
-func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSnapshot {
-	var minRemainingGemini *float64
-	var earliestResetGemini time.Time
-
-	var minRemainingClaude *float64
-	var earliestResetClaude time.Time
-
-	for id, model := range snapshot.Models {
-		lower := strings.ToLower(id)
-		if strings.Contains(lower, "gemini") {
-			if model.Quota.RemainingFraction != nil {
-				rem := *model.Quota.RemainingFraction
-				if minRemainingGemini == nil || rem < *minRemainingGemini {
-					minRemainingGemini = &rem
-				}
-			}
-			if !model.Quota.ResetTime.IsZero() {
-				if earliestResetGemini.IsZero() || model.Quota.ResetTime.Before(earliestResetGemini) {
-					earliestResetGemini = model.Quota.ResetTime
-				}
-			}
-		} else if strings.Contains(lower, "claude") {
-			if model.Quota.RemainingFraction != nil {
-				rem := *model.Quota.RemainingFraction
-				if minRemainingClaude == nil || rem < *minRemainingClaude {
-					minRemainingClaude = &rem
-				}
-			}
-			if !model.Quota.ResetTime.IsZero() {
-				if earliestResetClaude.IsZero() || model.Quota.ResetTime.Before(earliestResetClaude) {
-					earliestResetClaude = model.Quota.ResetTime
-				}
-			}
+func parseAntigravityQuotaSummary(body []byte, fetchedAt time.Time) (AntigravityQuotaSummary, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return AntigravityQuotaSummary{}, err
+	}
+	type wireBucket struct {
+		BucketID          string   `json:"bucketId"`
+		DisplayName       string   `json:"displayName"`
+		Description       string   `json:"description"`
+		Window            string   `json:"window"`
+		RemainingFraction *float64 `json:"remainingFraction"`
+		RemainingAmount   *int64   `json:"remainingAmount"`
+		Disabled          bool     `json:"disabled"`
+		ResetTime         string   `json:"resetTime"`
+	}
+	decodeBucket := func(raw wireBucket) AntigravityQuotaBucket {
+		reset, _ := time.Parse(time.RFC3339Nano, raw.ResetTime)
+		return AntigravityQuotaBucket{
+			BucketID:          raw.BucketID,
+			DisplayName:       raw.DisplayName,
+			Description:       raw.Description,
+			Window:            raw.Window,
+			RemainingFraction: raw.RemainingFraction,
+			RemainingAmount:   raw.RemainingAmount,
+			Disabled:          raw.Disabled,
+			ResetTime:         reset,
 		}
 	}
 
-	// Fallback: if no Gemini model reported quota, scan all models
-	if minRemainingGemini == nil && earliestResetGemini.IsZero() {
-		for _, model := range snapshot.Models {
-			if model.Quota.RemainingFraction != nil {
-				rem := *model.Quota.RemainingFraction
-				if minRemainingGemini == nil || rem < *minRemainingGemini {
-					minRemainingGemini = &rem
-				}
-			}
-			if !model.Quota.ResetTime.IsZero() {
-				if earliestResetGemini.IsZero() || model.Quota.ResetTime.Before(earliestResetGemini) {
-					earliestResetGemini = model.Quota.ResetTime
-				}
-			}
-		}
+	var description string
+	_ = json.Unmarshal(root["description"], &description)
+	summary := AntigravityQuotaSummary{FetchedAt: fetchedAt.UTC(), Description: description, Raw: root}
+	var buckets []wireBucket
+	_ = json.Unmarshal(root["buckets"], &buckets)
+	for _, bucket := range buckets {
+		summary.Buckets = append(summary.Buckets, decodeBucket(bucket))
 	}
-
-	primaryUsed := float64(0)
-	if minRemainingGemini != nil {
-		primaryUsed = 1.0 - *minRemainingGemini
-		if primaryUsed < 0 {
-			primaryUsed = 0
+	var groupObjects []map[string]json.RawMessage
+	_ = json.Unmarshal(root["groups"], &groupObjects)
+	for _, raw := range groupObjects {
+		var displayName, groupDescription string
+		var groupBuckets []wireBucket
+		_ = json.Unmarshal(raw["displayName"], &displayName)
+		_ = json.Unmarshal(raw["description"], &groupDescription)
+		_ = json.Unmarshal(raw["buckets"], &groupBuckets)
+		group := AntigravityQuotaGroup{DisplayName: displayName, Description: groupDescription, Raw: raw}
+		for _, bucket := range groupBuckets {
+			group.Buckets = append(group.Buckets, decodeBucket(bucket))
 		}
-		if primaryUsed > 1 {
-			primaryUsed = 1
-		}
+		summary.Groups = append(summary.Groups, group)
 	}
-
-	secondaryUsed := float64(0)
-	if minRemainingClaude != nil {
-		secondaryUsed = 1.0 - *minRemainingClaude
-		if secondaryUsed < 0 {
-			secondaryUsed = 0
-		}
-		if secondaryUsed > 1 {
-			secondaryUsed = 1
-		}
+	if len(summary.Buckets) == 0 && len(summary.Groups) == 0 {
+		return AntigravityQuotaSummary{}, errors.New("retrieveUserQuotaSummary returned no quota buckets")
 	}
+	return summary, nil
+}
 
-	return UsageSnapshot{
-		PrimaryUsed:            primaryUsed,
-		PrimaryUsedPercent:     primaryUsed,
-		PrimaryWindowMinutes:   1440,
-		PrimaryResetAt:         earliestResetGemini,
-		SecondaryUsed:          secondaryUsed,
-		SecondaryUsedPercent:   secondaryUsed,
-		SecondaryWindowMinutes: 1440,
-		SecondaryResetAt:       earliestResetClaude,
-		RetrievedAt:            snapshot.FetchedAt,
-		Source:                 "antigravity",
-		primarySet:             minRemainingGemini != nil || !earliestResetGemini.IsZero(),
-		secondarySet:           minRemainingClaude != nil || !earliestResetClaude.IsZero(),
+func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityQuotaSummary, error) {
+	requestBody, err := json.Marshal(map[string]string{"project": account.ProjectID})
+	if err != nil {
+		return AntigravityQuotaSummary{}, err
+	}
+	var lastErr error
+	for _, base := range bases {
+		if base == nil {
+			continue
+		}
+		u := *base
+		u.Path = singleJoin(u.Path, "/v1internal:retrieveUserQuotaSummary")
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(requestBody))
+		if err != nil {
+			return AntigravityQuotaSummary{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", antigravityUserAgent())
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("retrieveUserQuotaSummary failed: %s: %s", resp.Status, safeText(responseBody))
+			continue
+		}
+		return parseAntigravityQuotaSummary(responseBody, time.Now())
+	}
+	if lastErr == nil {
+		lastErr = errors.New("retrieveUserQuotaSummary has no configured upstream")
+	}
+	return AntigravityQuotaSummary{}, lastErr
+}
+
+func antigravityQuotaWindow(bucket AntigravityQuotaBucket) string {
+	value := strings.ToLower(strings.Join([]string{bucket.Window, bucket.BucketID, bucket.DisplayName}, " "))
+	switch {
+	case strings.Contains(value, "weekly") || strings.Contains(value, "week"):
+		return "weekly"
+	case strings.Contains(value, "5h") || strings.Contains(value, "five hour") || strings.Contains(value, "5-hour"):
+		return "5h"
+	default:
+		return ""
 	}
 }
 
+func antigravitySummaryWindow(summary *AntigravityQuotaSummary, window string) (*float64, time.Time) {
+	if summary == nil {
+		return nil, time.Time{}
+	}
+	var remaining *float64
+	var reset time.Time
+	consider := func(bucket AntigravityQuotaBucket) {
+		if bucket.Disabled || bucket.RemainingFraction == nil || antigravityQuotaWindow(bucket) != window {
+			return
+		}
+		value := *bucket.RemainingFraction
+		betterReset := !bucket.ResetTime.IsZero() && (reset.IsZero() || bucket.ResetTime.Before(reset))
+		if remaining == nil || value < *remaining || (value == *remaining && betterReset) {
+			copy := value
+			remaining = &copy
+			reset = bucket.ResetTime
+		}
+	}
+	for _, bucket := range summary.Buckets {
+		consider(bucket)
+	}
+	for _, group := range summary.Groups {
+		for _, bucket := range group.Buckets {
+			consider(bucket)
+		}
+	}
+	return remaining, reset
+}
+
+func antigravityModelQuotaFallback(snapshot AntigravityAccountSnapshot) (*float64, time.Time) {
+	var remaining *float64
+	var reset time.Time
+	for _, model := range snapshot.Models {
+		if model.Quota.RemainingFraction == nil {
+			continue
+		}
+		value := *model.Quota.RemainingFraction
+		betterReset := !model.Quota.ResetTime.IsZero() && (reset.IsZero() || model.Quota.ResetTime.Before(reset))
+		if remaining == nil || value < *remaining || (value == *remaining && betterReset) {
+			copy := value
+			remaining = &copy
+			reset = model.Quota.ResetTime
+		}
+	}
+	return remaining, reset
+}
+
+func antigravityUsedFraction(remaining *float64) float64 {
+	if remaining == nil {
+		return 0
+	}
+	used := 1 - *remaining
+	if used < 0 {
+		return 0
+	}
+	if used > 1 {
+		return 1
+	}
+	return used
+}
+
+func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSnapshot {
+	fiveHourRemaining, fiveHourReset := antigravitySummaryWindow(snapshot.QuotaSummary, "5h")
+	weeklyRemaining, weeklyReset := antigravitySummaryWindow(snapshot.QuotaSummary, "weekly")
+	source := "antigravity-quota-summary"
+	if fiveHourRemaining == nil {
+		fiveHourRemaining, fiveHourReset = antigravityModelQuotaFallback(snapshot)
+		source = "antigravity-model-quota"
+	}
+	fiveHourUsed := antigravityUsedFraction(fiveHourRemaining)
+	weeklyUsed := antigravityUsedFraction(weeklyRemaining)
+	usage := UsageSnapshot{
+		PrimaryUsed:            fiveHourUsed,
+		PrimaryUsedPercent:     fiveHourUsed,
+		PrimaryUsageReported:   fiveHourRemaining != nil,
+		PrimaryResetAt:         fiveHourReset,
+		SecondaryUsed:          weeklyUsed,
+		SecondaryUsedPercent:   weeklyUsed,
+		SecondaryUsageReported: weeklyRemaining != nil,
+		SecondaryResetAt:       weeklyReset,
+		RetrievedAt:            snapshot.FetchedAt,
+		Source:                 source,
+		primarySet:             fiveHourRemaining != nil,
+		secondarySet:           weeklyRemaining != nil,
+	}
+	if fiveHourRemaining != nil {
+		usage.PrimaryWindowMinutes = 5 * 60
+	}
+	if weeklyRemaining != nil {
+		usage.SecondaryWindowMinutes = 7 * 24 * 60
+	}
+	return usage
+}
+
 func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) error {
+	previous, hadPrevious := antigravityModels.AccountSnapshot(account.ID)
 	snapshot, err := fetchAntigravityModels(ctx, transport, account, bases...)
 	if err != nil {
 		return err
 	}
-	previous, hadPrevious := antigravityModels.AccountSnapshot(account.ID)
+	if snapshot.QuotaSummary == nil && hadPrevious && previous.QuotaSummary != nil {
+		snapshot.QuotaSummary = previous.QuotaSummary
+	}
 	antigravityModels.ReplaceAccount(account.ID, snapshot)
 	if account != nil {
 		account.mu.Lock()
@@ -574,6 +725,16 @@ func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, acc
 
 func antigravitySnapshotsEquivalent(left, right AntigravityAccountSnapshot) bool {
 	left.FetchedAt, right.FetchedAt = time.Time{}, time.Time{}
+	if left.QuotaSummary != nil {
+		summary := *left.QuotaSummary
+		summary.FetchedAt = time.Time{}
+		left.QuotaSummary = &summary
+	}
+	if right.QuotaSummary != nil {
+		summary := *right.QuotaSummary
+		summary.FetchedAt = time.Time{}
+		right.QuotaSummary = &summary
+	}
 	return reflect.DeepEqual(left, right)
 }
 

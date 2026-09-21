@@ -2260,9 +2260,12 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 		case AccountTypeClaude:
 			primaryLabel = "tokens"
 			secondaryLabel = "requests"
-		case AccountTypeGemini, AccountTypeAntigravity:
+		case AccountTypeGemini:
 			primaryLabel = "daily"
 			secondaryLabel = ""
+		case AccountTypeAntigravity:
+			primaryLabel = "5hr"
+			secondaryLabel = "weekly"
 		}
 
 		stats.Accounts = append(stats.Accounts, AccountBrief{

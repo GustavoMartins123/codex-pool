@@ -32,8 +32,8 @@ func TestAntigravityUsageAndRemainingTokensTracking(t *testing.T) {
 	if usage.PrimaryResetAt != resetTime {
 		t.Errorf("PrimaryResetAt = %v, want %v", usage.PrimaryResetAt, resetTime)
 	}
-	if usage.PrimaryWindowMinutes != 1440 {
-		t.Errorf("PrimaryWindowMinutes = %v, want 1440", usage.PrimaryWindowMinutes)
+	if usage.PrimaryWindowMinutes != 300 {
+		t.Errorf("PrimaryWindowMinutes = %v, want 300", usage.PrimaryWindowMinutes)
 	}
 	if !usagePrimaryWindowAvailable(usage) {
 		t.Errorf("usagePrimaryWindowAvailable should be true")
@@ -100,8 +100,8 @@ func TestAntigravityUsageAndRemainingTokensTracking(t *testing.T) {
 	if brief.PrimaryPct != 25 {
 		t.Errorf("brief.PrimaryPct = %d, want 25", brief.PrimaryPct)
 	}
-	if brief.PrimaryLabel != "daily" {
-		t.Errorf("brief.PrimaryLabel = %q, want daily", brief.PrimaryLabel)
+	if brief.PrimaryLabel != "5hr" {
+		t.Errorf("brief.PrimaryLabel = %q, want 5hr", brief.PrimaryLabel)
 	}
 	if !brief.PrimaryAvailable {
 		t.Errorf("brief.PrimaryAvailable should be true")
@@ -151,67 +151,61 @@ func TestAntigravityAccountLoadInitializesUsage(t *testing.T) {
 	if !usagePrimaryWindowAvailable(account.Usage) {
 		t.Errorf("loaded account should have usagePrimaryWindowAvailable == true")
 	}
-	if account.Usage.PrimaryWindowMinutes != 1440 {
-		t.Errorf("account.Usage.PrimaryWindowMinutes = %d, want 1440", account.Usage.PrimaryWindowMinutes)
+	if account.Usage.PrimaryWindowMinutes != 300 {
+		t.Errorf("account.Usage.PrimaryWindowMinutes = %d, want 300", account.Usage.PrimaryWindowMinutes)
 	}
 	if account.Usage.PrimaryResetAt != resetTime {
 		t.Errorf("account.Usage.PrimaryResetAt = %v, want %v", account.Usage.PrimaryResetAt, resetTime)
 	}
 }
 
-func TestAntigravityUsageExtractsBothGeminiAndClaudeWindows(t *testing.T) {
-	geminiReset := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
-	claudeReset := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
-	geminiRem := 0.70
-	claudeRem := 1.0
-
-	snapshot := AntigravityAccountSnapshot{
-		FetchedAt: time.Now(),
-		Models: map[string]AntigravityModelInfo{
-			"gemini-3.8-flash-high": {
-				ID: "gemini-3.8-flash-high",
-				Quota: AntigravityQuotaInfo{
-					RemainingFraction: &geminiRem,
-					ResetTime:         geminiReset,
-				},
+func TestAntigravityUsageUsesFiveHourAndWeeklyQuotaSummary(t *testing.T) {
+	fetchedAt := time.Date(2026, 9, 21, 19, 32, 30, 0, time.UTC)
+	body := []byte(`{
+		"groups": [
+			{
+				"displayName": "Gemini Models",
+				"buckets": [
+					{"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.3971,"resetTime":"2026-09-27T04:49:17Z"},
+					{"bucketId":"gemini-5h","window":"5h","remainingFraction":0.3886,"resetTime":"2026-09-21T21:11:44Z"}
+				]
 			},
-			"claude-sonnet-4-6": {
-				ID: "claude-sonnet-4-6",
-				Quota: AntigravityQuotaInfo{
-					RemainingFraction: &claudeRem,
-					ResetTime:         claudeReset,
-				},
-			},
-		},
+			{
+				"displayName": "Claude and GPT models",
+				"buckets": [
+					{"bucketId":"3p-weekly","window":"weekly","remainingFraction":1,"resetTime":"2026-09-28T19:32:30Z"},
+					{"bucketId":"3p-5h","window":"5h","remainingFraction":1,"resetTime":"2026-09-22T00:32:30Z"}
+				]
+			}
+		]
+	}`)
+	summary, err := parseAntigravityQuotaSummary(body, fetchedAt)
+	if err != nil {
+		t.Fatal(err)
 	}
-
+	snapshot := AntigravityAccountSnapshot{
+		FetchedAt:    fetchedAt,
+		Models:       map[string]AntigravityModelInfo{"gemini-3.8-flash-high": {ID: "gemini-3.8-flash-high"}},
+		QuotaSummary: &summary,
+	}
 	usage := extractAntigravityAccountUsage(snapshot)
 
-	// Primary window should track Gemini
-	if usage.PrimaryUsedPercent < 0.299 || usage.PrimaryUsedPercent > 0.301 {
-		t.Errorf("PrimaryUsedPercent = %v, want 0.30", usage.PrimaryUsedPercent)
+	if usage.PrimaryUsedPercent < 0.6113 || usage.PrimaryUsedPercent > 0.6115 {
+		t.Errorf("PrimaryUsedPercent = %v, want 0.6114", usage.PrimaryUsedPercent)
 	}
-	if usage.PrimaryResetAt != geminiReset {
-		t.Errorf("PrimaryResetAt = %v, want %v", usage.PrimaryResetAt, geminiReset)
+	if usage.SecondaryUsedPercent < 0.6028 || usage.SecondaryUsedPercent > 0.6030 {
+		t.Errorf("SecondaryUsedPercent = %v, want 0.6029", usage.SecondaryUsedPercent)
 	}
-	if usage.PrimaryWindowMinutes != 1440 {
-		t.Errorf("PrimaryWindowMinutes = %v, want 1440", usage.PrimaryWindowMinutes)
+	if usage.PrimaryWindowMinutes != 300 || usage.SecondaryWindowMinutes != 10080 {
+		t.Errorf("window minutes = %d/%d, want 300/10080", usage.PrimaryWindowMinutes, usage.SecondaryWindowMinutes)
 	}
-	if !usagePrimaryWindowAvailable(usage) {
-		t.Errorf("usagePrimaryWindowAvailable should be true")
+	if usage.PrimaryResetAt.Format(time.RFC3339) != "2026-09-21T21:11:44Z" {
+		t.Errorf("PrimaryResetAt = %v", usage.PrimaryResetAt)
 	}
-
-	// Secondary window should track Claude on Antigravity
-	if usage.SecondaryUsedPercent != 0.0 {
-		t.Errorf("SecondaryUsedPercent = %v, want 0.0", usage.SecondaryUsedPercent)
+	if usage.SecondaryResetAt.Format(time.RFC3339) != "2026-09-27T04:49:17Z" {
+		t.Errorf("SecondaryResetAt = %v", usage.SecondaryResetAt)
 	}
-	if usage.SecondaryResetAt != claudeReset {
-		t.Errorf("SecondaryResetAt = %v, want %v", usage.SecondaryResetAt, claudeReset)
-	}
-	if usage.SecondaryWindowMinutes != 1440 {
-		t.Errorf("SecondaryWindowMinutes = %v, want 1440", usage.SecondaryWindowMinutes)
-	}
-	if !usageSecondaryWindowAvailable(usage) {
-		t.Errorf("usageSecondaryWindowAvailable should be true")
+	if !usage.PrimaryUsageReported || !usage.SecondaryUsageReported {
+		t.Errorf("summary windows should both be reported: %#v", usage)
 	}
 }
