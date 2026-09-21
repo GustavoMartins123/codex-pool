@@ -1760,6 +1760,8 @@ type AccountStats struct {
 	SecondaryWindowUsed       float64  `json:"secondary_window_used_pct"`
 	PrimaryWindowAvailable    bool     `json:"primary_window_available"`
 	SecondaryWindowAvailable  bool     `json:"secondary_window_available"`
+	PrimaryUsageReported      bool     `json:"primary_usage_reported"`
+	SecondaryUsageReported    bool     `json:"secondary_usage_reported"`
 	PrimaryResetMinutes       int      `json:"primary_reset_minutes"`
 	SecondaryResetMinutes     int      `json:"secondary_reset_minutes"`
 	PrimaryWindowMinutes      int      `json:"primary_window_minutes"`
@@ -1772,6 +1774,7 @@ type AccountStats struct {
 	TotalOutputTokens         int64    `json:"total_output_tokens"`
 	TotalReasoningTokens      int64    `json:"total_reasoning_tokens"`
 	TotalBillableTokens       int64    `json:"total_billable_tokens"`
+	Last24hTokens             int64    `json:"last_24h_tokens"`
 	CacheHitRate              float64  `json:"cache_hit_rate_pct"`
 	CreditsBalance            float64  `json:"credits_balance,omitempty"`
 	HasCredits                bool     `json:"has_credits"`
@@ -1861,6 +1864,18 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 	var primarySum, secondarySum float64
 	var primaryCount, secondaryCount int
 	activeCount := 0
+	last24hByAccount := make(map[string]int64)
+	if h.store != nil {
+		if recent, err := h.store.getRecentRequestUsage(1); err == nil {
+			for _, usage := range recent {
+				throughput := usage.InputTokens + usage.OutputTokens
+				if usage.AccountType == AccountTypeClaude {
+					throughput += usage.CachedInputTokens
+				}
+				last24hByAccount[usage.AccountID] += throughput
+			}
+		}
+	}
 
 	for _, acc := range accounts {
 		acc.mu.Lock()
@@ -1901,6 +1916,14 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 
 		primaryUsed := accountPrimaryUsageLocked(acc) * 100
 		secondaryUsed := accountSecondaryUsageLocked(acc) * 100
+		primaryAvailable := usagePrimaryWindowAvailable(acc.Usage)
+		secondaryAvailable := usageSecondaryWindowAvailable(acc.Usage)
+		primaryReported := primaryAvailable
+		secondaryReported := secondaryAvailable
+		if acc.Type == AccountTypeAntigravity {
+			primaryReported = acc.Usage.PrimaryUsageReported
+			secondaryReported = acc.Usage.SecondaryUsageReported
+		}
 
 		breakdown := scoreBreakdown{}
 		score := float64(0)
@@ -1918,8 +1941,10 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			Penalty:                  acc.Penalty,
 			PrimaryWindowUsed:        primaryUsed,
 			SecondaryWindowUsed:      secondaryUsed,
-			PrimaryWindowAvailable:   usagePrimaryWindowAvailable(acc.Usage),
-			SecondaryWindowAvailable: usageSecondaryWindowAvailable(acc.Usage),
+			PrimaryWindowAvailable:   primaryAvailable,
+			SecondaryWindowAvailable: secondaryAvailable,
+			PrimaryUsageReported:     primaryReported,
+			SecondaryUsageReported:   secondaryReported,
 			PrimaryResetMinutes:      primaryReset,
 			SecondaryResetMinutes:    secondaryReset,
 			PrimaryWindowMinutes:     acc.Usage.PrimaryWindowMinutes,
@@ -1932,6 +1957,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			TotalOutputTokens:        acc.Totals.TotalOutputTokens,
 			TotalReasoningTokens:     acc.Totals.TotalReasoningTokens,
 			TotalBillableTokens:      acc.Totals.TotalBillableTokens,
+			Last24hTokens:            last24hByAccount[acc.ID],
 			CacheHitRate:             cacheHitRate,
 			HasCredits:               acc.Usage.HasCredits,
 			CreditsBalance:           acc.Usage.CreditsBalance,
@@ -1949,11 +1975,11 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 		totalOutput += acc.Totals.TotalOutputTokens
 		totalReasoning += acc.Totals.TotalReasoningTokens
 		totalBillable += acc.Totals.TotalBillableTokens
-		if usagePrimaryWindowAvailable(acc.Usage) {
+		if primaryReported {
 			primarySum += accountPrimaryUsageLocked(acc)
 			primaryCount++
 		}
-		if usageSecondaryWindowAvailable(acc.Usage) {
+		if secondaryReported {
 			secondarySum += accountSecondaryUsageLocked(acc)
 			secondaryCount++
 		}

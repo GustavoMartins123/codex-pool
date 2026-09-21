@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+	"time"
 )
 
 type metrics struct {
@@ -22,6 +23,16 @@ type metrics struct {
 	//   retry_buffered           — buffered translation retried on cyber
 	cyberPolicy map[cyberPolicyKey]int64
 	passport    map[passportMetricKey]int64
+
+	// Performance & Reliability metrics (F1)
+	ttftSamples         []float64 // rolling buffer in milliseconds
+	connectSamples      []float64 // rolling buffer in milliseconds
+	durationSamples     []float64 // rolling buffer in milliseconds
+	tokensPerSecSamples []float64 // rolling buffer in tokens/s
+	retriesTotal        int64
+	streamInterrupts    int64
+	providerRequests    map[string]map[string]int64 // provider -> status -> count
+	modelRequests       map[string]map[string]int64 // model -> status -> count
 }
 
 type passportMetricKey struct {
@@ -48,6 +59,12 @@ func newMetrics() *metrics {
 		cyberPolicy:           make(map[cyberPolicyKey]int64),
 		passport:              make(map[passportMetricKey]int64),
 		webSocketTerminations: make(map[webSocketTerminationKey]int64),
+		ttftSamples:           make([]float64, 0, 1000),
+		connectSamples:        make([]float64, 0, 1000),
+		durationSamples:       make([]float64, 0, 1000),
+		tokensPerSecSamples:   make([]float64, 0, 1000),
+		providerRequests:      make(map[string]map[string]int64),
+		modelRequests:         make(map[string]map[string]int64),
 	}
 }
 
@@ -113,6 +130,185 @@ func (m *metrics) cyberPolicySnapshot() map[cyberPolicyKey]int64 {
 		out[k] = v
 	}
 	return out
+}
+
+// PerformanceSummary provides an explainable snapshot of proxy performance.
+type PerformanceSummary struct {
+	TTFTMsAvg            float64         `json:"ttft_ms_avg"`
+	ConnectMsAvg         float64         `json:"connect_ms_avg"`
+	TotalDurationMsAvg   float64         `json:"total_duration_ms_avg"`
+	TokensPerSecAvg      float64         `json:"tokens_per_second_avg"`
+	SuccessRate          float64         `json:"success_rate"`
+	RateLimit429Rate     float64         `json:"rate_limit_429_rate"`
+	ServerError5xxRate   float64         `json:"server_error_5xx_rate"`
+	RetryCount           int64           `json:"retry_count"`
+	StreamInterruptions  int64           `json:"stream_interruptions"`
+	ProviderAvailability map[string]bool `json:"provider_availability,omitempty"`
+	ModelAvailability    map[string]bool `json:"model_availability,omitempty"`
+}
+
+func (m *metrics) recordPerformance(provider, model string, durationMs, ttftMs, connectMs, tokensPerSec float64, statusCode int, retries int, streamInterrupted bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	const maxSamples = 1000
+	if ttftMs > 0 {
+		if len(m.ttftSamples) >= maxSamples {
+			m.ttftSamples = m.ttftSamples[1:]
+		}
+		m.ttftSamples = append(m.ttftSamples, ttftMs)
+	}
+	if connectMs > 0 {
+		if len(m.connectSamples) >= maxSamples {
+			m.connectSamples = m.connectSamples[1:]
+		}
+		m.connectSamples = append(m.connectSamples, connectMs)
+	}
+	if durationMs > 0 {
+		if len(m.durationSamples) >= maxSamples {
+			m.durationSamples = m.durationSamples[1:]
+		}
+		m.durationSamples = append(m.durationSamples, durationMs)
+	}
+	if tokensPerSec > 0 {
+		if len(m.tokensPerSecSamples) >= maxSamples {
+			m.tokensPerSecSamples = m.tokensPerSecSamples[1:]
+		}
+		m.tokensPerSecSamples = append(m.tokensPerSecSamples, tokensPerSec)
+	}
+	if retries > 0 {
+		m.retriesTotal += int64(retries)
+	}
+	if streamInterrupted {
+		m.streamInterrupts++
+	}
+
+	statusStr := fmt.Sprintf("%d", statusCode)
+	if provider != "" {
+		mp, ok := m.providerRequests[provider]
+		if !ok {
+			mp = make(map[string]int64)
+			m.providerRequests[provider] = mp
+		}
+		mp[statusStr]++
+	}
+	if model != "" {
+		mp, ok := m.modelRequests[model]
+		if !ok {
+			mp = make(map[string]int64)
+			m.modelRequests[model] = mp
+		}
+		mp[statusStr]++
+	}
+}
+
+func (m *metrics) incRetry() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.retriesTotal++
+	m.mu.Unlock()
+}
+
+func (m *metrics) incStreamInterruption() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.streamInterrupts++
+	m.mu.Unlock()
+}
+
+func (m *metrics) performanceSummary(pool *poolState) PerformanceSummary {
+	if m == nil {
+		return PerformanceSummary{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	avg := func(samples []float64) float64 {
+		if len(samples) == 0 {
+			return 0
+		}
+		var sum float64
+		for _, s := range samples {
+			sum += s
+		}
+		return sum / float64(len(samples))
+	}
+
+	var totalReqs, successReqs, rate429Reqs, server5xxReqs int64
+	for status, count := range m.requests {
+		totalReqs += count
+		if len(status) == 3 {
+			switch status[0] {
+			case '2':
+				successReqs += count
+			case '5':
+				server5xxReqs += count
+			}
+			if status == "429" {
+				rate429Reqs += count
+			}
+		}
+	}
+
+	var successRate, rate429, server5xx float64
+	if totalReqs > 0 {
+		successRate = float64(successReqs) / float64(totalReqs)
+		rate429 = float64(rate429Reqs) / float64(totalReqs)
+		server5xx = float64(server5xxReqs) / float64(totalReqs)
+	}
+
+	summary := PerformanceSummary{
+		TTFTMsAvg:           avg(m.ttftSamples),
+		ConnectMsAvg:        avg(m.connectSamples),
+		TotalDurationMsAvg:  avg(m.durationSamples),
+		TokensPerSecAvg:     avg(m.tokensPerSecSamples),
+		SuccessRate:         successRate,
+		RateLimit429Rate:    rate429,
+		ServerError5xxRate:  server5xx,
+		RetryCount:          m.retriesTotal,
+		StreamInterruptions: m.streamInterrupts,
+	}
+
+	if pool != nil {
+		provs, mods := pool.providerModelAvailability()
+		summary.ProviderAvailability = provs
+		summary.ModelAvailability = mods
+	}
+
+	return summary
+}
+
+func (p *poolState) providerModelAvailability() (map[string]bool, map[string]bool) {
+	if p == nil {
+		return map[string]bool{}, map[string]bool{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+
+	providers := make(map[string]bool)
+	models := make(map[string]bool)
+
+	for _, a := range p.accounts {
+		a.mu.Lock()
+		isAvail := !a.Dead && !a.Disabled && !a.NeedsVerification && (a.RateLimitUntil.IsZero() || !a.RateLimitUntil.After(now))
+		provType := string(a.Type)
+		if isAvail {
+			providers[provType] = true
+			for m := range a.Models {
+				models[m] = true
+			}
+		}
+		a.mu.Unlock()
+	}
+	return providers, models
 }
 
 func (m *metrics) serve(w http.ResponseWriter, r *http.Request) {
@@ -196,4 +392,16 @@ func (m *metrics) serve(w http.ResponseWriter, r *http.Request) {
 	for _, key := range passportKeys {
 		fmt.Fprintf(w, "codexpool_%s_total{result=\"%s\"} %d\n", key.name, key.label, m.passport[key])
 	}
+
+	// Performance & Reliability metrics
+	summary := m.performanceSummary(nil)
+	fmt.Fprintf(w, "codexpool_ttft_seconds_avg %.6f\n", summary.TTFTMsAvg/1000.0)
+	fmt.Fprintf(w, "codexpool_upstream_connect_duration_seconds_avg %.6f\n", summary.ConnectMsAvg/1000.0)
+	fmt.Fprintf(w, "codexpool_request_duration_seconds_avg %.6f\n", summary.TotalDurationMsAvg/1000.0)
+	fmt.Fprintf(w, "codexpool_tokens_per_second_avg %.2f\n", summary.TokensPerSecAvg)
+	fmt.Fprintf(w, "codexpool_success_rate %.4f\n", summary.SuccessRate)
+	fmt.Fprintf(w, "codexpool_429_rate %.4f\n", summary.RateLimit429Rate)
+	fmt.Fprintf(w, "codexpool_5xx_rate %.4f\n", summary.ServerError5xxRate)
+	fmt.Fprintf(w, "codexpool_retries_total %d\n", summary.RetryCount)
+	fmt.Fprintf(w, "codexpool_stream_interruptions_total %d\n", summary.StreamInterruptions)
 }

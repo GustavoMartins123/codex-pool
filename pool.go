@@ -155,6 +155,8 @@ type UsageSnapshot struct {
 	SecondaryUsed          float64
 	PrimaryUsedPercent     float64
 	SecondaryUsedPercent   float64
+	PrimaryUsageReported   bool
+	SecondaryUsageReported bool
 	PrimaryWindowMinutes   int
 	SecondaryWindowMinutes int
 	PrimaryResetAt         time.Time
@@ -1648,6 +1650,7 @@ func mergeUsage(prev, next UsageSnapshot) UsageSnapshot {
 	hardReset := res.PrimaryUsedPercent == 0 && res.SecondaryUsedPercent == 0
 
 	if !res.primarySet {
+		res.PrimaryUsageReported = prev.PrimaryUsageReported
 		if res.PrimaryUsedPercent == 0 && prev.PrimaryUsedPercent > 0 && !authoritativeZero && !(hardSource && hardReset) {
 			res.PrimaryUsedPercent = prev.PrimaryUsedPercent
 		}
@@ -1662,6 +1665,7 @@ func mergeUsage(prev, next UsageSnapshot) UsageSnapshot {
 		}
 	}
 	if !res.secondarySet {
+		res.SecondaryUsageReported = prev.SecondaryUsageReported
 		if res.SecondaryUsedPercent == 0 && prev.SecondaryUsedPercent > 0 && !authoritativeZero && !(hardSource && hardReset) {
 			res.SecondaryUsedPercent = prev.SecondaryUsedPercent
 		}
@@ -2396,4 +2400,78 @@ func (p *poolState) debugf(format string, args ...any) {
 		return
 	}
 	log.Printf(format, args...)
+}
+
+func (p *poolState) candidateWithTrace(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string, model string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	acc := p.candidateForModel(conversationID, exclude, accountType, requiredPlan, clientIP, model)
+	if acc == nil {
+		return nil, "none", nil, 0, nil, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+
+	policy := "balanced"
+	reasons := []string{"healthy"}
+
+	if conversationID != "" && p.convPin[conversationID] == acc.ID {
+		policy = "pinned"
+		reasons = append(reasons, "conversation_pin")
+	}
+
+	acc.mu.Lock()
+	sb := scoreAccountBreakdownLocked(acc, now)
+	inflight := atomic.LoadInt64(&acc.Inflight)
+	hadHealthError := acc.NeedsVerification || acc.HealthError != ""
+	acc.mu.Unlock()
+
+	score := sb.Score - float64(inflight)*0.02
+
+	if sb.BaseWindow == "7d" {
+		reasons = append(reasons, "weekly_headroom")
+	} else if sb.BaseWindow == "5h" {
+		reasons = append(reasons, "five_hour_headroom")
+	}
+	if sb.PrimaryPaceBonus > 0 {
+		reasons = append(reasons, "primary_pace")
+	}
+	if sb.RecentUseBonus > 0 {
+		reasons = append(reasons, "recent_success")
+	}
+	if sb.CreditBonus > 1.0 {
+		reasons = append(reasons, "credit_bonus")
+	}
+
+	breakdownView := newScoreBreakdownView(sb, inflight, hadHealthError)
+
+	var alternatives []RouteAlternative
+	for _, a := range p.accounts {
+		if a == nil || a.ID == acc.ID || (accountType != "" && a.Type != accountType) || a.Dead || a.Disabled {
+			continue
+		}
+		a.mu.Lock()
+		altSB := scoreAccountBreakdownLocked(a, now)
+		altInflight := atomic.LoadInt64(&a.Inflight)
+		altHealthErr := a.NeedsVerification || a.HealthError != ""
+		a.mu.Unlock()
+
+		altScore := altSB.Score - float64(altInflight)*0.02
+		altReasons := []string{"healthy"}
+		if altSB.BaseWindow == "7d" {
+			altReasons = append(altReasons, "weekly_headroom")
+		}
+		altView := newScoreBreakdownView(altSB, altInflight, altHealthErr)
+
+		alternatives = append(alternatives, RouteAlternative{
+			Provider:       string(a.Type),
+			Model:          model,
+			Score:          altScore,
+			Reasons:        altReasons,
+			AccountID:      a.ID,
+			ScoreBreakdown: altView,
+		})
+	}
+
+	return acc, policy, reasons, score, alternatives, breakdownView
 }

@@ -292,7 +292,14 @@ func providerContributionActor(r *http.Request) string {
 
 // ServeHTTP routes incoming requests to the appropriate handler.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	reqID := randomID()
+	reqID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if reqID == "" {
+		reqID = strings.TrimSpace(r.Header.Get("x-request-id"))
+	}
+	if reqID == "" {
+		reqID = randomID()
+	}
+	w.Header().Set("X-Pool-Request-Id", reqID)
 	if h.cfg.debug.Load() {
 		log.Printf("[%s] incoming %s %s", reqID, r.Method, r.URL.Path)
 	}
@@ -423,6 +430,17 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handlePoolStats(w, r)
+		return
+	case "/api/pool/performance":
+		if !h.checkMemberOrAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		summary := h.metrics.performanceSummary(h.pool)
+		respondJSON(w, summary)
 		return
 	case "/api/pool/whoami":
 		h.handleWhoami(w, r)
@@ -594,6 +612,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Friend landing page with code
 	if strings.HasPrefix(r.URL.Path, "/friend/") {
 		h.serveFriendLanding(w, r)
+		return
+	}
+
+	// Route Trace: /api/pool/routes/:request_id
+	if strings.HasPrefix(r.URL.Path, "/api/pool/routes/") {
+		h.handleRouteTrace(w, r)
 		return
 	}
 
@@ -873,4 +897,43 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Default: proxy to upstream
 	h.proxyRequest(w, r, reqID)
+}
+
+func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	reqID := strings.TrimPrefix(r.URL.Path, "/api/pool/routes/")
+	reqID = strings.TrimSpace(reqID)
+	if reqID == "" {
+		respondJSONError(w, http.StatusBadRequest, "missing request_id")
+		return
+	}
+
+	traces := h.getRouteTraces()
+	trace, ok := traces.Get(reqID)
+	if !ok {
+		respondJSONError(w, http.StatusNotFound, "route trace not found")
+		return
+	}
+
+	isOperator := h.isOperatorRequest(r)
+	if isOperator {
+		respondJSON(w, trace)
+	} else {
+		respondJSON(w, traces.SanitizeForClient(trace))
+	}
+}
+
+func (h *proxyHandler) isOperatorRequest(r *http.Request) bool {
+	if h.passport != nil {
+		if principal, _ := h.passport.authenticate(r); principal != nil && principal.Kind == PrincipalOperator {
+			return true
+		}
+	}
+	if h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") == h.cfg.adminToken {
+		return true
+	}
+	return false
 }

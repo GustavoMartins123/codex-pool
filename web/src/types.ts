@@ -97,6 +97,8 @@ export interface AccountStats {
   secondary_window_used_pct: number;
   primary_window_available: boolean;
   secondary_window_available: boolean;
+  primary_usage_reported?: boolean;
+  secondary_usage_reported?: boolean;
   primary_reset_minutes: number;
   secondary_reset_minutes: number;
   primary_window_minutes: number;
@@ -109,6 +111,7 @@ export interface AccountStats {
   total_output_tokens: number;
   total_reasoning_tokens: number;
   total_billable_tokens: number;
+  last_24h_tokens?: number;
   cache_hit_rate_pct: number;
   score: number;
   score_tooltip?: string;
@@ -129,7 +132,7 @@ export interface PoolStats {
   total_accounts: number;
   active_accounts: number;
   total_pool_users: number;
-  last_24h_tokens: number;
+  last_24h_tokens?: number;
   accounts: AccountStats[];
   aggregate: {
     total_input_tokens: number;

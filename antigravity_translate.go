@@ -1276,10 +1276,30 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		attempts = accountCount
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
-		account := h.pool.candidateForAntigravityModel(conversationID, exclude, canonical, clientIP)
+		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithTrace(conversationID, exclude, canonical, clientIP)
 		if account == nil {
 			break
 		}
+		primaryReason := "quota_headroom"
+		if len(reasons) > 0 {
+			primaryReason = reasons[len(reasons)-1]
+		}
+		trace := &RouteTrace{
+			RequestID:      reqID,
+			Timestamp:      time.Now().UTC(),
+			Policy:         policy,
+			Selected:       RouteTarget{Provider: "antigravity", Model: canonical},
+			Score:          score,
+			Reasons:        reasons,
+			Alternatives:   alternatives,
+			AccountID:      account.ID,
+			ScoreBreakdown: breakdownView,
+			ClientIP:       clientIP,
+			UserID:         userID,
+			Attempts:       attempt + 1,
+		}
+		h.getRouteTraces().Record(trace)
+		setPoolRouteHeaders(w.Header(), "antigravity", canonical, policy, primaryReason, attempt+1, reqID)
 		exclude[account.ID] = true
 		if h.needsRefresh(account) {
 			_ = h.refreshAccount(r.Context(), account)

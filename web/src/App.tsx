@@ -1481,7 +1481,7 @@ function Header({ stats, loading, operator, onRefresh, onLock }: {
       </div>
       <div className="rail-readouts">
         {stats && <span>{stats.active_accounts} of {stats.total_accounts} accounts live</span>}
-        {stats && <span>{formatTokens(stats.last_24h_tokens)} tokens today</span>}
+        {stats && <span>{formatTokens(stats.last_24h_tokens ?? 0)} tokens today</span>}
         {generated && <span>Updated {generated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
         {onRefresh && <button onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>}
         {operator && <button className="operator-live" onClick={onLock}><span className="desktop-label">Lock operator</span><span className="mobile-label">Lock</span></button>}

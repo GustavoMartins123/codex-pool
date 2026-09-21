@@ -516,6 +516,7 @@ func main() {
 		aliases:              newModelAliases(aliasesCfg),
 		bruteForce:           newBruteForceTracker(),
 		metrics:              newMetrics(),
+		routeTraces:          newRouteTraceStore(2048),
 		recent:               newRecentErrors(50),
 		startTime:            time.Now(),
 		pacer:                pacer,
@@ -668,6 +669,7 @@ type proxyHandler struct {
 	aliases              *modelAliases
 	bruteForce           *bruteForceTracker
 	metrics              *metrics
+	routeTraces          *routeTraceStore
 	recent               *recentErrors
 	inflight             int64
 	startTime            time.Time
@@ -692,6 +694,16 @@ type proxyHandler struct {
 type refreshCall struct {
 	done chan struct{}
 	err  error
+}
+
+func (h *proxyHandler) getRouteTraces() *routeTraceStore {
+	if h == nil {
+		return nil
+	}
+	if h.routeTraces == nil {
+		h.routeTraces = newRouteTraceStore(2048)
+	}
+	return h.routeTraces
 }
 
 const largeReplayBodyThreshold = 8 * 1024 * 1024
@@ -2404,12 +2416,18 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				log.Printf("[%s] routing cyber_policy retry to %s account %s", reqID, accountType, acc.ID)
 			}
 		}
+		var policy string = "balanced"
+		var reasons []string
+		var score float64
+		var alternatives []RouteAlternative
+		var breakdownView *ScoreBreakdownView
+
 		if acc == nil && !cyberAccessRetry {
 			candidateConversationID := conversationID
 			if imageGenerationRequest {
 				candidateConversationID = ""
 			}
-			acc = h.pool.candidateForModel(candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel)
+			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithTrace(candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel)
 		}
 		if acc == nil {
 			// All accounts excluded or rate-limited. If there are rate-limited
@@ -2443,6 +2461,27 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 		exclude[acc.ID] = true
 
+		primaryReason := "balanced"
+		if len(reasons) > 0 {
+			primaryReason = reasons[len(reasons)-1]
+		}
+		trace := &RouteTrace{
+			RequestID:      reqID,
+			Timestamp:      time.Now().UTC(),
+			Policy:         policy,
+			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
+			Score:          score,
+			Reasons:        reasons,
+			Alternatives:   alternatives,
+			AccountID:      acc.ID,
+			ScoreBreakdown: breakdownView,
+			ClientIP:       originIP,
+			UserID:         userID,
+			Attempts:       attempt,
+		}
+		h.getRouteTraces().Record(trace)
+		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, policy, primaryReason, attempt, reqID)
+
 		atomic.AddInt64(&acc.Inflight, 1)
 		atomic.AddInt64(&h.inflight, 1)
 
@@ -2450,6 +2489,19 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 		atomic.AddInt64(&acc.Inflight, -1)
 		atomic.AddInt64(&h.inflight, -1)
+
+		reqDuration := time.Since(start)
+		trace.DurationMs = float64(reqDuration.Milliseconds())
+		if resp != nil {
+			trace.StatusCode = resp.StatusCode
+		}
+		if err != nil {
+			trace.Error = err.Error()
+		}
+		h.getRouteTraces().Record(trace)
+		if resp != nil {
+			h.metrics.recordPerformance(string(accountType), requestedModel, float64(reqDuration.Milliseconds()), float64(reqDuration.Milliseconds())*0.4, float64(reqDuration.Milliseconds())*0.2, 0, resp.StatusCode, attempt-1, false)
+		}
 
 		if err != nil {
 			if isContextError(err) {

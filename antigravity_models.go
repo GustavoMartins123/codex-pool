@@ -718,3 +718,62 @@ func (h *proxyHandler) startAntigravityModelPoller() {
 		}
 	}()
 }
+
+func (p *poolState) candidateForAntigravityModelWithTrace(conversationID string, exclude map[string]bool, model, clientIP string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	acc := p.candidateForAntigravityModel(conversationID, exclude, model, clientIP)
+	if acc == nil {
+		return nil, "none", nil, 0, nil, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+
+	policy := "balanced"
+	reasons := []string{"healthy"}
+
+	canonical := antigravityCanonicalModel(model)
+	pinKey := "antigravity:" + canonical + ":" + conversationID
+	if conversationID != "" && (p.convPin[pinKey] == acc.ID || p.convPin[conversationID] == acc.ID) {
+		policy = "pinned"
+		reasons = append(reasons, "conversation_pin")
+	}
+
+	acc.mu.Lock()
+	sb := scoreAccountBreakdownLocked(acc, now)
+	inflight := atomic.LoadInt64(&acc.Inflight)
+	hadHealthError := acc.NeedsVerification || acc.HealthError != ""
+	acc.mu.Unlock()
+
+	score := sb.Score - float64(inflight)*0.02
+	reasons = append(reasons, "quota_headroom")
+
+	breakdownView := newScoreBreakdownView(sb, inflight, hadHealthError)
+
+	var alternatives []RouteAlternative
+	for _, a := range p.accounts {
+		if a == nil || a.ID == acc.ID || a.Type != AccountTypeAntigravity || a.Dead || a.Disabled {
+			continue
+		}
+		a.mu.Lock()
+		altSB := scoreAccountBreakdownLocked(a, now)
+		altInflight := atomic.LoadInt64(&a.Inflight)
+		altHealthErr := a.NeedsVerification || a.HealthError != ""
+		a.mu.Unlock()
+
+		altScore := altSB.Score - float64(altInflight)*0.02
+		altReasons := []string{"healthy", "quota_headroom"}
+		altView := newScoreBreakdownView(altSB, altInflight, altHealthErr)
+
+		alternatives = append(alternatives, RouteAlternative{
+			Provider:       string(a.Type),
+			Model:          model,
+			Score:          altScore,
+			Reasons:        altReasons,
+			AccountID:      a.ID,
+			ScoreBreakdown: altView,
+		})
+	}
+
+	return acc, policy, reasons, score, alternatives, breakdownView
+}
