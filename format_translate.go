@@ -60,17 +60,12 @@ func detectRequestFormat(path string) RequestFormat {
 
 // providerTargetFormat returns the format the provider expects.
 func providerTargetFormat(accountType AccountType) RequestFormat {
-	switch accountType {
-	case AccountTypeClaude:
+	switch capabilitiesFor(accountType).WireFormat {
+	case WireAnthropic:
 		return FormatClaude
-	case AccountTypeZAI:
-		return FormatClaude
-	case AccountTypeCodex:
+	case WireResponses, WireOpenAI:
 		return FormatOpenAI
 	default:
-		if isGenericProviderType(accountType) {
-			return FormatOpenAI
-		}
 		return FormatUnknown
 	}
 }
