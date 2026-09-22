@@ -224,8 +224,6 @@ func TestServePoolModelsOmitsCredentials(t *testing.T) {
 }
 
 func TestServePoolModelsIncludesNativeGeminiProtocol(t *testing.T) {
-	t.Parallel()
-
 	antigravityModels.Reset()
 	t.Cleanup(antigravityModels.Reset)
 	antigravityModels.ReplaceAccount("ag-1", AntigravityAccountSnapshot{

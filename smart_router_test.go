@@ -136,6 +136,17 @@ func TestSmartRouterConfigurationAndAliases(t *testing.T) {
 	if weights.TTFT <= weights.Throughput {
 		t.Fatalf("override was not applied: %+v", weights)
 	}
+	onlyHealth := newRoutingPolicySet(RoutingConfigFile{
+		Profiles: map[string]RoutingProfileWeights{"balanced": {Health: 1}},
+	})
+	weights, _ = onlyHealth.weights(RoutingBalanced)
+	if weights.Health != 1 || weights.QuotaHeadroom != 0 {
+		t.Fatalf("full profile replacement must allow zero weights: %+v", weights)
+	}
+	legacy := newRoutingPolicySet(RoutingConfigFile{DefaultProfile: "legacy"})
+	if legacy.DefaultProfile != RoutingLegacy {
+		t.Fatalf("legacy default profile = %q", legacy.DefaultProfile)
+	}
 
 	tests := []struct {
 		name        string
@@ -235,12 +246,22 @@ func BenchmarkSmartRouterProfiles(b *testing.B) {
 		RoutingBalanced, RoutingFast, RoutingThroughput,
 		RoutingQuotaSaver, RoutingDrain, RoutingSticky,
 	}
-	b.ResetTimer()
-	for index := 0; index < b.N; index++ {
-		profile := profiles[index%len(profiles)]
-		decision := pool.smartCandidateForModel("", nil, AccountTypeCodex, "pro", "", "gpt-5.5", profile)
-		if decision.Account == nil {
-			b.Fatal("no account selected")
-		}
+	for _, profile := range profiles {
+		b.Run(string(profile), func(b *testing.B) {
+			var decision smartRouteDecision
+			b.ResetTimer()
+			for index := 0; index < b.N; index++ {
+				decision = pool.smartCandidateForModel("", nil, AccountTypeCodex, "pro", "", "gpt-5.5", profile)
+				if decision.Account == nil {
+					b.Fatal("no account selected")
+				}
+			}
+			b.StopTimer()
+			b.ReportMetric(decision.Score.Score, "route_score")
+			b.ReportMetric(decision.Score.Signals.Health, "health")
+			b.ReportMetric(decision.Score.Signals.QuotaHeadroom, "quota")
+			b.ReportMetric(decision.Score.Signals.TTFT, "ttft")
+			b.ReportMetric(decision.Score.Signals.Throughput, "throughput")
+		})
 	}
 }

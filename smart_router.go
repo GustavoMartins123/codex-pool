@@ -104,6 +104,9 @@ func defaultRoutingProfiles() map[RoutingProfile]RoutingProfileWeights {
 }
 
 func mergeRoutingWeights(base, override RoutingProfileWeights) RoutingProfileWeights {
+	if math.Abs(override.total()-1) <= 0.000001 {
+		return override
+	}
 	if override.QuotaHeadroom > 0 {
 		base.QuotaHeadroom = override.QuotaHeadroom
 	}
@@ -165,7 +168,12 @@ func newRoutingPolicySet(cfg RoutingConfigFile) routingPolicySet {
 		profiles[name] = weights.normalized()
 	}
 	defaultProfile := RoutingProfile(strings.ToLower(strings.TrimSpace(cfg.DefaultProfile)))
-	if _, ok := profiles[defaultProfile]; !ok {
+	if defaultProfile != RoutingLegacy {
+		if _, ok := profiles[defaultProfile]; !ok {
+			defaultProfile = RoutingBalanced
+		}
+	}
+	if defaultProfile == "" {
 		defaultProfile = RoutingBalanced
 	}
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
@@ -551,6 +559,14 @@ func (p *poolState) smartCandidateForModel(conversationID string, exclude map[st
 		return candidates[i].score.Score > candidates[j].score.Score
 	})
 	selected := candidates[0]
+	if pinnedID != "" {
+		for _, item := range candidates {
+			if item.account.ID == pinnedID && item.account.CyberAccess {
+				selected = item
+				break
+			}
+		}
+	}
 	if conversationID != "" {
 		p.convPin[conversationID] = selected.account.ID
 	}

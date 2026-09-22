@@ -40,3 +40,23 @@ storage_path = "./data/pool_users.json"
 # Entries here override built-ins.
 # [model_aliases]
 # "gpt-5.6" = "gpt-5.6-sol"
+
+# Smart Router policy. Requests may override this with:
+#   X-Pool-Routing: fast
+# or model aliases such as pool/quota-saver/gpt-5.6.
+[routing]
+default_profile = "balanced"
+default_model = "gpt-5.5"
+
+# Built-in profiles: balanced, fast, throughput, quota-saver, drain, sticky.
+# Set default_profile = "legacy" to retain the pre-Smart-Router selector.
+# A complete profile whose weights total 1 replaces the built-in weights.
+[routing.profiles.balanced]
+quota_headroom = 0.25
+reset_urgency = 0.15
+health = 0.20
+ttft = 0.10
+throughput = 0.10
+affinity = 0.10
+inflight = 0.05
+recent_failure = 0.05

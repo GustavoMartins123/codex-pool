@@ -334,7 +334,7 @@ func (m *CircuitBreakerManager) RecordFailure(provider, accountID, model string,
 	if accountID != "" {
 		m.getOrCreate(accountKey(accountID), "account", 3, 1, 30*time.Second).RecordFailure(errClass)
 	}
-	if accountID != "" && model != "" {
+	if accountID != "" && model != "" && len(capabilities) == 0 {
 		m.getOrCreate(accountModelKey(accountID, model), "account_model", 2, 1, 45*time.Second).RecordFailure(errClass)
 	}
 	if accountID != "" {
