@@ -82,6 +82,7 @@ type config struct {
 	tierThreshold              float64       // Secondary usage % at which we stop preferring a tier (default 0.50)
 	routing                    RoutingConfigFile
 	clientPolicies             map[string]ClientPolicy
+	genericProviders           map[string]GenericProviderConfig
 }
 
 func getenv(key, def string) string {
@@ -264,6 +265,7 @@ func buildConfig() *config {
 	cfg.tierThreshold = getConfigFloat64("TIER_THRESHOLD", fileCfg.TierThreshold, 0.50)
 	cfg.routing = fileCfg.Routing
 	cfg.clientPolicies = fileCfg.ClientPolicies
+	cfg.genericProviders = fileCfg.Providers
 	if err := validateRoutingConfig(cfg.routing); err != nil {
 		log.Printf("warning: invalid routing config, using built-in profiles: %v", err)
 		cfg.routing = RoutingConfigFile{}
@@ -312,16 +314,36 @@ func main() {
 	grokProvider := NewGrokProvider(cfg.grokBase)
 	adverserialProvider := NewAdverserialProvider(cfg.adverserialBase)
 	opencodeGoProvider := NewOpencodeGoProvider(cfg.opencodeGoBase)
-	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider)
+	genericProviders, genericAccounts, err := buildGenericProviders(cfg.genericProviders)
+	if err != nil {
+		log.Fatalf("configure generic providers: %v", err)
+	}
+	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider}
+	extraProviders = append(extraProviders, genericProviders...)
+	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)
 
 	log.Printf("loading pool from %s", cfg.poolDir)
 	accounts, err := loadPool(cfg.poolDir, registry)
 	if err != nil {
 		log.Fatalf("load pool: %v", err)
 	}
+	accounts = append(accounts, genericAccounts...)
 	pool := newPoolState(accounts, cfg.debug.Load())
 	pool.tierThreshold = cfg.tierThreshold
 	pool.configureRouting(cfg.routing)
+	for name, providerConfig := range cfg.genericProviders {
+		for _, model := range providerConfig.Models {
+			publicID := name + "/" + strings.TrimSpace(model.ID)
+			if len(model.Fallbacks) > 0 {
+				pool.fallbackGraph.SetRoute(publicID, FallbackRule{
+					On429: append([]string(nil), model.Fallbacks...), OnUnavailable: append([]string(nil), model.Fallbacks...),
+				})
+			}
+			for _, source := range model.FallbackFor {
+				pool.fallbackGraph.AddCandidate(source, publicID)
+			}
+		}
+	}
 	codexCount := pool.countByType(AccountTypeCodex)
 	claudeCount := pool.countByType(AccountTypeClaude)
 	geminiCount := pool.countByType(AccountTypeGemini)
@@ -547,6 +569,7 @@ func main() {
 	startAntigravityVersionUpdater(context.Background())
 	h.startAntigravityModelPoller()
 	h.startProviderModelPoller()
+	h.startGenericProviderHealthPoller()
 
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
 	go h.probeClaudeAccountUUIDs()
@@ -1406,6 +1429,9 @@ func isCodexToClaudeModelOverridePath(path string) bool {
 // provider (Kimi, MiniMax, etc.) instead of the path-detected provider.
 // Returns (provider, baseURL, rewrittenBody) or (nil, nil, nil) if no override.
 func (h *proxyHandler) modelRouteOverride(path, model string, body []byte) (Provider, *url.URL, []byte) {
+	if provider, canonical, ok := h.registry.ResolveModel(model); ok {
+		return provider, provider.UpstreamURL(path), rewriteModelInBody(body, canonical)
+	}
 	if isKimiModel(model) {
 		p := h.registry.ForType(AccountTypeKimi)
 		if p == nil {
@@ -1571,6 +1597,9 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 }
 
 func (h *proxyHandler) resolveStreamedModelRoute(path, model string) (Provider, *url.URL, string) {
+	if provider, canonical, ok := h.registry.ResolveModel(model); ok {
+		return provider, provider.UpstreamURL(path), canonical
+	}
 	type route struct {
 		accountType AccountType
 		matches     func(string) bool

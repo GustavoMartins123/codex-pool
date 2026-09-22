@@ -81,3 +81,27 @@ monthly_tokens = 60000000
 
 [client_policies.workstation.routing]
 profile = "balanced"
+
+# Configuration-driven OpenAI-compatible provider. The token is read only from
+# the environment and is never returned by pool APIs.
+[providers.local-vllm]
+protocol = "openai"
+base_url = "http://192.168.1.50:8000/v1"
+
+[providers.local-vllm.auth]
+type = "bearer"
+token_env = "VLLM_TOKEN"
+
+[providers.local-vllm.health]
+path = "/models"
+interval_seconds = 30
+
+[[providers.local-vllm.models]]
+id = "qwen"
+name = "Qwen Local"
+context_window = 262144
+max_output_tokens = 32768
+reasoning = true
+modalities = ["text"]
+fallbacks = ["gpt-5.6-luna"]
+fallback_for = ["gpt-5.6-luna"]

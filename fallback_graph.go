@@ -106,6 +106,31 @@ func (fg *FallbackGraph) SetRoute(model string, rule FallbackRule) {
 	fg.routes[strings.ToLower(strings.TrimSpace(model))] = rule
 }
 
+func (fg *FallbackGraph) AddCandidate(model, candidate string) {
+	if fg == nil {
+		return
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	candidate = strings.TrimSpace(candidate)
+	if model == "" || candidate == "" {
+		return
+	}
+	fg.mu.Lock()
+	defer fg.mu.Unlock()
+	rule := fg.routes[model]
+	appendUnique := func(values []string) []string {
+		for _, value := range values {
+			if strings.EqualFold(value, candidate) {
+				return values
+			}
+		}
+		return append(values, candidate)
+	}
+	rule.On429 = appendUnique(rule.On429)
+	rule.OnUnavailable = appendUnique(rule.OnUnavailable)
+	fg.routes[model] = rule
+}
+
 // ResolveFallback finds a compatible alternative model according to the fallback graph
 // and verifies that the candidate passes capability gates and circuit breaker checks.
 func (fg *FallbackGraph) ResolveFallback(

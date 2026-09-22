@@ -27,6 +27,7 @@ type DiscoveredModel struct {
 	Reasoning       bool     `json:"reasoning,omitempty"`
 	WebSearch       bool     `json:"web_search,omitempty"`
 	Modalities      []string `json:"modalities,omitempty"`
+	Protocol        string   `json:"protocol,omitempty"`
 }
 
 type providerModelSnapshot struct {
@@ -365,6 +366,10 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 		entry := aggregates[key]
 		protocol := "anthropic"
 		if entry.provider == AccountTypeCodex || entry.provider == AccountTypeGrok {
+			protocol = "openai"
+		} else if entry.model.Protocol != "" {
+			protocol = entry.model.Protocol
+		} else if isGenericProviderType(entry.provider) {
 			protocol = "openai"
 		}
 		capabilities := map[string]bool{"reasoning": entry.model.Reasoning, "tools": true}

@@ -79,3 +79,19 @@ func (r *ProviderRegistry) ForPath(path string) Provider {
 func (r *ProviderRegistry) All() []Provider {
 	return r.providers
 }
+
+// ResolveModel returns a configuration-driven provider and its upstream model ID.
+func (r *ProviderRegistry) ResolveModel(model string) (Provider, string, bool) {
+	for _, provider := range r.providers {
+		resolver, ok := provider.(interface {
+			ResolveModel(string) (string, bool)
+		})
+		if !ok {
+			continue
+		}
+		if canonical, matched := resolver.ResolveModel(model); matched {
+			return provider, canonical, true
+		}
+	}
+	return nil, "", false
+}

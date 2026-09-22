@@ -68,6 +68,9 @@ func providerTargetFormat(accountType AccountType) RequestFormat {
 	case AccountTypeCodex:
 		return FormatOpenAI
 	default:
+		if isGenericProviderType(accountType) {
+			return FormatOpenAI
+		}
 		return FormatUnknown
 	}
 }

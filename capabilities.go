@@ -115,7 +115,26 @@ func lookupModelMetadata(modelID string, pool *poolState) (ModelMetadata, bool) 
 	modelID = strings.TrimSpace(modelID)
 	lower := strings.ToLower(modelID)
 
-	// 1. Antigravity models
+	// 1. Models configured or discovered on provider accounts.
+	if pool != nil {
+		for _, account := range pool.allAccounts() {
+			account.mu.Lock()
+			discovered, ok := accountDiscoveredModel(account, modelID)
+			accountType := account.Type
+			account.mu.Unlock()
+			if !ok {
+				continue
+			}
+			return ModelMetadata{
+				ID: discovered.ID, Provider: accountType,
+				ContextWindow: discovered.ContextWindow, MaxTokens: discovered.MaxOutputTokens,
+				Reasoning: discovered.Reasoning, WebSearch: discovered.WebSearch,
+				SupportsImage: containsString(discovered.Modalities, "image"), SupportsTools: true,
+			}, true
+		}
+	}
+
+	// 2. Antigravity models
 	if strings.HasPrefix(lower, "antigravity/") || strings.Contains(lower, "gemini") {
 		canonical := strings.TrimPrefix(lower, "antigravity/")
 		if pool != nil {
@@ -147,7 +166,7 @@ func lookupModelMetadata(modelID string, pool *poolState) (ModelMetadata, bool) 
 		}, true
 	}
 
-	// 2. Main catalog (poolModels)
+	// 3. Main catalog (poolModels)
 	for _, m := range poolModels {
 		if strings.EqualFold(m.ID, modelID) {
 			supportsImg := false
@@ -191,7 +210,7 @@ func lookupModelMetadata(modelID string, pool *poolState) (ModelMetadata, bool) 
 		}
 	}
 
-	// 3. Grok catalog
+	// 4. Grok catalog
 	for _, g := range grokModelCatalog {
 		if strings.EqualFold(g.ID, modelID) || strings.EqualFold(g.Name, modelID) {
 			return ModelMetadata{
@@ -207,7 +226,7 @@ func lookupModelMetadata(modelID string, pool *poolState) (ModelMetadata, bool) 
 		}
 	}
 
-	// 4. Default fallback for standard OpenAI models
+	// 5. Default fallback for standard OpenAI models
 	if isOpenAIModel(modelID) {
 		return ModelMetadata{
 			ID:            modelID,

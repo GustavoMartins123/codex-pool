@@ -31,6 +31,9 @@ func retireAfterRefreshFail(a *Account, err error, now time.Time) bool {
 }
 
 func accountUsesStaticAPIKey(accountType AccountType) bool {
+	if isGenericProviderType(accountType) {
+		return true
+	}
 	switch accountType {
 	case AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi, AccountTypeAdverserial, AccountTypeOpencodeGo:
 		return true

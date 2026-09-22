@@ -124,6 +124,7 @@ func (h *proxyHandler) reloadAccounts() {
 		log.Printf("load pool: %v", err)
 		return
 	}
+	accs = append(accs, configuredGenericAccounts(h.registry)...)
 	preserveUsageSnapshots(h.pool.allAccounts(), accs)
 	h.pool.replace(accs)
 	if h.pool.count() == 0 {
