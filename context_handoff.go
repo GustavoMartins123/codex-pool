@@ -358,6 +358,227 @@ func mergeConversationMessages(previous, current []Message) []Message {
 	return append(merged, current[overlap:]...)
 }
 
+func precedingToolTriggerIndex(messages []Message, callIndex int) int {
+	for index := callIndex - 1; index >= 0; index-- {
+		if len(messages[index].Parts) == 0 {
+			continue
+		}
+		switch messages[index].Role {
+		case "system", "developer":
+			continue
+		case "user", "tool":
+			return index
+		default:
+			return -1
+		}
+	}
+	return -1
+}
+
+func sanitizeConversationToolPairs(messages []Message) ([]Message, []string) {
+	type toolLocation struct {
+		callIndex   int
+		resultIndex int
+	}
+	locations := make(map[string]toolLocation)
+	for messageIndex, message := range messages {
+		for _, part := range message.Parts {
+			if part.ToolID == "" {
+				continue
+			}
+			location := locations[part.ToolID]
+			switch part.Type {
+			case "tool_call":
+				if location.callIndex == 0 && messageIndex != 0 {
+					location.callIndex = messageIndex + 1
+				} else if messageIndex == 0 {
+					location.callIndex = 1
+				}
+			case "tool_result":
+				if location.resultIndex == 0 && messageIndex != 0 {
+					location.resultIndex = messageIndex + 1
+				} else if messageIndex == 0 {
+					location.resultIndex = 1
+				}
+			}
+			locations[part.ToolID] = location
+		}
+	}
+
+	valid := make(map[string]bool)
+	var warnings []string
+	for id, location := range locations {
+		callIndex := location.callIndex - 1
+		resultIndex := location.resultIndex - 1
+		if location.callIndex == 0 {
+			warnings = appendUniqueString(warnings, "orphan_tool_result_dropped")
+			continue
+		}
+		if location.resultIndex == 0 {
+			warnings = appendUniqueString(warnings, "dangling_tool_call_dropped")
+			continue
+		}
+		if resultIndex < callIndex {
+			warnings = appendUniqueString(warnings, "invalid_tool_pair_order_dropped")
+			continue
+		}
+		if precedingToolTriggerIndex(messages, callIndex) < 0 {
+			warnings = appendUniqueString(warnings, "invalid_tool_call_prefix_dropped")
+			continue
+		}
+		valid[id] = true
+	}
+
+	out := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		copyMessage := Message{Role: message.Role}
+		for _, part := range message.Parts {
+			switch part.Type {
+			case "tool_call":
+				if !valid[part.ToolID] {
+					continue
+				}
+			case "tool_result":
+				if !valid[part.ToolID] {
+					continue
+				}
+			}
+			copyMessage.Parts = append(copyMessage.Parts, part)
+		}
+		if len(copyMessage.Parts) > 0 {
+			out = append(out, copyMessage)
+		}
+	}
+	return out, warnings
+}
+
+type conversationMessageRange struct {
+	start int
+	end   int
+}
+
+func conversationAtomicRanges(messages []Message) []conversationMessageRange {
+	type pair struct {
+		callIndex   int
+		resultIndex int
+	}
+	pairs := make(map[string]pair)
+	for messageIndex, message := range messages {
+		for _, part := range message.Parts {
+			if part.ToolID == "" {
+				continue
+			}
+			current := pairs[part.ToolID]
+			switch part.Type {
+			case "tool_call":
+				current.callIndex = messageIndex + 1
+			case "tool_result":
+				current.resultIndex = messageIndex + 1
+			}
+			pairs[part.ToolID] = current
+		}
+	}
+
+	var linked []conversationMessageRange
+	for _, current := range pairs {
+		if current.callIndex == 0 || current.resultIndex == 0 {
+			continue
+		}
+		callIndex := current.callIndex - 1
+		resultIndex := current.resultIndex - 1
+		if resultIndex < callIndex {
+			continue
+		}
+		start := callIndex
+		if trigger := precedingToolTriggerIndex(messages, callIndex); trigger >= 0 {
+			start = trigger
+		}
+		linked = append(linked, conversationMessageRange{start: start, end: resultIndex})
+	}
+
+	var ranges []conversationMessageRange
+	for index := 0; index < len(messages); {
+		end := index
+		for {
+			expanded := false
+			for _, candidate := range linked {
+				if candidate.start <= end && candidate.end >= index && candidate.end > end {
+					end = candidate.end
+					expanded = true
+				}
+			}
+			if !expanded {
+				break
+			}
+		}
+		ranges = append(ranges, conversationMessageRange{start: index, end: end})
+		index = end + 1
+	}
+	return ranges
+}
+
+func messageCharacterSize(message Message) int {
+	size := len(message.Role) + 8
+	for _, part := range message.Parts {
+		size += len(part.Text) + len(part.ToolName) + len(part.Arguments) + 16
+	}
+	return size
+}
+
+func rangeCharacterSize(messages []Message, value conversationMessageRange) int {
+	size := 0
+	for index := value.start; index <= value.end; index++ {
+		size += messageCharacterSize(messages[index])
+	}
+	return size
+}
+
+func messageHasToolParts(message Message) bool {
+	for _, part := range message.Parts {
+		if part.Type == "tool_call" || part.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+func trimTextOnlyMessage(message Message, characterBudget int) (Message, bool) {
+	if characterBudget <= len(message.Role)+8 || messageHasToolParts(message) {
+		return Message{}, false
+	}
+	remaining := characterBudget - len(message.Role) - 8
+	reversed := make([]MessagePart, 0, len(message.Parts))
+	for index := len(message.Parts) - 1; index >= 0 && remaining > 16; index-- {
+		part := message.Parts[index]
+		if part.Type != "text" {
+			continue
+		}
+		size := len(part.Text) + 16
+		if size <= remaining {
+			reversed = append(reversed, part)
+			remaining -= size
+			continue
+		}
+		keep := remaining - 16
+		if keep > len(part.Text) {
+			keep = len(part.Text)
+		}
+		if keep > 0 {
+			part.Text = part.Text[len(part.Text)-keep:]
+			reversed = append(reversed, part)
+		}
+		remaining = 0
+	}
+	if len(reversed) == 0 {
+		return Message{}, false
+	}
+	parts := make([]MessagePart, len(reversed))
+	for index := range reversed {
+		parts[len(reversed)-1-index] = reversed[index]
+	}
+	return Message{Role: message.Role, Parts: parts}, true
+}
+
 func regenerateToolCallIDs(messages []Message, conversationID string, provider AccountType) ([]Message, []string) {
 	idMap := make(map[string]string)
 	callIndex := 0
@@ -395,6 +616,7 @@ func regenerateToolCallIDs(messages []Message, conversationID string, provider A
 	}
 	return messages, warnings
 }
+
 
 func toolsFromMessages(messages []Message) []ToolCall {
 	calls := make(map[string]*ToolCall)
@@ -437,19 +659,12 @@ func compactConversationMessages(messages []Message) ([]Message, string, bool) {
 	if estimateContextTokens(messages) <= contextHandoffCompactTokens {
 		return messages, "", false
 	}
-	recentStart := len(messages)
-	recentTokens := 0
-	for recentStart > 0 {
-		messageTokens := estimateContextTokens(messages[recentStart-1:])
-		if recentTokens > 0 && messageTokens > contextHandoffRecentTokens {
-			break
-		}
-		recentStart--
-		recentTokens = messageTokens
+
+	recent, recentStart := trimConversationMessagesWithStart(messages, contextHandoffRecentTokens*4)
+	if len(recent) == 0 {
+		return messages, "", false
 	}
-	if recentStart <= 0 {
-		recentStart = len(messages) / 2
-	}
+
 	var summary strings.Builder
 	summary.WriteString("Earlier conversation compacted by codex-pool:\n")
 	for _, message := range messages[:recentStart] {
@@ -476,53 +691,70 @@ func compactConversationMessages(messages []Message) ([]Message, string, bool) {
 		Role:  "system",
 		Parts: []MessagePart{{Type: "text", Text: summaryText}},
 	}}
-	compacted = append(compacted, trimConversationMessages(messages[recentStart:], contextHandoffRecentTokens*4)...)
+	compacted = append(compacted, recent...)
 	return compacted, summaryText, true
 }
 
-func trimConversationMessages(messages []Message, characterBudget int) []Message {
-	if characterBudget <= 0 {
-		return nil
+func trimConversationMessagesWithStart(messages []Message, characterBudget int) ([]Message, int) {
+	if characterBudget <= 0 || len(messages) == 0 {
+		return nil, len(messages)
 	}
-	out := append([]Message(nil), messages...)
-	for index := range out {
-		out[index].Parts = append([]MessagePart(nil), out[index].Parts...)
-	}
+	ranges := conversationAtomicRanges(messages)
 	remaining := characterBudget
-	for messageIndex := len(out) - 1; messageIndex >= 0; messageIndex-- {
-		for partIndex := len(out[messageIndex].Parts) - 1; partIndex >= 0; partIndex-- {
-			part := &out[messageIndex].Parts[partIndex]
-			size := len(part.Text) + len(part.ToolName) + len(part.Arguments) + 16
-			if size <= remaining {
-				remaining -= size
-				continue
-			}
-			if part.Type == "text" && remaining > 16 {
-				keep := remaining - 16
-				if keep > len(part.Text) {
-					keep = len(part.Text)
-				}
-				part.Text = part.Text[len(part.Text)-keep:]
-				remaining = 0
-			} else {
-				out[messageIndex].Parts = out[messageIndex].Parts[partIndex+1:]
-			}
-			for prior := 0; prior < messageIndex; prior++ {
-				out[prior].Parts = nil
-			}
-			break
+	selectedRange := len(ranges)
+	var leadingTrimmed *Message
+
+	for rangeIndex := len(ranges) - 1; rangeIndex >= 0; rangeIndex-- {
+		current := ranges[rangeIndex]
+		size := rangeCharacterSize(messages, current)
+		if size <= remaining {
+			remaining -= size
+			selectedRange = rangeIndex
+			continue
 		}
-		if remaining == 0 {
-			break
+
+		if current.start == current.end && !messageHasToolParts(messages[current.start]) {
+			if trimmed, ok := trimTextOnlyMessage(messages[current.start], remaining); ok {
+				leadingTrimmed = &trimmed
+				selectedRange = rangeIndex
+			}
+		}
+		break
+	}
+
+	if selectedRange == len(ranges) {
+		// Correctness wins over the target budget: retain the latest atomic
+		// tool exchange whole rather than creating a dangling call/result.
+		last := ranges[len(ranges)-1]
+		out := make([]Message, last.end-last.start+1)
+		copy(out, messages[last.start:last.end+1])
+		for index := range out {
+			out[index].Parts = append([]MessagePart(nil), out[index].Parts...)
+		}
+		return out, last.start
+	}
+
+	start := ranges[selectedRange].start
+	var out []Message
+	if leadingTrimmed != nil {
+		out = append(out, *leadingTrimmed)
+		start = ranges[selectedRange].start
+		selectedRange++
+	}
+	for rangeIndex := selectedRange; rangeIndex < len(ranges); rangeIndex++ {
+		current := ranges[rangeIndex]
+		for messageIndex := current.start; messageIndex <= current.end; messageIndex++ {
+			copyMessage := messages[messageIndex]
+			copyMessage.Parts = append([]MessagePart(nil), copyMessage.Parts...)
+			out = append(out, copyMessage)
 		}
 	}
-	filtered := out[:0]
-	for _, message := range out {
-		if len(message.Parts) > 0 {
-			filtered = append(filtered, message)
-		}
-	}
-	return filtered
+	return out, start
+}
+
+func trimConversationMessages(messages []Message, characterBudget int) []Message {
+	out, _ := trimConversationMessagesWithStart(messages, characterBudget)
+	return out
 }
 
 func appendUniqueString(values []string, value string) []string {
@@ -834,22 +1066,38 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	result := contextHandoffResult{Switched: switched, Warnings: detectContextWarnings(object, switched)}
 
 	messages := current
+	previouslyCompacted := exists && record.State.Summary != ""
 	if switched {
 		messages = mergeConversationMessages(record.State.Messages, current)
 		stripIncompatibleProviderFields(root)
-		var warnings []string
-		messages, warnings = regenerateToolCallIDs(messages, conversationID, target)
-		for _, warning := range warnings {
-			result.Warnings = appendUniqueString(result.Warnings, warning)
-		}
 		if len(record.State.Messages) == 0 {
 			result.Warnings = appendUniqueString(result.Warnings, "normalized_history_unavailable")
 		}
 	}
+
+	var warnings []string
+	messages, warnings = sanitizeConversationToolPairs(messages)
+	for _, warning := range warnings {
+		result.Warnings = appendUniqueString(result.Warnings, warning)
+	}
+
 	var summary string
-	messages, summary, result.Compacted = compactConversationMessages(messages)
-	if switched || result.Compacted {
+	var compacted bool
+	messages, summary, compacted = compactConversationMessages(messages)
+
+	// Compaction can change the cut boundary. Validate tool pairing again after
+	// the cut, then regenerate provider-local IDs only for surviving pairs.
+	messages, warnings = sanitizeConversationToolPairs(messages)
+	for _, warning := range warnings {
+		result.Warnings = appendUniqueString(result.Warnings, warning)
+	}
+	if switched {
+		messages, warnings = regenerateToolCallIDs(messages, conversationID, target)
+		for _, warning := range warnings {
+			result.Warnings = appendUniqueString(result.Warnings, warning)
+		}
 		renderConversationMessages(format, object, messages)
+		result.Compacted = compacted || previouslyCompacted
 	}
 
 	if !exists {
@@ -876,7 +1124,10 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	record.LastProvider = target
 	s.records[conversationID] = record
 
-	if !switched && !result.Compacted {
+	// Same-provider requests are never rewritten by the handoff store. Native
+	// providers already own their context/compaction semantics; the compacted
+	// representation above is only the pool's internal copy for a future switch.
+	if !switched {
 		return body, result, nil
 	}
 	rewritten, err := json.Marshal(root)
@@ -920,7 +1171,9 @@ func (s *conversationHandoffStore) RecordAssistantText(conversationID string, pr
 		return
 	}
 	record.State.Messages = append(record.State.Messages, message)
+	record.State.Messages, _ = sanitizeConversationToolPairs(record.State.Messages)
 	record.State.Messages, record.State.Summary, _ = compactConversationMessages(record.State.Messages)
+	record.State.Messages, _ = sanitizeConversationToolPairs(record.State.Messages)
 	record.State.Tools = toolsFromMessages(record.State.Messages)
 	record.State.UpdatedAt = time.Now().UTC()
 	record.LastProvider = provider

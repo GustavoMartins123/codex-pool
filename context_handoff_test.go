@@ -204,18 +204,18 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Compacted {
-		t.Fatal("conversation over 100k estimated tokens was not compacted")
+	if result.Compacted {
+		t.Fatal("same-provider request must not be rewritten by pool compaction")
+	}
+	if string(rewritten) != string(body) {
+		t.Fatal("same-provider large request was mutated")
 	}
 	state, ok := store.State("large-conversation")
 	if !ok || state.Summary == "" {
-		t.Fatalf("compacted state missing summary: %+v", state)
+		t.Fatalf("internally compacted state missing summary: %+v", state)
 	}
 	if tokens := estimateContextTokens(state.Messages); tokens >= contextHandoffCompactTokens {
-		t.Fatalf("compacted state still estimates %d tokens", tokens)
-	}
-	if len(rewritten) >= len(body) {
-		t.Fatalf("compaction did not reduce request size: before=%d after=%d", len(body), len(rewritten))
+		t.Fatalf("internally compacted state still estimates %d tokens", tokens)
 	}
 
 	next := addContextOpaqueState(t, contextTestBody(contextFormatClaude, "after compaction", true))
@@ -229,6 +229,93 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	text := normalizedContextText(t, "/v1/messages", rewritten)
 	if !strings.Contains(text, "Earlier conversation compacted") || !strings.Contains(text, "after compaction") {
 		t.Fatalf("compacted handoff lost summary or latest turn: %q", text)
+	}
+}
+
+
+func TestContextHandoffTrimKeepsToolExchangeAtomic(t *testing.T) {
+	messages := []Message{
+		{Role: "user", Parts: []MessagePart{{Type: "text", Text: "trigger tool"}}},
+		{Role: "assistant", Parts: []MessagePart{{Type: "tool_call", ToolID: "call_atomic", ToolName: "lookup", Arguments: "{\"q\":\"x\"}"}}},
+		{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "call_atomic", Text: strings.Repeat("result-", 200)}}},
+		{Role: "user", Parts: []MessagePart{{Type: "text", Text: strings.Repeat("latest-", 200)}}},
+	}
+
+	// Budget fits the latest user message but not the preceding tool exchange.
+	trimmed := trimConversationMessages(messages, messageCharacterSize(messages[3])+64)
+	for _, message := range trimmed {
+		for _, part := range message.Parts {
+			if part.ToolID == "call_atomic" {
+				t.Fatalf("tool pair was cut in half instead of being dropped atomically: %+v", trimmed)
+			}
+		}
+	}
+	if len(trimmed) == 0 || trimmed[len(trimmed)-1].Role != "user" {
+		t.Fatalf("latest user turn was not retained: %+v", trimmed)
+	}
+
+	// With enough room, the trigger + call + result must survive together.
+	budget := 0
+	for _, message := range messages[0:4] {
+		budget += messageCharacterSize(message)
+	}
+	trimmed = trimConversationMessages(messages, budget)
+	var callSeen, resultSeen bool
+	for _, message := range trimmed {
+		for _, part := range message.Parts {
+			if part.Type == "tool_call" && part.ToolID == "call_atomic" {
+				callSeen = true
+			}
+			if part.Type == "tool_result" && part.ToolID == "call_atomic" {
+				resultSeen = true
+			}
+		}
+	}
+	if !callSeen || !resultSeen {
+		t.Fatalf("complete tool exchange was not retained: %+v", trimmed)
+	}
+}
+
+func TestContextHandoffDropsInvalidToolPrefixAfterCompaction(t *testing.T) {
+	messages := []Message{
+		{Role: "assistant", Parts: []MessagePart{{Type: "tool_call", ToolID: "call_bad", ToolName: "lookup", Arguments: "{}"}}},
+		{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "call_bad", Text: "result"}}},
+		{Role: "user", Parts: []MessagePart{{Type: "text", Text: "continue"}}},
+	}
+	cleaned, warnings := sanitizeConversationToolPairs(messages)
+	if !strings.Contains(strings.Join(warnings, ","), "invalid_tool_call_prefix_dropped") {
+		t.Fatalf("expected invalid prefix warning, got %v", warnings)
+	}
+	for _, message := range cleaned {
+		for _, part := range message.Parts {
+			if part.Type == "tool_call" || part.Type == "tool_result" {
+				t.Fatalf("invalid leading tool exchange survived sanitization: %+v", cleaned)
+			}
+		}
+	}
+}
+
+func TestSameProviderLargeToolHistoryIsNotRewritten(t *testing.T) {
+	store := newConversationHandoffStore()
+	large := strings.Repeat("history-", 60_000)
+	body := []byte(`{
+		"model":"gpt-test",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"` + large + `"}]},
+			{"type":"function_call","call_id":"call_live","name":"lookup","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_live","output":"ok"},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+		]
+	}`)
+	rewritten, result, err := store.Prepare("same-provider-large-tools", AccountTypeCodex, "/v1/responses", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Switched || result.Compacted {
+		t.Fatalf("same-provider request should be transparent: %+v", result)
+	}
+	if string(rewritten) != string(body) {
+		t.Fatal("same-provider tool history was rewritten")
 	}
 }
 
