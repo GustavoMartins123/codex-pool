@@ -453,16 +453,24 @@ func applyCommonAccountFileState(account *Account, data []byte) {
 
 // poolState wraps accounts with a mutex.
 type poolState struct {
-	mu            sync.RWMutex
-	accounts      []*Account
-	convPin       map[string]string // conversation_id -> account ID
-	debug         bool
-	rr            uint64
-	tierThreshold float64 // secondary usage % at which we stop preferring a tier (default 0.50)
+	mu               sync.RWMutex
+	accounts         []*Account
+	convPin          map[string]string // conversation_id -> account ID
+	routing          routingPolicySet
+	routingTelemetry map[string]routingTelemetry
+	circuitBreakers  *CircuitBreakerManager
+	fallbackGraph    *FallbackGraph
+	debug            bool
+	rr               uint64
+	tierThreshold    float64 // secondary usage % at which we stop preferring a tier (default 0.50)
 }
 
 func newPoolState(accs []*Account, debug bool) *poolState {
-	return &poolState{accounts: accs, convPin: map[string]string{}, debug: debug, tierThreshold: 0.50}
+	return &poolState{
+		accounts: accs, convPin: map[string]string{}, debug: debug, tierThreshold: 0.50,
+		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
+		circuitBreakers: newCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
+	}
 }
 
 // replace swaps the pool accounts (used on reload).
@@ -648,13 +656,21 @@ func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountTyp
 }
 
 func (p *poolState) candidateForModel(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) *Account {
-	if !p.discoveredModelRequiresEntitlement(accountType, model) {
-		return p.candidate(conversationID, exclude, accountType, requiredPlan, clientIP)
-	}
-
 	filtered := make(map[string]bool, len(exclude)+p.countByType(accountType))
 	for id, blocked := range exclude {
 		filtered[id] = blocked
+	}
+	if p.circuitBreakers != nil && model != "" {
+		for _, account := range p.allAccounts() {
+			if account != nil {
+				if allowed, _ := p.circuitBreakers.AllowAccountModel(account.ID, model); !allowed {
+					filtered[account.ID] = true
+				}
+			}
+		}
+	}
+	if !p.discoveredModelRequiresEntitlement(accountType, model) {
+		return p.candidate(conversationID, filtered, accountType, requiredPlan, clientIP)
 	}
 	for _, account := range p.allAccounts() {
 		if account.Type != accountType {
@@ -812,6 +828,16 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 		if a.Dead || a.Disabled || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
 			a.mu.Unlock()
 			continue
+		}
+		if p.circuitBreakers != nil {
+			if allowed, _ := p.circuitBreakers.AllowProvider(string(a.Type)); !allowed {
+				a.mu.Unlock()
+				continue
+			}
+			if allowed, _ := p.circuitBreakers.AllowAccount(a.ID); !allowed {
+				a.mu.Unlock()
+				continue
+			}
 		}
 		if !a.RateLimitUntil.IsZero() && a.RateLimitUntil.After(now) {
 			secondaryUsed := accountSecondaryUsageLocked(a)
@@ -2477,4 +2503,19 @@ func (p *poolState) candidateWithTrace(conversationID string, exclude map[string
 	}
 
 	return acc, policy, reasons, score, alternatives, breakdownView
+}
+
+func (p *poolState) accountsForType(accountType AccountType) []*Account {
+	if p == nil {
+		return nil
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var out []*Account
+	for _, a := range p.accounts {
+		if a != nil && (accountType == "" || a.Type == accountType) {
+			out = append(out, a)
+		}
+	}
+	return out
 }

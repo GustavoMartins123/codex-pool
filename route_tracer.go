@@ -14,9 +14,12 @@ type RouteTrace struct {
 	Timestamp    time.Time          `json:"timestamp"`
 	Policy       string             `json:"policy"`
 	Selected     RouteTarget        `json:"selected"`
-	Score        float64            `json:"score"`
-	Reasons      []string           `json:"reasons"`
-	Alternatives []RouteAlternative `json:"alternatives"`
+	Score          float64            `json:"score"`
+	Reasons        []string           `json:"reasons"`
+	Alternatives   []RouteAlternative `json:"alternatives"`
+	FallbackFrom   string             `json:"fallback_from,omitempty"`
+	FallbackReason string             `json:"fallback_reason,omitempty"`
+	CircuitState   string             `json:"circuit_state,omitempty"`
 
 	// Sensitive fields (visible only to operators)
 	AccountID      string              `json:"account_id,omitempty"`
@@ -39,10 +42,10 @@ type RouteTarget struct {
 
 // RouteAlternative records an alternative account/route considered during selection.
 type RouteAlternative struct {
-	Provider       string              `json:"provider"`
-	Model          string              `json:"model"`
-	Score          float64             `json:"score"`
-	Reasons        []string            `json:"reasons,omitempty"`
+	Provider string   `json:"provider"`
+	Model    string   `json:"model"`
+	Score    float64  `json:"score"`
+	Reasons  []string `json:"reasons,omitempty"`
 	// Sensitive fields (visible only to operators)
 	AccountID      string              `json:"account_id,omitempty"`
 	ScoreBreakdown *ScoreBreakdownView `json:"score_breakdown,omitempty"`
@@ -50,18 +53,47 @@ type RouteAlternative struct {
 
 // ScoreBreakdownView exposes the explainable breakdown of account scoring.
 type ScoreBreakdownView struct {
-	Score                float64 `json:"score"`
-	QuotaScore           float64 `json:"quota_score"`
-	ResetUrgency         float64 `json:"reset_urgency"`
-	InflightPenalty      float64 `json:"inflight_penalty"`
-	LatencyScore         float64 `json:"latency_score"`
-	HealthScore          float64 `json:"health_score"`
-	RecentFailurePenalty float64 `json:"recent_failure_penalty"`
-	BaseWindow           string  `json:"base_window,omitempty"`
-	PrimaryUsed          float64 `json:"primary_used,omitempty"`
-	SecondaryUsed        float64 `json:"secondary_used,omitempty"`
-	PrimaryPaceBonus     float64 `json:"primary_pace_bonus,omitempty"`
-	CreditBonus          float64 `json:"credit_bonus,omitempty"`
+	Score                float64                `json:"score"`
+	Profile              string                 `json:"profile,omitempty"`
+	QuotaScore           float64                `json:"quota_score"`
+	ProjectedQuotaScore  float64                `json:"projected_quota_score,omitempty"`
+	RemainingQuotaScore  float64                `json:"remaining_quota_score,omitempty"`
+	ResetUrgency         float64                `json:"reset_urgency"`
+	ResetProximityScore  float64                `json:"reset_proximity_score,omitempty"`
+	InflightPenalty      float64                `json:"inflight_penalty"`
+	InflightScore        float64                `json:"inflight_score,omitempty"`
+	LatencyScore         float64                `json:"latency_score"`
+	ThroughputScore      float64                `json:"throughput_score,omitempty"`
+	AffinityScore        float64                `json:"affinity_score,omitempty"`
+	HealthScore          float64                `json:"health_score"`
+	RecentFailurePenalty float64                `json:"recent_failure_penalty"`
+	RecentFailureScore   float64                `json:"recent_failure_score,omitempty"`
+	Weights              *RoutingProfileWeights `json:"weights,omitempty"`
+	BaseWindow           string                 `json:"base_window,omitempty"`
+	PrimaryUsed          float64                `json:"primary_used,omitempty"`
+	SecondaryUsed        float64                `json:"secondary_used,omitempty"`
+	PrimaryPaceBonus     float64                `json:"primary_pace_bonus,omitempty"`
+	CreditBonus          float64                `json:"credit_bonus,omitempty"`
+}
+
+func newRoutingBreakdownView(score routingScore) *ScoreBreakdownView {
+	weights := score.Weights
+	return &ScoreBreakdownView{
+		Score:               score.Score,
+		Profile:             string(score.Profile),
+		QuotaScore:          score.Signals.QuotaHeadroom,
+		ProjectedQuotaScore: score.Signals.ProjectedQuota,
+		RemainingQuotaScore: score.Signals.RemainingQuota,
+		ResetUrgency:        score.Signals.ResetUrgency,
+		ResetProximityScore: score.Signals.ResetProximity,
+		InflightScore:       score.Signals.Inflight,
+		LatencyScore:        score.Signals.TTFT,
+		ThroughputScore:     score.Signals.Throughput,
+		AffinityScore:       score.Signals.Affinity,
+		HealthScore:         score.Signals.Health,
+		RecentFailureScore:  score.Signals.RecentFailure,
+		Weights:             &weights,
+	}
 }
 
 // routeTraceStore stores recent route traces in a bounded ring buffer for fast, low-overhead retrieval.

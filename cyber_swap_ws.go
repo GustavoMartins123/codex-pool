@@ -26,6 +26,7 @@ type codexCyberSwapOptions struct {
 	InitialOutURL               *url.URL
 	InitialUpstreamHeaders      http.Header
 	ConversationID              string
+	RoutingProfile              RoutingProfile
 	RequiredPlan                string
 	ClientIP                    string
 	UserID                      string
@@ -466,6 +467,22 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	if conversationID == "" {
 		conversationID = s.activeConversationID
 	}
+	if s.h != nil && conversationID != "" {
+		rewritten, result, err := s.h.getContextHandoff().Prepare(
+			conversationID,
+			AccountTypeCodex,
+			s.opts.RequestPath,
+			data,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("websocket context handoff: %w", err)
+		}
+		data = rewritten
+		if s.h.cfg != nil && s.h.cfg.debug.Load() && (result.Switched || result.Compacted || len(result.Warnings) > 0) {
+			log.Printf("[%s] websocket context handoff switched=%v compacted=%v warnings=%v",
+				s.opts.ReqID, result.Switched, result.Compacted, result.Warnings)
+		}
+	}
 	model := extractCodexWebSocketRequestedModel(data)
 	turn := &codexRelayTurn{request: append([]byte(nil), data...), model: model, conversationID: conversationID, account: s.activeAccount}
 	s.turns = append(s.turns, turn)
@@ -475,7 +492,15 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("cannot change websocket account while responses are pending")
 		}
 		exclude := map[string]bool{s.activeAccount.ID: true}
-		next := s.h.pool.candidateForModel(conversationID, exclude, AccountTypeCodex, s.opts.RequiredPlan, s.opts.ClientIP, model)
+		next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTrace(
+			conversationID,
+			exclude,
+			AccountTypeCodex,
+			s.opts.RequiredPlan,
+			s.opts.ClientIP,
+			model,
+			s.opts.RoutingProfile,
+		)
 		if next == nil {
 			s.finishTurn(turn)
 			return nil, fmt.Errorf("no Codex account is entitled to websocket model %q", model)

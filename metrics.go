@@ -313,6 +313,7 @@ func (p *poolState) providerModelAvailability() (map[string]bool, map[string]boo
 
 func (m *metrics) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	summary := m.performanceSummary(nil)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// overall
@@ -394,7 +395,6 @@ func (m *metrics) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Performance & Reliability metrics
-	summary := m.performanceSummary(nil)
 	fmt.Fprintf(w, "codexpool_ttft_seconds_avg %.6f\n", summary.TTFTMsAvg/1000.0)
 	fmt.Fprintf(w, "codexpool_upstream_connect_duration_seconds_avg %.6f\n", summary.ConnectMsAvg/1000.0)
 	fmt.Fprintf(w, "codexpool_request_duration_seconds_avg %.6f\n", summary.TotalDurationMsAvg/1000.0)

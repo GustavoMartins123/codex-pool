@@ -253,3 +253,70 @@ func BenchmarkRouteTraceStoreOverhead(b *testing.B) {
 		_, _ = store.Get("req_bench")
 	}
 }
+
+func TestRouteTraceFallbackAndCircuitState(t *testing.T) {
+	store := newRouteTraceStore(10)
+
+	trace := &RouteTrace{
+		RequestID:      "req_fallback_456",
+		Timestamp:      time.Now().UTC(),
+		Policy:         "pool_auto:quality",
+		Selected:       RouteTarget{Provider: "claude", Model: "claude-sonnet-5"},
+		Score:          0.88,
+		Reasons:        []string{"compatibility_gate_passed", "fallback_on_429:gpt-6-astra->claude-sonnet-5"},
+		FallbackFrom:   "gpt-6-astra",
+		FallbackReason: "on_429",
+		CircuitState:   "CLOSED",
+	}
+	store.Record(trace)
+
+	retrieved, ok := store.Get("req_fallback_456")
+	if !ok {
+		t.Fatalf("expected to retrieve trace")
+	}
+	if retrieved.FallbackFrom != "gpt-6-astra" || retrieved.FallbackReason != "on_429" {
+		t.Errorf("fallback fields mismatch: %+v", retrieved)
+	}
+	if retrieved.CircuitState != "CLOSED" {
+		t.Errorf("circuit state mismatch: %s", retrieved.CircuitState)
+	}
+
+	sanitized := store.SanitizeForClient(retrieved)
+	if sanitized.FallbackFrom != "gpt-6-astra" || sanitized.FallbackReason != "on_429" {
+		t.Errorf("fallback info should be retained in sanitized client view: %+v", sanitized)
+	}
+}
+
+func TestCircuitBreakersEndpoint(t *testing.T) {
+	cb := newCircuitBreakerManager()
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit)
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit)
+
+	h := &proxyHandler{
+		cfg:             &config{adminToken: "operator-pass"},
+		circuitBreakers: cb,
+	}
+
+	req := httptest.NewRequest("GET", "/api/pool/circuit-breakers", nil)
+	req.Header.Set("X-Admin-Token", "operator-pass")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var snapshot map[string]CircuitStateInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("failed to decode circuit breakers JSON: %v", err)
+	}
+
+	info, exists := snapshot[accountModelKey("acc_1", "gpt-6-astra")]
+	if !exists {
+		t.Fatalf("expected snapshot to contain key for acc_1:gpt-6-astra")
+	}
+	if info.State != StateOpen {
+		t.Errorf("expected state OPEN, got %s", info.State)
+	}
+}

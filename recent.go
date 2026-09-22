@@ -13,6 +13,9 @@ func newRecentErrors(max int) *recentErrors {
 }
 
 func (r *recentErrors) add(msg string) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.list = append([]string{msg}, r.list...)
@@ -22,6 +25,9 @@ func (r *recentErrors) add(msg string) {
 }
 
 func (r *recentErrors) snapshot() []string {
+	if r == nil {
+		return nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]string, len(r.list))

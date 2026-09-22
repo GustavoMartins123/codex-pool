@@ -24,13 +24,22 @@ type ConfigFile struct {
 
 	ModelAliases map[string]string `toml:"model_aliases"`
 
-	PoolUsers PoolUsersConfig `toml:"pool_users"`
+	PoolUsers PoolUsersConfig   `toml:"pool_users"`
+	Routing   RoutingConfigFile `toml:"routing"`
 }
 
 // PoolUsersConfig is the [pool_users] section.
 type PoolUsersConfig struct {
 	JWTSecret   string `toml:"jwt_secret"`
 	StoragePath string `toml:"storage_path"`
+}
+
+// RoutingConfigFile is the [routing] section. Profiles can override any
+// subset of the built-in weights under [routing.profiles.<name>].
+type RoutingConfigFile struct {
+	DefaultProfile string                           `toml:"default_profile"`
+	DefaultModel   string                           `toml:"default_model"`
+	Profiles       map[string]RoutingProfileWeights `toml:"profiles"`
 }
 
 // loadConfigFile loads config.toml if it exists.

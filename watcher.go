@@ -148,6 +148,13 @@ func (pw *poolWatcher) reloadConfig() {
 	pw.handler.pool.mu.Lock()
 	pw.handler.pool.debug = newDebug
 	pw.handler.pool.mu.Unlock()
+	if err := validateRoutingConfig(cfg.Routing); err != nil {
+		log.Printf("routing config reload rejected: %v", err)
+	} else {
+		pw.handler.cfg.routing = cfg.Routing
+		pw.handler.pool.configureRouting(cfg.Routing)
+		log.Printf("reloaded routing profiles (default=%s overrides=%d)", pw.handler.pool.defaultRoutingProfile(), len(cfg.Routing.Profiles))
+	}
 
 	// Reload model aliases (built-in defaults + optional config overrides).
 	if pw.handler.aliases != nil {

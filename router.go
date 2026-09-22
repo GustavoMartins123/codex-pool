@@ -442,6 +442,16 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		summary := h.metrics.performanceSummary(h.pool)
 		respondJSON(w, summary)
 		return
+	case "/api/pool/circuit-breakers":
+		if !h.checkMemberOrAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		respondJSON(w, h.getCircuitBreakers().Snapshot())
+		return
 	case "/api/pool/whoami":
 		h.handleWhoami(w, r)
 		return

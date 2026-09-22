@@ -1257,7 +1257,7 @@ func sanitizeAntigravityFunctionName(name string) string {
 
 func stringValue(value any) string { text, _ := value.(string); return text }
 
-func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Request, body []byte, requestedModel, conversationID, userID, originID, clientIP, reqID string) bool {
+func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Request, body []byte, requestedModel, conversationID, userID, originID, clientIP, reqID string, routingProfile RoutingProfile) bool {
 	if !shouldRouteAntigravityModel(requestedModel) {
 		return false
 	}
@@ -1276,7 +1276,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		attempts = accountCount
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
-		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithTrace(conversationID, exclude, canonical, clientIP)
+		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTrace(conversationID, exclude, canonical, clientIP, routingProfile)
 		if account == nil {
 			break
 		}
@@ -1314,13 +1314,19 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		}
 		var replayScope antigravityReplayScope
 		prepared.Body, replayScope, _ = antigravityApplyNativeReplay(prepared.Body)
+		attemptStarted := time.Now()
 		atomic.AddInt64(&account.Inflight, 1)
 		resp, err := h.doAntigravityRequestWithTransientRetry(r.Context(), r.Header, account, provider, prepared)
 		atomic.AddInt64(&account.Inflight, -1)
 		if err != nil {
+			h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, http.StatusServiceUnavailable, time.Now())
 			lastError = err
 			continue
 		}
+		trace.DurationMs = float64(time.Since(attemptStarted).Milliseconds())
+		trace.StatusCode = resp.StatusCode
+		h.getRouteTraces().Record(trace)
+		h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
 		if resp.StatusCode == http.StatusUnauthorized {
 			_ = resp.Body.Close()
 			if err := h.refreshAccountAfterAuthFailure(r.Context(), account); err == nil {

@@ -802,6 +802,11 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 		if account.Type != AccountTypeAntigravity || (exclude != nil && exclude[account.ID]) || !antigravityModels.Supports(account.ID, model) {
 			continue
 		}
+		if p.circuitBreakers != nil {
+			if allowed, _, _ := p.circuitBreakers.AllowTarget(string(AccountTypeAntigravity), account.ID, model, nil); !allowed {
+				continue
+			}
+		}
 		account.mu.Lock()
 		until := account.ModelRateLimits[model]
 		discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
