@@ -24,16 +24,17 @@ const (
 // ConversationState is the provider-independent state retained by the pool.
 // Provider-local identifiers are deliberately stored outside Messages.
 type ConversationState struct {
-	ID               string                                `json:"id"`
-	Messages         []Message                             `json:"messages"`
-	Tools            []ToolCall                            `json:"tools,omitempty"`
-	Summary          string                                `json:"summary,omitempty"`
-	Metadata         map[string]any                        `json:"metadata,omitempty"`
-	ProviderState    map[string]ProviderLocalState         `json:"provider_state,omitempty"`
-	ProviderSessions map[AccountType]*ProviderSessionState `json:"provider_sessions,omitempty"`
-	ActiveProvider   AccountType                           `json:"active_provider,omitempty"`
-	TransitionEpoch  uint64                                `json:"transition_epoch,omitempty"`
-	UpdatedAt        time.Time                             `json:"updated_at"`
+	ID                 string                                `json:"id"`
+	Messages           []Message                             `json:"messages"`
+	Tools              []ToolCall                            `json:"tools,omitempty"`
+	Summary            string                                `json:"summary,omitempty"`
+	Metadata           map[string]any                        `json:"metadata,omitempty"`
+	ProviderState      map[string]ProviderLocalState         `json:"provider_state,omitempty"`
+	ProviderSessions   map[AccountType]*ProviderSessionState `json:"provider_sessions,omitempty"`
+	ActiveProvider     AccountType                           `json:"active_provider,omitempty"`
+	LastTransitionFrom AccountType                           `json:"last_transition_from,omitempty"`
+	TransitionEpoch    uint64                                `json:"transition_epoch,omitempty"`
+	UpdatedAt          time.Time                             `json:"updated_at"`
 }
 
 type Message struct {
@@ -1178,6 +1179,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 			recordProviderSession(&record.State, record.LastProvider, localState)
 		}
 		record.State.TransitionEpoch++
+		record.State.LastTransitionFrom = record.LastProvider
 		// Re-entry begins a new native epoch; old provider state is retained
 		// under its own provider but must not be supplied to this request.
 		record.State.ProviderSessions[target] = &ProviderSessionState{Provider: target, Epoch: record.State.TransitionEpoch}
@@ -1274,6 +1276,30 @@ func (s *conversationHandoffStore) MarkNativeSessionEstablished(conversationID s
 		session.Established = true
 		s.records[conversationID] = record
 	}
+}
+
+func (s *conversationHandoffStore) RecoverNativeSession(attempt *TransitionAttempt) bool {
+	if s == nil || attempt == nil || attempt.RecoveryUsed || attempt.ConversationID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[attempt.ConversationID]
+	if !ok || record.State.ActiveProvider != attempt.To || record.State.LastTransitionFrom != attempt.From ||
+		record.State.TransitionEpoch != attempt.Epoch || attempt.Epoch == 0 {
+		return false
+	}
+	session := record.State.ProviderSessions[attempt.To]
+	if session == nil || session.Established || session.Epoch != attempt.Epoch {
+		return false
+	}
+	record.State.TransitionEpoch++
+	record.State.ProviderSessions[attempt.To] = &ProviderSessionState{Provider: attempt.To, Epoch: record.State.TransitionEpoch}
+	record.State.ProviderState[string(attempt.To)] = ProviderLocalState{}
+	s.records[attempt.ConversationID] = record
+	attempt.Epoch = record.State.TransitionEpoch
+	attempt.RecoveryUsed = true
+	return true
 }
 
 func (s *conversationHandoffStore) RecordAssistantText(conversationID string, provider AccountType, text string) {

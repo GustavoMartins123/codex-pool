@@ -1344,6 +1344,50 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		trace.StatusCode = resp.StatusCode
 		h.getRouteTraces().Record(trace)
 		h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
+		if resp.StatusCode == http.StatusTooManyRequests && freshSession && conversationID != "" {
+			errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(readErr.Error()))
+				return true
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(errBody))
+			resp.ContentLength = int64(len(errBody))
+			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
+			state, ok := h.getContextHandoff().State(conversationID)
+			if ok && (providerErr.Class == ProviderErrorSession || providerErr.Class == ProviderErrorContext) {
+				transition := &TransitionAttempt{
+					ConversationID: conversationID, Epoch: state.TransitionEpoch,
+					From: state.LastTransitionFrom, To: AccountTypeAntigravity,
+				}
+				if h.getContextHandoff().RecoverNativeSession(transition) {
+					_ = resp.Body.Close()
+					nativeSeed, _ = h.getContextHandoff().NativeSessionSeed(conversationID, AccountTypeAntigravity)
+					prepared, err = prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, nativeSeed)
+					if err != nil {
+						antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusBadRequest, []byte(err.Error()))
+						return true
+					}
+					replayScope = antigravityReplayScopeFromBody(prepared.Body)
+					var envelope map[string]any
+					if json.Unmarshal(prepared.Body, &envelope) == nil {
+						request, _ := envelope["request"].(map[string]any)
+						h.getContextHandoff().BindNativeSession(conversationID, AccountTypeAntigravity, stringValue(request["sessionId"]))
+					}
+					log.Printf("conversation=%s transition=%s->antigravity epoch=%d recovery_retry=true error_class=%s", conversationID, transition.From, transition.Epoch, providerErr.Class)
+					atomic.AddInt64(&account.Inflight, 1)
+					resp, err = h.doAntigravityRequestWithTransientRetry(r.Context(), r.Header, account, provider, prepared)
+					atomic.AddInt64(&account.Inflight, -1)
+					if err != nil {
+						lastError = err
+						continue
+					}
+					trace.StatusCode = resp.StatusCode
+					h.getRouteTraces().Record(trace)
+					h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
+				}
+			}
+		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			_ = resp.Body.Close()
 			if err := h.refreshAccountAfterAuthFailure(r.Context(), account); err == nil {

@@ -4,6 +4,14 @@ import "strings"
 
 type TransitionMode string
 
+type TransitionAttempt struct {
+	ConversationID string
+	Epoch          uint64
+	From           AccountType
+	To             AccountType
+	RecoveryUsed   bool
+}
+
 const (
 	TransitionNative      TransitionMode = "native"
 	TransitionFullHistory TransitionMode = "full-history"
