@@ -496,7 +496,7 @@ try {
     $accessToken = [string]$auth.access_token
   }
   if (-not [string]::IsNullOrWhiteSpace($accessToken)) {
-    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.125.0'
+    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.155.1'
     $headers = @{ Authorization = "Bearer $accessToken" }
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
@@ -560,7 +560,7 @@ function Refresh-ModelCatalog {
   }
   if ([string]::IsNullOrWhiteSpace($token)) { return }
 
-  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.125.0'
+  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.155.1'
   $headers = @{ Authorization = "Bearer $token" }
 
   try {
@@ -595,6 +595,17 @@ function Write-McpResponse {
 }
 
 Refresh-ModelCatalog -Url $BaseUrl
+
+# Keep pulling the live catalog every 15 minutes while Codex is running, so
+# newly released upstream models show up in /model without a restart.
+Start-Job -Name 'codex-pool-model-sync' -ArgumentList @($BaseUrl, ${function:Refresh-ModelCatalog}) -ScriptBlock {
+  param($Url, $Fn)
+  Set-Item -Path 'function:Refresh-ModelCatalog' -Value $Fn
+  while ($true) {
+    Start-Sleep -Seconds 900
+    Refresh-ModelCatalog -Url $Url
+  }
+} | Out-Null
 
 while ($true) {
   $transport = 'framed'
@@ -835,7 +846,7 @@ ACCESS_TOKEN=$(sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/
 if [ -n "${ACCESS_TOKEN:-}" ]; then
     curl --connect-timeout 5 --max-time 10 -fsSL \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
-        "$BASE_URL/backend-api/codex/models?client_version=0.125.0" \
+        "${BASE_URL%%/}/backend-api/codex/models?client_version=0.155.1" \
         -o "$MODEL_CATALOG" 2>/dev/null && chmod 600 "$MODEL_CATALOG" 2>/dev/null || true
 fi
 
@@ -848,7 +859,7 @@ BASE_URL="${1:-}"
 AUTH_DIR="${HOME}/.codex"
 AUTH_FILE="$AUTH_DIR/auth.json"
 MODEL_CATALOG="$AUTH_DIR/model_catalog.json"
-CLIENT_VERSION="0.125.0"
+CLIENT_VERSION="0.155.1"
 
 refresh_model_catalog() {
     if [ -z "$BASE_URL" ] || [ ! -f "$AUTH_FILE" ]; then
@@ -958,7 +969,14 @@ handle_request() {
     write_response "$payload"
 }
 
-refresh_model_catalog >/dev/null 2>&1 &
+# Refresh now and keep pulling the live catalog every 15 minutes while
+# Codex is running, so newly released upstream models show up in /model.
+(
+    while true; do
+        refresh_model_catalog >/dev/null 2>&1 || true
+        sleep 900
+    done
+) >/dev/null 2>&1 &
 
 while true; do
     REQUEST_BODY=""
