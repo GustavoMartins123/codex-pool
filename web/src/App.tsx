@@ -2623,7 +2623,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
-                      {selectedAccount.type === "codex" && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAccount.id); setContributing(true); }}>Relogin account</button>}
+                      {selectedAccount.type === "codex" && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setContributing(true); }}>Relogin account</button>}
                     </div>
                   </>
                 ) : (
