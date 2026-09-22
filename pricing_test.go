@@ -266,16 +266,25 @@ func TestCalculateCostAppliesLongContextTier(t *testing.T) {
 	}
 }
 
-func TestAntigravityAliasesUseCurrentGeminiPricing(t *testing.T) {
+func TestAntigravityAliasesUseAPIEquivalentPricing(t *testing.T) {
 	t.Parallel()
 
 	pd := newPricingData()
 	for alias, canonical := range map[string]string{
+		"claude-opus-4-6-thinking":   "claude-opus-4-6",
+		"gemini-3-flash":             "gemini-3-flash-preview",
 		"gemini-3-flash-agent":       "gemini-3.5-flash",
+		"gemini-3.1-flash-image":     "gemini-3-flash-preview",
+		"gemini-3.1-flash-lite":      "gemini-3.5-flash-lite",
+		"gemini-3.1-pro-low":         "gemini-3.1-pro-preview",
 		"gemini-3.5-flash-extra-low": "gemini-3.5-flash",
+		"gemini-3.6-flash-high":      "gemini-3.6-flash",
 		"gemini-3.6-flash-tiered":    "gemini-3.6-flash",
+		"gemini-3.7-flash-medium":    "gemini-3.7-flash",
 		"gemini-3.7-flash-tiered":    "gemini-3.7-flash",
+		"gemini-3.8-flash-low":       "gemini-3.8-flash",
 		"gemini-3.8-flash-tiered":    "gemini-3.8-flash",
+		"gpt-oss-120b-medium":        "openai.gpt-oss-120b-1:0",
 	} {
 		got, ok := pd.lookupPricing(alias)
 		if !ok {
@@ -284,6 +293,22 @@ func TestAntigravityAliasesUseCurrentGeminiPricing(t *testing.T) {
 		want, ok := pd.lookupPricing(canonical)
 		if !ok || got != want {
 			t.Fatalf("pricing for %q = %#v, want %q %#v", alias, got, canonical, want)
+		}
+	}
+}
+
+func TestAllAntigravityFallbackModelsHaveAPIEquivalentPricing(t *testing.T) {
+	t.Parallel()
+
+	pd := newPricingData()
+	for _, model := range antigravityFallbackModels {
+		pricing, ok := pd.lookupPricing(model.ID)
+		if !ok {
+			t.Errorf("missing API-equivalent pricing for Antigravity model %q", model.ID)
+			continue
+		}
+		if pricing.InputCostPerToken <= 0 || pricing.OutputCostPerToken <= 0 {
+			t.Errorf("non-positive API-equivalent pricing for Antigravity model %q: %#v", model.ID, pricing)
 		}
 	}
 }

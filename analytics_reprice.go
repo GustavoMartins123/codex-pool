@@ -9,7 +9,7 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const analyticsPricingVersion = "2026-08-18-v2"
+const analyticsPricingVersion = "2026-09-22-v3"
 
 type analyticsPricingAggKey struct {
 	date, accountID, accountType, model string

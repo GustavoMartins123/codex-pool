@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isArmedAccountAction, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
+import { formatAPIValue, isArmedAccountAction, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
 
 describe("account action confirmation", () => {
   it("is scoped to both the account and action", () => {
@@ -14,6 +14,13 @@ describe("account action confirmation", () => {
 describe("poolSurplus", () => {
   it("uses the same account totals shown beside it", () => {
     expect(poolSurplus({ total_api_cost: 5634, total_subscription_cost: 2064 })).toBe(3570);
+  });
+});
+
+describe("formatAPIValue", () => {
+  it("shows API-equivalent value even when the account has no subscription cost", () => {
+    expect(formatAPIValue(0)).toBe("$0.00");
+    expect(formatAPIValue(12.345)).toBe("$12.35");
   });
 });
 

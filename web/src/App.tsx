@@ -159,6 +159,10 @@ export function poolSurplus(aggregate: Pick<PoolStats["aggregate"], "total_api_c
   return aggregate.total_api_cost - aggregate.total_subscription_cost;
 }
 
+export function formatAPIValue(value: number) {
+  return preciseMoney.format(value || 0);
+}
+
 function formatTokens(value: number) {
   return compact.format(value || 0).replace("T", "T");
 }
@@ -2541,7 +2545,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
       <div className={classNames("accounts-layout", selected && "inspecting")}>
         <div className="account-table" role="list" aria-label="Provider accounts" aria-hidden={mobileInspector && Boolean(selected) ? true : undefined}>
           <div className="account-row account-head" aria-hidden="true">
-            <span>Provider / plan / account</span><span>State</span><span>Weekly pace</span><span>Reset windows</span><span>24h burn</span><span>Return</span><span>Trend</span>
+            <span>Provider / plan / account</span><span>State</span><span>Weekly pace</span><span>Reset windows</span><span>24h burn</span><span>API value</span><span>Trend</span>
           </div>
           {filteredAccounts.length === 0 && <div className="empty-state">{stats.accounts.length === 0 ? "No provider accounts are connected." : "No accounts match this filter."}</div>}
           {filteredAccounts.map((account) => {
@@ -2564,7 +2568,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                   <ResetWindow label="Weekly" available={account.secondary_window_available} used={account.secondary_window_used_pct} resetMinutes={account.secondary_reset_minutes} compact />
                 </span>
                 <span data-label="24h burn">{formatTokens(accountThroughput(account))}</span>
-                <strong data-label="Return">{account.subscription_spend ? `${account.roi.toFixed(2)}×` : "—"}</strong>
+                <strong data-label="API value">{formatAPIValue(account.api_cost_estimate)}</strong>
                 <span className="account-spark" aria-hidden="true"><Sparkline data={[0, account.total_input_tokens, accountThroughput(account), account.total_output_tokens]} color={provider.dither} /></span>
               </button>
             );
