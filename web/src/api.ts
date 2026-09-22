@@ -256,6 +256,22 @@ export async function startAccountOAuth(provider: "codex" | "claude") {
   }));
 }
 
+export async function startCodexRelogin(accountID: string) {
+  return decode<AccountContributionResult>(await fetch("/admin/codex/relogin", {
+    method: "POST",
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    body: JSON.stringify({ account_id: accountID }),
+  }));
+}
+
+export async function exchangeCodexRelogin(code: string, verifier: string) {
+  return decode<AccountContributionResult>(await fetch("/admin/codex/exchange", {
+    method: "POST",
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    body: JSON.stringify({ code, verifier }),
+  }));
+}
+
 export async function exchangeAccountOAuth(provider: "codex" | "claude", code: string, verifier: string) {
   return decode<AccountContributionResult>(await fetch(`/api/pool/accounts/${provider}/exchange`, {
     method: "POST",

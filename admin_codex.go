@@ -33,7 +33,11 @@ type CodexOAuthSession struct {
 	Verifier  string
 	Challenge string
 	State     string
-	CreatedAt time.Time
+	// ReloginAccountID, when set, binds this session to an existing pool
+	// account: the exchange replaces that account's credentials instead of
+	// creating a new account file.
+	ReloginAccountID string
+	CreatedAt        time.Time
 }
 
 // In-memory store for pending Codex OAuth sessions
@@ -65,6 +69,9 @@ func (h *proxyHandler) serveCodexAdmin(w http.ResponseWriter, r *http.Request) {
 
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleCodexAdd(w, r)
+
+	case path == "/relogin" && r.Method == http.MethodPost:
+		h.handleCodexRelogin(w, r)
 
 	case path == "/exchange" && r.Method == http.MethodPost:
 		h.handleCodexExchange(w, r)
@@ -109,15 +116,17 @@ func (h *proxyHandler) handleCodexList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /admin/codex/add - start OAuth flow
-func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
+// startCodexOAuthSession builds the PKCE pair, the authorize URL and stores
+// the pending session. actor binds the session to the contributing principal
+// (empty disables the binding); reloginAccountID binds it to an existing
+// account (see handleCodexRelogin).
+func startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier, state string) {
 	// Generate PKCE verifier and challenge
 	verifierBytes := make([]byte, 32)
 	if _, err := rand.Read(verifierBytes); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to generate verifier")
-		return
+		return "", "", ""
 	}
-	verifier := base64.RawURLEncoding.EncodeToString(verifierBytes)
+	verifier = base64.RawURLEncoding.EncodeToString(verifierBytes)
 
 	challengeHash := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(challengeHash[:])
@@ -125,10 +134,9 @@ func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
 	// Generate state
 	stateBytes := make([]byte, 32)
 	if _, err := rand.Read(stateBytes); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to generate state")
-		return
+		return "", "", ""
 	}
-	state := base64.RawURLEncoding.EncodeToString(stateBytes)
+	state = base64.RawURLEncoding.EncodeToString(stateBytes)
 
 	// Build OAuth URL
 	u, _ := url.Parse(CodexOAuthAuthorizeURL)
@@ -147,11 +155,12 @@ func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
 
 	// Store session
 	session := &CodexOAuthSession{
-		ActorID:   providerContributionActor(r),
-		Verifier:  verifier,
-		Challenge: challenge,
-		State:     state,
-		CreatedAt: time.Now(),
+		ActorID:          actor,
+		ReloginAccountID: reloginAccountID,
+		Verifier:         verifier,
+		Challenge:        challenge,
+		State:            state,
+		CreatedAt:        time.Now(),
 	}
 
 	codexOAuthSessions.Lock()
@@ -161,10 +170,76 @@ func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
 	// Clean up old sessions
 	go cleanupOldCodexSessions()
 
+	return u.String(), verifier, state
+}
+
+// POST /admin/codex/add - start OAuth flow
+func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
+	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), "")
+	if oauthURL == "" {
+		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
+		return
+	}
+
 	respondJSON(w, map[string]any{
-		"oauth_url": u.String(),
+		"oauth_url": oauthURL,
 		"verifier":  verifier,
 		"state":     state,
+	})
+}
+
+// POST /admin/codex/relogin - start an OAuth flow bound to an existing pool
+// account. The exchange replaces that account's stale credentials (e.g. after
+// "refresh_token_invalidated") instead of creating a new account.
+func (h *proxyHandler) handleCodexRelogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSONError(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	accountID := strings.TrimSpace(req.AccountID)
+	if accountID == "" {
+		respondJSONError(w, http.StatusBadRequest, "account_id is required")
+		return
+	}
+
+	var target *Account
+	for _, acc := range h.pool.allAccounts() {
+		if acc.ID == accountID {
+			target = acc
+			break
+		}
+	}
+	if target == nil {
+		var codexIDs []string
+		for _, acc := range h.pool.allAccounts() {
+			if acc.Type == AccountTypeCodex {
+				codexIDs = append(codexIDs, acc.ID)
+			}
+		}
+		log.Printf("codex relogin: account %q not found; codex accounts: %v", accountID, codexIDs)
+		respondJSONError(w, http.StatusNotFound, "codex account not found: "+accountID)
+		return
+	}
+	if target.Type != AccountTypeCodex {
+		respondJSONError(w, http.StatusBadRequest, "account "+accountID+" is a "+string(target.Type)+" account, not codex")
+		return
+	}
+
+	oauthURL, verifier, state := startCodexOAuthSession("", accountID)
+	if oauthURL == "" {
+		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
+		return
+	}
+
+	log.Printf("codex relogin started for account %s (file %s)", accountID, target.File)
+	respondJSON(w, map[string]any{
+		"oauth_url":  oauthURL,
+		"verifier":   verifier,
+		"state":      state,
+		"account_id": accountID,
 	})
 }
 
@@ -215,6 +290,25 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Relogin flow: replace the bound account's credentials in place.
+	if session.ReloginAccountID != "" {
+		if err := h.replaceCodexAccountCredentials(session.ReloginAccountID, tokens); err != nil {
+			respondJSONError(w, http.StatusForbidden, "relogin failed: "+err.Error())
+			return
+		}
+		codexOAuthSessions.Lock()
+		delete(codexOAuthSessions.sessions, verifier)
+		codexOAuthSessions.Unlock()
+		h.reloadAccounts()
+		h.auditProviderContribution(r, "codex-relogin", session.ReloginAccountID)
+		respondJSON(w, map[string]any{
+			"success":    true,
+			"account_id": session.ReloginAccountID,
+			"replaced":   true,
+		})
+		return
+	}
+
 	// Generate account ID from email in id_token
 	accountID := generateCodexAccountID(tokens.IDToken)
 
@@ -240,9 +334,67 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// replaceCodexAccountCredentials overwrites an existing codex account's auth
+// file with fresh tokens, preserving unrelated state (added_at, cookies,
+// model snapshot, disabled flag) and clearing any retirement markers. The
+// upstream identity is verified so credentials cannot be swapped into the
+// wrong account.
+func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *CodexTokenResponse) error {
+	var target *Account
+	for _, acc := range h.pool.allAccounts() {
+		if acc.Type == AccountTypeCodex && acc.ID == accountID {
+			target = acc
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("codex account %q not found", accountID)
+	}
+
+	newClaims := parseCodexClaims(tokens.IDToken)
+	target.mu.Lock()
+	existingIdentity := target.AccountID
+	if existingIdentity == "" {
+		existingIdentity = target.IDTokenChatGPTAccountID
+	}
+	authFile := target.File
+	target.mu.Unlock()
+	if newClaims.ChatGPTAccountID != "" && existingIdentity != "" && newClaims.ChatGPTAccountID != existingIdentity {
+		return fmt.Errorf("signed-in account (%s) does not match pool account %s", newClaims.ChatGPTAccountID, accountID)
+	}
+
+	existing := make(map[string]any)
+	if raw, err := os.ReadFile(authFile); err == nil {
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			return fmt.Errorf("parse %s: %w", authFile, err)
+		}
+	}
+	existing["tokens"] = map[string]any{
+		"id_token":      tokens.IDToken,
+		"access_token":  tokens.AccessToken,
+		"refresh_token": tokens.RefreshToken,
+	}
+	delete(existing, "dead")
+	delete(existing, "last_refresh")
+
+	data, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	tmp := authFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	if err := os.Rename(tmp, authFile); err != nil {
+		return fmt.Errorf("replace %s: %w", authFile, err)
+	}
+
+	log.Printf("codex relogin: replaced credentials for account %s (%s)", accountID, authFile)
+	return nil
+}
+
 // codexExchangeCode exchanges an authorization code for tokens
-func codexExchangeCode(code, verifier string) (*CodexTokenResponse, error) {
-	data := url.Values{}
+func codexExchangeCode(code, verifier string) (*CodexTokenResponse, error) {	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("client_id", CodexOAuthClientID)
 	data.Set("code", code)

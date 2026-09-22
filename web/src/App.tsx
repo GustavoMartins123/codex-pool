@@ -66,6 +66,8 @@ import {
   storedAdminToken,
   storedFriendSession,
   startAccountOAuth,
+  startCodexRelogin,
+  exchangeCodexRelogin,
 	  startAntigravityOAuth,
   unlockOperator,
   loadAuthConfig,
@@ -2403,6 +2405,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
   const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const [unlocking, setUnlocking] = useState(false);
   const [contributing, setContributing] = useState(false);
+  const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
   const [action, setAction] = useState<ArmedAccountAction>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -2529,7 +2532,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
       <div className="view-title account-title">
         <h1>Accounts</h1>
         <div className="account-title-actions">
-          <button className="contribute-button" onClick={() => setContributing(true)}>Add pool account</button>
+          <button className="contribute-button" onClick={() => { setReloginAccountID(null); setContributing(true); }}>Add pool account</button>
           {!operatorToken && <button className="unlock-button" onClick={() => setUnlocking(true)}>Unlock controls</button>}
           {operatorToken && <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>}
         </div>
@@ -2620,6 +2623,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
+                      {selectedAccount.type === "codex" && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAccount.id); setContributing(true); }}>Relogin account</button>}
                     </div>
                   </>
                 ) : (
@@ -2630,7 +2634,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
           </aside>
         )}
       </div>
-      {contributing && <AccountContribution onClose={() => setContributing(false)} onAdded={async () => { await onAccountsChanged(); setContributing(false); }} />}
+      {contributing && <AccountContribution reloginAccountID={reloginAccountID ?? undefined} onClose={() => setContributing(false)} onAdded={async () => { await onAccountsChanged(); setContributing(false); }} />}
       {unlocking && <OperatorUnlock onClose={() => setUnlocking(false)} onUnlocked={(token, accounts) => { onUnlocked(token, accounts); setUnlocking(false); }} />}
     </div>
   );
@@ -2662,8 +2666,8 @@ function oauthCode(value: string) {
   }
 }
 
-function AccountContribution({ onClose, onAdded }: { onClose: () => void; onAdded: () => Promise<void> }) {
-  const [provider, setProvider] = useState<ContributableProvider>("codex");
+function AccountContribution({ onClose, onAdded, reloginAccountID }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string }) {
+  const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? "codex" : "codex");
   const [credential, setCredential] = useState("");
 	  const [oauth, setOAuth] = useState<{ verifier?: string; sessionID?: string; state?: string; url: string } | null>(null);
 	  const oauthCompleted = useRef(false);
@@ -2711,7 +2715,11 @@ function AccountContribution({ onClose, onAdded }: { onClose: () => void; onAdde
     setBusy(true);
     setError("");
     try {
-	      const result = provider === "antigravity" ? await startAntigravityOAuth() : await startAccountOAuth(provider as "codex" | "claude");
+	      const result = provider === "antigravity"
+	        ? await startAntigravityOAuth()
+	        : reloginAccountID
+	          ? await startCodexRelogin(reloginAccountID)
+	          : await startAccountOAuth(provider as "codex" | "claude");
 	      if (!result.oauth_url || (provider === "antigravity" ? !result.session_id : !result.verifier)) throw new Error("Provider did not return an OAuth session");
 	      oauthCompleted.current = false;
 	      setOAuth({ verifier: result.verifier, sessionID: result.session_id, state: result.state, url: result.oauth_url });
@@ -2740,7 +2748,11 @@ function AccountContribution({ onClose, onAdded }: { onClose: () => void; onAdde
 	        } else {
 	          const code = oauthCode(credential);
 	          if (!code || !oauth.verifier) throw new Error("Paste the authorization code or callback URL");
-	          await exchangeAccountOAuth(provider as "codex" | "claude", code, oauth.verifier);
+	          if (reloginAccountID) {
+	            await exchangeCodexRelogin(code, oauth.verifier);
+	          } else {
+	            await exchangeAccountOAuth(provider as "codex" | "claude", code, oauth.verifier);
+	          }
 	        }
       } else if (selected.mode === "json") {
         await contributeGrok(credential);
@@ -2758,11 +2770,13 @@ function AccountContribution({ onClose, onAdded }: { onClose: () => void; onAdde
   return (
     <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <form className="operator-dialog contribution-dialog" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="contribution-title">
-        <h2 id="contribution-title">Add a pool account</h2>
-        <p>Other pool members will be able to use this account.</p>
-        <div className="contribution-providers" aria-label="Provider">
+        <h2 id="contribution-title">{reloginAccountID ? "Relogin account" : "Add a pool account"}</h2>
+        <p>{reloginAccountID
+          ? "Sign in with the same upstream account to replace its credentials. The pool account stays the same."
+          : "Other pool members will be able to use this account."}</p>
+        {!reloginAccountID && <div className="contribution-providers" aria-label="Provider">
           {CONTRIBUTION_PROVIDERS.map((candidate) => <button type="button" key={candidate.id} className={provider === candidate.id ? "active" : ""} disabled={busy} aria-pressed={provider === candidate.id} onClick={() => choose(candidate.id)}>{candidate.label}</button>)}
-        </div>
+        </div>}
         {selected.mode === "oauth" ? (
           <div className="contribution-oauth">
             {!oauth ? (
