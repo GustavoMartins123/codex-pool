@@ -23,13 +23,16 @@ const (
 // ConversationState is the provider-independent state retained by the pool.
 // Provider-local identifiers are deliberately stored outside Messages.
 type ConversationState struct {
-	ID            string                        `json:"id"`
-	Messages      []Message                     `json:"messages"`
-	Tools         []ToolCall                    `json:"tools,omitempty"`
-	Summary       string                        `json:"summary,omitempty"`
-	Metadata      map[string]any                `json:"metadata,omitempty"`
-	ProviderState map[string]ProviderLocalState `json:"provider_state,omitempty"`
-	UpdatedAt     time.Time                     `json:"updated_at"`
+	ID               string                                `json:"id"`
+	Messages         []Message                             `json:"messages"`
+	Tools            []ToolCall                            `json:"tools,omitempty"`
+	Summary          string                                `json:"summary,omitempty"`
+	Metadata         map[string]any                        `json:"metadata,omitempty"`
+	ProviderState    map[string]ProviderLocalState         `json:"provider_state,omitempty"`
+	ProviderSessions map[AccountType]*ProviderSessionState `json:"provider_sessions,omitempty"`
+	ActiveProvider   AccountType                           `json:"active_provider,omitempty"`
+	TransitionEpoch  uint64                                `json:"transition_epoch,omitempty"`
+	UpdatedAt        time.Time                             `json:"updated_at"`
 }
 
 type Message struct {
@@ -54,6 +57,17 @@ type ToolCall struct {
 
 type ProviderLocalState struct {
 	Identifiers map[string]any `json:"identifiers,omitempty"`
+}
+
+// ProviderSessionState owns identifiers that have meaning only to one
+// upstream. The conversation ID remains stable across provider changes.
+type ProviderSessionState struct {
+	Provider        AccountType    `json:"provider"`
+	NativeSessionID string         `json:"native_session_id,omitempty"`
+	ResponseID      string         `json:"response_id,omitempty"`
+	CacheKey        string         `json:"cache_key,omitempty"`
+	Epoch           uint64         `json:"epoch"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
 type contextHandoffResult struct {
@@ -617,7 +631,6 @@ func regenerateToolCallIDs(messages []Message, conversationID string, provider A
 	return messages, warnings
 }
 
-
 func toolsFromMessages(messages []Message) []ToolCall {
 	calls := make(map[string]*ToolCall)
 	var order []string
@@ -781,6 +794,37 @@ func extractProviderLocalState(object map[string]any) ProviderLocalState {
 		state.Identifiers = nil
 	}
 	return state
+}
+
+func recordProviderSession(state *ConversationState, provider AccountType, local ProviderLocalState) {
+	if provider == "" {
+		return
+	}
+	if state.ProviderSessions == nil {
+		state.ProviderSessions = make(map[AccountType]*ProviderSessionState)
+	}
+	session := state.ProviderSessions[provider]
+	if session == nil {
+		session = &ProviderSessionState{Provider: provider, Epoch: state.TransitionEpoch}
+		state.ProviderSessions[provider] = session
+	}
+	if len(local.Identifiers) == 0 {
+		return
+	}
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]any)
+	}
+	for key, value := range local.Identifiers {
+		session.Metadata[key] = value
+		switch key {
+		case "session_id", "sessionId":
+			session.NativeSessionID = stringValue(value)
+		case "previous_response_id", "response_id":
+			session.ResponseID = stringValue(value)
+		case "prompt_cache_key", "prompt_cache_id":
+			session.CacheKey = stringValue(value)
+		}
+	}
 }
 
 func stripIncompatibleProviderFields(value any) bool {
@@ -1104,22 +1148,40 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		s.evictOldestLocked()
 		record.State = ConversationState{
 			ID: conversationID, Metadata: make(map[string]any),
-			ProviderState: make(map[string]ProviderLocalState),
+			ProviderState:    make(map[string]ProviderLocalState),
+			ProviderSessions: make(map[AccountType]*ProviderSessionState),
 		}
 	}
 	if record.State.ProviderState == nil {
 		record.State.ProviderState = make(map[string]ProviderLocalState)
 	}
-	if switched && record.LastProvider != "" && len(localState.Identifiers) > 0 {
-		record.State.ProviderState[string(record.LastProvider)] = localState
-		localState = ProviderLocalState{}
+	if record.State.ProviderSessions == nil {
+		record.State.ProviderSessions = make(map[AccountType]*ProviderSessionState)
+	}
+	if switched {
+		// The incoming request still belongs to the client conversation. Any
+		// opaque identifier it carries belongs to the previous upstream.
+		if len(localState.Identifiers) > 0 {
+			record.State.ProviderState[string(record.LastProvider)] = localState
+			recordProviderSession(&record.State, record.LastProvider, localState)
+		}
+		record.State.TransitionEpoch++
+		// Re-entry begins a new native epoch; old provider state is retained
+		// under its own provider but must not be supplied to this request.
+		record.State.ProviderSessions[target] = &ProviderSessionState{Provider: target, Epoch: record.State.TransitionEpoch}
+		record.State.ProviderState[string(target)] = ProviderLocalState{}
+	} else {
+		if len(localState.Identifiers) > 0 {
+			record.State.ProviderState[string(target)] = localState
+		}
+		recordProviderSession(&record.State, target, localState)
 	}
 	record.State.Messages = messages
 	record.State.Tools = toolsFromMessages(messages)
 	if summary != "" {
 		record.State.Summary = summary
 	}
-	record.State.ProviderState[string(target)] = localState
+	record.State.ActiveProvider = target
 	record.State.UpdatedAt = time.Now().UTC()
 	record.LastProvider = target
 	s.records[conversationID] = record
@@ -1159,13 +1221,16 @@ func (s *conversationHandoffStore) RecordAssistantText(conversationID string, pr
 		s.evictOldestLocked()
 		record.State = ConversationState{
 			ID: conversationID, Metadata: make(map[string]any),
-			ProviderState: make(map[string]ProviderLocalState),
+			ProviderState:    make(map[string]ProviderLocalState),
+			ProviderSessions: make(map[AccountType]*ProviderSessionState),
 		}
 	}
 	message := Message{Role: "assistant", Parts: []MessagePart{{Type: "text", Text: text}}}
 	if count := len(record.State.Messages); count > 0 &&
 		messageFingerprint(record.State.Messages[count-1]) == messageFingerprint(message) {
+		recordProviderSession(&record.State, provider, ProviderLocalState{})
 		record.State.UpdatedAt = time.Now().UTC()
+		record.State.ActiveProvider = provider
 		record.LastProvider = provider
 		s.records[conversationID] = record
 		return
@@ -1175,7 +1240,9 @@ func (s *conversationHandoffStore) RecordAssistantText(conversationID string, pr
 	record.State.Messages, record.State.Summary, _ = compactConversationMessages(record.State.Messages)
 	record.State.Messages, _ = sanitizeConversationToolPairs(record.State.Messages)
 	record.State.Tools = toolsFromMessages(record.State.Messages)
+	recordProviderSession(&record.State, provider, ProviderLocalState{})
 	record.State.UpdatedAt = time.Now().UTC()
+	record.State.ActiveProvider = provider
 	record.LastProvider = provider
 	s.records[conversationID] = record
 }
