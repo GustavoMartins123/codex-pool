@@ -60,3 +60,24 @@ throughput = 0.10
 affinity = 0.10
 inflight = 0.05
 recent_failure = 0.05
+
+# Optional per-client policies. The key may be a client credential ID, its
+# case-insensitive label, or "*" for the default policy.
+[client_policies.workstation]
+priority = 50
+
+[client_policies.workstation.models]
+allow = ["gpt-5.6-sol", "gpt-6-astra"]
+
+[client_policies.workstation.providers]
+deny = ["grok"]
+
+[client_policies.workstation.limits]
+requests_per_minute = 30
+concurrent_requests = 3
+daily_requests = 1000
+daily_tokens = 3000000
+monthly_tokens = 60000000
+
+[client_policies.workstation.routing]
+profile = "balanced"

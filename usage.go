@@ -333,6 +333,13 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage) {
 	}
 	a.mu.Unlock()
 	a.applyRequestUsage(ru)
+	if ru.UserID != "" {
+		principalID, clientID := splitClientIdentity(ru.UserID)
+		ru.UserID = principalID
+		if ru.ClientCredentialID == "" {
+			ru.ClientCredentialID = clientID
+		}
+	}
 
 	// Calculate cost before the durable usage transaction so the immutable
 	// analytics fact and raw request commit together.
@@ -350,6 +357,11 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage) {
 			log.Printf("analytics: durable usage write failed: %v", err)
 		} else if h.duckAnalytics != nil {
 			h.duckAnalytics.Notify()
+		}
+	}
+	if h.passport != nil && ru.ClientCredentialID != "" && ru.BillableTokens > 0 {
+		if err := h.passport.recordPolicyTokens(ru.ClientCredentialID, ru.BillableTokens, ru.Timestamp); err != nil {
+			log.Printf("passport policy: record token usage: %v", err)
 		}
 	}
 	// Keep the legacy SQLite store during migration only; DuckDB is canonical.

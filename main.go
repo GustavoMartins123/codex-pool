@@ -81,6 +81,7 @@ type config struct {
 	shutdownGrace              time.Duration // Let active websocket turns finish before forcing a restart close
 	tierThreshold              float64       // Secondary usage % at which we stop preferring a tier (default 0.50)
 	routing                    RoutingConfigFile
+	clientPolicies             map[string]ClientPolicy
 }
 
 func getenv(key, def string) string {
@@ -262,6 +263,7 @@ func buildConfig() *config {
 	// Tier threshold: secondary usage % at which we stop preferring a tier (default 50%)
 	cfg.tierThreshold = getConfigFloat64("TIER_THRESHOLD", fileCfg.TierThreshold, 0.50)
 	cfg.routing = fileCfg.Routing
+	cfg.clientPolicies = fileCfg.ClientPolicies
 	if err := validateRoutingConfig(cfg.routing); err != nil {
 		log.Printf("warning: invalid routing config, using built-in profiles: %v", err)
 		cfg.routing = RoutingConfigFile{}
@@ -1541,6 +1543,16 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 		restoreBody(prefix)
 		return provider, targetBase, nil
 	}
+	if admission := policyAdmissionFromRequest(r); admission != nil {
+		if err := admission.CheckModel(canonicalModel); err != nil {
+			restoreBody(prefix)
+			return provider, targetBase, err
+		}
+		if err := admission.CheckProvider(routeProvider.Type()); err != nil {
+			restoreBody(prefix)
+			return provider, targetBase, err
+		}
+	}
 	rewrittenPrefix := prefix
 	delta := 0
 	if canonicalModel != requestedModel {
@@ -1893,7 +1905,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	// Every pool credential path shares one parser and one live authorization check.
-	userID, _, _, credentialKind, credentialAllowed := h.authorizePoolCredentialRequest(r)
+	userID, principalID, clientID, credentialKind, credentialAllowed := h.authorizePoolCredentialRequest(r)
 	if credentialKind != "" && !credentialAllowed {
 		if isContextRequestPath(r.URL.Path) {
 			w.Header().Set("Content-Type", "application/json")
@@ -1947,6 +1959,25 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		serveUnifiedGeminiModels(w, h.pool)
 		return
 	}
+	var admission *policyAdmission
+	if h.passport != nil {
+		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.clientPolicies, time.Now())
+		if policyErr != nil {
+			h.auditPolicyDecision(&policyAdmission{principalID: principalID, clientID: clientID}, "policy.request_blocked", policyErr)
+			respondPolicyError(w, policyErr)
+			return
+		}
+		admission = candidateAdmission
+		if admission != nil {
+			defer admission.Release()
+			r = r.WithContext(context.WithValue(r.Context(), policyAdmissionContextKey{}, admission))
+			if profile := strings.TrimSpace(admission.policy.Routing.Profile); profile != "" {
+				r.Header.Set("X-Pool-Routing", profile)
+			}
+			r.Header.Set("X-Pool-Priority", strconv.Itoa(admission.priority))
+			h.auditPolicyDecision(admission, "policy.request_admitted", nil)
+		}
+	}
 	originID := hashRequestOrigin(r, h.originHashSalt())
 	originIP := getClientIP(r)
 	if h.store != nil && originID != "" && originIP != "" {
@@ -1970,6 +2001,12 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		var err error
 		provider, targetBase, err = h.applyStreamedModelRoute(r, provider, targetBase, reqID)
 		if err != nil {
+			var blocked *policyError
+			if errors.As(err, &blocked) {
+				h.auditPolicyDecision(admission, "policy.request_blocked", blocked)
+				respondPolicyError(w, blocked)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -2020,10 +2057,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				return
 			}
 			if spooled.Model != "" {
+				if !h.enforcePolicy(w, admission, func() error { return admission.CheckModel(spooled.Model) }) {
+					return
+				}
 				if routed, routeBase, _ := h.resolveStreamedModelRoute(r.URL.Path, spooled.Model); routed != nil {
 					provider = routed
 					targetBase = routeBase
 					accountType = routed.Type()
+					if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
+						return
+					}
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] oversized Responses model-route: model=%s provider=%s", reqID, spooled.Model, accountType)
 					}
@@ -2168,6 +2211,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	requestedModel, bodyBytes = routedModel, routedBody
+	if !h.enforcePolicy(w, admission, func() error { return admission.CheckModel(requestedModel) }) {
+		return
+	}
 
 	var autoDecisionInfo *AutoDecision
 	if isPoolAutoModel(requestedModel) {
@@ -2180,6 +2226,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 		autoDecisionInfo = &dec
 		requestedModel = dec.SelectedModel
+		if !h.enforcePolicy(w, admission, func() error {
+			if err := admission.CheckModel(requestedModel); err != nil {
+				return err
+			}
+			return admission.CheckProvider(dec.SelectedProvider)
+		}) {
+			return
+		}
 		if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
 			bodyBytes = rewritten
 		}
@@ -2193,6 +2247,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// Handle it before the generic provider translator so every public protocol
 	// consumes the same model registry and quota scheduler.
 	if requestedModel != "" && shouldRouteAntigravityModel(requestedModel) {
+		if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(AccountTypeAntigravity) }) {
+			return
+		}
 		bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, AccountTypeAntigravity, r.URL.Path, bodyBytes)
 		if err != nil {
 			http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
@@ -2228,10 +2285,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			provider = overrideProvider
 			targetBase = overrideBase
 			accountType = overrideProvider.Type()
+			if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
+				return
+			}
 			if rewrittenBody != nil {
 				bodyBytes = rewrittenBody
 			}
 		}
+	}
+	if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
+		return
 	}
 
 	// OpenCode Go's router rejects requests missing x-opencode-session (HTTP 400
@@ -2526,6 +2589,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				trigger = Trigger429
 			}
 			if fallbackModel, fallbackReason, hasFallback := h.getFallbackGraph().ResolveFallback(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers()); hasFallback {
+				fallbackMeta, _ := lookupModelMetadata(fallbackModel, h.pool)
+				if !h.enforcePolicy(w, admission, func() error {
+					if err := admission.CheckModel(fallbackModel); err != nil {
+						return err
+					}
+					return admission.CheckProvider(fallbackMeta.Provider)
+				}) {
+					return
+				}
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] triggering %s fallback: %s -> %s", reqID, trigger, requestedModel, fallbackModel)
 				}
@@ -3448,6 +3520,15 @@ func (h *proxyHandler) proxyRequestWebSocket(
 ) {
 	start := time.Now()
 	accountType := provider.Type()
+	admission := policyAdmissionFromRequest(r)
+	if !h.enforcePolicy(w, admission, func() error {
+		if err := admission.CheckModel(r.URL.Query().Get("model")); err != nil {
+			return err
+		}
+		return admission.CheckProvider(accountType)
+	}) {
+		return
+	}
 
 	conversationID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 	if conversationID == "" {
@@ -4086,6 +4167,10 @@ func logRelayFrame(logLabel, label string, msgType websocket.MessageType, data [
 func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider Provider, targetBase *url.URL) {
 	start := time.Now()
 	accountType := provider.Type()
+	admission := policyAdmissionFromRequest(r)
+	if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
+		return
+	}
 	spooled, _ := r.Context().Value(contextSpoolKey{}).(*streamedResponsesRequest)
 	contextSession := ""
 	if spooled != nil {
@@ -4094,7 +4179,16 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	requiredPlan := requiredPlanForRequest(accountType, r, "")
 	clientIP := getClientIP(r)
-	acc := h.pool.candidate(contextSession, map[string]bool{}, accountType, requiredPlan, clientIP)
+	requestedModel := ""
+	if spooled != nil {
+		requestedModel = spooled.Model
+	}
+	routingProfile, ok := h.pool.resolveRoutingProfile(r.Header.Get("X-Pool-Routing"))
+	if !ok {
+		http.Error(w, fmt.Sprintf("unknown routing profile %q", r.Header.Get("X-Pool-Routing")), http.StatusBadRequest)
+		return
+	}
+	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTrace(contextSession, map[string]bool{}, accountType, requiredPlan, clientIP, requestedModel, routingProfile)
 	if acc == nil {
 		http.Error(w, fmt.Sprintf("no live %s accounts", accountType), http.StatusServiceUnavailable)
 		return

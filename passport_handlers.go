@@ -12,12 +12,13 @@ import (
 )
 
 type clientCredentialView struct {
-	ID         string     `json:"id"`
-	Label      string     `json:"label"`
-	Status     string     `json:"status"`
-	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
+	ID         string       `json:"id"`
+	Label      string       `json:"label"`
+	Status     string       `json:"status"`
+	ExpiresAt  *time.Time   `json:"expires_at,omitempty"`
+	CreatedAt  time.Time    `json:"created_at"`
+	LastSeenAt *time.Time   `json:"last_seen_at,omitempty"`
+	Policy     ClientPolicy `json:"policy,omitempty"`
 }
 
 func noStore(w http.ResponseWriter) {
@@ -103,7 +104,7 @@ func (h *proxyHandler) handleAuthConfig(w http.ResponseWriter, r *http.Request) 
 	legacyAvailable := h.cfg != nil && strings.TrimSpace(h.cfg.legacyFriendCode) != ""
 	operatorExists := h.passport != nil && h.passport.hasOperator()
 	respondJSON(w, map[string]any{
-		"legacy_signup": legacyAvailable,
+		"legacy_signup":   legacyAvailable,
 		"operator_exists": operatorExists,
 	})
 }
@@ -236,7 +237,7 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 		out := make([]clientCredentialView, 0)
 		for _, c := range h.passport.clients {
 			if c.PrincipalID == pr.ID {
-				view := clientCredentialView{ID: c.ID, Label: c.Label, Status: c.Status, ExpiresAt: c.ExpiresAt, CreatedAt: c.CreatedAt}
+				view := clientCredentialView{ID: c.ID, Label: c.Label, Status: c.Status, ExpiresAt: c.ExpiresAt, CreatedAt: c.CreatedAt, Policy: c.Policy}
 				if !c.LastSeenAt.IsZero() {
 					lastSeen := c.LastSeenAt
 					view.LastSeenAt = &lastSeen

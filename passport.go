@@ -59,17 +59,18 @@ type Principal struct {
 }
 
 type ClientCredential struct {
-	ID                 string     `json:"id"`
-	PrincipalID        string     `json:"principal_id"`
-	Label              string     `json:"label"`
-	Status             string     `json:"status"`
-	ValidAfter         time.Time  `json:"valid_after,omitempty"`
-	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
-	DownloadDigest     string     `json:"download_digest"`
-	DownloadCiphertext []byte     `json:"download_ciphertext"`
-	DownloadToken      string     `json:"-"`
-	CreatedAt          time.Time  `json:"created_at"`
-	LastSeenAt         time.Time  `json:"last_seen_at,omitempty"`
+	ID                 string       `json:"id"`
+	PrincipalID        string       `json:"principal_id"`
+	Label              string       `json:"label"`
+	Status             string       `json:"status"`
+	ValidAfter         time.Time    `json:"valid_after,omitempty"`
+	ExpiresAt          *time.Time   `json:"expires_at,omitempty"`
+	DownloadDigest     string       `json:"download_digest"`
+	DownloadCiphertext []byte       `json:"download_ciphertext"`
+	DownloadToken      string       `json:"-"`
+	CreatedAt          time.Time    `json:"created_at"`
+	LastSeenAt         time.Time    `json:"last_seen_at,omitempty"`
+	Policy             ClientPolicy `json:"policy,omitempty"`
 }
 
 type passportSession struct {
@@ -79,13 +80,15 @@ type passportSession struct {
 }
 
 type PassportStore struct {
-	db            *bbolt.DB
-	mu            sync.RWMutex
-	principals    map[string]*Principal
-	clients       map[string]*ClientCredential
-	passwordWork  chan struct{}
-	aead          cipher.AEAD
-	analyticsSalt string
+	db             *bbolt.DB
+	mu             sync.RWMutex
+	principals     map[string]*Principal
+	clients        map[string]*ClientCredential
+	passwordWork   chan struct{}
+	aead           cipher.AEAD
+	analyticsSalt  string
+	policyMu       sync.Mutex
+	policyInflight map[string]int
 }
 
 func passportAEAD() (cipher.AEAD, error) {
@@ -112,9 +115,9 @@ func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt .
 	if err != nil {
 		return nil, err
 	}
-	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead}
+	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
-		for _, n := range []string{bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketPassportAvatars, bucketJoinLinks, bucketMemberRecoveryLinks, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges} {
+		for _, n := range []string{bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketPassportAvatars, bucketJoinLinks, bucketMemberRecoveryLinks, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
