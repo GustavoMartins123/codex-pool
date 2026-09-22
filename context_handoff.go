@@ -26,6 +26,7 @@ const (
 type ConversationState struct {
 	ID                 string                                `json:"id"`
 	Messages           []Message                             `json:"messages"`
+	IR                 ConversationIR                        `json:"ir"`
 	Tools              []ToolCall                            `json:"tools,omitempty"`
 	Summary            string                                `json:"summary,omitempty"`
 	Metadata           map[string]any                        `json:"metadata,omitempty"`
@@ -48,6 +49,9 @@ type MessagePart struct {
 	ToolID    string `json:"tool_id,omitempty"`
 	ToolName  string `json:"tool_name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
+	ImageURL  string `json:"image_url,omitempty"`
+	MimeType  string `json:"mime_type,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 type ToolCall struct {
@@ -146,6 +150,27 @@ func appendTextPart(parts []MessagePart, text string) []MessagePart {
 	return append(parts, MessagePart{Type: "text", Text: text})
 }
 
+func imagePartFromURL(value string) MessagePart {
+	part := MessagePart{Type: "image", ImageURL: strings.TrimSpace(value)}
+	if strings.HasPrefix(part.ImageURL, "data:") {
+		if header, data, ok := strings.Cut(part.ImageURL, ","); ok && strings.HasSuffix(header, ";base64") {
+			part.MimeType = strings.TrimPrefix(strings.TrimSuffix(header, ";base64"), "data:")
+			part.Data = data
+		}
+	}
+	return part
+}
+
+func imagePartURL(part MessagePart) string {
+	if part.ImageURL != "" {
+		return part.ImageURL
+	}
+	if part.Data != "" && part.MimeType != "" {
+		return "data:" + part.MimeType + ";base64," + part.Data
+	}
+	return ""
+}
+
 func contextText(value any) string {
 	switch typed := value.(type) {
 	case string:
@@ -205,7 +230,29 @@ func normalizeResponsesContext(object map[string]any) []Message {
 			switch itemType {
 			case "message", "":
 				role, _ := item["role"].(string)
-				parts := appendTextPart(nil, contextText(item["content"]))
+				var parts []MessagePart
+				switch content := item["content"].(type) {
+				case string:
+					parts = appendTextPart(parts, content)
+				case []any:
+					for _, rawBlock := range content {
+						block, _ := rawBlock.(map[string]any)
+						switch stringValue(block["type"]) {
+						case "input_text", "output_text", "text":
+							parts = appendTextPart(parts, stringValue(block["text"]))
+						case "input_image", "output_image", "image_url":
+							url := stringValue(block["image_url"])
+							if nested, ok := block["image_url"].(map[string]any); ok {
+								url = stringValue(nested["url"])
+							}
+							if url != "" {
+								parts = append(parts, imagePartFromURL(url))
+							}
+						case "reasoning_visible":
+							parts = append(parts, MessagePart{Type: "reasoning_visible", Text: stringValue(block["text"])})
+						}
+					}
+				}
 				if role != "" && len(parts) > 0 {
 					messages = append(messages, Message{Role: role, Parts: parts})
 				}
@@ -261,6 +308,18 @@ func normalizeMessageList(object map[string]any, claude bool) []Message {
 					message.Parts = append(message.Parts, MessagePart{
 						Type: "tool_result", ToolID: stringValue(part["tool_use_id"]), Text: contextText(part["content"]),
 					})
+				case "image", "input_image", "image_url":
+					if source, ok := part["source"].(map[string]any); ok {
+						if stringValue(source["type"]) == "base64" {
+							message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: stringValue(source["media_type"]), Data: stringValue(source["data"])})
+						} else if url := stringValue(source["url"]); url != "" {
+							message.Parts = append(message.Parts, imagePartFromURL(url))
+						}
+					} else if nested, ok := part["image_url"].(map[string]any); ok {
+						message.Parts = append(message.Parts, imagePartFromURL(stringValue(nested["url"])))
+					} else if url := stringValue(part["image_url"]); url != "" {
+						message.Parts = append(message.Parts, imagePartFromURL(url))
+					}
 				}
 			}
 		}
@@ -306,6 +365,12 @@ func normalizeGeminiContext(object map[string]any) []Message {
 			part, _ := rawPart.(map[string]any)
 			if text := stringValue(part["text"]); text != "" {
 				message.Parts = appendTextPart(message.Parts, text)
+			}
+			if inline, ok := part["inlineData"].(map[string]any); ok {
+				message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: stringValue(inline["mimeType"]), Data: stringValue(inline["data"])})
+			}
+			if file, ok := part["fileData"].(map[string]any); ok {
+				message.Parts = append(message.Parts, imagePartFromURL(stringValue(file["fileUri"])))
 			}
 			if call, ok := part["functionCall"].(map[string]any); ok {
 				message.Parts = append(message.Parts, MessagePart{
@@ -387,6 +452,20 @@ func precedingToolTriggerIndex(messages []Message, callIndex int) int {
 			continue
 		case "user", "tool":
 			return index
+		case "assistant":
+			// Responses represents parallel calls as adjacent assistant
+			// function_call items. They share the preceding user trigger.
+			allCalls := true
+			for _, part := range messages[index].Parts {
+				if part.Type != "tool_call" {
+					allCalls = false
+					break
+				}
+			}
+			if allCalls {
+				continue
+			}
+			return -1
 		default:
 			return -1
 		}
@@ -898,12 +977,16 @@ func renderResponsesContext(object map[string]any, messages []Message) {
 		var actions []any
 		for _, part := range message.Parts {
 			switch part.Type {
-			case "text":
+			case "text", "reasoning_visible":
 				contentType := "input_text"
 				if message.Role == "assistant" {
 					contentType = "output_text"
 				}
 				content = append(content, map[string]any{"type": contentType, "text": part.Text})
+			case "image":
+				if url := imagePartURL(part); url != "" {
+					content = append(content, map[string]any{"type": "input_image", "image_url": url})
+				}
 			case "tool_call":
 				actions = append(actions, map[string]any{
 					"type": "function_call", "call_id": part.ToolID,
@@ -941,11 +1024,16 @@ func renderOpenAIContext(object map[string]any, messages []Message) {
 		}
 		item := map[string]any{"role": message.Role}
 		var text []string
+		var imageBlocks []any
 		var calls []any
 		for _, part := range message.Parts {
 			switch part.Type {
-			case "text":
+			case "text", "reasoning_visible":
 				text = append(text, part.Text)
+			case "image":
+				if url := imagePartURL(part); url != "" {
+					imageBlocks = append(imageBlocks, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+				}
 			case "tool_call":
 				calls = append(calls, map[string]any{
 					"id": part.ToolID, "type": "function",
@@ -954,6 +1042,14 @@ func renderOpenAIContext(object map[string]any, messages []Message) {
 			}
 		}
 		item["content"] = strings.Join(text, "\n")
+		if len(imageBlocks) > 0 {
+			blocks := make([]any, 0, len(imageBlocks)+1)
+			if joined := strings.Join(text, "\n"); joined != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": joined})
+			}
+			blocks = append(blocks, imageBlocks...)
+			item["content"] = blocks
+		}
 		if len(calls) > 0 {
 			item["tool_calls"] = calls
 		}
@@ -983,8 +1079,14 @@ func renderClaudeContext(object map[string]any, messages []Message) {
 		var blocks []any
 		for _, part := range message.Parts {
 			switch part.Type {
-			case "text":
+			case "text", "reasoning_visible":
 				blocks = append(blocks, map[string]any{"type": "text", "text": part.Text})
+			case "image":
+				if part.Data != "" && part.MimeType != "" {
+					blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": part.MimeType, "data": part.Data}})
+				} else if part.ImageURL != "" {
+					blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": part.ImageURL}})
+				}
 			case "tool_call":
 				var arguments any
 				if json.Unmarshal([]byte(part.Arguments), &arguments) != nil {
@@ -1038,8 +1140,14 @@ func renderGeminiContext(object map[string]any, messages []Message) {
 		var parts []any
 		for _, part := range message.Parts {
 			switch part.Type {
-			case "text":
+			case "text", "reasoning_visible":
 				parts = append(parts, map[string]any{"text": part.Text})
+			case "image":
+				if part.Data != "" && part.MimeType != "" {
+					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": part.MimeType, "data": part.Data}})
+				} else if part.ImageURL != "" {
+					parts = append(parts, map[string]any{"fileData": map[string]any{"fileUri": part.ImageURL}})
+				}
 			case "tool_call":
 				var arguments any
 				if json.Unmarshal([]byte(part.Arguments), &arguments) != nil {
@@ -1105,7 +1213,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	if format == contextFormatUnknown {
 		return body, contextHandoffResult{}, nil
 	}
-	current := normalizeConversationMessages(format, object)
+	current := normalizeConversationIR(format, object, conversationID, 0).legacyMessages()
 	localState := extractProviderLocalState(object)
 
 	s.mu.Lock()
@@ -1153,7 +1261,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		for _, warning := range warnings {
 			result.Warnings = appendUniqueString(result.Warnings, warning)
 		}
-		renderConversationMessages(format, object, messages)
+		renderConversationIR(format, object, conversationIRFromMessages(messages, conversationID, record.State.TransitionEpoch+1))
 		result.Compacted = compacted || previouslyCompacted
 	}
 
@@ -1191,6 +1299,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		recordProviderSession(&record.State, target, localState)
 	}
 	record.State.Messages = messages
+	record.State.IR = conversationIRFromMessages(messages, conversationID, record.State.TransitionEpoch)
 	record.State.Tools = toolsFromMessages(messages)
 	if summary != "" {
 		record.State.Summary = summary
@@ -1323,6 +1432,7 @@ func (s *conversationHandoffStore) RecordAssistantText(conversationID string, pr
 		messageFingerprint(record.State.Messages[count-1]) == messageFingerprint(message) {
 		recordProviderSession(&record.State, provider, ProviderLocalState{})
 		record.State.UpdatedAt = time.Now().UTC()
+		record.State.IR = conversationIRFromMessages(record.State.Messages, conversationID, record.State.TransitionEpoch)
 		record.State.ActiveProvider = provider
 		record.LastProvider = provider
 		s.records[conversationID] = record
@@ -1333,6 +1443,7 @@ func (s *conversationHandoffStore) RecordAssistantText(conversationID string, pr
 	record.State.Messages, record.State.Summary, _ = compactConversationMessages(record.State.Messages)
 	record.State.Messages, _ = sanitizeConversationToolPairs(record.State.Messages)
 	record.State.Tools = toolsFromMessages(record.State.Messages)
+	record.State.IR = conversationIRFromMessages(record.State.Messages, conversationID, record.State.TransitionEpoch)
 	recordProviderSession(&record.State, provider, ProviderLocalState{})
 	record.State.UpdatedAt = time.Now().UTC()
 	record.State.ActiveProvider = provider

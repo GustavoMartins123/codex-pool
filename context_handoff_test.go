@@ -157,6 +157,7 @@ func TestUniversalContextHandoffRegeneratesToolCallIDs(t *testing.T) {
 	first := []byte(`{
 		"model":"claude-test",
 		"messages":[
+			{"role":"user","content":[{"type":"text","text":"look up weather"}]},
 			{"role":"assistant","content":[{"type":"tool_use","id":"toolu_old","name":"lookup","input":{"q":"weather"}}]},
 			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_old","content":"sunny"}]}
 		]
@@ -231,7 +232,6 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 		t.Fatalf("compacted handoff lost summary or latest turn: %q", text)
 	}
 }
-
 
 func TestContextHandoffTrimKeepsToolExchangeAtomic(t *testing.T) {
 	messages := []Message{

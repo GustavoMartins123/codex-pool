@@ -84,9 +84,7 @@ func transitionHistory(scenario string) []Message {
 	case "reasoning":
 		messages = append(messages, transitionText("assistant", "Visible conclusion."))
 	case "image":
-		// The source wire format carries an image. This probe records whether the
-		// current IR retains it during handoff.
-		messages = append(messages, Message{Role: "user", Parts: []MessagePart{{Type: "image", Text: "data:image/png;base64,aGVsbG8="}}})
+		messages = append(messages, Message{Role: "user", Parts: []MessagePart{{Type: "image", ImageURL: "data:image/png;base64,aGVsbG8="}}})
 	}
 	return messages
 }
@@ -155,11 +153,7 @@ func TestProviderTransitionCompatibilityMatrix(t *testing.T) {
 				if !strings.Contains(visible, "first turn") || !strings.Contains(visible, "next question") {
 					t.Fatalf("visible conversation lost: %q", visible)
 				}
-				if scenario == "parallel_tools" && calls != 3 {
-					// Baseline diagnostic: current sanitization retains only the
-					// first parallel call. A later phase must close this gap.
-					t.Logf("KNOWN GAP parallel tools: retained=%d want=3 payload=%s", calls, out)
-				} else if (scenario == "tool" || scenario == "after_tool_result") && calls != 1 {
+				if scenario == "parallel_tools" && calls != 3 || (scenario == "tool" || scenario == "after_tool_result") && calls != 1 {
 					t.Fatalf("tool count=%d, scenario=%s, payload=%s", calls, scenario, out)
 				}
 				t.Logf("from=%s to=%s scenario=%s handoff_status=200 messages=%d calls=%d results=%d compacted=%v warnings=%v payload_bytes=%d", pair.from, pair.to, scenario, len(messages), calls, results, result.Compacted, result.Warnings, len(out))
