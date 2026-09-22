@@ -598,7 +598,7 @@ func trimTextOnlyMessage(message Message, characterBudget int) (Message, bool) {
 	return Message{Role: message.Role, Parts: parts}, true
 }
 
-func regenerateToolCallIDs(messages []Message, conversationID string, provider AccountType) ([]Message, []string) {
+func regenerateToolCallIDs(messages []Message, conversationID string, provider AccountType, epoch uint64) ([]Message, []string) {
 	idMap := make(map[string]string)
 	callIndex := 0
 	for messageIndex := range messages {
@@ -607,7 +607,7 @@ func regenerateToolCallIDs(messages []Message, conversationID string, provider A
 			if part.Type != "tool_call" {
 				continue
 			}
-			seed := fmt.Sprintf("%s|%s|%d|%s|%s", conversationID, provider, callIndex, part.ToolName, part.Arguments)
+			seed := fmt.Sprintf("%s|%s|%d|%d|%s|%s", conversationID, provider, epoch, callIndex, part.ToolName, part.Arguments)
 			sum := sha256.Sum256([]byte(seed))
 			newID := "call_" + hex.EncodeToString(sum[:8])
 			if part.ToolID != "" {
@@ -1149,7 +1149,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		result.Warnings = appendUniqueString(result.Warnings, warning)
 	}
 	if switched {
-		messages, warnings = regenerateToolCallIDs(messages, conversationID, target)
+		messages, warnings = regenerateToolCallIDs(messages, conversationID, target, record.State.TransitionEpoch+1)
 		for _, warning := range warnings {
 			result.Warnings = appendUniqueString(result.Warnings, warning)
 		}

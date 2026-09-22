@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +19,11 @@ const (
 )
 
 type antigravityReplayScope struct {
-	Model   string
-	Session string
+	ConversationID string
+	Provider       AccountType
+	Epoch          uint64
+	Model          string
+	Session        string
 }
 
 func (s antigravityReplayScope) valid() bool {
@@ -105,6 +109,20 @@ func antigravityApplyNativeReplay(body []byte) ([]byte, antigravityReplayScope, 
 	return updated, scope, changed
 }
 
+func antigravityScopedReplay(body []byte, conversationID string, epoch uint64, fresh bool) ([]byte, antigravityReplayScope, bool) {
+	scope := antigravityReplayScopeFromBody(body)
+	if conversationID != "" {
+		scope.ConversationID = conversationID
+		scope.Provider = AccountTypeAntigravity
+		scope.Epoch = epoch
+	}
+	if fresh {
+		return body, scope, false
+	}
+	updated, changed := antigravityNativeReplay.apply(scope, body)
+	return updated, scope, changed
+}
+
 // antigravityCaptureNativeReplay records signed upstream parts. It accepts one
 // SSE JSON payload or a collected response body.
 func antigravityCaptureNativeReplay(scope antigravityReplayScope, requestBody, responseBody []byte) bool {
@@ -120,6 +138,9 @@ func antigravityClearNativeReplayOnError(scope antigravityReplayScope, status in
 func (c *antigravityReplayCache) key(scope antigravityReplayScope) string {
 	if !scope.valid() {
 		return ""
+	}
+	if scope.ConversationID != "" {
+		return scope.ConversationID + "\x00" + string(scope.Provider) + "\x00" + strconv.FormatUint(scope.Epoch, 10) + "\x00" + strings.TrimSpace(scope.Model) + "\x00" + strings.TrimSpace(scope.Session)
 	}
 	return strings.TrimSpace(scope.Model) + "\x00" + strings.TrimSpace(scope.Session)
 }

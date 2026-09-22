@@ -1319,11 +1319,12 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			return true
 		}
 		var replayScope antigravityReplayScope
-		if freshSession {
-			replayScope = antigravityReplayScopeFromBody(prepared.Body)
-		} else {
-			prepared.Body, replayScope, _ = antigravityApplyNativeReplay(prepared.Body)
+		var transitionEpoch uint64
+		if conversationID != "" {
+			state, _ := h.getContextHandoff().State(conversationID)
+			transitionEpoch = state.TransitionEpoch
 		}
+		prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transitionEpoch, freshSession)
 		if conversationID != "" {
 			var envelope map[string]any
 			if json.Unmarshal(prepared.Body, &envelope) == nil {
@@ -1368,7 +1369,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 						antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusBadRequest, []byte(err.Error()))
 						return true
 					}
-					replayScope = antigravityReplayScopeFromBody(prepared.Body)
+					prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transition.Epoch, true)
 					var envelope map[string]any
 					if json.Unmarshal(prepared.Body, &envelope) == nil {
 						request, _ := envelope["request"].(map[string]any)
