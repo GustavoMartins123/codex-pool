@@ -301,6 +301,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqID = randomID()
 	}
 	w.Header().Set("X-Pool-Request-Id", reqID)
+	if r.URL.Path == "/admin/debug/transition" {
+		h.handleTransitionDryRun(w, r)
+		return
+	}
 	if r.URL.Path == "/admin/transitions" || strings.HasPrefix(r.URL.Path, "/admin/debug/conversations/") {
 		if !h.checkAdminAuth(w, r) {
 			return
