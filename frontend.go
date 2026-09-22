@@ -1920,7 +1920,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 		secondaryAvailable := usageSecondaryWindowAvailable(acc.Usage)
 		primaryReported := primaryAvailable
 		secondaryReported := secondaryAvailable
-		if acc.Type == AccountTypeAntigravity {
+		if acc.Type == AccountTypeAntigravity || acc.Type == AccountTypeZAI {
 			primaryReported = acc.Usage.PrimaryUsageReported
 			secondaryReported = acc.Usage.SecondaryUsageReported
 		}
@@ -2107,6 +2107,13 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			realID := accountIDMap[as.ID]
 
 			subCost, subLabel := getSubscriptionCost(AccountType(as.Type), accountPlanForSubscription(as.PlanType))
+			if acc := h.pool.getLocked(realID); acc != nil {
+				acc.mu.Lock()
+				if acc.MonthlyCost > 0 {
+					subCost = acc.MonthlyCost
+				}
+				acc.mu.Unlock()
+			}
 			costStats := allTimeCostStats[realID]
 			as.SubscriptionCostMonthly = subCost
 			as.SubscriptionLabel = subLabel
@@ -2249,6 +2256,10 @@ func accountPlanForSubscription(planType string) string {
 		return "pro"
 	case strings.Contains(pt, "plus"):
 		return "plus"
+	case strings.Contains(pt, "coding"):
+		return "coding_plan"
+	case strings.Contains(pt, "zai"):
+		return "coding_plan"
 	default:
 		return pt
 	}

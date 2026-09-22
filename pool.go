@@ -56,6 +56,8 @@ type Account struct {
 	IDTokenChatGPTAccountID string
 	PlanType                string
 	RateLimitTier           string
+	MonthlyCost             float64
+	DailyTokenLimit         int64
 	Disabled                bool
 	Inflight                int64
 	ImageGenerationSupport  int32
@@ -1554,6 +1556,18 @@ func saveAPIKeyAccount(a *Account) error {
 
 	if a.AccessToken != "" {
 		root["api_key"] = a.AccessToken
+	}
+	if a.PlanType != "" {
+		root["plan_type"] = a.PlanType
+	}
+	if a.Label != "" {
+		root["label"] = a.Label
+	}
+	if a.MonthlyCost > 0 {
+		root["monthly_cost"] = a.MonthlyCost
+	}
+	if a.DailyTokenLimit > 0 {
+		root["daily_token_limit"] = a.DailyTokenLimit
 	}
 	if a.Dead {
 		root["dead"] = true

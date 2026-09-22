@@ -173,9 +173,9 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		}
 
 		if accType == AccountTypeZAI {
-			if dead || retrievedAt.IsZero() {
-				if err := h.seedZAIUsage(now, a); err != nil && h.cfg.debug.Load() {
-					log.Printf("zai usage seed %s failed: %v", a.ID, err)
+			if dead || retrievedAt.IsZero() || now.Sub(retrievedAt) >= h.cfg.usageRefresh {
+				if err := h.syncZAIUsage(now, a); err != nil && h.cfg.debug.Load() {
+					log.Printf("zai usage sync %s failed: %v", a.ID, err)
 				}
 			}
 			continue
@@ -1299,17 +1299,18 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 	return nil
 }
 
-func (h *proxyHandler) seedZAIUsage(now time.Time, a *Account) error {
+func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 	a.mu.Lock()
 	access := a.AccessToken
+	planType := a.PlanType
+	dailyLimit := a.DailyTokenLimit
 	a.mu.Unlock()
 
-	seedURL := h.cfg.zaiBase.String() + "/v1/messages"
-	body := []byte(`{"model":"glm-5.3","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)
-
-	req, _ := http.NewRequest(http.MethodPost, seedURL, bytes.NewReader(body))
+	// 1. Sync models and test authentication with upstream Z.ai API
+	modelsURL := h.cfg.zaiBase.String() + "/v1/models"
+	req, _ := http.NewRequest(http.MethodGet, modelsURL, nil)
 	req.Header.Set("X-Api-Key", access)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+access)
 	req.Header.Set("anthropic-version", ccAnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(req)
@@ -1323,20 +1324,122 @@ func (h *proxyHandler) seedZAIUsage(now time.Time, a *Account) error {
 		a.Dead = true
 		a.Penalty += 100.0
 		a.mu.Unlock()
-		log.Printf("marking zai account %s as dead: seed returned %d", a.ID, resp.StatusCode)
+		log.Printf("marking zai account %s as dead: models returned %d", a.ID, resp.StatusCode)
 		if err := saveAccount(a); err != nil {
 			log.Printf("warning: failed to save dead zai account %s: %v", a.ID, err)
 		}
-		return fmt.Errorf("zai seed unauthorized: %s", resp.Status)
+		return fmt.Errorf("zai models unauthorized: %s", resp.Status)
 	}
 
+	var payload struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"data"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&payload)
+
 	a.mu.Lock()
+	if a.Models == nil {
+		a.Models = make(map[string]DiscoveredModel)
+	}
+	for _, m := range payload.Data {
+		if m.ID != "" {
+			displayName := m.DisplayName
+			if displayName == "" {
+				displayName = strings.ToUpper(m.ID)
+			}
+			a.Models[m.ID] = DiscoveredModel{
+				ID:            m.ID,
+				DisplayName:   displayName,
+				ContextWindow: 1000000,
+			}
+		}
+	}
+	a.ModelsFetchedAt = now
+
+	// 2. Setup Quota windows and calculate utilization
+	windowMins := a.Usage.PrimaryWindowMinutes
+	if windowMins <= 0 {
+		windowMins = 1440 // 24h rolling daily quota window
+	}
+
+	// Next daily reset (midnight UTC)
+	nextDailyReset := a.Usage.PrimaryResetAt
+	if nextDailyReset.IsZero() || nextDailyReset.Before(now) {
+		nextDailyReset = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	}
+
+	// Next weekly reset (Sunday midnight UTC)
+	nextWeeklyReset := a.Usage.SecondaryResetAt
+	if nextWeeklyReset.IsZero() || nextWeeklyReset.Before(now) {
+		daysUntilSunday := (7 - int(now.Weekday())) % 7
+		if daysUntilSunday == 0 {
+			daysUntilSunday = 7
+		}
+		nextWeeklyReset = time.Date(now.Year(), now.Month(), now.Day()+daysUntilSunday, 0, 0, 0, 0, time.UTC)
+	}
+
+	// Rate limit parsing from headers if available
+	snap, hasHeaderQuota := parseZAIResponseRateLimits(resp.Header)
+
+	primaryPct := float64(0)
+	secondaryPct := float64(0)
+	if hasHeaderQuota {
+		primaryPct = snap.PrimaryUsedPercent
+		secondaryPct = snap.SecondaryUsedPercent
+		if !snap.PrimaryResetAt.IsZero() {
+			nextDailyReset = snap.PrimaryResetAt
+		}
+		if !snap.SecondaryResetAt.IsZero() {
+			nextWeeklyReset = snap.SecondaryResetAt
+		}
+	} else {
+		// Calculate from rolling 24h token throughput against plan capacity
+		budget := dailyLimit
+		if budget <= 0 {
+			budget = 2000000 // 2M daily tokens standard baseline
+			if strings.Contains(strings.ToLower(planType), "pro") {
+				budget = 5000000
+			} else if strings.Contains(strings.ToLower(planType), "team") {
+				budget = 10000000
+			}
+		}
+
+		last24hTokens := int64(0)
+		if h.store != nil {
+			if recent, err := h.store.getRecentRequestUsage(1); err == nil {
+				for _, ru := range recent {
+					if ru.AccountID == a.ID {
+						last24hTokens += ru.InputTokens + ru.OutputTokens
+					}
+				}
+			}
+		}
+		if budget > 0 {
+			primaryPct = math.Min(1.0, float64(last24hTokens)/float64(budget))
+			secondaryPct = math.Min(1.0, float64(last24hTokens*7)/float64(budget*7))
+		}
+	}
+
 	a.Usage = mergeUsage(a.Usage, UsageSnapshot{
-		RetrievedAt: now,
-		Source:      "seed",
+		PrimaryUsed:            primaryPct,
+		PrimaryUsedPercent:     primaryPct,
+		PrimaryWindowMinutes:   windowMins,
+		PrimaryResetAt:         nextDailyReset,
+		SecondaryUsed:          secondaryPct,
+		SecondaryUsedPercent:   secondaryPct,
+		SecondaryWindowMinutes: 10080,
+		SecondaryResetAt:       nextWeeklyReset,
+		PrimaryUsageReported:   true,
+		SecondaryUsageReported: true,
+		RetrievedAt:            now,
+		Source:                 "zai-api",
 	})
 	a.mu.Unlock()
-	restoreValidatedAccount(a, "Z.ai model")
+
+	restoreValidatedAccount(a, "Z.ai model API")
+	_ = saveAccount(a)
 	return nil
 }
 

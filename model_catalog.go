@@ -65,6 +65,7 @@ var poolModels = []poolModel{
 	// an alias so existing installed configurations migrate at the proxy.
 	{AccountType: AccountTypeZAI, ID: "glm-5.3", DisplayName: "GLM-5.3", ContextWindow: 1000000, MaxTokens: 131072, Reasoning: true, WebSearch: true, Input: []string{"text"}, Aliases: []string{"glm-5.2"}},
 	{AccountType: AccountTypeZAI, ID: "glm-5.3-flash", DisplayName: "GLM-5.3-Flash", ContextWindow: 1000000, MaxTokens: 131072, Reasoning: true, WebSearch: true, Input: []string{"text"}},
+	{AccountType: AccountTypeZAI, ID: "glm-5.3-flashx", DisplayName: "GLM-5.3-FlashX", ContextWindow: 1000000, MaxTokens: 131072, Reasoning: true, WebSearch: true, Input: []string{"text"}},
 
 	{AccountType: AccountTypeXiaomi, ID: "mimo-v2.5-pro", DisplayName: "MiMo-V2.5-Pro", ContextWindow: 1000000, MaxTokens: 131072, Reasoning: true, WebSearch: true, Input: []string{"text"}, Aliases: []string{"mimo-v2.5-pro[1m]"}},
 	{AccountType: AccountTypeXiaomi, ID: "mimo-v2.5", DisplayName: "MiMo-V2.5", ContextWindow: 1000000, MaxTokens: 131072, Reasoning: true, Input: []string{"text", "image", "video", "audio"}},
