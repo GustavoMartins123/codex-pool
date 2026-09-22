@@ -4543,9 +4543,9 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 					return
 				}
 
-				// For Claude, accumulate input (message_start) and output (message_delta)
-				// into a single record before emitting.
-				if acc.Type == AccountTypeClaude {
+				// Anthropic-wire providers split input (message_start) and output
+				// (message_delta); accumulate them into a single usage record.
+				if providerTargetFormat(acc.Type) == FormatClaude {
 					if claudeAccum2 == nil {
 						claudeAccum2 = ru
 					} else {
