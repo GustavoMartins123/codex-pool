@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -1343,8 +1344,14 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
-			until, ok := parseAntigravityRetry(errBody, time.Now())
-			if !ok {
+			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
+			log.Printf("provider=antigravity status=%d error_class=%s retryable=%t quota_affected=%t", resp.StatusCode, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota)
+			if providerErr.Class != ProviderErrorQuota {
+				antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
+				return true
+			}
+			until := providerErr.ResetAt
+			if until.IsZero() {
 				until = time.Now().Add(backoffDuration(attempt))
 			}
 			setAntigravityModelCooldown(account, canonical, until)
@@ -1520,6 +1527,18 @@ func (h *proxyHandler) doAntigravityRequest(ctx context.Context, incoming http.H
 		return transport.RoundTrip(req)
 	}
 	resp, err := tryBase(provider.dailyBase)
+	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		resp.ContentLength = int64(len(body))
+		if classifyAntigravityError(resp.StatusCode, body).Class != ProviderErrorQuota {
+			return resp, nil
+		}
+	}
 	if err == nil && resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
 		return resp, nil
 	}
@@ -1564,7 +1583,7 @@ func (h *proxyHandler) doAntigravityRequestWithTransientRetry(ctx context.Contex
 }
 
 func antigravityInstantRetryDelay(body []byte, now time.Time) (time.Duration, bool) {
-	if !strings.Contains(strings.ToLower(string(body)), "rate_limit_exceeded") {
+	if classifyAntigravityError(http.StatusTooManyRequests, body).Class != ProviderErrorQuota || !strings.Contains(strings.ToLower(string(body)), "rate_limit_exceeded") {
 		return 0, false
 	}
 	until, ok := parseAntigravityRetry(body, now)
