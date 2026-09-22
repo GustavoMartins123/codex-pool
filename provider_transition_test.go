@@ -21,6 +21,10 @@ var transitionFixtures = []transitionFixture{
 	{"antigravity_to_codex", AccountTypeAntigravity, AccountTypeCodex},
 	{"codex_to_zai", AccountTypeCodex, AccountTypeZAI},
 	{"zai_to_codex", AccountTypeZAI, AccountTypeCodex},
+	{"codex_to_claude", AccountTypeCodex, AccountTypeClaude},
+	{"claude_to_codex", AccountTypeClaude, AccountTypeCodex},
+	{"claude_to_zai", AccountTypeClaude, AccountTypeZAI},
+	{"zai_to_claude", AccountTypeZAI, AccountTypeClaude},
 	{"claude_to_antigravity", AccountTypeClaude, AccountTypeAntigravity},
 	{"antigravity_to_claude", AccountTypeAntigravity, AccountTypeClaude},
 	{"zai_to_antigravity", AccountTypeZAI, AccountTypeAntigravity},
@@ -81,6 +85,8 @@ func transitionHistory(scenario string) []Message {
 		messages = append(messages, calls, results, transitionText("assistant", "Done."))
 	case "compaction":
 		messages = append(messages, transitionText("user", strings.Repeat("context payload ", 30000)))
+	case "context_100k":
+		messages = append(messages, transitionText("user", strings.Repeat("context payload ", 35000)))
 	case "reasoning":
 		messages = append(messages, transitionText("assistant", "Visible conclusion."))
 	case "image":
@@ -113,7 +119,7 @@ func transitionToolPairs(messages []Message) (calls, results int, valid bool) {
 }
 
 func TestProviderTransitionCompatibilityMatrix(t *testing.T) {
-	scenarios := []string{"simple", "history_20", "history_50", "history_100", "tool", "parallel_tools", "compaction", "reasoning", "image", "after_tool_result"}
+	scenarios := []string{"simple", "history_20", "history_50", "history_100", "tool", "parallel_tools", "compaction", "context_100k", "reasoning", "image", "after_tool_result"}
 	for _, pair := range transitionFixtures {
 		for _, scenario := range scenarios {
 			t.Run(pair.name+"/"+scenario, func(t *testing.T) {
@@ -189,6 +195,10 @@ func strictAntigravityTransitionStatus(body []byte, failure string) (int, string
 		return http.StatusTooManyRequests, `{"error":{"message":"context mismatch"}}`
 	case "session":
 		return http.StatusTooManyRequests, `{"error":{"message":"invalid session"}}`
+	case "auth":
+		return http.StatusUnauthorized, `{"error":{"message":"invalid credentials"}}`
+	case "provider":
+		return http.StatusInternalServerError, `{"error":{"message":"upstream failed"}}`
 	}
 	return http.StatusOK, `{"response":{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}}`
 }
@@ -211,13 +221,24 @@ func TestProviderTransitionAntigravityStrictUpstream(t *testing.T) {
 	for _, test := range []struct {
 		failure string
 		want    int
+		class   ProviderErrorClass
 	}{
-		{"", 200}, {"quota", 429}, {"session", 429}, {"context", 429}, {"signature", 429}, {"capacity", 503},
+		{"", 200, ProviderErrorUnknown},
+		{"quota", 429, ProviderErrorQuota},
+		{"session", 429, ProviderErrorSession},
+		{"context", 429, ProviderErrorContext},
+		{"signature", 429, ProviderErrorProtocol},
+		{"capacity", 503, ProviderErrorCapacity},
+		{"auth", 401, ProviderErrorAuth},
+		{"provider", 500, ProviderErrorTransient},
 	} {
 		t.Run(test.failure, func(t *testing.T) {
 			status, payload := strictAntigravityTransitionStatus(prepared.Body, test.failure)
 			if status != test.want {
 				t.Fatalf("status=%d want=%d payload=%s sent=%s", status, test.want, payload, prepared.Body)
+			}
+			if class := classifyAntigravityError(status, []byte(payload)).Class; class != test.class {
+				t.Fatalf("status=%d class=%s want=%s", status, class, test.class)
 			}
 			t.Logf("status=%d error=%s sent=%s", status, payload, prepared.Body)
 		})
