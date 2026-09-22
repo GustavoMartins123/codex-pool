@@ -82,3 +82,33 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestGeneric429SessionErrorDoesNotConsumeQuota(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "generic-429-secret")
+	base, _ := url.Parse("https://codex.mock")
+	account := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "token", PlanType: "pro"}
+	h := &proxyHandler{
+		cfg:      &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: time.Second, streamTimeout: time.Second},
+		pool:     newPoolState([]*Account{account}, false),
+		registry: NewProviderRegistry(NewCodexProvider(base, base, nil), nil, nil),
+		metrics:  newMetrics(), recent: newRecentErrors(10),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := `{"error":{"status":"RESOURCE_EXHAUSTED","message":"invalid session identifier"}}`
+			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		}),
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","conversation_id":"unknown-429","input":"hello","stream":false}`))
+	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("generic-429-secret", "user"))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 429 || !strings.Contains(w.Body.String(), "invalid session") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	account.mu.Lock()
+	until := account.RateLimitUntil
+	account.mu.Unlock()
+	if !until.IsZero() {
+		t.Fatalf("session error set quota cooldown: %s", until)
+	}
+}

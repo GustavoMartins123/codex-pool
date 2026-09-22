@@ -59,8 +59,6 @@ var defaultProfileWeights = map[string]PoolAutoProfileWeights{
 	},
 }
 
-
-
 // AutoScoreBreakdown captures the individual signal scores for explainability.
 type AutoScoreBreakdown struct {
 	HealthScore      float64 `json:"health_score"`
@@ -143,6 +141,19 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 	pricing *PricingData,
 	metrics *metrics,
 ) (AutoDecision, error) {
+	return o.OrchestrateWithTransition(profile, caps, conversationID, pool, cb, pricing, metrics, nil)
+}
+
+func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
+	profile string,
+	caps RequestCapabilities,
+	conversationID string,
+	pool *poolState,
+	cb *CircuitBreakerManager,
+	pricing *PricingData,
+	metrics *metrics,
+	conversation *ConversationState,
+) (AutoDecision, error) {
 	if profile == "" {
 		profile = "balanced"
 	}
@@ -168,6 +179,14 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 		if !compatible {
 			candidateScores[candID] = 0.0
 			continue
+		}
+		transition := TransitionCompatibility{Allowed: true, Mode: TransitionNative}
+		if conversation != nil {
+			transition = CanTransition(*conversation, conversation.ActiveProvider, meta.Provider)
+			if !transition.Allowed {
+				candidateScores[candID] = 0
+				continue
+			}
 		}
 
 		// SIGNAL 1: Health & Reliability (20%)
@@ -327,6 +346,10 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 			(weights.AdequacyWeight * adequacyScore) +
 			(weights.AffinityWeight * affinityScore) +
 			(weights.CostWeight * costScore)
+		totalScore -= 0.25 * transition.Cost
+		if totalScore < 0 {
+			totalScore = 0
+		}
 
 		candidateScores[candID] = totalScore
 
@@ -351,6 +374,7 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 				fmt.Sprintf("adequacy_score:%.2f", adequacyScore),
 				fmt.Sprintf("affinity_score:%.2f", affinityScore),
 				fmt.Sprintf("cost_score:%.2f", costScore),
+				fmt.Sprintf("transition:%s:%.2f", transition.Mode, transition.Cost),
 			}
 		}
 	}

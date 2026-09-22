@@ -2310,7 +2310,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if isPoolAutoModel(requestedModel) {
 		profile := parsePoolAutoProfile(requestedModel)
 		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
-		dec, err := h.getPoolAuto().Orchestrate(profile, reqCaps, conversationID, h.pool, h.getCircuitBreakers(), h.pricing, h.metrics)
+		var conversation *ConversationState
+		if state, ok := h.getContextHandoff().State(conversationID); ok {
+			conversation = &state
+		}
+		dec, err := h.getPoolAuto().OrchestrateWithTransition(profile, reqCaps, conversationID, h.pool, h.getCircuitBreakers(), h.pricing, h.metrics, conversation)
 		if err != nil {
 			http.Error(w, "pool/auto orchestration error: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -2395,6 +2399,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		r.Header.Set("x-opencode-session", opencodeGoSessionHeader(r, conversationID, userID))
 	}
 
+	transitionSourceBody := append([]byte(nil), bodyBytes...)
+	transitionSourcePath := r.URL.Path
 	bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, accountType, r.URL.Path, bodyBytes)
 	if err != nil {
 		http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
@@ -2623,6 +2629,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	var fallbackApplied bool
 	var fallbackFromModel string
 	var fallbackReasonApplied string
+	fallbackVisited := map[string]bool{strings.ToLower(requestedModel): true}
+	fallbackTransitions := 0
 	cyberAccessRetry := false
 	requiredPlan := requiredPlanForRequest(accountType, r, requestedModel)
 
@@ -2678,7 +2686,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if lastStatus == http.StatusTooManyRequests {
 				trigger = Trigger429
 			}
-			if fallbackModel, fallbackReason, hasFallback := h.getFallbackGraph().ResolveFallback(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers()); hasFallback {
+			var conversation *ConversationState
+			if state, ok := h.getContextHandoff().State(conversationID); ok {
+				conversation = &state
+			}
+			fallbackModel, fallbackReason, hasFallback := "", "", false
+			if fallbackTransitions < 4 {
+				fallbackModel, fallbackReason, hasFallback = h.getFallbackGraph().ResolveFallbackWithTransitionExcluding(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers(), conversation, fallbackVisited)
+			}
+			if hasFallback {
 				fallbackMeta, _ := lookupModelMetadata(fallbackModel, h.pool)
 				if !h.enforcePolicy(w, admission, func() error {
 					if err := admission.CheckModel(fallbackModel); err != nil {
@@ -2691,19 +2707,44 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] triggering %s fallback: %s -> %s", reqID, trigger, requestedModel, fallbackModel)
 				}
+				fallbackBody := rewriteModelInBody(transitionSourceBody, fallbackModel)
+				if fallbackBody == nil {
+					http.Error(w, "fallback model could not be written to request", http.StatusBadRequest)
+					return
+				}
+				fallbackBody, err = h.prepareProviderContextHandoff(w, conversationID, fallbackMeta.Provider, transitionSourcePath, fallbackBody)
+				if err != nil {
+					http.Error(w, "fallback context handoff error: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				if fallbackMeta.Provider == AccountTypeAntigravity {
+					fallbackRequest := r.Clone(r.Context())
+					fallbackRequest.URL.Path = transitionSourcePath
+					h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile)
+					return
+				}
+				fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
+				if fallbackProvider == nil {
+					http.Error(w, "fallback provider is not configured", http.StatusServiceUnavailable)
+					return
+				}
+				fallbackBody, fallbackPath, fallbackDir, translateErr := translateFallbackPayload(fallbackBody, transitionSourcePath, fallbackMeta.Provider)
+				if translateErr != nil {
+					http.Error(w, translateErr.Error(), http.StatusBadRequest)
+					return
+				}
 				fallbackFromModel = requestedModel
 				requestedModel = fallbackModel
-				if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
-					bodyBytes = rewritten
-				}
-				if overrideProvider, overrideBase, rewrittenBody := h.modelRouteOverride(r.URL.Path, requestedModel, bodyBytes); overrideProvider != nil {
-					provider = overrideProvider
-					targetBase = overrideBase
-					accountType = overrideProvider.Type()
-					if rewrittenBody != nil {
-						bodyBytes = rewrittenBody
-					}
-				}
+				fallbackVisited[strings.ToLower(fallbackModel)] = true
+				fallbackTransitions++
+				bodyBytes = fallbackBody
+				r.URL.Path = fallbackPath
+				translateDir = fallbackDir
+				provider = fallbackProvider
+				targetBase = fallbackProvider.UpstreamURL(fallbackPath)
+				accountType = fallbackMeta.Provider
+				targetFormat = providerTargetFormat(accountType)
+				requiredPlan = requiredPlanForRequest(accountType, r, requestedModel)
 				if attempts < attempt+h.pool.countByType(accountType) {
 					attempts = attempt + h.pool.countByType(accountType)
 				}
@@ -2848,6 +2889,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			resp.Body.Close()
 			errBody = bodyForInspection(nil, errBody)
 			errBodyStr := string(errBody)
+			if resp.StatusCode == http.StatusTooManyRequests {
+				providerErr := classifyAntigravityError(resp.StatusCode, errBody)
+				if providerErr.Class != ProviderErrorQuota {
+					// A bare 429 is not proof of exhausted quota. Preserve the
+					// original status without cooling or rerouting the account.
+					errClass = ErrorClassFatal
+				}
+			}
 
 			if accountType == AccountTypeCodex && isCyberPolicyError(errBody) && !acc.CyberAccess {
 				cyberAccessRetry = true

@@ -1222,7 +1222,13 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	switched := exists && record.LastProvider != "" && record.LastProvider != target
 	mode := TransitionNative
 	if switched {
-		mode = transitionMode(record.LastProvider, target)
+		probe := record.State
+		probe.IR = conversationIRFromMessages(mergeConversationMessages(record.State.Messages, current), conversationID, record.State.TransitionEpoch+1)
+		plan := CanTransition(probe, record.LastProvider, target)
+		if !plan.Allowed {
+			return nil, contextHandoffResult{Switched: true, From: record.LastProvider, Mode: plan.Mode, Warnings: plan.Warnings}, fmt.Errorf("provider transition %s->%s is incompatible: %s", record.LastProvider, target, strings.Join(plan.Warnings, ","))
+		}
+		mode = plan.Mode
 	}
 	result := contextHandoffResult{Switched: switched, From: record.LastProvider, Mode: mode, Warnings: detectContextWarnings(object, switched)}
 
@@ -1238,6 +1244,10 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		if len(record.State.Messages) == 0 {
 			result.Warnings = appendUniqueString(result.Warnings, "normalized_history_unavailable")
 		}
+	} else if exists {
+		// Native clients often send only a new turn plus a response ID.
+		// Preserve the pool's portable history for a later provider fallback.
+		messages = mergeConversationMessages(record.State.Messages, current)
 	}
 
 	var warnings []string

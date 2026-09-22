@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FallbackTrigger specifies the condition that triggered model fallback.
@@ -140,6 +141,29 @@ func (fg *FallbackGraph) ResolveFallback(
 	pool *poolState,
 	cb *CircuitBreakerManager,
 ) (string, string, bool) {
+	return fg.ResolveFallbackWithTransition(currentModel, trigger, caps, pool, cb, nil)
+}
+
+func (fg *FallbackGraph) ResolveFallbackWithTransition(
+	currentModel string,
+	trigger FallbackTrigger,
+	caps RequestCapabilities,
+	pool *poolState,
+	cb *CircuitBreakerManager,
+	conversation *ConversationState,
+) (string, string, bool) {
+	return fg.ResolveFallbackWithTransitionExcluding(currentModel, trigger, caps, pool, cb, conversation, nil)
+}
+
+func (fg *FallbackGraph) ResolveFallbackWithTransitionExcluding(
+	currentModel string,
+	trigger FallbackTrigger,
+	caps RequestCapabilities,
+	pool *poolState,
+	cb *CircuitBreakerManager,
+	conversation *ConversationState,
+	exclude map[string]bool,
+) (string, string, bool) {
 	if fg == nil {
 		return "", "", false
 	}
@@ -177,8 +201,14 @@ func (fg *FallbackGraph) ResolveFallback(
 		candidates = append(rule.On429, rule.OnUnavailable...)
 	}
 
-	for _, cand := range candidates {
+	bestCandidate := ""
+	bestReason := ""
+	bestCost := 0.0
+	for index, cand := range candidates {
 		if strings.EqualFold(cand, normCurrent) {
+			continue
+		}
+		if exclude[strings.ToLower(strings.TrimSpace(cand))] {
 			continue
 		}
 
@@ -190,6 +220,13 @@ func (fg *FallbackGraph) ResolveFallback(
 
 		// 2. Circuit Breaker Check
 		meta, _ := lookupModelMetadata(cand, pool)
+		plan := TransitionCompatibility{Allowed: true, Mode: TransitionNative}
+		if conversation != nil {
+			plan = CanTransition(*conversation, conversation.ActiveProvider, meta.Provider)
+			if !plan.Allowed {
+				continue
+			}
+		}
 		if cb != nil {
 			if allowed, _ := cb.AllowProvider(string(meta.Provider)); !allowed {
 				continue
@@ -203,9 +240,13 @@ func (fg *FallbackGraph) ResolveFallback(
 				continue
 			}
 			hasLive := false
+			now := time.Now()
+			requiredPlan := requiredPlanForRequest(meta.Provider, nil, cand)
 			for _, a := range accounts {
 				a.mu.Lock()
-				live := !a.Dead && !a.Disabled
+				live := !a.Dead && !a.Disabled &&
+					(a.RateLimitUntil.IsZero() || !a.RateLimitUntil.After(now)) &&
+					planMatchesRequired(a.PlanType, requiredPlan)
 				a.mu.Unlock()
 				if live {
 					hasLive = true
@@ -219,8 +260,17 @@ func (fg *FallbackGraph) ResolveFallback(
 
 		// Candidate accepted
 		fallbackReason := fmt.Sprintf("fallback_%s:%s->%s", trigger, currentModel, cand)
-		return cand, fallbackReason, true
+		if conversation == nil {
+			return cand, fallbackReason, true
+		}
+		candidateCost := float64(index)*0.1 + plan.Cost
+		if bestCandidate == "" || candidateCost < bestCost {
+			bestCandidate, bestCost = cand, candidateCost
+			bestReason = fallbackReason + ":" + string(plan.Mode)
+		}
 	}
-
+	if bestCandidate != "" {
+		return bestCandidate, bestReason, true
+	}
 	return "", "", false
 }

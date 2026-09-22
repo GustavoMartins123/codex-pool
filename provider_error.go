@@ -82,7 +82,7 @@ func classifyAntigravityError(status int, body []byte) ProviderError {
 		result.Class, result.Retryable = ProviderErrorCapacity, true
 	case contains("policy violation", "terms of service", "safety policy", "permission denied"):
 		result.Class = ProviderErrorPolicy
-	case contains("rate_limit_exceeded", "quota_exceeded", "quota exhausted", "quota limit", "resource_exhausted: quota", "rate limited", "too many requests"):
+	case contains("rate_limit_exceeded", "rate limit exceeded", "quota_exceeded", "quota exhausted", "quota limit", "resource_exhausted: quota", "rate limited", "too many requests"):
 		result.Class, result.Retryable = ProviderErrorQuota, true
 		result.ResetAt, _ = parseAntigravityRetry(body, time.Now())
 	case status >= 500:
