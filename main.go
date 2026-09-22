@@ -3390,6 +3390,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if conversationID != "" && sampleBuf != nil && sampleBuf.Len() > 0 {
+				if text := extractAssistantTextFromResponseSample(sampleBuf.Bytes()); text != "" {
+					h.getContextHandoff().RecordAssistantText(conversationID, accountType, text)
+				}
+			}
 			if conversationID == "" {
 				if sampleBuf != nil && sampleBuf.Len() > 0 {
 					conversationID = extractConversationIDFromSSE(sampleBuf.Bytes())
@@ -5712,6 +5717,9 @@ func (h *proxyHandler) tryOnce(
 	// stays on the direct upstream->client path so first tokens are not delayed by
 	// accounting-only parsing or sampling.
 	sampleLimit := int64(16 * 1024)
+	if conversationID != "" {
+		sampleLimit = 256 * 1024
+	}
 	if h.cfg.logBodies && h.cfg.bodyLogLimit > 0 {
 		sampleLimit = h.cfg.bodyLogLimit
 	}

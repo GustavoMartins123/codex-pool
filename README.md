@@ -158,6 +158,26 @@ Set `POOL_AUTH_ENCRYPTION_KEY` to a stable 32-byte secret (hex or base64) before
 
 Environment variable `PROXY_MAX_INMEM_BODY_BYTES` controls how large a request body can be before the proxy streams it directly (no retries). Default is 16777216 (16 MiB).
 
+### Smart routing
+
+The default `balanced` policy scores quota headroom, reset timing, health,
+TTFT, throughput, conversation affinity, inflight load, and recent failures.
+Select another built-in profile per request with
+`X-Pool-Routing: fast` or use a model alias such as
+`pool/throughput/gpt-5.6`. Available profiles are `balanced`, `fast`,
+`throughput`, `quota-saver`, `drain`, `sticky`, and `legacy`.
+
+Profiles and their weights are configurable under `[routing]` and
+`[routing.profiles.<name>]`; see `config.toml.example`. Route traces expose
+the selected profile, normalized signals, weights, alternatives, and score.
+
+When a conversation changes provider, the pool keeps provider-local IDs
+separate, removes incompatible response/session/cache identifiers, rebuilds
+portable message and tool history, and compacts normalized context above
+100,000 estimated tokens. The response headers `X-Pool-Context-Handoff`,
+`X-Pool-Context-Compacted`, and `X-Pool-Context-Warning` describe those
+actions when applicable.
+
 ### Model capability discovery
 
 Authenticated clients can query `GET /api/pool/models` for the pool's model catalog, current account availability, and provider capabilities. The response includes a `schema_version`; clients should ignore fields they do not understand and treat an unknown schema version as unsupported.

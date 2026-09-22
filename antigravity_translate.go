@@ -1407,7 +1407,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		if conversationID != "" {
 			h.pool.pin(conversationID, account.ID)
 		}
-		h.writeAntigravityResponse(w, resp, prepared, replayScope, account, userID, originID, reqID)
+		h.writeAntigravityResponse(w, resp, prepared, replayScope, account, conversationID, userID, originID, reqID)
 		return true
 	}
 	if len(lastRateLimitBody) > 0 {
@@ -1622,7 +1622,7 @@ func parseAntigravityRetry(body []byte, now time.Time) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *http.Response, prepared antigravityPreparedRequest, replayScope antigravityReplayScope, account *Account, userID, originID, reqID string) {
+func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *http.Response, prepared antigravityPreparedRequest, replayScope antigravityReplayScope, account *Account, conversationID, userID, originID, reqID string) {
 	defer resp.Body.Close()
 	w.Header().Set("X-Accel-Buffering", "no")
 	if !prepared.ClientStream {
@@ -1644,6 +1644,11 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
+		if conversationID != "" {
+			if text := responseTextFromObject(result); text != "" {
+				h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, text)
+			}
+		}
 		h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
 		return
 	}
@@ -1657,6 +1662,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	translator.setResponsesRequest(prepared.ResponsesRequest)
 	translator.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
 	var usage *RequestUsage
+	var assistantText strings.Builder
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -1679,12 +1685,16 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		if value := antigravityUsage(response); value != nil {
 			usage = value
 		}
+		assistantText.WriteString(responseTextFromObject(response))
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 	if flusher != nil {
 		flusher.Flush()
+	}
+	if conversationID != "" {
+		h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, assistantText.String())
 	}
 	h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
 }

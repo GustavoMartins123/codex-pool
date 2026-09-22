@@ -161,6 +161,7 @@ type codexRelayTurn struct {
 	conversationID string
 	account        *Account
 	responseID     string
+	assistantText  strings.Builder
 }
 
 type codexRelayState struct {
@@ -398,7 +399,19 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
 	turn := s.responseTurn(data)
+	if turn == nil && len(s.turns) == 1 {
+		turn = s.turns[0]
+	}
 	s.recordCompletedUsage(data, turn)
+	if turn != nil {
+		text := extractAssistantTextFromResponseSample(data)
+		if text != "" && (!isTerminalCodexWebSocketEvent(data) || turn.assistantText.Len() == 0) {
+			turn.assistantText.WriteString(text)
+		}
+		if isTerminalCodexWebSocketEvent(data) && turn.conversationID != "" && s.h != nil {
+			s.h.getContextHandoff().RecordAssistantText(turn.conversationID, AccountTypeCodex, turn.assistantText.String())
+		}
+	}
 	filtered, drop, changed := filterHostedMCPResponseJSON(data)
 	if drop {
 		return []byte{}, nil
