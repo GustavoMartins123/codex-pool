@@ -125,6 +125,7 @@ func (h *proxyHandler) reloadAccounts() {
 		return
 	}
 	accs = append(accs, configuredGenericAccounts(h.registry)...)
+	accs = append(accs, configuredFederatedAccounts(h.registry)...)
 	preserveUsageSnapshots(h.pool.allAccounts(), accs)
 	h.pool.replace(accs)
 	if h.pool.count() == 0 {

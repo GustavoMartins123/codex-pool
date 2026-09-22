@@ -25,6 +25,8 @@ type ConfigFile struct {
 	ModelAliases   map[string]string                `toml:"model_aliases"`
 	ClientPolicies map[string]ClientPolicy          `toml:"client_policies"`
 	Providers      map[string]GenericProviderConfig `toml:"providers"`
+	Experiments    ExperimentsConfig                `toml:"experiments"`
+	Federation     FederationConfig                 `toml:"federation"`
 
 	PoolUsers PoolUsersConfig   `toml:"pool_users"`
 	Routing   RoutingConfigFile `toml:"routing"`

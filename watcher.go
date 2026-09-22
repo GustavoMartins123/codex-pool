@@ -155,6 +155,11 @@ func (pw *poolWatcher) reloadConfig() {
 		pw.handler.pool.configureRouting(cfg.Routing)
 		log.Printf("reloaded routing profiles (default=%s overrides=%d)", pw.handler.pool.defaultRoutingProfile(), len(cfg.Routing.Profiles))
 	}
+	pw.handler.cfg.clientPolicies = cfg.ClientPolicies
+	pw.handler.cfg.experiments = cfg.Experiments
+	if pw.handler.experiments != nil {
+		pw.handler.experiments.Configure(cfg.Experiments)
+	}
 
 	// Reload model aliases (built-in defaults + optional config overrides).
 	if pw.handler.aliases != nil {

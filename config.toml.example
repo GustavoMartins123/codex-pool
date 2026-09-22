@@ -105,3 +105,22 @@ reasoning = true
 modalities = ["text"]
 fallbacks = ["gpt-5.6-luna"]
 fallback_for = ["gpt-5.6-luna"]
+
+# Deterministic canary routing. This sends 5% of conversations requesting
+# gpt-5.6-sol to gpt-6-astra. Shadow duplication is opt-in and only runs for
+# requests without tools or image generation.
+[experiments.canary."gpt-5.6-sol"]
+candidate = "gpt-6-astra"
+percent = 5
+shadow = false
+
+# Optional authenticated pool federation. The remote token is a normal client
+# credential issued by the remote node and is read only from the environment.
+[federation]
+enabled = false
+
+[federation.nodes.home]
+enabled = true
+base_url = "https://pool-home.example.com"
+token_env = "POOL_HOME_TOKEN"
+poll_interval_seconds = 30

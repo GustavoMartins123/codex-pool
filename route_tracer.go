@@ -10,16 +10,18 @@ import (
 
 // RouteTrace records the routing decision made for a single request.
 type RouteTrace struct {
-	RequestID    string             `json:"request_id"`
-	Timestamp    time.Time          `json:"timestamp"`
-	Policy       string             `json:"policy"`
-	Selected     RouteTarget        `json:"selected"`
+	RequestID      string             `json:"request_id"`
+	Timestamp      time.Time          `json:"timestamp"`
+	Policy         string             `json:"policy"`
+	Selected       RouteTarget        `json:"selected"`
 	Score          float64            `json:"score"`
 	Reasons        []string           `json:"reasons"`
 	Alternatives   []RouteAlternative `json:"alternatives"`
 	FallbackFrom   string             `json:"fallback_from,omitempty"`
 	FallbackReason string             `json:"fallback_reason,omitempty"`
 	CircuitState   string             `json:"circuit_state,omitempty"`
+	Experiment     string             `json:"experiment,omitempty"`
+	Variant        string             `json:"variant,omitempty"`
 
 	// Sensitive fields (visible only to operators)
 	AccountID      string              `json:"account_id,omitempty"`

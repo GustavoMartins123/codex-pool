@@ -83,6 +83,8 @@ type config struct {
 	routing                    RoutingConfigFile
 	clientPolicies             map[string]ClientPolicy
 	genericProviders           map[string]GenericProviderConfig
+	experiments                ExperimentsConfig
+	federation                 FederationConfig
 }
 
 func getenv(key, def string) string {
@@ -266,6 +268,8 @@ func buildConfig() *config {
 	cfg.routing = fileCfg.Routing
 	cfg.clientPolicies = fileCfg.ClientPolicies
 	cfg.genericProviders = fileCfg.Providers
+	cfg.experiments = fileCfg.Experiments
+	cfg.federation = fileCfg.Federation
 	if err := validateRoutingConfig(cfg.routing); err != nil {
 		log.Printf("warning: invalid routing config, using built-in profiles: %v", err)
 		cfg.routing = RoutingConfigFile{}
@@ -318,8 +322,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure generic providers: %v", err)
 	}
+	federatedProviders, federatedAccounts, err := buildFederatedProviders(cfg.federation)
+	if err != nil {
+		log.Fatalf("configure federation: %v", err)
+	}
 	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider}
 	extraProviders = append(extraProviders, genericProviders...)
+	extraProviders = append(extraProviders, federatedProviders...)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)
 
 	log.Printf("loading pool from %s", cfg.poolDir)
@@ -328,6 +337,7 @@ func main() {
 		log.Fatalf("load pool: %v", err)
 	}
 	accounts = append(accounts, genericAccounts...)
+	accounts = append(accounts, federatedAccounts...)
 	pool := newPoolState(accounts, cfg.debug.Load())
 	pool.tierThreshold = cfg.tierThreshold
 	pool.configureRouting(cfg.routing)
@@ -481,6 +491,10 @@ func main() {
 		log.Fatalf("failed to initialize Pool Passport: %v", passportErr)
 	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
+	experiments, err := newExperimentTracker(store.db, cfg.experiments)
+	if err != nil {
+		log.Fatalf("initialize experiments: %v", err)
+	}
 
 	// Initialize pricing data
 	pricing := newPricingData()
@@ -548,6 +562,7 @@ func main() {
 		bruteForce:           newBruteForceTracker(),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
+		experiments:          experiments,
 		recent:               newRecentErrors(50),
 		startTime:            time.Now(),
 		pacer:                pacer,
@@ -570,6 +585,7 @@ func main() {
 	h.startAntigravityModelPoller()
 	h.startProviderModelPoller()
 	h.startGenericProviderHealthPoller()
+	h.startFederationPoller()
 
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
 	go h.probeClaudeAccountUUIDs()
@@ -704,6 +720,7 @@ type proxyHandler struct {
 	bruteForce           *bruteForceTracker
 	metrics              *metrics
 	routeTraces          *routeTraceStore
+	experiments          *experimentTracker
 	circuitBreakers      *CircuitBreakerManager
 	fallbackGraph        *FallbackGraph
 	poolAuto             *PoolAutoOrchestrator
@@ -1988,6 +2005,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		serveUnifiedGeminiModels(w, h.pool)
 		return
 	}
+	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/api/pool/experiments" {
+		h.serveExperimentMetrics(w)
+		return
+	}
 	var admission *policyAdmission
 	if h.passport != nil {
 		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.clientPolicies, time.Now())
@@ -2240,8 +2261,49 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	requestedModel, bodyBytes = routedModel, routedBody
+	var experiment *experimentAssignment
+	if h.experiments != nil && r.Header.Get("X-Pool-Canary-Bypass") == "" {
+		experimentKey := conversationID
+		if experimentKey == "" {
+			experimentKey = firstNonEmpty(userID, originID, reqID)
+		}
+		experiment = h.experiments.Assign(requestedModel, experimentKey)
+		if experiment != nil && experiment.Model != requestedModel {
+			requestedModel = experiment.Model
+			if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
+				bodyBytes = rewritten
+			}
+		}
+	}
 	if !h.enforcePolicy(w, admission, func() error { return admission.CheckModel(requestedModel) }) {
 		return
+	}
+	if experiment != nil {
+		shadowAllowed := admission == nil || admission.CheckModel(experiment.Rule.Candidate) == nil
+		if shadowAllowed {
+			h.maybeStartShadow(r, bodyBytes, experiment, reqID)
+		}
+		experimentStarted := time.Now()
+		experimentWriter := &experimentResponseWriter{ResponseWriter: w}
+		w = experimentWriter
+		w.Header().Set("X-Pool-Experiment", experiment.Name)
+		w.Header().Set("X-Pool-Variant", experiment.Variant)
+		toolRequest := requestUsesTools(bodyBytes)
+		defer func() {
+			status := experimentWriter.status
+			if status == 0 {
+				status = http.StatusServiceUnavailable
+			}
+			ttft := time.Duration(0)
+			if !experimentWriter.firstWrite.IsZero() {
+				ttft = experimentWriter.firstWrite.Sub(experimentStarted)
+			}
+			h.experiments.Record(experiment.Name, experiment.Variant, ExperimentObservation{
+				Status: status, Duration: time.Since(experimentStarted), TTFT: ttft,
+				ResponseBytes: experimentWriter.bytes, StreamError: status >= 500,
+				ToolRequest: toolRequest,
+			})
+		}()
 	}
 
 	var autoDecisionInfo *AutoDecision
@@ -2714,6 +2776,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			ClientIP:       originIP,
 			UserID:         userID,
 			Attempts:       attempt,
+		}
+		if experiment != nil {
+			trace.Experiment = experiment.Name
+			trace.Variant = experiment.Variant
 		}
 		h.getRouteTraces().Record(trace)
 		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, policy, primaryReason, attempt, reqID)
