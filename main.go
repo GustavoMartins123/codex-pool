@@ -80,6 +80,7 @@ type config struct {
 	websocketCompression       bool          // Enable per-message websocket compression (off by default for latency)
 	shutdownGrace              time.Duration // Let active websocket turns finish before forcing a restart close
 	tierThreshold              float64       // Secondary usage % at which we stop preferring a tier (default 0.50)
+	routing                    RoutingConfigFile
 }
 
 func getenv(key, def string) string {
@@ -260,6 +261,11 @@ func buildConfig() *config {
 
 	// Tier threshold: secondary usage % at which we stop preferring a tier (default 50%)
 	cfg.tierThreshold = getConfigFloat64("TIER_THRESHOLD", fileCfg.TierThreshold, 0.50)
+	cfg.routing = fileCfg.Routing
+	if err := validateRoutingConfig(cfg.routing); err != nil {
+		log.Printf("warning: invalid routing config, using built-in profiles: %v", err)
+		cfg.routing = RoutingConfigFile{}
+	}
 
 	flag.StringVar(&cfg.listenAddr, "listen", cfg.listenAddr, "listen address")
 	flag.StringVar(&cfg.backupDir, "backup-dir", "", "create an offline paired Bolt/DuckDB backup in this directory, then exit")
@@ -313,6 +319,7 @@ func main() {
 	}
 	pool := newPoolState(accounts, cfg.debug.Load())
 	pool.tierThreshold = cfg.tierThreshold
+	pool.configureRouting(cfg.routing)
 	codexCount := pool.countByType(AccountTypeCodex)
 	claudeCount := pool.countByType(AccountTypeClaude)
 	geminiCount := pool.countByType(AccountTypeGemini)
@@ -663,6 +670,8 @@ type proxyHandler struct {
 	registry             *ProviderRegistry
 	store                *usageStore
 	nativeContext        *nativeContext
+	contextHandoffOnce   sync.Once
+	contextHandoff       *conversationHandoffStore
 	analyticsStore       *AnalyticsStore
 	duckAnalytics        *DuckAnalytics
 	pricing              *PricingData
@@ -670,6 +679,9 @@ type proxyHandler struct {
 	bruteForce           *bruteForceTracker
 	metrics              *metrics
 	routeTraces          *routeTraceStore
+	circuitBreakers      *CircuitBreakerManager
+	fallbackGraph        *FallbackGraph
+	poolAuto             *PoolAutoOrchestrator
 	recent               *recentErrors
 	inflight             int64
 	startTime            time.Time
@@ -704,6 +716,42 @@ func (h *proxyHandler) getRouteTraces() *routeTraceStore {
 		h.routeTraces = newRouteTraceStore(2048)
 	}
 	return h.routeTraces
+}
+
+func (h *proxyHandler) getCircuitBreakers() *CircuitBreakerManager {
+	if h == nil {
+		return nil
+	}
+	if h.pool != nil && h.pool.circuitBreakers != nil {
+		return h.pool.circuitBreakers
+	}
+	if h.circuitBreakers == nil {
+		h.circuitBreakers = newCircuitBreakerManager()
+	}
+	return h.circuitBreakers
+}
+
+func (h *proxyHandler) getFallbackGraph() *FallbackGraph {
+	if h == nil {
+		return nil
+	}
+	if h.pool != nil && h.pool.fallbackGraph != nil {
+		return h.pool.fallbackGraph
+	}
+	if h.fallbackGraph == nil {
+		h.fallbackGraph = newFallbackGraph()
+	}
+	return h.fallbackGraph
+}
+
+func (h *proxyHandler) getPoolAuto() *PoolAutoOrchestrator {
+	if h == nil {
+		return nil
+	}
+	if h.poolAuto == nil {
+		h.poolAuto = newPoolAutoOrchestrator(nil)
+	}
+	return h.poolAuto
 }
 
 const largeReplayBodyThreshold = 8 * 1024 * 1024
@@ -2114,12 +2162,45 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if requestedModel != "" {
 		requestedModel, bodyBytes = applyModelAlias(h.aliases, requestedModel, bodyBytes, h.cfg.debug.Load(), reqID)
 	}
+	routingProfile, routedModel, routedBody, routingErr := resolveRequestRouting(h.pool, r, requestedModel, bodyBytes)
+	if routingErr != nil {
+		http.Error(w, routingErr.Error(), http.StatusBadRequest)
+		return
+	}
+	requestedModel, bodyBytes = routedModel, routedBody
+
+	var autoDecisionInfo *AutoDecision
+	if isPoolAutoModel(requestedModel) {
+		profile := parsePoolAutoProfile(requestedModel)
+		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
+		dec, err := h.getPoolAuto().Orchestrate(profile, reqCaps, conversationID, h.pool, h.getCircuitBreakers(), h.pricing, h.metrics)
+		if err != nil {
+			http.Error(w, "pool/auto orchestration error: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		autoDecisionInfo = &dec
+		requestedModel = dec.SelectedModel
+		if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
+			bodyBytes = rewritten
+		}
+		if h.cfg.debug.Load() {
+			log.Printf("[%s] pool/auto (%s) selected model=%s provider=%s score=%.2f",
+				reqID, profile, dec.SelectedModel, dec.SelectedProvider, dec.Score)
+		}
+	}
 
 	// Antigravity owns its complete upstream envelope and protocol conversion.
 	// Handle it before the generic provider translator so every public protocol
 	// consumes the same model registry and quota scheduler.
-	if requestedModel != "" && h.handleAntigravityProxy(w, r, bodyBytes, requestedModel, conversationID, userID, originID, originIP, reqID) {
-		return
+	if requestedModel != "" && shouldRouteAntigravityModel(requestedModel) {
+		bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, AccountTypeAntigravity, r.URL.Path, bodyBytes)
+		if err != nil {
+			http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if h.handleAntigravityProxy(w, r, bodyBytes, requestedModel, conversationID, userID, originID, originIP, reqID, routingProfile) {
+			return
+		}
 	}
 
 	if requestedModel != "" && isOpenAIModel(requestedModel) {
@@ -2158,6 +2239,12 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// attempt — streamed or buffered — carries a stable per-conversation value.
 	if accountType == AccountTypeOpencodeGo {
 		r.Header.Set("x-opencode-session", opencodeGoSessionHeader(r, conversationID, userID))
+	}
+
+	bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, accountType, r.URL.Path, bodyBytes)
+	if err != nil {
+		http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Inject thinking budget if the original model had a (budget) suffix.
@@ -2380,6 +2467,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	exclude := map[string]bool{}
 	var lastErr error
 	var lastStatus int
+	var fallbackApplied bool
+	var fallbackFromModel string
+	var fallbackReasonApplied string
 	cyberAccessRetry := false
 	requiredPlan := requiredPlanForRequest(accountType, r, requestedModel)
 
@@ -2427,9 +2517,40 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if imageGenerationRequest {
 				candidateConversationID = ""
 			}
-			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithTrace(candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel)
+			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTrace(candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
 		}
 		if acc == nil {
+			reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
+			trigger := TriggerUnavailable
+			if lastStatus == http.StatusTooManyRequests {
+				trigger = Trigger429
+			}
+			if fallbackModel, fallbackReason, hasFallback := h.getFallbackGraph().ResolveFallback(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers()); hasFallback {
+				if h.cfg.debug.Load() {
+					log.Printf("[%s] triggering %s fallback: %s -> %s", reqID, trigger, requestedModel, fallbackModel)
+				}
+				fallbackFromModel = requestedModel
+				requestedModel = fallbackModel
+				if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
+					bodyBytes = rewritten
+				}
+				if overrideProvider, overrideBase, rewrittenBody := h.modelRouteOverride(r.URL.Path, requestedModel, bodyBytes); overrideProvider != nil {
+					provider = overrideProvider
+					targetBase = overrideBase
+					accountType = overrideProvider.Type()
+					if rewrittenBody != nil {
+						bodyBytes = rewrittenBody
+					}
+				}
+				if attempts < attempt+h.pool.countByType(accountType) {
+					attempts = attempt + h.pool.countByType(accountType)
+				}
+				exclude = map[string]bool{}
+				fallbackApplied = true
+				fallbackReasonApplied = fallbackReason
+				continue
+			}
+
 			// All accounts excluded or rate-limited. If there are rate-limited
 			// accounts, wait for the shortest cooldown instead of 503 immediately.
 			if cooldown := h.pool.nearestCooldown(accountType, nil); cooldown > 0 {
@@ -2448,6 +2569,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				case <-ctx.Done():
 				}
 			}
+
 			if lastErr != nil {
 				http.Error(w, lastErr.Error(), http.StatusServiceUnavailable)
 			} else {
@@ -2465,6 +2587,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if len(reasons) > 0 {
 			primaryReason = reasons[len(reasons)-1]
 		}
+
+		if autoDecisionInfo != nil {
+			policy = "pool_auto:" + autoDecisionInfo.Profile
+			reasons = append(autoDecisionInfo.Explanation, reasons...)
+			score = autoDecisionInfo.Score
+		}
+		if fallbackApplied {
+			reasons = append(reasons, fallbackReasonApplied)
+		}
+		circuitState := string(h.getCircuitBreakers().State(providerKey(string(accountType))))
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Timestamp:      time.Now().UTC(),
@@ -2473,6 +2605,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			Score:          score,
 			Reasons:        reasons,
 			Alternatives:   alternatives,
+			FallbackFrom:   fallbackFromModel,
+			FallbackReason: fallbackReasonApplied,
+			CircuitState:   circuitState,
 			AccountID:      acc.ID,
 			ScoreBreakdown: breakdownView,
 			ClientIP:       originIP,
@@ -2481,6 +2616,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 		h.getRouteTraces().Record(trace)
 		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, policy, primaryReason, attempt, reqID)
+		if fallbackApplied {
+			w.Header().Set("X-Pool-Fallback", fmt.Sprintf("%s->%s", fallbackFromModel, requestedModel))
+		}
+		w.Header().Set("X-Pool-Circuit-State", circuitState)
 
 		atomic.AddInt64(&acc.Inflight, 1)
 		atomic.AddInt64(&h.inflight, 1)
@@ -2494,6 +2633,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		trace.DurationMs = float64(reqDuration.Milliseconds())
 		if resp != nil {
 			trace.StatusCode = resp.StatusCode
+			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, time.Now())
+		} else if err != nil {
+			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, http.StatusServiceUnavailable, time.Now())
 		}
 		if err != nil {
 			trace.Error = err.Error()
@@ -2503,7 +2645,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			h.metrics.recordPerformance(string(accountType), requestedModel, float64(reqDuration.Milliseconds()), float64(reqDuration.Milliseconds())*0.4, float64(reqDuration.Milliseconds())*0.2, 0, resp.StatusCode, attempt-1, false)
 		}
 
+		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
 		if err != nil {
+			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, ErrorClassTransient)
 			if isContextError(err) {
 				writeContextError(w, err)
 				return
@@ -2526,6 +2670,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 		// --- Error classification & handling ---
 		errClass := classifyStatus(resp.StatusCode)
+		if errClass != ErrorClassNone {
+			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass)
+		} else {
+			h.getCircuitBreakers().RecordSuccess(string(accountType), acc.ID, requestedModel, reqCaps.Modalities)
+		}
 
 		// For classes that need the body, read it now.
 		if errClass != ErrorClassNone {
@@ -3314,6 +3463,11 @@ func (h *proxyHandler) proxyRequestWebSocket(
 
 	requiredPlan := requiredPlanForRequest(accountType, r, "")
 	clientIP := getClientIP(r)
+	routingProfile, ok := h.pool.resolveRoutingProfile(r.Header.Get("X-Pool-Routing"))
+	if !ok {
+		http.Error(w, fmt.Sprintf("unknown routing profile %q", r.Header.Get("X-Pool-Routing")), http.StatusBadRequest)
+		return
+	}
 	selectionConversationID := conversationID
 	if selectionConversationID == "" && accountType == AccountTypeCodex {
 		fallbackID := userID
@@ -3325,7 +3479,15 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		}
 		selectionConversationID = "cyber-fallback:" + fallbackID
 	}
-	acc := h.pool.candidate(selectionConversationID, map[string]bool{}, accountType, requiredPlan, clientIP)
+	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTrace(
+		selectionConversationID,
+		map[string]bool{},
+		accountType,
+		requiredPlan,
+		clientIP,
+		"",
+		routingProfile,
+	)
 	if acc == nil {
 		http.Error(w, fmt.Sprintf("no live %s accounts", accountType), http.StatusServiceUnavailable)
 		return
@@ -3427,6 +3589,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 			InitialOutURL:               outURL,
 			InitialUpstreamHeaders:      upstreamHeaders,
 			ConversationID:              conversationID,
+			RoutingProfile:              routingProfile,
 			RequiredPlan:                requiredPlan,
 			ClientIP:                    clientIP,
 			UserID:                      userID,

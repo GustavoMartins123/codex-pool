@@ -151,6 +151,39 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 			AvailableNow: model.AvailableNow, NextResetAt: optionalModelReset(model.NextResetAt), Stale: model.Stale,
 		})
 	}
+	// Pool Auto Orchestration models
+	autoProfiles := []struct {
+		id, name, desc string
+		ctxWin         int
+	}{
+		{"pool/auto", "Pool Auto", "Dynamic capacity-aware model orchestration across all providers", 1000000},
+		{"pool/auto-fast", "Pool Auto Fast", "Lowest latency and TTFT optimized model orchestration", 1000000},
+		{"pool/auto-quality", "Pool Auto Quality", "Frontier reasoning and benchmark quality model orchestration", 1000000},
+		{"pool/auto-efficient", "Pool Auto Efficient", "Economical cost and quota headroom optimized model orchestration", 1000000},
+		{"pool/auto-long-context", "Pool Auto Long Context", "Large context window (>=1M tokens) model orchestration", 1048576},
+	}
+	totalAccs := 0
+	if pool != nil {
+		totalAccs = len(pool.allAccounts())
+	}
+	for _, ap := range autoProfiles {
+		models = append(models, poolModelDescriptor{
+			ID:                 ap.id,
+			Name:               ap.name,
+			Description:        ap.desc,
+			Protocol:           "openai",
+			Protocols:          []string{"openai", "responses", "anthropic", "gemini"},
+			ContextWindow:      ap.ctxWin,
+			MaxOutputTokens:    131072,
+			Provider:           "pool",
+			Modalities:         []string{"text", "image"},
+			Capabilities:       map[string]bool{"reasoning": true, "tools": true, "web_search": true, "images": true},
+			AvailableNow:       true,
+			SupportingAccounts: totalAccs,
+			AvailableAccounts:  totalAccs,
+		})
+	}
+
 	models = append(models, discoveredModelsForPool(pool)...)
 	return models
 }
