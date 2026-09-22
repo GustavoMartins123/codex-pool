@@ -2448,12 +2448,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			translateDir = TranslateChatToResponses
 		}
 	}
-	// Special case: Responses API -> Claude Messages API
-	// When client sends /responses (e.g. Codex CLI with -m opus) and provider is Claude.
-	if translateDir == TranslateNone && accountType == AccountTypeClaude {
-		if strings.HasPrefix(r.URL.Path, "/v1/responses") || strings.HasPrefix(r.URL.Path, "/responses") {
-			translateDir = TranslateResponsesToClaude
-		}
+	// Special case: Responses API -> Anthropic Messages API.
+	// Route by the provider wire format so Anthropic-compatible providers such as ZAI
+	// receive the same tool-call normalization as native Claude.
+	if translateDir == TranslateNone && shouldTranslateResponsesToAnthropic(r.URL.Path, targetFormat) {
+		translateDir = TranslateResponsesToClaude
 	}
 
 	if translateDir != TranslateNone {
@@ -3389,7 +3388,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					return
 				}
 
-				if acc.Type == AccountTypeClaude {
+				if providerTargetFormat(acc.Type) == FormatClaude {
 					if claudeAccum == nil {
 						claudeAccum = ru
 					} else {
@@ -5648,24 +5647,25 @@ func (h *proxyHandler) tryOnce(
 			outReq.Header.Set("Accept", "text/event-stream")
 			outReq.Header.Set("Content-Type", "application/json")
 		} else if translateDir == TranslateOAIToClaude || translateDir == TranslateResponsesToClaude {
-			// Client sent OpenAI/Responses format but upstream is Claude — make request
-			// indistinguishable from a native Claude Code request.
-			isOAuth := strings.HasPrefix(access, "sk-ant-oat")
-			is1M := strings.Contains(strings.ToLower(requestedModel), "[1m]")
-
-			// Parse translated body to detect streaming and fast mode
+			// All Anthropic-compatible providers need the wire translation, but only
+			// native Claude OAuth traffic should impersonate Claude Code.
 			acceptHeader := "application/json"
-			isFastMode := false
 			var bodyObj map[string]any
 			if json.Unmarshal(bodyBytes, &bodyObj) == nil {
 				if s, ok := bodyObj["stream"].(bool); ok && s {
 					acceptHeader = "text/event-stream"
 				}
+			}
+
+			if provider.Type() == AccountTypeClaude {
+				isOAuth := strings.HasPrefix(access, "sk-ant-oat")
+				is1M := strings.Contains(strings.ToLower(requestedModel), "[1m]")
+				isFastMode := false
 				if sp, ok := bodyObj["speed"].(string); ok && sp == "fast" {
 					isFastMode = true
 				}
 
-				// Pace requests per session to avoid burst patterns
+				// Pace requests per session to avoid burst patterns.
 				sessionID := ccSessionHeader(in, userID)
 				h.pacer.wait(sessionID)
 
@@ -5680,32 +5680,47 @@ func (h *proxyHandler) tryOnce(
 				if reordered, err := orderedMarshal(bodyObj, claudeBodyKeyOrder); err == nil {
 					bodyBytes = reordered
 				}
-			}
-			// Extract the model from the translated body (canonical name)
-			bodyModel := ""
-			if m, ok := bodyObj["model"].(string); ok {
-				bodyModel = m
-			}
-			if bodyModel == "" {
-				bodyModel = requestedModel
-			}
 
-			outReq.Header.Set("anthropic-version", ccAnthropicVersion)
-			hasStructuredOutputs := ccRequestHasStructuredOutputs(bodyObj)
-			hasTaskBudget := ccRequestHasTaskBudget(bodyObj)
-			outReq.Header.Set("anthropic-beta", ccBetaHeader(bodyModel, isOAuth, is1M, isFastMode, hasStructuredOutputs, hasTaskBudget))
-			outReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-			outReq.Header.Set("User-Agent", ccUserAgent())
-			outReq.Header.Set("X-Claude-Code-Session-Id", ccSessionHeader(in, userID))
-			outReq.Header.Set("X-App", "cli")
-			outReq.Header.Set("x-client-request-id", uuid.NewString())
-			outReq.Header.Set("Accept", acceptHeader)
-			outReq.Header.Set("Accept-Language", "*")
-			outReq.Header.Set("Content-Type", "application/json")
-			outReq.Header.Set("Sec-Fetch-Mode", "cors")
-			// Add x-stainless headers to match Anthropic SDK fingerprint
-			ccStainlessHeaders(outReq.Header.Set)
-			// Remove any OpenAI-specific headers that might leak
+				bodyModel := ""
+				if m, ok := bodyObj["model"].(string); ok {
+					bodyModel = m
+				}
+				if bodyModel == "" {
+					bodyModel = requestedModel
+				}
+
+				outReq.Header.Set("anthropic-version", ccAnthropicVersion)
+				hasStructuredOutputs := ccRequestHasStructuredOutputs(bodyObj)
+				hasTaskBudget := ccRequestHasTaskBudget(bodyObj)
+				outReq.Header.Set("anthropic-beta", ccBetaHeader(bodyModel, isOAuth, is1M, isFastMode, hasStructuredOutputs, hasTaskBudget))
+				outReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
+				outReq.Header.Set("User-Agent", ccUserAgent())
+				outReq.Header.Set("X-Claude-Code-Session-Id", sessionID)
+				outReq.Header.Set("X-App", "cli")
+				outReq.Header.Set("x-client-request-id", uuid.NewString())
+				outReq.Header.Set("Accept", acceptHeader)
+				outReq.Header.Set("Accept-Language", "*")
+				outReq.Header.Set("Content-Type", "application/json")
+				outReq.Header.Set("Sec-Fetch-Mode", "cors")
+				ccStainlessHeaders(outReq.Header.Set)
+			} else {
+				// ZAI and other Anthropic-compatible providers should receive a clean
+				// Messages API request without Claude OAuth fingerprint headers.
+				if outReq.Header.Get("anthropic-version") == "" {
+					outReq.Header.Set("anthropic-version", ccAnthropicVersion)
+				}
+				outReq.Header.Set("Accept", acceptHeader)
+				outReq.Header.Set("Content-Type", "application/json")
+				outReq.Header.Del("anthropic-beta")
+				outReq.Header.Del("anthropic-dangerous-direct-browser-access")
+				outReq.Header.Del("X-Claude-Code-Session-Id")
+				outReq.Header.Del("X-App")
+				for key := range outReq.Header {
+					if strings.HasPrefix(strings.ToLower(key), "x-stainless-") {
+						outReq.Header.Del(key)
+					}
+				}
+			}
 			outReq.Header.Del("openai-beta")
 			outReq.Header.Del("openai-organization")
 		}

@@ -75,6 +75,13 @@ func providerTargetFormat(accountType AccountType) RequestFormat {
 	}
 }
 
+func shouldTranslateResponsesToAnthropic(path string, targetFormat RequestFormat) bool {
+	if targetFormat != FormatClaude {
+		return false
+	}
+	return strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/responses")
+}
+
 // translateRequestBody translates a request body between formats.
 func translateRequestBody(body []byte, src, dst RequestFormat) ([]byte, error) {
 	if src == dst || src == FormatUnknown || dst == FormatUnknown {

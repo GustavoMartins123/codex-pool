@@ -62,19 +62,6 @@ func (p *ZAIProvider) LoadAccount(name, path string, data []byte) (*Account, err
 		label = "Z.ai Coding Plan"
 	}
 
-	windowMins := zj.WindowMinutes
-	if windowMins <= 0 {
-		windowMins = 1440 // 24h rolling daily quota window
-	}
-
-	now := time.Now()
-	nextDailyReset := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-	daysUntilSunday := (7 - int(now.Weekday())) % 7
-	if daysUntilSunday == 0 {
-		daysUntilSunday = 7
-	}
-	nextWeeklyReset := time.Date(now.Year(), now.Month(), now.Day()+daysUntilSunday, 0, 0, 0, 0, time.UTC)
-
 	monthlyCost := float64(15.0)
 	if zj.MonthlyCost != nil && *zj.MonthlyCost >= 0 {
 		monthlyCost = *zj.MonthlyCost
@@ -82,12 +69,15 @@ func (p *ZAIProvider) LoadAccount(name, path string, data []byte) (*Account, err
 		monthlyCost = *zj.SubscriptionCost
 	}
 
-	dailyLimit := zj.DailyTokenLimit
-	if dailyLimit <= 0 && zj.LimitTPM > 0 {
-		dailyLimit = int64(zj.LimitTPM) * 1440
+	// Coding Plan quota is not a fixed midnight daily window. Keep legacy
+	// explicit configuration metadata, but never synthesize usage percentages
+	// or reset timestamps when Z.ai has not reported them.
+	usage := UsageSnapshot{
+		RetrievedAt: time.Now(),
+		Source:      "config",
 	}
-	if dailyLimit <= 0 {
-		dailyLimit = 2000000 // 2M daily tokens standard baseline for coding plan
+	if zj.WindowMinutes > 0 {
+		usage.PrimaryWindowMinutes = zj.WindowMinutes
 	}
 
 	acc := &Account{
@@ -99,25 +89,15 @@ func (p *ZAIProvider) LoadAccount(name, path string, data []byte) (*Account, err
 		AccessToken:      zj.APIKey,
 		PlanType:         planType,
 		MonthlyCost:      monthlyCost,
-		DailyTokenLimit:  dailyLimit,
+		DailyTokenLimit:  zj.DailyTokenLimit,
 		RateLimitTier:    zj.RateLimitTier,
 		AllowedSourceIPs: zj.AllowedSourceIPs,
 		Dead:             zj.Dead,
 		Disabled:         zj.Disabled,
-		Usage: UsageSnapshot{
-			PrimaryWindowMinutes:   windowMins,
-			PrimaryResetAt:         nextDailyReset,
-			SecondaryWindowMinutes: 10080, // 7 days = 10080 minutes
-			SecondaryResetAt:       nextWeeklyReset,
-			PrimaryUsageReported:   true,
-			SecondaryUsageReported: true,
-			RetrievedAt:            now,
-			Source:                 "config",
-		},
+		Usage:            usage,
 	}
 	return acc, nil
 }
-
 func (p *ZAIProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	req.Header.Set("X-Api-Key", acc.AccessToken)
 	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
@@ -306,6 +286,13 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 	if !hasPrimary && !hasSecondary {
 		return UsageSnapshot{}, false
 	}
+
+	// These are immediate API request/token rate limits, not Coding Plan's
+	// 5-hour/weekly quota. Report only fields actually supplied upstream.
+	snap.PrimaryUsageReported = hasPrimary
+	snap.SecondaryUsageReported = hasSecondary
+	snap.primarySet = hasPrimary
+	snap.secondarySet = hasSecondary
 
 	// Check reset timestamps
 	for _, key := range []string{

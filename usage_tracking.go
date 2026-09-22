@@ -1302,11 +1302,11 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 	a.mu.Lock()
 	access := a.AccessToken
-	planType := a.PlanType
-	dailyLimit := a.DailyTokenLimit
 	a.mu.Unlock()
 
-	// 1. Sync models and test authentication with upstream Z.ai API
+	// Sync model discovery and validate the key. The /v1/models response may
+	// expose immediate request/token rate-limit headers, but those headers are
+	// not a substitute for Coding Plan's separate 5-hour and weekly quotas.
 	modelsURL := h.cfg.zaiBase.String() + "/v1/models"
 	req, _ := http.NewRequest(http.MethodGet, modelsURL, nil)
 	req.Header.Set("X-Api-Key", access)
@@ -1330,6 +1330,9 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 		}
 		return fmt.Errorf("zai models unauthorized: %s", resp.Status)
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("zai models bad status: %s", resp.Status)
+	}
 
 	var payload struct {
 		Data []struct {
@@ -1337,105 +1340,44 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 			DisplayName string `json:"display_name"`
 		} `json:"data"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&payload)
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return fmt.Errorf("decode zai models: %w", err)
+	}
+
+	snap, hasHeaderQuota := parseZAIResponseRateLimits(resp.Header)
 
 	a.mu.Lock()
 	if a.Models == nil {
 		a.Models = make(map[string]DiscoveredModel)
 	}
 	for _, m := range payload.Data {
-		if m.ID != "" {
-			displayName := m.DisplayName
-			if displayName == "" {
-				displayName = strings.ToUpper(m.ID)
-			}
-			a.Models[m.ID] = DiscoveredModel{
-				ID:            m.ID,
-				DisplayName:   displayName,
-				ContextWindow: 1000000,
-			}
+		if m.ID == "" {
+			continue
+		}
+		displayName := m.DisplayName
+		if displayName == "" {
+			displayName = strings.ToUpper(m.ID)
+		}
+		a.Models[m.ID] = DiscoveredModel{
+			ID:            m.ID,
+			DisplayName:   displayName,
+			ContextWindow: 1000000,
 		}
 	}
 	a.ModelsFetchedAt = now
 
-	// 2. Setup Quota windows and calculate utilization
-	windowMins := a.Usage.PrimaryWindowMinutes
-	if windowMins <= 0 {
-		windowMins = 1440 // 24h rolling daily quota window
-	}
-
-	// Next daily reset (midnight UTC)
-	nextDailyReset := a.Usage.PrimaryResetAt
-	if nextDailyReset.IsZero() || nextDailyReset.Before(now) {
-		nextDailyReset = time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-	}
-
-	// Next weekly reset (Sunday midnight UTC)
-	nextWeeklyReset := a.Usage.SecondaryResetAt
-	if nextWeeklyReset.IsZero() || nextWeeklyReset.Before(now) {
-		daysUntilSunday := (7 - int(now.Weekday())) % 7
-		if daysUntilSunday == 0 {
-			daysUntilSunday = 7
-		}
-		nextWeeklyReset = time.Date(now.Year(), now.Month(), now.Day()+daysUntilSunday, 0, 0, 0, 0, time.UTC)
-	}
-
-	// Rate limit parsing from headers if available
-	snap, hasHeaderQuota := parseZAIResponseRateLimits(resp.Header)
-
-	primaryPct := float64(0)
-	secondaryPct := float64(0)
 	if hasHeaderQuota {
-		primaryPct = snap.PrimaryUsedPercent
-		secondaryPct = snap.SecondaryUsedPercent
-		if !snap.PrimaryResetAt.IsZero() {
-			nextDailyReset = snap.PrimaryResetAt
-		}
-		if !snap.SecondaryResetAt.IsZero() {
-			nextWeeklyReset = snap.SecondaryResetAt
-		}
+		snap.RetrievedAt = now
+		a.Usage = mergeUsage(a.Usage, snap)
+	} else if a.Usage.Source == "zai-api" || a.Usage.Source == "config" {
+		// Clear state synthesized by older codex-pool versions. Unknown is
+		// preferable to presenting a fabricated 24-hour/weekly reset.
+		a.Usage = UsageSnapshot{RetrievedAt: now, Source: "zai-models"}
 	} else {
-		// Calculate from rolling 24h token throughput against plan capacity
-		budget := dailyLimit
-		if budget <= 0 {
-			budget = 2000000 // 2M daily tokens standard baseline
-			if strings.Contains(strings.ToLower(planType), "pro") {
-				budget = 5000000
-			} else if strings.Contains(strings.ToLower(planType), "team") {
-				budget = 10000000
-			}
-		}
-
-		last24hTokens := int64(0)
-		if h.store != nil {
-			if recent, err := h.store.getRecentRequestUsage(1); err == nil {
-				for _, ru := range recent {
-					if ru.AccountID == a.ID {
-						last24hTokens += ru.InputTokens + ru.OutputTokens
-					}
-				}
-			}
-		}
-		if budget > 0 {
-			primaryPct = math.Min(1.0, float64(last24hTokens)/float64(budget))
-			secondaryPct = math.Min(1.0, float64(last24hTokens*7)/float64(budget*7))
-		}
+		// Preserve real usage learned from request headers while advancing the
+		// model-sync timestamp so we do not hammer the discovery endpoint.
+		a.Usage.RetrievedAt = now
 	}
-
-	a.Usage = mergeUsage(a.Usage, UsageSnapshot{
-		PrimaryUsed:            primaryPct,
-		PrimaryUsedPercent:     primaryPct,
-		PrimaryWindowMinutes:   windowMins,
-		PrimaryResetAt:         nextDailyReset,
-		SecondaryUsed:          secondaryPct,
-		SecondaryUsedPercent:   secondaryPct,
-		SecondaryWindowMinutes: 10080,
-		SecondaryResetAt:       nextWeeklyReset,
-		PrimaryUsageReported:   true,
-		SecondaryUsageReported: true,
-		RetrievedAt:            now,
-		Source:                 "zai-api",
-	})
 	a.mu.Unlock()
 
 	restoreValidatedAccount(a, "Z.ai model API")

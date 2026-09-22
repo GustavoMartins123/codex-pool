@@ -68,8 +68,8 @@ func TestZAIAccountLoadAndPlanSupport(t *testing.T) {
 		"plan_type": "coding_plan",
 		"label": "Custom Z.ai",
 		"monthly_cost": 25.0,
-		"window_minutes": 1440,
-		"limit_tpm": 50000
+		"window_minutes": 300,
+		"daily_token_limit": 123456
 	}`)
 
 	provider := NewZAIProvider(mustParse("https://api.z.ai/api/anthropic"))
@@ -86,20 +86,83 @@ func TestZAIAccountLoadAndPlanSupport(t *testing.T) {
 	if acc.MonthlyCost != 25.0 {
 		t.Errorf("MonthlyCost = %v, want 25.0", acc.MonthlyCost)
 	}
-	if acc.DailyTokenLimit != 50000*1440 {
-		t.Errorf("DailyTokenLimit = %v, want %v", acc.DailyTokenLimit, 50000*1440)
+	if acc.DailyTokenLimit != 123456 {
+		t.Errorf("DailyTokenLimit = %v, want 123456", acc.DailyTokenLimit)
 	}
-	if acc.Usage.PrimaryWindowMinutes != 1440 {
-		t.Errorf("PrimaryWindowMinutes = %v, want 1440", acc.Usage.PrimaryWindowMinutes)
+	if acc.Usage.PrimaryWindowMinutes != 300 {
+		t.Errorf("PrimaryWindowMinutes = %v, want explicit 300", acc.Usage.PrimaryWindowMinutes)
 	}
-	if acc.Usage.SecondaryWindowMinutes != 10080 {
-		t.Errorf("SecondaryWindowMinutes = %v, want 10080", acc.Usage.SecondaryWindowMinutes)
+	if acc.Usage.SecondaryWindowMinutes != 0 {
+		t.Errorf("SecondaryWindowMinutes = %v, want unknown", acc.Usage.SecondaryWindowMinutes)
 	}
-	if acc.Usage.PrimaryResetAt.IsZero() {
-		t.Errorf("PrimaryResetAt should not be zero")
+	if !acc.Usage.PrimaryResetAt.IsZero() || !acc.Usage.SecondaryResetAt.IsZero() {
+		t.Errorf("ZAI reset timestamps must remain unknown until upstream reports them: %+v", acc.Usage)
 	}
-	if acc.Usage.SecondaryResetAt.IsZero() {
-		t.Errorf("SecondaryResetAt should not be zero")
+	if acc.Usage.PrimaryUsageReported || acc.Usage.SecondaryUsageReported {
+		t.Errorf("ZAI usage must not be marked reported from static config: %+v", acc.Usage)
+	}
+}
+
+
+func TestZAIResponsesPathUsesAnthropicWireTranslation(t *testing.T) {
+	if !shouldTranslateResponsesToAnthropic("/v1/responses", providerTargetFormat(AccountTypeZAI)) {
+		t.Fatal("ZAI Responses requests must be translated to Anthropic Messages")
+	}
+	if !shouldTranslateResponsesToAnthropic("/responses", providerTargetFormat(AccountTypeZAI)) {
+		t.Fatal("ZAI /responses requests must be translated to Anthropic Messages")
+	}
+	if shouldTranslateResponsesToAnthropic("/v1/responses", providerTargetFormat(AccountTypeCodex)) {
+		t.Fatal("Codex Responses requests must stay on the Responses wire format")
+	}
+}
+
+func TestSyncZAIUsageDoesNotInventCodingPlanWindows(t *testing.T) {
+	mockServer := &mockUpstreamTransport{
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/v1/models") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.3","display_name":"GLM-5.3"}]}`))
+				return
+			}
+			http.NotFound(w, r)
+		}),
+	}
+
+	zaiBase, _ := url.Parse("http://mock-zai.local/api/anthropic")
+	h := &proxyHandler{
+		cfg:       &config{zaiBase: zaiBase},
+		transport: mockServer,
+	}
+	acc := &Account{
+		Type:        AccountTypeZAI,
+		ID:          "zai_unknown_quota",
+		AccessToken: "test-key",
+		PlanType:    "coding_plan",
+		Usage: UsageSnapshot{
+			PrimaryUsedPercent:     0.42,
+			SecondaryUsedPercent:   0.31,
+			PrimaryWindowMinutes:   1440,
+			SecondaryWindowMinutes: 10080,
+			PrimaryResetAt:         time.Now().Add(2 * time.Hour),
+			SecondaryResetAt:       time.Now().Add(4 * 24 * time.Hour),
+			PrimaryUsageReported:   true,
+			SecondaryUsageReported: true,
+			Source:                 "zai-api",
+		},
+	}
+
+	if err := h.syncZAIUsage(time.Now(), acc); err != nil {
+		t.Fatalf("syncZAIUsage failed: %v", err)
+	}
+
+	if acc.Usage.PrimaryUsageReported || acc.Usage.SecondaryUsageReported {
+		t.Fatalf("usage should be unknown without upstream quota data: %+v", acc.Usage)
+	}
+	if acc.Usage.PrimaryWindowMinutes != 0 || acc.Usage.SecondaryWindowMinutes != 0 {
+		t.Fatalf("quota windows were invented: %+v", acc.Usage)
+	}
+	if !acc.Usage.PrimaryResetAt.IsZero() || !acc.Usage.SecondaryResetAt.IsZero() {
+		t.Fatalf("quota reset timestamps were invented: %+v", acc.Usage)
 	}
 }
 
