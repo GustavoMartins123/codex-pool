@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -72,6 +73,8 @@ type ProviderSessionState struct {
 
 type contextHandoffResult struct {
 	Switched  bool
+	From      AccountType
+	Mode      TransitionMode
 	Compacted bool
 	Warnings  []string
 }
@@ -1107,12 +1110,20 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	defer s.mu.Unlock()
 	record, exists := s.records[conversationID]
 	switched := exists && record.LastProvider != "" && record.LastProvider != target
-	result := contextHandoffResult{Switched: switched, Warnings: detectContextWarnings(object, switched)}
+	mode := TransitionNative
+	if switched {
+		mode = transitionMode(record.LastProvider, target)
+	}
+	result := contextHandoffResult{Switched: switched, From: record.LastProvider, Mode: mode, Warnings: detectContextWarnings(object, switched)}
 
 	messages := current
 	previouslyCompacted := exists && record.State.Summary != ""
 	if switched {
-		messages = mergeConversationMessages(record.State.Messages, current)
+		if mode == TransitionSummary {
+			messages = summaryHandoffMessages(record.State.Messages, current, record.State.Summary)
+		} else {
+			messages = mergeConversationMessages(record.State.Messages, current)
+		}
 		stripIncompatibleProviderFields(root)
 		if len(record.State.Messages) == 0 {
 			result.Warnings = appendUniqueString(result.Warnings, "normalized_history_unavailable")
@@ -1383,6 +1394,8 @@ func (h *proxyHandler) prepareProviderContextHandoff(
 	}
 	if result.Switched {
 		w.Header().Set("X-Pool-Context-Handoff", "provider-switch")
+		w.Header().Set("X-Pool-Transition-Mode", string(result.Mode))
+		log.Printf("conversation=%s transition=%s->%s mode=%s", conversationID, result.From, target, result.Mode)
 	}
 	if result.Compacted {
 		w.Header().Set("X-Pool-Context-Compacted", "true")
