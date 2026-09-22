@@ -1308,13 +1308,29 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		account.mu.Lock()
 		projectID := account.ProjectID
 		account.mu.Unlock()
-		prepared, err := prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, conversationID)
+		nativeSeed := conversationID
+		freshSession := false
+		if conversationID != "" {
+			nativeSeed, freshSession = h.getContextHandoff().NativeSessionSeed(conversationID, AccountTypeAntigravity)
+		}
+		prepared, err := prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, nativeSeed)
 		if err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return true
 		}
 		var replayScope antigravityReplayScope
-		prepared.Body, replayScope, _ = antigravityApplyNativeReplay(prepared.Body)
+		if freshSession {
+			replayScope = antigravityReplayScopeFromBody(prepared.Body)
+		} else {
+			prepared.Body, replayScope, _ = antigravityApplyNativeReplay(prepared.Body)
+		}
+		if conversationID != "" {
+			var envelope map[string]any
+			if json.Unmarshal(prepared.Body, &envelope) == nil {
+				request, _ := envelope["request"].(map[string]any)
+				h.getContextHandoff().BindNativeSession(conversationID, AccountTypeAntigravity, stringValue(request["sessionId"]))
+			}
+		}
 		attemptStarted := time.Now()
 		atomic.AddInt64(&account.Inflight, 1)
 		resp, err := h.doAntigravityRequestWithTransientRetry(r.Context(), r.Header, account, provider, prepared)
@@ -1664,6 +1680,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 		if conversationID != "" {
+			h.getContextHandoff().MarkNativeSessionEstablished(conversationID, AccountTypeAntigravity)
 			if text := responseTextFromObject(result); text != "" {
 				h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, text)
 			}
@@ -1682,6 +1699,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	translator.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
 	var usage *RequestUsage
 	var assistantText strings.Builder
+	validResponseSeen := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -1699,6 +1717,9 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		if response == nil {
 			response = wrapper
 		}
+		if _, ok := response["candidates"]; ok {
+			validResponseSeen = true
+		}
 		antigravityCaptureNativeReplay(replayScope, prepared.Body, []byte(data))
 		_, _ = translator.Write([]byte("data: " + data + "\n\n"))
 		if value := antigravityUsage(response); value != nil {
@@ -1711,6 +1732,9 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	}
 	if flusher != nil {
 		flusher.Flush()
+	}
+	if conversationID != "" && validResponseSeen && scanner.Err() == nil {
+		h.getContextHandoff().MarkNativeSessionEstablished(conversationID, AccountTypeAntigravity)
 	}
 	if conversationID != "" {
 		h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, assistantText.String())

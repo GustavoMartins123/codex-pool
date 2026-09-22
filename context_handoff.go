@@ -68,6 +68,7 @@ type ProviderSessionState struct {
 	ResponseID      string         `json:"response_id,omitempty"`
 	CacheKey        string         `json:"cache_key,omitempty"`
 	Epoch           uint64         `json:"epoch"`
+	Established     bool           `json:"established,omitempty"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
@@ -1218,6 +1219,61 @@ func (s *conversationHandoffStore) State(conversationID string) (ConversationSta
 	defer s.mu.Unlock()
 	record, ok := s.records[conversationID]
 	return record.State, ok
+}
+
+func (s *conversationHandoffStore) NativeSessionSeed(conversationID string, provider AccountType) (string, bool) {
+	if s == nil || conversationID == "" {
+		return conversationID, true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[conversationID]
+	if !ok {
+		return conversationID, true
+	}
+	session := record.State.ProviderSessions[provider]
+	if session == nil {
+		return conversationID, true
+	}
+	if session.NativeSessionID != "" {
+		return session.NativeSessionID, !session.Established
+	}
+	if session.Epoch == 0 {
+		return conversationID, !session.Established
+	}
+	return fmt.Sprintf("%s\x00%s\x00%d", conversationID, provider, session.Epoch), !session.Established
+}
+
+func (s *conversationHandoffStore) BindNativeSession(conversationID string, provider AccountType, nativeID string) {
+	if s == nil || conversationID == "" || nativeID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[conversationID]
+	if !ok {
+		return
+	}
+	if session := record.State.ProviderSessions[provider]; session != nil {
+		session.NativeSessionID = nativeID
+		s.records[conversationID] = record
+	}
+}
+
+func (s *conversationHandoffStore) MarkNativeSessionEstablished(conversationID string, provider AccountType) {
+	if s == nil || conversationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[conversationID]
+	if !ok {
+		return
+	}
+	if session := record.State.ProviderSessions[provider]; session != nil {
+		session.Established = true
+		s.records[conversationID] = record
+	}
 }
 
 func (s *conversationHandoffStore) RecordAssistantText(conversationID string, provider AccountType, text string) {
