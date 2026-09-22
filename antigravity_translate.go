@@ -1287,6 +1287,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		}
 		trace := &RouteTrace{
 			RequestID:      reqID,
+			Transition:     h.transitionForTrace(conversationID, AccountTypeAntigravity, w.Header()),
 			Timestamp:      time.Now().UTC(),
 			Policy:         policy,
 			Selected:       RouteTarget{Provider: "antigravity", Model: canonical},
@@ -1343,6 +1344,10 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		}
 		trace.DurationMs = float64(time.Since(attemptStarted).Milliseconds())
 		trace.StatusCode = resp.StatusCode
+		if trace.Transition != nil {
+			h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, "", false)
+			trace.Transition.StatusCode = resp.StatusCode
+		}
 		h.getRouteTraces().Record(trace)
 		h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
 		if resp.StatusCode == http.StatusTooManyRequests && freshSession && conversationID != "" {
@@ -1355,6 +1360,10 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			resp.Body = io.NopCloser(bytes.NewReader(errBody))
 			resp.ContentLength = int64(len(errBody))
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
+			if trace.Transition != nil {
+				trace.Transition.ErrorClass = providerErr.Class
+				h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, providerErr.Class, false)
+			}
 			state, ok := h.getContextHandoff().State(conversationID)
 			if ok && (providerErr.Class == ProviderErrorSession || providerErr.Class == ProviderErrorContext) {
 				transition := &TransitionAttempt{
@@ -1362,6 +1371,10 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 					From: state.LastTransitionFrom, To: AccountTypeAntigravity,
 				}
 				if h.getContextHandoff().RecoverNativeSession(transition) {
+					if trace.Transition != nil {
+						trace.Transition.Epoch = transition.Epoch
+						trace.Transition.RecoveryRetry = true
+					}
 					_ = resp.Body.Close()
 					nativeSeed, _ = h.getContextHandoff().NativeSessionSeed(conversationID, AccountTypeAntigravity)
 					prepared, err = prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, nativeSeed)
@@ -1384,6 +1397,10 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 						continue
 					}
 					trace.StatusCode = resp.StatusCode
+					if trace.Transition != nil {
+						trace.Transition.StatusCode = resp.StatusCode
+						h.getContextHandoff().MarkTransitionOutcome(conversationID, transition.Epoch, resp.StatusCode, "", true)
+					}
 					h.getRouteTraces().Record(trace)
 					h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
 				}

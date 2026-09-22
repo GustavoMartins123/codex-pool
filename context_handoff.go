@@ -78,16 +78,36 @@ type ProviderSessionState struct {
 }
 
 type contextHandoffResult struct {
-	Switched  bool
-	From      AccountType
-	Mode      TransitionMode
-	Compacted bool
-	Warnings  []string
+	Switched     bool
+	From         AccountType
+	Mode         TransitionMode
+	Compacted    bool
+	Warnings     []string
+	Epoch        uint64
+	RemovedState []string
+}
+
+// TransitionDiagnostic contains only protocol metadata. Native IDs and request
+// content are intentionally excluded from administrative diagnostics.
+type TransitionDiagnostic struct {
+	ConversationID string             `json:"conversation_id"`
+	From           AccountType        `json:"from_provider"`
+	To             AccountType        `json:"to_provider"`
+	Epoch          uint64             `json:"transition_epoch"`
+	Mode           TransitionMode     `json:"handoff_mode"`
+	FreshSession   bool               `json:"fresh_session"`
+	RecoveryRetry  bool               `json:"recovery_retry"`
+	RemovedState   []string           `json:"removed_state,omitempty"`
+	Warnings       []string           `json:"warnings,omitempty"`
+	StatusCode     int                `json:"status_code,omitempty"`
+	ErrorClass     ProviderErrorClass `json:"error_class,omitempty"`
+	Timestamp      time.Time          `json:"timestamp"`
 }
 
 type conversationHandoffRecord struct {
 	State        ConversationState
 	LastProvider AccountType
+	Transitions  []TransitionDiagnostic
 }
 
 type conversationHandoffStore struct {
@@ -939,6 +959,24 @@ func stripIncompatibleProviderFields(value any) bool {
 	return changed
 }
 
+func removedProviderFieldNames(value any, names []string) []string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			switch strings.ToLower(key) {
+			case "previous_response_id", "prompt_cache_key", "prompt_cache_id", "session_id", "sessionid", "response_id", "thought_signature", "thoughtsignature", "encrypted_content", "reasoning_metadata":
+				names = appendUniqueString(names, key)
+			}
+			names = removedProviderFieldNames(child, names)
+		}
+	case []any:
+		for _, child := range typed {
+			names = removedProviderFieldNames(child, names)
+		}
+	}
+	return names
+}
+
 func detectContextWarnings(object map[string]any, switched bool) []string {
 	if !switched {
 		return nil
@@ -1240,6 +1278,7 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		} else {
 			messages = mergeConversationMessages(record.State.Messages, current)
 		}
+		result.RemovedState = removedProviderFieldNames(root, nil)
 		stripIncompatibleProviderFields(root)
 		if len(record.State.Messages) == 0 {
 			result.Warnings = appendUniqueString(result.Warnings, "normalized_history_unavailable")
@@ -1297,11 +1336,21 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 			recordProviderSession(&record.State, record.LastProvider, localState)
 		}
 		record.State.TransitionEpoch++
+		result.Epoch = record.State.TransitionEpoch
 		record.State.LastTransitionFrom = record.LastProvider
 		// Re-entry begins a new native epoch; old provider state is retained
 		// under its own provider but must not be supplied to this request.
 		record.State.ProviderSessions[target] = &ProviderSessionState{Provider: target, Epoch: record.State.TransitionEpoch}
 		record.State.ProviderState[string(target)] = ProviderLocalState{}
+		record.Transitions = append(record.Transitions, TransitionDiagnostic{
+			ConversationID: conversationID, From: result.From, To: target,
+			Epoch: result.Epoch, Mode: result.Mode, FreshSession: true,
+			RemovedState: append([]string(nil), result.RemovedState...),
+			Warnings:     append([]string(nil), result.Warnings...), Timestamp: time.Now().UTC(),
+		})
+		if len(record.Transitions) > 32 {
+			record.Transitions = record.Transitions[len(record.Transitions)-32:]
+		}
 	} else {
 		if len(localState.Identifiers) > 0 {
 			record.State.ProviderState[string(target)] = localState
@@ -1340,6 +1389,69 @@ func (s *conversationHandoffStore) State(conversationID string) (ConversationSta
 	defer s.mu.Unlock()
 	record, ok := s.records[conversationID]
 	return record.State, ok
+}
+
+func (s *conversationHandoffStore) TransitionDiagnostics(conversationID string) []TransitionDiagnostic {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if conversationID != "" {
+		return append([]TransitionDiagnostic(nil), s.records[conversationID].Transitions...)
+	}
+	var events []TransitionDiagnostic
+	for _, record := range s.records {
+		events = append(events, record.Transitions...)
+	}
+	return events
+}
+
+func (h *proxyHandler) transitionForTrace(conversationID string, target AccountType, headers http.Header) *TransitionDiagnostic {
+	if conversationID == "" {
+		return nil
+	}
+	state, ok := h.getContextHandoff().State(conversationID)
+	if !ok || state.ActiveProvider != target {
+		return nil
+	}
+	if headers.Get("X-Pool-Context-Handoff") != "provider-switch" {
+		// Direct Antigravity requests may enter after a prepared handoff without
+		// passing through the normal HTTP wrapper.
+		session := state.ProviderSessions[target]
+		if session == nil || session.Established || state.LastTransitionFrom == "" {
+			return nil
+		}
+	}
+	events := h.getContextHandoff().TransitionDiagnostics(conversationID)
+	if len(events) == 0 || events[len(events)-1].Epoch != state.TransitionEpoch {
+		return nil
+	}
+	event := events[len(events)-1]
+	return &event
+}
+
+func (s *conversationHandoffStore) MarkTransitionOutcome(conversationID string, epoch uint64, status int, class ProviderErrorClass, recovery bool) {
+	if s == nil || conversationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, ok := s.records[conversationID]
+	if !ok || len(record.Transitions) == 0 {
+		return
+	}
+	for i := len(record.Transitions) - 1; i >= 0; i-- {
+		if record.Transitions[i].Epoch <= epoch {
+			record.Transitions[i].StatusCode = status
+			if class != "" {
+				record.Transitions[i].ErrorClass = class
+			}
+			record.Transitions[i].RecoveryRetry = record.Transitions[i].RecoveryRetry || recovery
+			s.records[conversationID] = record
+			return
+		}
+	}
 }
 
 func (s *conversationHandoffStore) NativeSessionSeed(conversationID string, provider AccountType) (string, bool) {
@@ -1413,6 +1525,10 @@ func (s *conversationHandoffStore) RecoverNativeSession(attempt *TransitionAttem
 		return false
 	}
 	record.State.TransitionEpoch++
+	if len(record.Transitions) > 0 {
+		record.Transitions[len(record.Transitions)-1].Epoch = record.State.TransitionEpoch
+		record.Transitions[len(record.Transitions)-1].RecoveryRetry = true
+	}
 	record.State.ProviderSessions[attempt.To] = &ProviderSessionState{Provider: attempt.To, Epoch: record.State.TransitionEpoch}
 	record.State.ProviderState[string(attempt.To)] = ProviderLocalState{}
 	s.records[attempt.ConversationID] = record
@@ -1598,6 +1714,9 @@ func (h *proxyHandler) prepareProviderContextHandoff(
 	if result.Switched {
 		w.Header().Set("X-Pool-Context-Handoff", "provider-switch")
 		w.Header().Set("X-Pool-Transition-Mode", string(result.Mode))
+		w.Header().Set("X-Pool-Transition", string(result.From)+"->"+string(target))
+		w.Header().Set("X-Pool-Transition-Epoch", fmt.Sprint(result.Epoch))
+		w.Header().Set("X-Pool-Native-Session", "fresh")
 		log.Printf("conversation=%s transition=%s->%s mode=%s", conversationID, result.From, target, result.Mode)
 	}
 	if result.Compacted {

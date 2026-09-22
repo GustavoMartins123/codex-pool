@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	httppprof "net/http/pprof"
+	"sort"
 	"strings"
 )
 
@@ -300,6 +301,37 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqID = randomID()
 	}
 	w.Header().Set("X-Pool-Request-Id", reqID)
+	if r.URL.Path == "/admin/transitions" || strings.HasPrefix(r.URL.Path, "/admin/debug/conversations/") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Path == "/admin/transitions" {
+			events := h.getContextHandoff().TransitionDiagnostics("")
+			sort.Slice(events, func(i, j int) bool { return events[i].Timestamp.After(events[j].Timestamp) })
+			if len(events) > 100 {
+				events = events[:100]
+			}
+			respondJSON(w, events)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/admin/debug/conversations/")
+		if id == "" || strings.Contains(id, "/") {
+			respondJSONError(w, http.StatusBadRequest, "invalid conversation id")
+			return
+		}
+		state, ok := h.getContextHandoff().State(id)
+		if !ok {
+			respondJSONError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		respondJSON(w, map[string]any{"conversation_id": id, "active_provider": state.ActiveProvider,
+			"transition_epoch": state.TransitionEpoch, "transitions": h.getContextHandoff().TransitionDiagnostics(id)})
+		return
+	}
 	if h.cfg.debug.Load() {
 		log.Printf("[%s] incoming %s %s", reqID, r.Method, r.URL.Path)
 	}

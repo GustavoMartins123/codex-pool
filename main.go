@@ -2802,6 +2802,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		circuitState := string(h.getCircuitBreakers().State(providerKey(string(accountType))))
 		trace := &RouteTrace{
 			RequestID:      reqID,
+			Transition:     h.transitionForTrace(conversationID, accountType, w.Header()),
 			Timestamp:      time.Now().UTC(),
 			Policy:         policy,
 			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
@@ -2840,6 +2841,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		trace.DurationMs = float64(reqDuration.Milliseconds())
 		if resp != nil {
 			trace.StatusCode = resp.StatusCode
+			if trace.Transition != nil {
+				h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, "", false)
+				trace.Transition.StatusCode = resp.StatusCode
+			}
 			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, time.Now())
 		} else if err != nil {
 			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, http.StatusServiceUnavailable, time.Now())
