@@ -7,6 +7,7 @@ function account(overrides: Partial<AccountStats>): AccountStats {
     id: "account",
     type: "codex",
     plan_type: "pro",
+    reset_windows: { tier: "pro_or_higher", primary: "none", secondary: "weekly" },
     status: "healthy",
     penalty: 0,
     primary_window_used_pct: 0,
