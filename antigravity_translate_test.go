@@ -447,3 +447,60 @@ func TestTranslateAntigravityErrorShapes(t *testing.T) {
 		t.Fatalf("bad OpenAI error: %#v", openAI)
 	}
 }
+
+func TestAntigravityMergeConsecutiveRoleContents(t *testing.T) {
+	contents := []any{
+		map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hello"}}},
+		map[string]any{"role": "model", "parts": []any{map[string]any{"text": "running tool"}}},
+		map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"name": "exec"}}}},
+		map[string]any{"role": "user", "parts": []any{map[string]any{"functionResponse": map[string]any{"name": "exec", "response": map[string]any{"result": "ok"}}}}},
+		map[string]any{"role": "user", "parts": []any{map[string]any{"text": "next question"}}},
+	}
+
+	merged := antigravityMergeConsecutiveRoleContents(contents)
+	if len(merged) != 3 {
+		t.Fatalf("expected 3 merged contents, got %d", len(merged))
+	}
+	turn0 := mapValue(merged[0])
+	if stringValue(turn0["role"]) != "user" || len(anySlice(turn0["parts"])) != 1 {
+		t.Fatalf("turn 0 mismatch: %#v", turn0)
+	}
+	turn1 := mapValue(merged[1])
+	if stringValue(turn1["role"]) != "model" || len(anySlice(turn1["parts"])) != 2 {
+		t.Fatalf("turn 1 mismatch: %#v", turn1)
+	}
+	turn2 := mapValue(merged[2])
+	if stringValue(turn2["role"]) != "user" || len(anySlice(turn2["parts"])) != 2 {
+		t.Fatalf("turn 2 mismatch: %#v", turn2)
+	}
+}
+
+func TestAntigravityResponsesMergesConsecutiveRolesInMultiTurnHistory(t *testing.T) {
+	req := map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "start"}}},
+			map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "checking..."}}},
+			map[string]any{"type": "function_call", "call_id": "call-1", "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}"},
+			map[string]any{"type": "function_call_output", "call_id": "call-1", "output": "/home"},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "continue"}}},
+		},
+	}
+	geminiReq, err := antigravityResponsesToGemini(req, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents, _ := geminiReq["contents"].([]any)
+	if len(contents) != 3 {
+		t.Fatalf("contents length = %d, want 3", len(contents))
+	}
+	lastRole := ""
+	for i, c := range contents {
+		m := mapValue(c)
+		role := stringValue(m["role"])
+		if role == lastRole {
+			t.Fatalf("role did not alternate at index %d: %s", i, role)
+		}
+		lastRole = role
+	}
+}
