@@ -1,5 +1,13 @@
 export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go";
 
+export type ResetWindowKind = "none" | "five_hour" | "daily" | "weekly" | "tokens" | "requests" | "primary" | "secondary";
+
+export interface ResetWindowPolicy {
+  tier: "unknown" | "plus" | "team_basic" | "pro_or_higher";
+  primary: ResetWindowKind;
+  secondary: ResetWindowKind;
+}
+
 export interface PassportPrincipal {
   id: string;
   kind: "operator" | "member" | "guest";
@@ -91,6 +99,7 @@ export interface AccountStats {
   id: string;
   type: Provider;
   plan_type: string;
+  reset_windows: ResetWindowPolicy;
   status: "healthy" | "degraded" | "cooldown" | "dead";
   penalty: number;
   primary_window_used_pct: number;
