@@ -1257,18 +1257,23 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, exists := s.records[conversationID]
-	switched := exists && record.LastProvider != "" && record.LastProvider != target
+	fromProvider := record.LastProvider
+	lastFailedTransition := len(record.Transitions) > 0 && record.Transitions[len(record.Transitions)-1].StatusCode >= 400 && record.Transitions[len(record.Transitions)-1].To == target
+	if lastFailedTransition && record.State.LastTransitionFrom != "" {
+		fromProvider = record.State.LastTransitionFrom
+	}
+	switched := exists && fromProvider != "" && fromProvider != target
 	mode := TransitionNative
 	if switched {
 		probe := record.State
 		probe.IR = conversationIRFromMessages(mergeConversationMessages(record.State.Messages, current), conversationID, record.State.TransitionEpoch+1)
-		plan := CanTransition(probe, record.LastProvider, target)
+		plan := CanTransition(probe, fromProvider, target)
 		if !plan.Allowed {
-			return nil, contextHandoffResult{Switched: true, From: record.LastProvider, Mode: plan.Mode, Warnings: plan.Warnings}, fmt.Errorf("provider transition %s->%s is incompatible: %s", record.LastProvider, target, strings.Join(plan.Warnings, ","))
+			return nil, contextHandoffResult{Switched: true, From: fromProvider, Mode: plan.Mode, Warnings: plan.Warnings}, fmt.Errorf("provider transition %s->%s is incompatible: %s", fromProvider, target, strings.Join(plan.Warnings, ","))
 		}
 		mode = plan.Mode
 	}
-	result := contextHandoffResult{Switched: switched, From: record.LastProvider, Mode: mode, Warnings: detectContextWarnings(object, switched)}
+	result := contextHandoffResult{Switched: switched, From: fromProvider, Mode: mode, Warnings: detectContextWarnings(object, switched)}
 
 	messages := current
 	previouslyCompacted := exists && record.State.Summary != ""
@@ -1332,12 +1337,12 @@ func (s *conversationHandoffStore) Prepare(conversationID string, target Account
 		// The incoming request still belongs to the client conversation. Any
 		// opaque identifier it carries belongs to the previous upstream.
 		if len(localState.Identifiers) > 0 {
-			record.State.ProviderState[string(record.LastProvider)] = localState
-			recordProviderSession(&record.State, record.LastProvider, localState)
+			record.State.ProviderState[string(fromProvider)] = localState
+			recordProviderSession(&record.State, fromProvider, localState)
 		}
 		record.State.TransitionEpoch++
 		result.Epoch = record.State.TransitionEpoch
-		record.State.LastTransitionFrom = record.LastProvider
+		record.State.LastTransitionFrom = fromProvider
 		// Re-entry begins a new native epoch; old provider state is retained
 		// under its own provider but must not be supplied to this request.
 		record.State.ProviderSessions[target] = &ProviderSessionState{Provider: target, Epoch: record.State.TransitionEpoch}

@@ -417,3 +417,38 @@ func TestUniversalContextHandoffCapturesAssistantResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedTransitionRetriesAsSwitch(t *testing.T) {
+	store := newConversationHandoffStore()
+	convID := "failed-transition-retry"
+
+	first := contextTestBody(contextFormatResponses, "first user turn", true)
+	if _, _, err := store.Prepare(convID, AccountTypeCodex, "/v1/responses", first); err != nil {
+		t.Fatal(err)
+	}
+	store.RecordAssistantText(convID, AccountTypeCodex, "first answer")
+	store.MarkNativeSessionEstablished(convID, AccountTypeCodex)
+
+	second := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "second turn on gemini", true))
+	out2, result2, err := store.Prepare(convID, AccountTypeAntigravity, "/v1/responses", second)
+	if err != nil || !result2.Switched {
+		t.Fatalf("turn 2 should switch: switched=%v err=%v", result2.Switched, err)
+	}
+
+	// Turn 2 fails with 429
+	store.MarkTransitionOutcome(convID, result2.Epoch, 429, ProviderErrorQuota, false)
+
+	// Turn 3 retries or continues with the same client state
+	third := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "third turn retry", true))
+	out3, result3, err := store.Prepare(convID, AccountTypeAntigravity, "/v1/responses", third)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result3.Switched || result3.From != AccountTypeCodex {
+		t.Fatalf("turn 3 should retry as switch from codex: switched=%v from=%s", result3.Switched, result3.From)
+	}
+	if strings.Contains(string(out3), "resp_previous_provider") || strings.Contains(string(out3), "session_previous_provider") {
+		t.Fatalf("turn 3 leaked foreign state on retry: %s", string(out3))
+	}
+	_ = out2
+}
