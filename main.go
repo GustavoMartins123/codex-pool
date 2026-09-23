@@ -2720,7 +2720,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if fallbackMeta.Provider == AccountTypeAntigravity {
 					fallbackRequest := r.Clone(r.Context())
 					fallbackRequest.URL.Path = transitionSourcePath
-					h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile)
+					if h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile) {
+						return
+					}
+					// handleAntigravityProxy declines before writing anything when the
+					// fallback model is not routable for antigravity. Returning here
+					// without a status would strand the client with an empty 200 and
+					// no error to back off from.
+					log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
+					h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
+					http.Error(w, fmt.Sprintf("no live %s accounts for fallback model %s", AccountTypeAntigravity, fallbackModel), http.StatusServiceUnavailable)
 					return
 				}
 				fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
