@@ -2291,22 +2291,9 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 			score = scoreAccountLocked(a, now)
 		}
 
-		// Provider-specific labels
-		var primaryLabel, secondaryLabel string
-		switch a.Type {
-		case AccountTypeCodex:
-			primaryLabel = "5hr"
-			secondaryLabel = "weekly"
-		case AccountTypeClaude:
-			primaryLabel = "tokens"
-			secondaryLabel = "requests"
-		case AccountTypeGemini:
-			primaryLabel = "daily"
-			secondaryLabel = ""
-		case AccountTypeAntigravity:
-			primaryLabel = "5hr"
-			secondaryLabel = "weekly"
-		}
+		windowPolicy := resetWindowPolicy(a.Type, a.PlanType)
+		primaryLabel := resetWindowLabel(windowPolicy.Primary)
+		secondaryLabel := resetWindowLabel(windowPolicy.Secondary)
 
 		stats.Accounts = append(stats.Accounts, AccountBrief{
 			ID:                 a.ID,

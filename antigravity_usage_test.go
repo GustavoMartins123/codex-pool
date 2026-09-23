@@ -100,8 +100,8 @@ func TestAntigravityUsageAndRemainingTokensTracking(t *testing.T) {
 	if brief.PrimaryPct != 25 {
 		t.Errorf("brief.PrimaryPct = %d, want 25", brief.PrimaryPct)
 	}
-	if brief.PrimaryLabel != "5hr" {
-		t.Errorf("brief.PrimaryLabel = %q, want 5hr", brief.PrimaryLabel)
+	if brief.PrimaryLabel != "5 hour" {
+		t.Errorf("brief.PrimaryLabel = %q, want 5 hour", brief.PrimaryLabel)
 	}
 	if !brief.PrimaryAvailable {
 		t.Errorf("brief.PrimaryAvailable should be true")
