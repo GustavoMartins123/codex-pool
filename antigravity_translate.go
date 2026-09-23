@@ -1457,7 +1457,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
-			log.Printf("provider=antigravity status=%d error_class=%s retryable=%t quota_affected=%t", resp.StatusCode, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota)
+			log.Printf("provider=antigravity status=%d error_class=%s retryable=%t quota_affected=%t body=%s", resp.StatusCode, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota, safeText(errBody))
 			if providerErr.Class == ProviderErrorProtocol || providerErr.Class == ProviderErrorPolicy {
 				antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
 				return true
