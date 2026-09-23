@@ -259,6 +259,37 @@ func cloneAnyMap(input map[string]any) map[string]any {
 	return result
 }
 
+func antigravityMergeConsecutiveRoleContents(contents []any) []any {
+	if len(contents) <= 1 {
+		return contents
+	}
+	merged := make([]any, 0, len(contents))
+	for _, raw := range contents {
+		entry := mapValue(raw)
+		if entry == nil {
+			continue
+		}
+		role := stringValue(entry["role"])
+		parts := anySlice(entry["parts"])
+		if len(parts) == 0 {
+			continue
+		}
+		if len(merged) > 0 {
+			prev := mapValue(merged[len(merged)-1])
+			if stringValue(prev["role"]) == role {
+				prevParts := anySlice(prev["parts"])
+				prev["parts"] = append(prevParts, parts...)
+				continue
+			}
+		}
+		merged = append(merged, map[string]any{
+			"role":  role,
+			"parts": append([]any(nil), parts...),
+		})
+	}
+	return merged
+}
+
 func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 	result := map[string]any{}
 	contents := make([]any, 0)
@@ -302,6 +333,7 @@ func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 		}
 		contents = append(contents, map[string]any{"role": geminiRole, "parts": parts})
 	}
+	contents = antigravityMergeConsecutiveRoleContents(contents)
 	result["contents"] = contents
 	if len(systemParts) > 0 {
 		result["systemInstruction"] = map[string]any{"parts": systemParts}
@@ -385,6 +417,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 			}
 		}
 	}
+	contents = antigravityMergeConsecutiveRoleContents(contents)
 	if len(contents) > 0 && antigravityIsTrailingModelPrefill(mapValue(contents[len(contents)-1])) {
 		contents = contents[:len(contents)-1]
 	}
@@ -625,6 +658,7 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 		}
 		contents = append(contents, map[string]any{"role": role, "parts": parts})
 	}
+	contents = antigravityMergeConsecutiveRoleContents(contents)
 	result["contents"] = contents
 	antigravityCopyGenerationConfig(input, result)
 	antigravityCopyTools(input, result)
@@ -1365,7 +1399,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 				h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, providerErr.Class, false)
 			}
 			state, ok := h.getContextHandoff().State(conversationID)
-			if ok && (providerErr.Class == ProviderErrorSession || providerErr.Class == ProviderErrorContext) {
+			if ok && (providerErr.Class == ProviderErrorSession || providerErr.Class == ProviderErrorContext || providerErr.Class == ProviderErrorUnknown) {
 				transition := &TransitionAttempt{
 					ConversationID: conversationID, Epoch: state.TransitionEpoch,
 					From: state.LastTransitionFrom, To: AccountTypeAntigravity,
@@ -1424,18 +1458,23 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
 			log.Printf("provider=antigravity status=%d error_class=%s retryable=%t quota_affected=%t", resp.StatusCode, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota)
-			if providerErr.Class != ProviderErrorQuota {
+			if providerErr.Class == ProviderErrorProtocol || providerErr.Class == ProviderErrorPolicy {
 				antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
 				return true
 			}
-			until := providerErr.ResetAt
-			if until.IsZero() {
-				until = time.Now().Add(backoffDuration(attempt))
+			if providerErr.Class == ProviderErrorQuota {
+				until := providerErr.ResetAt
+				if until.IsZero() {
+					until = time.Now().Add(backoffDuration(attempt))
+				}
+				setAntigravityModelCooldown(account, canonical, until)
+				lastRateLimitBody = append(lastRateLimitBody[:0], errBody...)
+				lastRateLimitUntil = until
+				lastError = fmt.Errorf("Antigravity %s is rate limited until %s", canonical, until.Format(time.RFC3339))
+				continue
 			}
-			setAntigravityModelCooldown(account, canonical, until)
 			lastRateLimitBody = append(lastRateLimitBody[:0], errBody...)
-			lastRateLimitUntil = until
-			lastError = fmt.Errorf("Antigravity %s is rate limited until %s", canonical, until.Format(time.RFC3339))
+			lastError = fmt.Errorf("Antigravity %s returned %d (%s): %s", canonical, resp.StatusCode, providerErr.Class, safeText(errBody))
 			continue
 		}
 		if resp.StatusCode == http.StatusForbidden {
