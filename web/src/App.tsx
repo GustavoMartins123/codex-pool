@@ -152,6 +152,7 @@ const PROVIDERS: Record<Provider, { label: string; color: string; dither: Dither
   grok: { label: "Grok", color: "#86efff", dither: "cyan", glyph: "⌁" },
   adverserial: { label: "Adverserial", color: "#ff5454", dither: "red", glyph: "◬" },
   opencode_go: { label: "OpenCode Go", color: "#ffd23f", dither: "gold", glyph: "⬢" },
+  pool: { label: "Pool", color: "#d5a638", dither: "gold", glyph: "⊛" },
 };
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
@@ -1805,9 +1806,10 @@ function OriginDrain({ rows }: { rows: OriginWeeklyUsage[] }) {
           <b>{formatTokens(origin.total)}</b>
           <span>{poolTotal ? `${((origin.total / poolTotal) * 100).toFixed(1)}%` : "0%"}</span>
           <div className="footprint" aria-label="Provider footprint">
-            {Object.entries(origin.providers).map(([provider, value]) => (
-              <i key={provider} title={`${PROVIDERS[provider as Provider].label}: ${formatTokens(value ?? 0)}`} style={{ background: PROVIDERS[provider as Provider].color, flex: value }} />
-            ))}
+            {Object.entries(origin.providers).map(([provider, value]) => {
+              const display = providerDisplay(provider);
+              return <i key={provider} title={`${display.label}: ${formatTokens(value ?? 0)}`} style={{ background: display.color, flex: value }} />;
+            })}
           </div>
         </div>
       ))}
@@ -1905,9 +1907,10 @@ function CapacityForecastTable({ forecasts }: { forecasts: CapacityForecast[] })
       <div className="capacity-row capacity-head" role="row"><span>PROVIDER</span><span>LOAD</span><span>SUPPLY</span><span>MIN</span><span>+20%</span><span>ACTION</span></div>
       {forecasts.map((forecast) => {
         const state = forecast.minimumToAdd > 0 ? "gap" : forecast.bufferedToAdd > 0 ? "buffer" : "covered";
+        const display = providerDisplay(forecast.provider);
         return (
-          <div className={classNames("capacity-row", state)} role="row" key={forecast.provider} style={{ "--provider": PROVIDERS[forecast.provider].color } as CSSProperties}>
-            <span className="capacity-provider"><i className="provider-mark" aria-hidden="true" /><b>{PROVIDERS[forecast.provider].label}</b><small>{forecast.measuredAccounts} measured</small></span>
+          <div className={classNames("capacity-row", state)} role="row" key={forecast.provider} style={{ "--provider": display.color } as CSSProperties}>
+            <span className="capacity-provider"><i className="provider-mark" aria-hidden="true" /><b>{display.label}</b><small>{forecast.measuredAccounts} measured</small></span>
             <span><b>{forecast.loadEquivalents.toFixed(1)}</b><small>ACCOUNT LOAD</small></span>
             <span><b>{forecast.activeAccounts}</b><small>ACTIVE</small></span>
             <span><b>{forecast.baselineAccounts}</b><small>BASELINE</small></span>
@@ -2012,8 +2015,9 @@ function CapacityHistoryChart({ rows }: { rows: QuotaCapacityPoint[] }) {
   });
   if (data.length === 0) return <EmptyChart label="A weekly quota change is required before capacity can be estimated." />;
   const config = Object.fromEntries(series.map((key) => {
-    const [provider, plan] = key.split("|") as [Provider, string];
-    return [key, { label: `${PROVIDERS[provider].label} ${plan}`, color: PROVIDERS[provider].dither }];
+    const [provider, plan] = key.split("|");
+    const display = providerDisplay(provider);
+    return [key, { label: `${display.label} ${plan}`, color: display.dither }];
   })) as ChartConfig;
   return (
     <div className="chart-stage large">
@@ -2124,7 +2128,10 @@ function ScenarioPlanner({ forecasts, onAccounts }: { forecasts: CapacityForecas
         <div className={classNames("scenario-outcome", totalAdds > 0 && "risk")}><span>POOL ACTION</span><strong>{totalAdds ? `ADD ${totalAdds}` : "CAPACITY HOLDS"}</strong><button onClick={onAccounts}>OPEN ACCOUNTS →</button></div>
       </div>
       <div className="scenario-rows">
-        {rows.map((row) => <div key={row.provider} style={{ "--provider": PROVIDERS[row.provider].color } as CSSProperties}><b><i className="provider-mark" aria-hidden="true" /> {PROVIDERS[row.provider].label}</b><span>{row.scenarioLoad.toFixed(1)} account-equivalent demand</span><span>{row.activeAccounts} active</span><strong>{row.add ? `+${row.add} REQUIRED` : `${row.required} REQUIRED`}</strong></div>)}
+        {rows.map((row) => {
+          const display = providerDisplay(row.provider);
+          return <div key={row.provider} style={{ "--provider": display.color } as CSSProperties}><b><i className="provider-mark" aria-hidden="true" /> {display.label}</b><span>{row.scenarioLoad.toFixed(1)} account-equivalent demand</span><span>{row.activeAccounts} active</span><strong>{row.add ? `+${row.add} REQUIRED` : `${row.required} REQUIRED`}</strong></div>;
+        })}
       </div>
       <footer>SCENARIO SCALES THE CURRENT OBSERVED QUOTA DRAIN; IT DOES NOT ASSUME TOKENS ARE INTERCHANGEABLE BETWEEN PROVIDERS.</footer>
     </div>
@@ -2187,7 +2194,7 @@ function AccountFlowTable({ rows }: { rows: AccountFlow[] }) {
     <div className="flow-table">
       <div className="flow-row flow-head"><span>ACCOUNT</span><span>USED</span><span>PROJECTED AT RESET</span><span>UNUSED</span><span>ROUTING CALL</span></div>
       {rows.map((row) => {
-        const provider = PROVIDERS[row.provider];
+        const provider = providerDisplay(row.provider);
         const canReceiveShift = row.state === "stranded" && rows.some((candidate) => candidate.provider === row.provider && candidate.id !== row.id && (candidate.state === "exhausts" || candidate.state === "tight"));
         return <div className={`flow-row ${row.state}`} key={row.id} style={{ "--provider": provider.color } as CSSProperties}>
           <span><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small>{row.id.slice(-7)}</small></span>
@@ -2229,17 +2236,23 @@ function FlowDashboard({ stats, signal, onAccounts }: { stats: PoolStats; signal
         <SignalPanel title="Projected account utilization"><AccountFlowTable rows={flows} /></SignalPanel>
         <SignalPanel title="Routing balance by provider">
           <div className="routing-calls">
-            {routingCalls.map((call) => <div className={call.score < 60 ? "risk" : ""} key={call.provider} style={{ "--provider": PROVIDERS[call.provider].color } as CSSProperties}>
-              <span><i className="provider-mark" aria-hidden="true" /><b>{PROVIDERS[call.provider].label}</b><small>{call.score.toFixed(0)}/100 balance</small></span>
+            {routingCalls.map((call) => {
+              const display = providerDisplay(call.provider);
+              return <div className={call.score < 60 ? "risk" : ""} key={call.provider} style={{ "--provider": display.color } as CSSProperties}>
+                <span><i className="provider-mark" aria-hidden="true" /><b>{display.label}</b><small>{call.score.toFixed(0)}/100 balance</small></span>
               <p>{call.hot && call.cold && call.hot.id !== call.cold.id && call.spread > 20 ? <>Shift new traffic from <b>{call.hot.id.slice(-5)}</b> toward <b>{call.cold.id.slice(-5)}</b>; projected utilization differs by {call.spread.toFixed(0)} points.</> : <>Current accounts are draining within a reasonable range.</>}</p>
-            </div>)}
+            </div>;
+            })}
           </div>
         </SignalPanel>
       </section>
       <section className="flow-lower-grid">
         <SignalPanel title="Capacity likely to reset unused">
           <div className="stranded-list">
-            {flows.filter((row) => row.strandedPct >= 20).slice(0, 10).map((row) => <div key={row.id}><span className="provider-mark" style={{ "--provider": PROVIDERS[row.provider].color } as CSSProperties} aria-hidden="true" /><b>{PROVIDERS[row.provider].label} {row.id.slice(-5)}</b><div><i style={{ width: `${row.strandedPct}%` }} /></div><strong>{row.strandedPct.toFixed(0)}% UNUSED</strong></div>)}
+            {flows.filter((row) => row.strandedPct >= 20).slice(0, 10).map((row) => {
+              const display = providerDisplay(row.provider);
+              return <div key={row.id}><span className="provider-mark" style={{ "--provider": display.color } as CSSProperties} aria-hidden="true" /><b>{display.label} {row.id.slice(-5)}</b><div><i style={{ width: `${row.strandedPct}%` }} /></div><strong>{row.strandedPct.toFixed(0)}% UNUSED</strong></div>;
+            })}
             {flows.every((row) => row.strandedPct < 20) && <div className="empty-signal">NO MATERIAL STRANDED WEEKLY CAPACITY</div>}
           </div>
         </SignalPanel>
@@ -2358,7 +2371,7 @@ function InsightsOverview({ stats, signal, onAccounts }: { stats: PoolStats; sig
   const directiveForecasts = minimumAdds > 0 ? required : reserves;
   const directiveBreakdown = directiveForecasts.map((forecast) => {
     const count = minimumAdds > 0 ? forecast.minimumToAdd : forecast.bufferedToAdd;
-    return `${PROVIDERS[forecast.provider].label.toUpperCase()} ${count}`;
+    return `${providerDisplay(forecast.provider).label.toUpperCase()} ${count}`;
   }).join(" · ");
   const directiveTitle = minimumAdds > 0
     ? `ADD ${minimumAdds} ACCOUNT${minimumAdds === 1 ? "" : "S"} NOW`
@@ -2403,7 +2416,7 @@ function InsightsOverview({ stats, signal, onAccounts }: { stats: PoolStats; sig
       <section className="insight-method">
         <b>HOW THE ACCOUNT NUMBER WORKS</b>
         <span>For each provider: sum <code>weekly used % ÷ expected used % by now</code>, then round up. “+20%” adds an operating reserve. Recommendations use {sampleDays.toFixed(1)} observed account-days and update every 30 seconds.</span>
-        {unmodeled.length > 0 && <span>Unmodeled: {unmodeled.map((provider) => PROVIDERS[provider].label).join(" · ")}. Their tokens appear in demand trends, but they do not report a weekly limit.</span>}
+        {unmodeled.length > 0 && <span>Unmodeled: {unmodeled.map((provider) => providerDisplay(provider).label).join(" · ")}. Their tokens appear in demand trends, but they do not report a weekly limit.</span>}
       </section>
     </>
   );
@@ -2851,9 +2864,9 @@ function OperatorUnlock({ onClose, onUnlocked }: { onClose: () => void; onUnlock
   );
 }
 
-function Models({ models }: { models: ModelDescriptor[] }) {
+export function Models({ models }: { models: ModelDescriptor[] }) {
 	const [query, setQuery] = useState("");
-	const [provider, setProvider] = useState<Provider | "all">("all");
+	const [provider, setProvider] = useState<string>("all");
 	const [copied, setCopied] = useState("");
 	const providers = [...new Set(models.map((model) => model.provider))].sort();
 	const normalizedQuery = query.trim().toLowerCase();
@@ -2886,7 +2899,7 @@ function Models({ models }: { models: ModelDescriptor[] }) {
 				<label><span>SEARCH</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="model name or alias" /></label>
 				<div className="model-provider-filter" aria-label="Filter by provider">
 					<button className={provider === "all" ? "active" : ""} onClick={() => setProvider("all")}>ALL</button>
-					{providers.map((id) => <button key={id} className={provider === id ? "active" : ""} onClick={() => setProvider(id)}>{PROVIDERS[id].label}</button>)}
+					{providers.map((id) => <button key={id} className={provider === id ? "active" : ""} onClick={() => setProvider(id)}>{providerDisplay(id).label}</button>)}
 				</div>
 				<span>{filtered.length} MATCHES</span>
 			</div>
@@ -2895,9 +2908,10 @@ function Models({ models }: { models: ModelDescriptor[] }) {
 				{filtered.map((model) => {
 					const reset = model.next_reset_at ? new Date(model.next_reset_at) : null;
 					const hasReset = Boolean(reset && !Number.isNaN(reset.valueOf()) && reset.getUTCFullYear() > 2000);
-					return <div className="model-row" role="row" key={`${model.provider}:${model.id}`} style={{ "--provider": PROVIDERS[model.provider].color } as CSSProperties}>
+					const display = providerDisplay(model.provider);
+					return <div className="model-row" role="row" key={`${model.provider}:${model.id}`} style={{ "--provider": display.color } as CSSProperties}>
 						<span className="model-route"><button onClick={() => copyID(model.id)}>{copied === model.id ? "COPIED" : model.id}</button><small>{model.name && model.name !== model.id ? model.name : "canonical"}{model.aliases?.length ? ` · ${model.aliases.join(" · ")}` : ""}</small></span>
-						<span className="model-provider">{PROVIDERS[model.provider].label}</span>
+						<span className="model-provider">{display.label}</span>
 						<span className={classNames("model-status", model.available_now ? "available" : "unavailable")}>{model.available_now ? "AVAILABLE" : hasReset && reset ? `RESET ${reset.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "UNAVAILABLE"}{model.stale ? " / STALE" : ""}</span>
 						<span>{(model.protocols?.length ? model.protocols : [model.protocol]).join(" / ")}</span>
 						<span>{model.contextWindow ? formatTokens(model.contextWindow) : "n/a"}</span>

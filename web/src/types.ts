@@ -1,4 +1,4 @@
-export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go";
+export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go" | "pool";
 
 export type ResetWindowKind = "none" | "five_hour" | "daily" | "weekly" | "tokens" | "requests" | "primary" | "secondary";
 
@@ -184,7 +184,7 @@ export interface ModelDescriptor {
   protocol: string;
   contextWindow?: number;
   description?: string;
-  provider: Provider;
+  provider: Provider | string;
   upstream_id?: string;
   max_output_tokens?: number;
   protocols?: string[];
