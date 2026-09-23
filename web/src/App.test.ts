@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AccountResetWindows, formatAPIValue, isArmedAccountAction, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
+import { AccountResetWindows, formatAPIValue, isArmedAccountAction, Models, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
 function renderWindows(resetWindows: ResetWindowPolicy, overrides: Partial<AccountStats> = {}) {
@@ -103,6 +103,15 @@ describe("providerDisplay", () => {
     });
   });
 
+  it("defines display metadata for pool orchestration models", () => {
+    expect(providerDisplay("pool")).toEqual({
+      label: "Pool",
+      color: "#d5a638",
+      dither: "gold",
+      glyph: "⊛",
+    });
+  });
+
   it("falls back safely when the API returns a provider newer than the frontend", () => {
     expect(providerDisplay("future-provider")).toEqual({
       label: "Unknown",
@@ -110,5 +119,36 @@ describe("providerDisplay", () => {
       dither: "grey",
       glyph: "·",
     });
+  });
+});
+
+
+describe("Models component", () => {
+  it("renders models including pool orchestration and unknown providers without error", () => {
+    const models = [
+      {
+        id: "pool/auto",
+        name: "Pool Auto",
+        provider: "pool",
+        protocol: "openai",
+        available_now: true,
+        supporting_accounts: 3,
+        available_accounts: 3,
+      },
+      {
+        id: "custom/future-model",
+        name: "Future Model",
+        provider: "unknown-future-provider",
+        protocol: "openai",
+        available_now: false,
+        supporting_accounts: 1,
+        available_accounts: 0,
+      },
+    ];
+    const markup = renderToStaticMarkup(createElement(Models, { models }));
+    expect(markup).toContain("Pool");
+    expect(markup).toContain("pool/auto");
+    expect(markup).toContain("Unknown");
+    expect(markup).toContain("custom/future-model");
   });
 });
