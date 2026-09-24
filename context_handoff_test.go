@@ -197,6 +197,32 @@ func TestUniversalContextHandoffRegeneratesToolCallIDs(t *testing.T) {
 	}
 }
 
+func TestSanitizeConversationToolPairsBackfillsToolResultName(t *testing.T) {
+	messages := []Message{
+		{Role: "user", Parts: []MessagePart{{Type: "text", Text: "trigger tool"}}},
+		{Role: "assistant", Parts: []MessagePart{{Type: "tool_call", ToolID: "call-1", ToolName: "lookup", Arguments: "{}"}}},
+		{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "call-1", Text: "ok"}}},
+	}
+	cleaned, warnings := sanitizeConversationToolPairs(messages)
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	found := false
+	for _, message := range cleaned {
+		for _, part := range message.Parts {
+			if part.Type == "tool_result" {
+				found = true
+				if part.ToolName != "lookup" {
+					t.Fatalf("tool result name = %q", part.ToolName)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("tool result was dropped")
+	}
+}
+
 func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	store := newConversationHandoffStore()
 	large := strings.Repeat("context-data-", 50_000)

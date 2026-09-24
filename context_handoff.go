@@ -499,10 +499,14 @@ func sanitizeConversationToolPairs(messages []Message) ([]Message, []string) {
 		resultIndex int
 	}
 	locations := make(map[string]toolLocation)
+	toolNames := make(map[string]string)
 	for messageIndex, message := range messages {
 		for _, part := range message.Parts {
 			if part.ToolID == "" {
 				continue
+			}
+			if part.Type == "tool_call" && part.ToolName != "" {
+				toolNames[part.ToolID] = part.ToolName
 			}
 			location := locations[part.ToolID]
 			switch part.Type {
@@ -559,6 +563,9 @@ func sanitizeConversationToolPairs(messages []Message) ([]Message, []string) {
 			case "tool_result":
 				if !valid[part.ToolID] {
 					continue
+				}
+				if part.ToolName == "" {
+					part.ToolName = toolNames[part.ToolID]
 				}
 			}
 			copyMessage.Parts = append(copyMessage.Parts, part)

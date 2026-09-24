@@ -72,6 +72,51 @@ func TestBuildAntigravityOpenAIRequest(t *testing.T) {
 	}
 }
 
+func TestBuildAntigravityOpenAIRequestBackfillsToolResponseName(t *testing.T) {
+	body := []byte(`{"model":"gemini-3-flash","messages":[{"role":"user","content":"run it"},{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"mcp/read file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call-1","content":"ok"}],"tools":[{"type":"function","function":{"name":"mcp/read file","parameters":{"type":"object"}}}]}`)
+	prepared, err := prepareAntigravityRequest("/v1/chat/completions", body, "gemini-3-flash", "project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
+	contents := inner["contents"].([]any)
+	response := mapValue(mapValue(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
+	if response["name"] != "mcp_read_file" {
+		t.Fatalf("function response name = %#v", response)
+	}
+}
+
+func TestBuildAntigravityAnthropicRequestBackfillsToolResultName(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"run it"},{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"mcp/read file","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}],"tools":[{"name":"mcp/read file","input_schema":{"type":"object"}}]}`)
+	prepared, err := prepareAntigravityRequest("/v1/messages", body, "claude-sonnet-4-6", "project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
+	contents := inner["contents"].([]any)
+	response := mapValue(mapValue(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
+	if response["name"] != "mcp_read_file" {
+		t.Fatalf("function response name = %#v", response)
+	}
+}
+
+func TestBuildAntigravityToolDeclarationDefaultsToObjectSchema(t *testing.T) {
+	body := []byte(`{"model":"gemini-3-flash","messages":[{"role":"user","content":"run it"}],"tools":[{"type":"function","function":{"name":"ping"}}],"tool_choice":"required"}`)
+	prepared, err := prepareAntigravityRequest("/v1/chat/completions", body, "gemini-3-flash", "project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
+	declaration := inner["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)[0].(map[string]any)
+	parameters, ok := declaration["parameters"].(map[string]any)
+	if !ok || parameters["type"] != "object" {
+		t.Fatalf("parameters = %#v", declaration["parameters"])
+	}
+	if _, exists := declaration["description"]; exists {
+		t.Fatalf("null description leaked: %#v", declaration)
+	}
+}
+
 func TestPrepareAntigravityUnwrapsCodeAssistEnvelope(t *testing.T) {
 	body := []byte(`{
 		"model":"gemini-3.7-flash",

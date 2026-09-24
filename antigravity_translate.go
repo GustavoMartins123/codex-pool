@@ -290,11 +290,59 @@ func antigravityMergeConsecutiveRoleContents(contents []any) []any {
 	return merged
 }
 
+func antigravityChatFunctionNames(messages []any) map[string]string {
+	names := make(map[string]string)
+	for _, raw := range messages {
+		message := mapValue(raw)
+		for _, rawCall := range anySlice(message["tool_calls"]) {
+			call := mapValue(rawCall)
+			function := mapValue(call["function"])
+			id := strings.TrimSpace(stringValue(call["id"]))
+			name := sanitizeAntigravityFunctionName(stringValue(function["name"]))
+			if id != "" && name != "" {
+				names[id] = name
+			}
+		}
+	}
+	return names
+}
+
+func antigravityAnthropicFunctionNames(messages []any) map[string]string {
+	names := make(map[string]string)
+	for _, raw := range messages {
+		message := mapValue(raw)
+		for _, rawBlock := range anySlice(message["content"]) {
+			block := mapValue(rawBlock)
+			if stringValue(block["type"]) != "tool_use" {
+				continue
+			}
+			id := strings.TrimSpace(stringValue(block["id"]))
+			name := sanitizeAntigravityFunctionName(stringValue(block["name"]))
+			if id != "" && name != "" {
+				names[id] = name
+			}
+		}
+	}
+	return names
+}
+
+func antigravityFunctionResponseName(explicit string, names map[string]string, id string) string {
+	name := sanitizeAntigravityFunctionName(explicit)
+	if name == "" {
+		name = names[strings.TrimSpace(id)]
+	}
+	if name == "" {
+		return "unknown"
+	}
+	return name
+}
+
 func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 	result := map[string]any{}
 	contents := make([]any, 0)
 	systemParts := make([]any, 0)
 	messages, _ := input["messages"].([]any)
+	functionNames := antigravityChatFunctionNames(messages)
 	for _, raw := range messages {
 		message, _ := raw.(map[string]any)
 		role, _ := message["role"].(string)
@@ -329,7 +377,7 @@ func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 			}
 		}
 		if role == "tool" {
-			parts = []any{map[string]any{"functionResponse": map[string]any{"name": sanitizeAntigravityFunctionName(stringValue(message["name"])), "id": stringValue(message["tool_call_id"]), "response": map[string]any{"content": message["content"]}}}}
+			parts = []any{map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(stringValue(message["name"]), functionNames, stringValue(message["tool_call_id"])), "id": stringValue(message["tool_call_id"]), "response": map[string]any{"content": message["content"]}}}}
 		}
 		contents = append(contents, map[string]any{"role": geminiRole, "parts": parts})
 	}
@@ -620,6 +668,7 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 	}
 	contents := make([]any, 0)
 	messages, _ := input["messages"].([]any)
+	functionNames := antigravityAnthropicFunctionNames(messages)
 	for _, raw := range messages {
 		message, _ := raw.(map[string]any)
 		role := "user"
@@ -652,7 +701,7 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 				case "tool_use":
 					parts = append(parts, map[string]any{"functionCall": map[string]any{"name": sanitizeAntigravityFunctionName(stringValue(block["name"])), "args": block["input"], "id": block["id"]}, "thoughtSignature": antigravityFunctionThoughtSignature})
 				case "tool_result":
-					parts = append(parts, map[string]any{"functionResponse": map[string]any{"name": sanitizeAntigravityFunctionName(stringValue(block["name"])), "id": block["tool_use_id"], "response": map[string]any{"content": block["content"], "is_error": block["is_error"]}}})
+					parts = append(parts, map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(stringValue(block["name"]), functionNames, stringValue(block["tool_use_id"])), "id": block["tool_use_id"], "response": map[string]any{"content": block["content"], "is_error": block["is_error"]}}})
 				}
 			}
 		}
@@ -869,13 +918,15 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 			continue
 		}
 		seenDeclarations[name] = true
-		declaration := map[string]any{"name": name, "description": definition["description"]}
-		if schema, ok := definition["input_schema"].(map[string]any); ok {
-			declaration["parameters"] = cleanAntigravitySchema(schema)
+		declaration := map[string]any{"name": name}
+		if description := strings.TrimSpace(stringValue(definition["description"])); description != "" {
+			declaration["description"] = description
 		}
-		if schema, ok := definition["parameters"].(map[string]any); ok {
-			declaration["parameters"] = cleanAntigravitySchema(schema)
+		schema := mapValue(definition["input_schema"])
+		if schema == nil {
+			schema = mapValue(definition["parameters"])
 		}
+		declaration["parameters"] = cleanAntigravityFunctionParameters(schema)
 		declarations = append(declarations, declaration)
 	}
 	tools := make([]any, 0)
@@ -994,6 +1045,15 @@ func reverseAntigravityFunctionNameMap(nameMap map[string]string) map[string]str
 		reversed[mapped] = original
 	}
 	return reversed
+}
+
+func cleanAntigravityFunctionParameters(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{"type": "object"}
+	}
+	cleaned := cleanAntigravitySchema(schema)
+	cleaned["type"] = "object"
+	return cleaned
 }
 
 func cleanAntigravitySchema(schema map[string]any) map[string]any {
