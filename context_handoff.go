@@ -19,6 +19,7 @@ const (
 	contextHandoffCompactTokens    = 100_000
 	contextHandoffRecentTokens     = 48_000
 	contextHandoffSummaryChars     = 16_000
+	antigravityWireCompactTokens   = 700_000
 )
 
 // ConversationState is the provider-independent state retained by the pool.
@@ -645,7 +646,7 @@ func conversationAtomicRanges(messages []Message) []conversationMessageRange {
 func messageCharacterSize(message Message) int {
 	size := len(message.Role) + 8
 	for _, part := range message.Parts {
-		size += len(part.Text) + len(part.ToolName) + len(part.Arguments) + 16
+		size += len(part.Text) + len(part.ToolName) + len(part.Arguments) + len(part.ImageURL) + len(part.MimeType) + len(part.Data) + 16
 	}
 	return size
 }
@@ -773,7 +774,7 @@ func estimateContextTokens(messages []Message) int {
 	for _, message := range messages {
 		characters += len(message.Role) + 8
 		for _, part := range message.Parts {
-			characters += len(part.Text) + len(part.ToolName) + len(part.Arguments) + 16
+			characters += len(part.Text) + len(part.ToolName) + len(part.Arguments) + len(part.ImageURL) + len(part.MimeType) + len(part.Data) + 16
 		}
 	}
 	return (characters + 3) / 4
@@ -1708,6 +1709,40 @@ func (h *proxyHandler) getContextHandoff() *conversationHandoffStore {
 	return h.contextHandoff
 }
 
+func compactAntigravityRequestBody(path string, body []byte) ([]byte, bool, error) {
+	if len(body) == 0 {
+		return body, false, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return body, false, nil
+	}
+	object := contextRequestObject(root)
+	format := detectContextWireFormat(path, object)
+	if format == contextFormatUnknown {
+		return body, false, nil
+	}
+	messages, _ := sanitizeConversationToolPairs(normalizeConversationMessages(format, object))
+	if len(messages) == 0 || estimateContextTokens(messages) <= antigravityWireCompactTokens {
+		return body, false, nil
+	}
+	originalTokens := estimateContextTokens(messages)
+	compacted, _, ok := compactConversationMessages(messages)
+	if !ok {
+		return body, false, nil
+	}
+	compacted, _ = sanitizeConversationToolPairs(compacted)
+	if estimateContextTokens(compacted) >= originalTokens {
+		return body, false, nil
+	}
+	renderConversationMessages(format, object, compacted)
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return body, false, err
+	}
+	return encoded, true, nil
+}
+
 func (h *proxyHandler) prepareProviderContextHandoff(
 	w http.ResponseWriter,
 	conversationID string,
@@ -1722,6 +1757,17 @@ func (h *proxyHandler) prepareProviderContextHandoff(
 	rewritten, result, err := store.Prepare(conversationID, target, path, body)
 	if err != nil {
 		return nil, err
+	}
+	if target == AccountTypeAntigravity {
+		compacted, didCompact, compactErr := compactAntigravityRequestBody(path, rewritten)
+		if compactErr != nil {
+			return nil, compactErr
+		}
+		if didCompact {
+			rewritten = compacted
+			result.Compacted = true
+			log.Printf("conversation=%s provider=%s context_compacted=true", conversationID, target)
+		}
 	}
 	if result.Switched {
 		w.Header().Set("X-Pool-Context-Handoff", "provider-switch")

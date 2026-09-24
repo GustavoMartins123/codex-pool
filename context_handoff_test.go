@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -256,6 +257,55 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	text := normalizedContextText(t, "/v1/messages", rewritten)
 	if !strings.Contains(text, "Earlier conversation compacted") || !strings.Contains(text, "after compaction") {
 		t.Fatalf("compacted handoff lost summary or latest turn: %q", text)
+	}
+}
+
+func TestAntigravitySameProviderLargeRequestIsCompacted(t *testing.T) {
+	old := strings.Repeat("old-context-", 260_000)
+	body, err := json.Marshal(map[string]any{
+		"model":  "antigravity/gemini-3.8-flash-high",
+		"stream": true,
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": old}}},
+			map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "old answer"}}},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "latest request"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := &proxyHandler{}
+	w := httptest.NewRecorder()
+	rewritten, err := h.prepareProviderContextHandoff(w, "antigravity-large", AccountTypeAntigravity, "/v1/responses", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Header().Get("X-Pool-Context-Compacted") != "true" {
+		t.Fatal("large Antigravity request was not marked as compacted")
+	}
+	var root map[string]any
+	if err := json.Unmarshal(rewritten, &root); err != nil {
+		t.Fatal(err)
+	}
+	if root["stream"] != true {
+		t.Fatalf("stream flag was not preserved: %s", rewritten)
+	}
+	messages := normalizeConversationMessages(contextFormatResponses, root)
+	if tokens := estimateContextTokens(messages); tokens >= antigravityWireCompactTokens {
+		t.Fatalf("compacted request still estimates %d tokens", tokens)
+	}
+	text := normalizedContextText(t, "/v1/responses", rewritten)
+	if !strings.Contains(text, "Earlier conversation compacted") || !strings.Contains(text, "latest request") {
+		t.Fatalf("compaction lost the summary or latest turn: %q", text)
+	}
+}
+
+func TestContextTokenEstimateIncludesImagePayload(t *testing.T) {
+	image := []Message{{Role: "user", Parts: []MessagePart{{Type: "image", Data: strings.Repeat("x", 100_000)}}}}
+	empty := []Message{{Role: "user", Parts: []MessagePart{{Type: "image"}}}}
+	if estimateContextTokens(image) <= estimateContextTokens(empty) {
+		t.Fatal("image payload was not included in context estimation")
 	}
 }
 
