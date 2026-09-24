@@ -1050,10 +1050,13 @@ func reverseAntigravityFunctionNameMap(nameMap map[string]string) map[string]str
 
 func cleanAntigravityFunctionParameters(schema map[string]any) map[string]any {
 	if schema == nil {
-		return map[string]any{"type": "object"}
+		return map[string]any{"type": "object", "properties": map[string]any{}}
 	}
 	cleaned := cleanAntigravitySchema(schema)
 	cleaned["type"] = "object"
+	if properties, ok := cleaned["properties"].(map[string]any); !ok || properties == nil {
+		cleaned["properties"] = map[string]any{}
+	}
 	return cleaned
 }
 

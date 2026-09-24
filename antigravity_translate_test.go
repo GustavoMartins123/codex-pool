@@ -133,6 +133,9 @@ func TestBuildAntigravityToolDeclarationDefaultsToObjectSchema(t *testing.T) {
 	if !ok || parameters["type"] != "object" {
 		t.Fatalf("parameters = %#v", declaration["parameters"])
 	}
+	if properties, ok := parameters["properties"].(map[string]any); !ok || len(properties) != 0 {
+		t.Fatalf("default properties = %#v", parameters["properties"])
+	}
 	if _, exists := declaration["description"]; exists {
 		t.Fatalf("null description leaked: %#v", declaration)
 	}
