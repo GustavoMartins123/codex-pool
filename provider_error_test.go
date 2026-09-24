@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ func TestClassifyAntigravityErrors(t *testing.T) {
 		{"rate limit reason", 429, `{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"reason":"RATE_LIMIT_EXCEEDED"}]}}`, ProviderErrorQuota},
 		{"session despite quota wording", 429, `{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exhausted: invalid session identifier"}}`, ProviderErrorSession},
 		{"context", 429, `{"error":{"message":"context mismatch"}}`, ProviderErrorContext},
+		{"input limit", 400, `{"error":{"code":"400","message":"The input token count exceeds the maximum number of tokens allowed 1048576."}}`, ProviderErrorContext},
 		{"signature", 429, `{"error":{"message":"invalid thought signature"}}`, ProviderErrorProtocol},
 		{"unknown resource exhausted", 429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, ProviderErrorUnknown},
 		{"unknown empty", 429, `{}`, ProviderErrorUnknown},
@@ -110,5 +112,50 @@ func TestGeneric429SessionErrorDoesNotConsumeQuota(t *testing.T) {
 	account.mu.Unlock()
 	if !until.IsZero() {
 		t.Fatalf("session error set quota cooldown: %s", until)
+	}
+}
+
+func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
+	daily, _ := url.Parse("https://daily.example")
+	prod, _ := url.Parse("https://prod.example")
+	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+	calls := 0
+	var requestSizes []int
+	h := &proxyHandler{
+		cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
+		pool:     newPoolState([]*Account{account}, false),
+		registry: NewProviderRegistry(nil, nil, nil, NewAntigravityProvider(daily, prod)),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			raw, _ := io.ReadAll(req.Body)
+			calls++
+			requestSizes = append(requestSizes, len(raw))
+			if calls == 1 {
+				return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"400","message":"The input token count exceeds the maximum number of tokens allowed 1048576."}}`)), Request: req}, nil
+			}
+			if !strings.Contains(string(raw), "Earlier conversation compacted") {
+				t.Errorf("retry did not compact the request: %s", raw)
+			}
+			response := `data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}}` + "\n\n"
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
+		}),
+	}
+	body, err := json.Marshal(map[string]any{
+		"model":  "antigravity/gemini-3.8-flash-high",
+		"stream": false,
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": strings.Repeat("retry-context-", 260_000)}}},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "latest request"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+	if !h.handleAntigravityProxy(w, r, body, "antigravity/gemini-3.8-flash-high", "", "user", "origin", "127.0.0.1", "req", "") {
+		t.Fatal("Antigravity request was not handled")
+	}
+	if w.Code != http.StatusOK || calls != 2 || len(requestSizes) != 2 || requestSizes[1] >= requestSizes[0] {
+		t.Fatalf("status=%d calls=%d sizes=%v body=%s", w.Code, calls, requestSizes, w.Body.String())
 	}
 }

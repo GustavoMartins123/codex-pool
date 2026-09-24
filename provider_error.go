@@ -74,7 +74,7 @@ func classifyAntigravityError(status int, body []byte) ProviderError {
 		result.Class = ProviderErrorAuth
 	case contains("invalid session", "session mismatch", "session expired", "session not found", "invalid session identifier"):
 		result.Class, result.Retryable = ProviderErrorSession, true
-	case contains("context mismatch", "context window", "context length", "context too long", "context exceeded"):
+	case contains("context mismatch", "context window", "context length", "context too long", "context exceeded") || (status == http.StatusBadRequest && contains("input token count exceeds", "maximum number of tokens allowed")):
 		result.Class, result.Retryable = ProviderErrorContext, true
 	case contains("thought signature", "thoughtsignature", "invalid signature", "malformed function call", "invalid argument"):
 		result.Class = ProviderErrorProtocol

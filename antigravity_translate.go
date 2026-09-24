@@ -1445,9 +1445,13 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	var lastRateLimitBody []byte
 	var lastRateLimitUntil time.Time
 	attempts := h.cfg.maxAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
 	if accountCount := h.pool.countByType(AccountTypeAntigravity); accountCount > attempts {
 		attempts = accountCount
 	}
+	contextCompactionRetry := false
 	for attempt := 0; attempt < attempts; attempt++ {
 		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTrace(conversationID, exclude, canonical, clientIP, routingProfile)
 		if account == nil {
@@ -1589,6 +1593,34 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 					continue
 				}
 			}
+		}
+		if resp.StatusCode == http.StatusBadRequest && !contextCompactionRetry {
+			errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			_ = resp.Body.Close()
+			if readErr != nil {
+				antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(readErr.Error()))
+				return true
+			}
+			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
+			if providerErr.Class == ProviderErrorContext {
+				compacted, didCompact, compactErr := compactAntigravityRequestBody(r.URL.Path, body)
+				if compactErr == nil && didCompact {
+					antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+					logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, providerErr)
+					body = compacted
+					contextCompactionRetry = true
+					log.Printf("[%s] provider=antigravity context_compaction_retry=true", reqID)
+					delete(exclude, account.ID)
+					if attempt == 0 {
+						attempts++
+					} else {
+						attempt--
+					}
+					continue
+				}
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(errBody))
+			resp.ContentLength = int64(len(errBody))
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
