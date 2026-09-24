@@ -86,6 +86,27 @@ func TestBuildAntigravityOpenAIRequestBackfillsToolResponseName(t *testing.T) {
 	}
 }
 
+func TestBuildAntigravityOpenAIRequestResolvesToolResponseNameByCallID(t *testing.T) {
+	body := []byte(`{"model":"gemini-3-flash","messages":[{"role":"user","content":"run it"},{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"first_tool","arguments":"{}"}},{"id":"call-2","type":"function","function":{"name":"second_tool","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call-2","name":"call-2","content":"two"},{"role":"tool","tool_call_id":"call-1","name":"call-1","content":"one"}],"tools":[{"type":"function","function":{"name":"first_tool","parameters":{"type":"object"}}},{"type":"function","function":{"name":"second_tool","parameters":{"type":"object"}}}]}`)
+	prepared, err := prepareAntigravityRequest("/v1/chat/completions", body, "gemini-3-flash", "project", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
+	contents := inner["contents"].([]any)
+	responses := map[string]map[string]any{}
+	for _, raw := range contents {
+		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
+			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
+				responses[stringValue(response["id"])] = response
+			}
+		}
+	}
+	if responses["call-2"]["name"] != "second_tool" || responses["call-1"]["name"] != "first_tool" {
+		t.Fatalf("tool response names = %#v", responses)
+	}
+}
+
 func TestBuildAntigravityAnthropicRequestBackfillsToolResultName(t *testing.T) {
 	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"run it"},{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"mcp/read file","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"ok"}]}],"tools":[{"name":"mcp/read file","input_schema":{"type":"object"}}]}`)
 	prepared, err := prepareAntigravityRequest("/v1/messages", body, "claude-sonnet-4-6", "project", "")

@@ -327,14 +327,15 @@ func antigravityAnthropicFunctionNames(messages []any) map[string]string {
 }
 
 func antigravityFunctionResponseName(explicit string, names map[string]string, id string) string {
-	name := sanitizeAntigravityFunctionName(explicit)
-	if name == "" {
-		name = names[strings.TrimSpace(id)]
+	id = strings.TrimSpace(id)
+	explicitName := sanitizeAntigravityFunctionName(explicit)
+	if matched := names[id]; matched != "" {
+		return matched
 	}
-	if name == "" {
+	if explicitName == "" || explicitName == id {
 		return "unknown"
 	}
-	return name
+	return explicitName
 }
 
 func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
