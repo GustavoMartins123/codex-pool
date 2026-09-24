@@ -557,6 +557,34 @@ func TestAntigravityMergeConsecutiveRoleContents(t *testing.T) {
 	}
 }
 
+func TestAntigravityResponsesScopesRepeatedToolCallIDsByTurn(t *testing.T) {
+	request := map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "run twice"}}},
+			map[string]any{"type": "function_call", "call_id": "call-reused", "name": "write_stdin", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "call-reused", "output": "first"},
+			map[string]any{"type": "function_call", "call_id": "call-reused", "name": "exec_command", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "call-reused", "output": "second"},
+		},
+	}
+	prepared, err := antigravityResponsesToGemini(request, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, raw := range prepared["contents"].([]any) {
+		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
+			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
+				names = append(names, stringValue(response["name"]))
+			}
+		}
+	}
+	if len(names) != 2 || names[0] != "write_stdin" || names[1] != "exec_command" {
+		t.Fatalf("repeated call ID names = %#v", names)
+	}
+}
+
 func TestAntigravityResponsesAlignsDetachedParallelToolResponses(t *testing.T) {
 	request := map[string]any{
 		"model": "antigravity/gemini-3.8-flash-high",
