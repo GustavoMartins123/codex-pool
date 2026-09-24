@@ -557,6 +557,36 @@ func TestAntigravityMergeConsecutiveRoleContents(t *testing.T) {
 	}
 }
 
+func TestAntigravityResponsesAlignsDetachedParallelToolResponses(t *testing.T) {
+	request := map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "run both"}}},
+			map[string]any{"type": "function_call", "call_id": "call-1", "name": "first", "arguments": "{}"},
+			map[string]any{"type": "reasoning", "summary": []any{map[string]any{"type": "summary_text", "text": "plan"}}},
+			map[string]any{"type": "function_call", "call_id": "call-2", "name": "second", "arguments": "{}"},
+			map[string]any{"type": "function_call_output", "call_id": "call-2", "output": "two"},
+			map[string]any{"type": "function_call_output", "call_id": "call-1", "output": "one"},
+		},
+	}
+	prepared, err := antigravityResponsesToGemini(request, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := prepared["contents"].([]any)
+	var responses []any
+	for _, raw := range contents {
+		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
+			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
+				responses = append(responses, response)
+			}
+		}
+	}
+	if len(responses) != 2 || stringValue(responses[0].(map[string]any)["id"]) != "call-1" || stringValue(responses[1].(map[string]any)["id"]) != "call-2" {
+		t.Fatalf("function response order = %#v", responses)
+	}
+}
+
 func TestAntigravityResponsesMergesConsecutiveRolesInMultiTurnHistory(t *testing.T) {
 	req := map[string]any{
 		"model": "antigravity/gemini-3.8-flash-high",

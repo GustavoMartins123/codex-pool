@@ -157,6 +157,9 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 	if err != nil {
 		return antigravityPreparedRequest{}, err
 	}
+	if contents := anySlice(gemini["contents"]); len(contents) > 0 {
+		gemini["contents"] = antigravityAlignFunctionResponses(contents)
+	}
 	delete(gemini, "stream")
 	delete(gemini, "model")
 	delete(gemini, "safetySettings")
@@ -290,6 +293,74 @@ func antigravityMergeConsecutiveRoleContents(contents []any) []any {
 	return merged
 }
 
+func antigravityAlignFunctionResponses(contents []any) []any {
+	type callRef struct {
+		id   string
+		name string
+	}
+	var pending []callRef
+	for contentIndex, raw := range contents {
+		content := mapValue(raw)
+		parts := anySlice(content["parts"])
+		calls := make([]callRef, 0)
+		responseParts := make([]int, 0)
+		for partIndex, rawPart := range parts {
+			part := mapValue(rawPart)
+			if call := mapValue(part["functionCall"]); call != nil {
+				calls = append(calls, callRef{id: strings.TrimSpace(stringValue(call["id"])), name: stringValue(call["name"])})
+			}
+			if mapValue(part["functionResponse"]) != nil {
+				responseParts = append(responseParts, partIndex)
+			}
+		}
+		if len(calls) > 0 {
+			pending = calls
+			continue
+		}
+		if len(pending) == 0 || len(responseParts) != len(pending) {
+			continue
+		}
+		byID := make(map[string]map[string]any, len(responseParts))
+		for _, partIndex := range responseParts {
+			response := mapValue(mapValue(parts[partIndex])["functionResponse"])
+			id := strings.TrimSpace(stringValue(response["id"]))
+			if id == "" {
+				byID = nil
+				break
+			}
+			byID[id] = response
+		}
+		if len(byID) != len(pending) {
+			continue
+		}
+		ordered := make([]any, 0, len(pending))
+		complete := true
+		for responseIndex, call := range pending {
+			response, ok := byID[call.id]
+			if !ok || call.id == "" {
+				complete = false
+				break
+			}
+			if call.name != "" {
+				response["name"] = call.name
+			}
+			part := cloneAnyMap(mapValue(parts[responseParts[responseIndex]]))
+			part["functionResponse"] = response
+			ordered = append(ordered, part)
+		}
+		if !complete {
+			continue
+		}
+		for index, partIndex := range responseParts {
+			parts[partIndex] = ordered[index]
+		}
+		content["parts"] = parts
+		contents[contentIndex] = content
+		pending = nil
+	}
+	return contents
+}
+
 func antigravityChatFunctionNames(messages []any) map[string]string {
 	names := make(map[string]string)
 	for _, raw := range messages {
@@ -383,6 +454,7 @@ func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 		contents = append(contents, map[string]any{"role": geminiRole, "parts": parts})
 	}
 	contents = antigravityMergeConsecutiveRoleContents(contents)
+	contents = antigravityAlignFunctionResponses(contents)
 	result["contents"] = contents
 	if len(systemParts) > 0 {
 		result["systemInstruction"] = map[string]any{"parts": systemParts}
@@ -467,6 +539,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 		}
 	}
 	contents = antigravityMergeConsecutiveRoleContents(contents)
+	contents = antigravityAlignFunctionResponses(contents)
 	if len(contents) > 0 && antigravityIsTrailingModelPrefill(mapValue(contents[len(contents)-1])) {
 		contents = contents[:len(contents)-1]
 	}
@@ -709,6 +782,7 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 		contents = append(contents, map[string]any{"role": role, "parts": parts})
 	}
 	contents = antigravityMergeConsecutiveRoleContents(contents)
+	contents = antigravityAlignFunctionResponses(contents)
 	result["contents"] = contents
 	antigravityCopyGenerationConfig(input, result)
 	antigravityCopyTools(input, result)
