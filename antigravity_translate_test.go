@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -445,6 +446,18 @@ func TestTranslateAntigravityErrorShapes(t *testing.T) {
 	openAI := decodeMap(t, translateAntigravityError(body, antigravityFormatChat, 429))
 	if openAI["error"].(map[string]any)["type"] != "rate_limit_error" {
 		t.Fatalf("bad OpenAI error: %#v", openAI)
+	}
+}
+
+func TestTranslateAntigravityErrorPreservesUpstreamCodeAndType(t *testing.T) {
+	body := []byte(`{"error":{"code":"INVALID_ARGUMENT","type":"invalid_request_error","message":"Request contains an invalid argument."}}`)
+	got := decodeMap(t, translateAntigravityError(body, antigravityFormatChat, http.StatusBadRequest))
+	errObj := got["error"].(map[string]any)
+	if errObj["code"] != "invalid_argument" || errObj["type"] != "invalid_request_error" {
+		t.Fatalf("upstream error fields were not preserved: %#v", errObj)
+	}
+	if summary := antigravityErrorSummary(body); !strings.Contains(summary, "code=INVALID_ARGUMENT") || !strings.Contains(summary, "message=Request contains an invalid argument.") {
+		t.Fatalf("error summary = %q", summary)
 	}
 }
 

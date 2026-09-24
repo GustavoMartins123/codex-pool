@@ -331,6 +331,7 @@ func anySlice(value any) []any {
 func translateAntigravityError(body []byte, format antigravityClientFormat, status int) []byte {
 	message := strings.TrimSpace(string(body))
 	code := "api_error"
+	errorType := ""
 	var obj map[string]any
 	if json.Unmarshal(body, &obj) == nil {
 		errObj, _ := obj["error"].(map[string]any)
@@ -338,9 +339,12 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 			if m := stringValue(errObj["message"]); m != "" {
 				message = m
 			}
-			if c := stringValue(errObj["status"]); c != "" {
+			if c := antigravityErrorValue(errObj["code"]); c != "" {
+				code = strings.ToLower(c)
+			} else if c := antigravityErrorValue(errObj["status"]); c != "" {
 				code = strings.ToLower(c)
 			}
+			errorType = stringValue(errObj["type"])
 		}
 	}
 	if message == "" {
@@ -353,9 +357,56 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 	case antigravityFormatGemini:
 		return body
 	default:
-		out, _ := json.Marshal(map[string]any{"error": map[string]any{"message": message, "type": antigravityOpenAIErrorType(status), "code": code}})
+		if errorType == "" {
+			errorType = antigravityOpenAIErrorType(status)
+		}
+		out, _ := json.Marshal(map[string]any{"error": map[string]any{"message": message, "type": errorType, "code": code}})
 		return out
 	}
+}
+
+func antigravityErrorValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case float64:
+		return fmt.Sprint(int64(typed))
+	case int:
+		return fmt.Sprint(typed)
+	case int64:
+		return fmt.Sprint(typed)
+	default:
+		return ""
+	}
+}
+
+func antigravityErrorSummary(body []byte) string {
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil {
+		text := strings.TrimSpace(string(body))
+		if len(text) > 256 {
+			text = text[:256]
+		}
+		return safeText([]byte(text))
+	}
+	errObj := mapValue(obj["error"])
+	if errObj == nil {
+		return "unstructured_error"
+	}
+	parts := make([]string, 0, 5)
+	for _, key := range []string{"code", "status", "type", "message"} {
+		if value := antigravityErrorValue(errObj[key]); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	if len(parts) == 0 {
+		return "structured_error"
+	}
+	summary := strings.Join(parts, " ")
+	if len(summary) > 512 {
+		summary = summary[:512]
+	}
+	return safeText([]byte(summary))
 }
 func antigravityOpenAIErrorType(status int) string {
 	switch status {

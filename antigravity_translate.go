@@ -1457,7 +1457,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
-			log.Printf("provider=antigravity status=%d error_class=%s retryable=%t quota_affected=%t body=%s", resp.StatusCode, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota, safeText(errBody))
+			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, providerErr)
 			if providerErr.Class == ProviderErrorProtocol || providerErr.Class == ProviderErrorPolicy {
 				antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
 				return true
@@ -1481,6 +1481,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			needsVerification, banned, verificationURL := classifyAntigravityForbidden(errBody)
 			account.mu.Lock()
 			account.NeedsVerification = needsVerification
@@ -1501,6 +1502,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
 			return true
 		}
@@ -1602,6 +1604,10 @@ func antigravityFormatForPath(path string) antigravityClientFormat {
 	default:
 		return antigravityFormatGemini
 	}
+}
+
+func logAntigravityUpstreamError(reqID, path string, format antigravityClientFormat, model string, status int, body []byte, providerErr ProviderError) {
+	log.Printf("[%s] provider=antigravity path=%s format=%s model=%s status=%d error_class=%s retryable=%t quota_affected=%t summary=%s", reqID, path, format, model, status, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota, antigravityErrorSummary(body))
 }
 
 func isAntigravityResponsesPath(path string) bool {
