@@ -69,6 +69,8 @@ import {
   startCodexRelogin,
   exchangeCodexRelogin,
 	  startAntigravityOAuth,
+	  startAntigravityRelogin,
+	  exchangeAntigravityRelogin,
   unlockOperator,
   loadAuthConfig,
   operatorBootstrap,
@@ -2444,6 +2446,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
   const [unlocking, setUnlocking] = useState(false);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
+  const [reloginProvider, setReloginProvider] = useState<"codex" | "antigravity">("codex");
   const [action, setAction] = useState<ArmedAccountAction>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -2570,7 +2573,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
       <div className="view-title account-title">
         <h1>Accounts</h1>
         <div className="account-title-actions">
-          <button className="contribute-button" onClick={() => { setReloginAccountID(null); setContributing(true); }}>Add pool account</button>
+          <button className="contribute-button" onClick={() => { setReloginAccountID(null); setReloginProvider("codex"); setContributing(true); }}>Add pool account</button>
           {!operatorToken && <button className="unlock-button" onClick={() => setUnlocking(true)}>Unlock controls</button>}
           {operatorToken && <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>}
         </div>
@@ -2659,8 +2662,9 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
-                      {selectedAccount.type === "codex" && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setContributing(true); }}>Relogin account</button>}
+                      {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                     </div>
+
                   </>
                 ) : (
                   <div className="locked-inspector"><b>Operator controls are locked</b><p>Usage windows and account economics remain visible. Unlock only when you need to change pool state.</p><button onClick={() => setUnlocking(true)}>Unlock controls</button></div>
@@ -2670,7 +2674,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
           </aside>
         )}
       </div>
-      {contributing && <AccountContribution reloginAccountID={reloginAccountID ?? undefined} onClose={() => setContributing(false)} onAdded={async () => { await onAccountsChanged(); setContributing(false); }} />}
+      {contributing && <AccountContribution reloginAccountID={reloginAccountID ?? undefined} reloginProvider={reloginProvider} onClose={() => setContributing(false)} onAdded={async () => { await onAccountsChanged(); setContributing(false); }} />}
       {unlocking && <OperatorUnlock onClose={() => setUnlocking(false)} onUnlocked={(token, accounts) => { onUnlocked(token, accounts); setUnlocking(false); }} />}
     </div>
   );
@@ -2702,8 +2706,8 @@ function oauthCode(value: string) {
   }
 }
 
-function AccountContribution({ onClose, onAdded, reloginAccountID }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string }) {
-  const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? "codex" : "codex");
+function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvider = "codex" }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string; reloginProvider?: "codex" | "antigravity" }) {
+  const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? reloginProvider : "codex");
   const [credential, setCredential] = useState("");
 	  const [oauth, setOAuth] = useState<{ verifier?: string; sessionID?: string; state?: string; url: string } | null>(null);
 	  const oauthCompleted = useRef(false);
@@ -2752,7 +2756,9 @@ function AccountContribution({ onClose, onAdded, reloginAccountID }: { onClose: 
     setError("");
     try {
 	      const result = provider === "antigravity"
-	        ? await startAntigravityOAuth()
+	        ? reloginAccountID
+	          ? await startAntigravityRelogin(reloginAccountID)
+	          : await startAntigravityOAuth()
 	        : reloginAccountID
 	          ? await startCodexRelogin(reloginAccountID)
 	          : await startAccountOAuth(provider as "codex" | "claude");
@@ -2780,7 +2786,11 @@ function AccountContribution({ onClose, onAdded, reloginAccountID }: { onClose: 
         }
 	        if (provider === "antigravity") {
 	          if (!oauth.sessionID || !credential.trim()) throw new Error("Paste the authorization code or callback URL");
-	          await exchangeAntigravityOAuth(oauth.sessionID, credential, oauth.state || "");
+	          if (reloginAccountID) {
+	            await exchangeAntigravityRelogin(oauth.sessionID, credential, oauth.state || "");
+	          } else {
+	            await exchangeAntigravityOAuth(oauth.sessionID, credential, oauth.state || "");
+	          }
 	        } else {
 	          const code = oauthCode(credential);
 	          if (!code || !oauth.verifier) throw new Error("Paste the authorization code or callback URL");
@@ -2806,7 +2816,7 @@ function AccountContribution({ onClose, onAdded, reloginAccountID }: { onClose: 
   return (
     <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <form className="operator-dialog contribution-dialog" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="contribution-title">
-        <h2 id="contribution-title">{reloginAccountID ? "Relogin account" : "Add a pool account"}</h2>
+        <h2 id="contribution-title">{reloginAccountID ? reloginProvider === "antigravity" ? "Relogin / revalidate account" : "Relogin account" : "Add a pool account"}</h2>
         <p>{reloginAccountID
           ? "Sign in with the same upstream account to replace its credentials. The pool account stays the same."
           : "Other pool members will be able to use this account."}</p>

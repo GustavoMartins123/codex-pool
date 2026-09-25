@@ -288,6 +288,24 @@ export async function startAntigravityOAuth() {
   }));
 }
 
+export async function startAntigravityRelogin(accountID: string) {
+  return decode<AccountContributionResult>(await fetch("/admin/antigravity/relogin", {
+    method: "POST",
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    body: JSON.stringify({ account_id: accountID }),
+  }));
+}
+
+export async function exchangeAntigravityRelogin(sessionID: string, value: string, state: string) {
+  const trimmed = value.trim();
+  const isCallback = /^https?:\/\//i.test(trimmed);
+  return decode<AccountContributionResult>(await fetch("/admin/antigravity/exchange", {
+    method: "POST",
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    body: JSON.stringify({ session_id: sessionID, ...(isCallback ? { callback_url: trimmed } : { code: trimmed, state }) }),
+  }));
+}
+
 export async function antigravityOAuthStatus(sessionID: string) {
   return decode<AccountContributionResult>(await fetch("/api/pool/accounts/antigravity/status", {
     method: "POST",
