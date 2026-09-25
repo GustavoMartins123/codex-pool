@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -144,6 +146,32 @@ func TestReplaceAntigravityAccountCredentialsClearsVerification(t *testing.T) {
 	}
 	if saved.NeedsVerification || saved.VerificationURL != "" || saved.HealthError != "" || saved.AccessToken != "new-access" {
 		t.Fatalf("persisted health state was not cleared: %+v", saved)
+	}
+}
+
+func TestAntigravityReloginValidationRejectsVerificationAndAcceptsQuota(t *testing.T) {
+	daily, _ := url.Parse("https://daily.example")
+	production, _ := url.Parse("https://prod.example")
+	provider := NewAntigravityProvider(daily, production)
+	account := &Account{ProjectID: "project", File: filepath.Join(t.TempDir(), "account.json")}
+	snapshot := AntigravityAccountSnapshot{Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
+
+	verificationHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED"}}`)), Request: req}, nil
+	})}
+	if _, err := verificationHandler.validateAntigravityRelogin(context.Background(), account, account, provider, snapshot); err == nil {
+		t.Fatal("verification-required response was accepted")
+	}
+	if !account.NeedsVerification || account.HealthError == "" {
+		t.Fatal("verification failure was not persisted on the target account")
+	}
+
+	quotaHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED","details":[{"reason":"QUOTA_EXCEEDED"}]}}`)), Request: req}, nil
+	})}
+	quotaLimited, err := quotaHandler.validateAntigravityRelogin(context.Background(), account, account, provider, snapshot)
+	if err != nil || !quotaLimited {
+		t.Fatalf("quota response was not classified as quota: quota=%t err=%v", quotaLimited, err)
 	}
 }
 

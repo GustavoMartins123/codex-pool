@@ -364,6 +364,78 @@ type antigravityTokenResponse struct {
 	Scope        string `json:"scope"`
 }
 
+func antigravityValidationModel(snapshot AntigravityAccountSnapshot) string {
+	if _, ok := snapshot.Models["gemini-3.8-flash-high"]; ok {
+		return "gemini-3.8-flash-high"
+	}
+	model := ""
+	for candidate := range snapshot.Models {
+		if model == "" || candidate < model {
+			model = candidate
+		}
+	}
+	return model
+}
+
+func (h *proxyHandler) validateAntigravityRelogin(ctx context.Context, target, account *Account, provider *AntigravityProvider, snapshot AntigravityAccountSnapshot) (bool, error) {
+	model := antigravityValidationModel(snapshot)
+	if model == "" {
+		return false, errors.New("Antigravity revalidation found no usable model")
+	}
+	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"Reply with OK."}]}]}`)
+	prepared, err := prepareAntigravityRequest("/v1beta/models/"+model+":streamGenerateContent", body, "antigravity/"+model, account.ProjectID, "")
+	if err != nil {
+		return false, err
+	}
+	validationCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	resp, err := h.doAntigravityRequest(validationCtx, nil, account, provider, prepared)
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, errors.New("Antigravity revalidation returned no response")
+	}
+	defer resp.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return false, readErr
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return false, nil
+	}
+	providerErr := classifyAntigravityError(resp.StatusCode, responseBody)
+	if providerErr.Class == ProviderErrorQuota {
+		return true, nil
+	}
+	if providerErr.Class == ProviderErrorContext || resp.StatusCode == http.StatusForbidden {
+		h.persistAntigravityReloginFailure(target, responseBody)
+	}
+	return false, fmt.Errorf("Antigravity revalidation failed (%s): %s", providerErr.Class, antigravityErrorSummary(responseBody))
+}
+
+func (h *proxyHandler) persistAntigravityReloginFailure(target *Account, responseBody []byte) {
+	if target == nil {
+		return
+	}
+	needsVerification, banned, verificationURL := classifyAntigravityForbidden(responseBody)
+	if !needsVerification && !banned {
+		return
+	}
+	target.mu.Lock()
+	target.NeedsVerification = needsVerification
+	target.VerificationURL = verificationURL
+	target.HealthError = string(responseBody)
+	if banned {
+		target.Dead = true
+	}
+	file := target.File
+	target.mu.Unlock()
+	if err := saveAntigravityAccount(target); err != nil {
+		log.Printf("warning: failed to persist Antigravity relogin failure for %s: %v", file, err)
+	}
+}
+
 func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *antigravityOAuthSession, code string) (string, error) {
 	if code == "" {
 		return "", errors.New("Google callback did not contain an authorization code")
@@ -433,6 +505,13 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		}
 		if target == nil {
 			return fail(fmt.Errorf("Antigravity account %q not found", session.ReloginAccountID))
+		}
+		quotaLimited, err := h.validateAntigravityRelogin(ctx, target, account, provider, snapshot)
+		if err != nil {
+			return fail(err)
+		}
+		if quotaLimited {
+			log.Printf("Antigravity relogin validated account %s with quota cooldown", target.ID)
 		}
 		if err := h.replaceAntigravityAccountCredentials(target, token, email, projectID, planType, snapshot); err != nil {
 			return fail(err)
