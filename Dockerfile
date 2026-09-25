@@ -16,6 +16,9 @@ COPY . .
 COPY --from=web /src/web/dist ./web/dist
 RUN --mount=type=cache,target=/root/.cache/go-build go build -trimpath -ldflags='-s -w' -o /out/codex-pool .
 
+FROM scratch AS binary
+COPY --from=build /out/codex-pool /codex-pool
+
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 1000 codex && useradd -u 1000 -g codex --home-dir /app codex
