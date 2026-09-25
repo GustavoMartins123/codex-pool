@@ -23,6 +23,7 @@ func TestClassifyAntigravityErrors(t *testing.T) {
 		{"session despite quota wording", 429, `{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exhausted: invalid session identifier"}}`, ProviderErrorSession},
 		{"context", 429, `{"error":{"message":"context mismatch"}}`, ProviderErrorContext},
 		{"input limit", 400, `{"error":{"code":"400","message":"The input token count exceeds the maximum number of tokens allowed 1048576."}}`, ProviderErrorContext},
+		{"verification required", 403, `{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED"}}`, ProviderErrorVerification},
 		{"signature", 429, `{"error":{"message":"invalid thought signature"}}`, ProviderErrorProtocol},
 		{"unknown resource exhausted", 429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, ProviderErrorUnknown},
 		{"unknown empty", 429, `{}`, ProviderErrorUnknown},

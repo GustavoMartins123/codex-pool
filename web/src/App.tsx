@@ -2533,6 +2533,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
     const adminMatch = operatorToken ? adminAccounts.find((candidate) => candidate.public_id === account.id) : null;
     return (adminMatch?.id ?? account.id) === selected;
   }) ?? null;
+  const selectedVerificationURL = selectedAdmin ? safeVerificationURL(selectedAdmin.verification_url) : "";
   const toggleAction: AccountAction | null = selectedAdmin ? selectedAdmin.disabled ? "enable" : "disable" : null;
 
   const perform = async (nextAction: AccountAction) => {
@@ -2662,6 +2663,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
+                      {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer">Open Google verification</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                     </div>
 
@@ -2703,6 +2705,16 @@ function oauthCode(value: string) {
   } catch {
     const match = trimmed.match(/(?:^|[?&])code=([^&]+)/);
     return match ? decodeURIComponent(match[1]) : trimmed;
+  }
+}
+
+function safeVerificationURL(raw: string | undefined) {
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch {
+    return "";
   }
 }
 

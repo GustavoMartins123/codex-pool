@@ -10,15 +10,16 @@ import (
 type ProviderErrorClass string
 
 const (
-	ProviderErrorUnknown   ProviderErrorClass = "unknown"
-	ProviderErrorQuota     ProviderErrorClass = "quota"
-	ProviderErrorSession   ProviderErrorClass = "session"
-	ProviderErrorContext   ProviderErrorClass = "context"
-	ProviderErrorProtocol  ProviderErrorClass = "protocol"
-	ProviderErrorCapacity  ProviderErrorClass = "capacity"
-	ProviderErrorAuth      ProviderErrorClass = "auth"
-	ProviderErrorPolicy    ProviderErrorClass = "policy"
-	ProviderErrorTransient ProviderErrorClass = "transient"
+	ProviderErrorUnknown      ProviderErrorClass = "unknown"
+	ProviderErrorQuota        ProviderErrorClass = "quota"
+	ProviderErrorSession      ProviderErrorClass = "session"
+	ProviderErrorContext      ProviderErrorClass = "context"
+	ProviderErrorProtocol     ProviderErrorClass = "protocol"
+	ProviderErrorCapacity     ProviderErrorClass = "capacity"
+	ProviderErrorAuth         ProviderErrorClass = "auth"
+	ProviderErrorVerification ProviderErrorClass = "verification"
+	ProviderErrorPolicy       ProviderErrorClass = "policy"
+	ProviderErrorTransient    ProviderErrorClass = "transient"
 )
 
 type ProviderError struct {
@@ -80,6 +81,8 @@ func classifyAntigravityError(status int, body []byte) ProviderError {
 		result.Class = ProviderErrorProtocol
 	case contains("no capacity", "capacity exhausted", "overloaded", "server busy"):
 		result.Class, result.Retryable = ProviderErrorCapacity, true
+	case status == http.StatusForbidden && contains("validation_required", "verify your account", "verification_required", "permission_denied"):
+		result.Class = ProviderErrorVerification
 	case contains("policy violation", "terms of service", "safety policy", "permission denied"):
 		result.Class = ProviderErrorPolicy
 	case contains("rate_limit_exceeded", "rate limit exceeded", "rate limit", "rate_limit", "quota_exceeded", "quota exceeded", "quota exhausted", "quota limit", "exceeded quota", "resource has been exhausted", "resource_exhausted: quota", "rate limited", "too many requests"):
