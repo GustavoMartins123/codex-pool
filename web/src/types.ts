@@ -100,7 +100,9 @@ export interface AccountStats {
   type: Provider;
   plan_type: string;
   reset_windows: ResetWindowPolicy;
-  status: "healthy" | "degraded" | "cooldown" | "dead";
+  status: "healthy" | "degraded" | "cooldown" | "verification_required" | "dead";
+  needs_verification?: boolean;
+  health_blocked?: boolean;
   penalty: number;
   primary_window_used_pct: number;
   secondary_window_used_pct: number;
@@ -308,6 +310,10 @@ export interface AdminAccount {
   plan_type: string;
   disabled: boolean;
   dead: boolean;
+  needs_verification?: boolean;
+  health_blocked?: boolean;
+  verification_url?: string;
+  health_error?: string;
   inflight: number;
   expires_at?: string;
   last_refresh?: string;

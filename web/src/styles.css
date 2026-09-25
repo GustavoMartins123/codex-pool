@@ -400,7 +400,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .stranded-list > div > div { height: 9px; border: 1px solid var(--rule); background: #050504; }
 .stranded-list > div > div i { display: block; height: 100%; background: var(--gold); }
 .stranded-list strong { color: var(--gold-hot); font-size: .51rem; text-align: right; }
-.health-board { display: grid; grid-template-columns: repeat(4,1fr); font-family: "IBM Plex Mono", monospace; }
+.health-board { display: grid; grid-template-columns: repeat(5,1fr); font-family: "IBM Plex Mono", monospace; }
 .health-board > div { min-height: 92px; display: flex; flex-direction: column; justify-content: center; padding: 10px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
 .health-board > div span { color: var(--faint); font-size: .48rem; }
 .health-board > div b { margin: 4px 0; color: var(--ink); font-size: 1.1rem; }
@@ -466,6 +466,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .account-identity small span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .state { color: var(--muted); }
 .state.degraded, .state.cooldown { color: #ffb23f; }
+.state.verification_required { color: var(--danger); }
 .state.dead { color: var(--danger); }
 .quota-limit { display: grid; gap: 2px; font-family: "IBM Plex Mono", monospace; }
 .quota-limit b { color: var(--gold-hot); font-size: .71rem; font-weight: 600; white-space: nowrap; }

@@ -80,6 +80,12 @@ describe("capacityForecasts", () => {
     expect(forecast.loadEquivalents).toBe(0);
     expect(forecast.minimumToAdd).toBe(0);
   });
+
+  it("excludes health-blocked accounts from capacity and flow", () => {
+    const blocked = account({ status: "verification_required", health_blocked: true, secondary_window_used_pct: 0 });
+    expect(capacityForecasts([blocked])).toEqual([]);
+    expect(accountFlow([blocked])).toEqual([]);
+  });
 });
 
 describe("demand trend", () => {

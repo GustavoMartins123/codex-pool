@@ -32,6 +32,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		Disabled                bool        `json:"disabled"`
 		Dead                    bool        `json:"dead"`
 		NeedsVerification       bool        `json:"needs_verification,omitempty"`
+		HealthBlocked           bool        `json:"health_blocked,omitempty"`
 		VerificationURL         string      `json:"verification_url,omitempty"`
 		HealthError             string      `json:"health_error,omitempty"`
 		CyberAccess             bool        `json:"cyber_access,omitempty"`
@@ -56,6 +57,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		disabled := a.Disabled
 		dead := a.Dead
 		needsVerification := a.NeedsVerification
+		healthBlocked := accountHealthBlockedLocked(a)
 		verificationURL := a.VerificationURL
 		healthError := a.HealthError
 		cyberAccess := a.CyberAccess
@@ -79,6 +81,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 			Disabled:                disabled,
 			Dead:                    dead,
 			NeedsVerification:       needsVerification,
+			HealthBlocked:           healthBlocked,
 			VerificationURL:         verificationURL,
 			HealthError:             healthError,
 			CyberAccess:             cyberAccess,

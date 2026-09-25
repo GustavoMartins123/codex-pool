@@ -1594,7 +1594,7 @@ function Pulse({ stats, signal, onAccounts }: { stats: PoolStats | null; signal:
           <span className="intervention-items">
             {intervention.slice(0, 4).map((account) => {
               const provider = providerDisplay(account.type);
-              const state = account.status === "dead" ? "offline" : account.secondary_window_used_pct >= 80 ? `${account.secondary_window_used_pct.toFixed(0)}% weekly used` : account.status;
+              const state = account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.secondary_window_used_pct >= 80 ? `${account.secondary_window_used_pct.toFixed(0)}% weekly used` : account.status;
               return <b key={account.id} style={{ color: provider.color }}>{provider.label}: {state}</b>;
             })}
           </span>
@@ -1737,7 +1737,7 @@ function ProviderLanes({ accounts }: { accounts: AccountStats[] }) {
         const spend = rows.reduce((sum, row) => sum + row.subscription_spend, 0);
         const roi = spend ? value / spend : 0;
         const spark = rows.map(accountThroughput);
-        const status = rows.some((row) => row.status === "dead") ? "cooked" : used > 80 ? "leaning hard" : roi > 2 ? "carrying" : roi < 0.5 && spend ? "paid for" : "live";
+        const status = rows.some((row) => row.status === "dead") ? "cooked" : rows.some((row) => row.status === "verification_required" || row.health_blocked) ? "revalidation" : used > 80 ? "leaning hard" : roi > 2 ? "carrying" : roi < 0.5 && spend ? "paid for" : "live";
         return (
           <div className="provider-lane" key={provider} style={{ "--provider": PROVIDERS[provider].color } as CSSProperties}>
             <div className="provider-name"><span className="provider-mark" aria-hidden="true" /><b>{PROVIDERS[provider].label}</b><small>{rows.length} account{rows.length === 1 ? "" : "s"}</small></div>
@@ -2261,6 +2261,7 @@ function FlowDashboard({ stats, signal, onAccounts }: { stats: PoolStats; signal
             <div><span>HEALTHY</span><b>{stats.accounts.filter((account) => account.status === "healthy").length}</b><small>routing normally</small></div>
             <div><span>DEGRADED</span><b>{stats.accounts.filter((account) => account.status === "degraded").length}</b><small>penalty elevated</small></div>
             <div><span>COOLDOWN</span><b>{stats.accounts.filter((account) => account.status === "cooldown").length}</b><small>temporarily unavailable</small></div>
+            <div><span>REVALIDATION</span><b>{stats.accounts.filter((account) => account.status === "verification_required").length}</b><small>account action required</small></div>
             <div><span>DEAD</span><b>{stats.accounts.filter((account) => account.status === "dead").length}</b><small>not in supply</small></div>
             <footer>RELIABILITY COUNTERS ARE PROCESS-LIFETIME SIGNALS TODAY. DURABLE LATENCY AND FAILURE HISTORY IS NOT YET RECORDED, SO THIS PANEL DOES NOT CLAIM A LONG-TERM SLA.</footer>
             <button onClick={onAccounts}>INSPECT ACCOUNTS →</button>
@@ -2601,7 +2602,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 aria-label={`Open ${provider.label} ${account.plan_type || "account"} details`}
               >
                 <span className="account-identity"><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small><em>{account.plan_type || "unknown plan"}</em><span>{operatorToken && adminMatch ? adminMatch.id : account.id}</span></small></span>
-                <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status}</span>
+                <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.status}</span>
                 <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
                 <span className="account-windows" data-label="Reset windows">
                   <AccountResetWindows account={account} compact />
