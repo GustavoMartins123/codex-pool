@@ -799,6 +799,14 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !h.checkAdminAuth(w, r) {
 			return
 		}
+		if r.URL.Path == "/admin/antigravity/relogin" && r.Method == http.MethodPost {
+			h.handleAntigravityRelogin(w, r)
+			return
+		}
+		if r.URL.Path == "/admin/antigravity/exchange" && r.Method == http.MethodPost {
+			h.handleAntigravityExchange(w, r)
+			return
+		}
 		if r.URL.Path == "/admin/antigravity/models/sync" && r.Method == http.MethodPost {
 			h.handleAntigravityModelSync(w, r)
 			return

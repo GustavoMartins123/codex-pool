@@ -37,16 +37,17 @@ var antigravityOAuthScopes = []string{
 }
 
 type antigravityOAuthSession struct {
-	ActorID      string
-	ID           string
-	State        string
-	Verifier     string
-	CreatedAt    time.Time
-	Status       string
-	AccountID    string
-	Error        string
-	RedirectURI  string
-	TargetOrigin string
+	ActorID          string
+	ID               string
+	State            string
+	Verifier         string
+	CreatedAt        time.Time
+	Status           string
+	AccountID        string
+	ReloginAccountID string
+	Error            string
+	RedirectURI      string
+	TargetOrigin     string
 }
 
 var antigravityOAuthSessions = struct {
@@ -85,7 +86,7 @@ func antigravityOAuthRedirectURI() string {
 	return antigravityOAuthCallbackURL
 }
 
-func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Request) {
+func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Request, reloginAccountID string) {
 	clientID := antigravityOAuthClientID()
 	if clientID == "" {
 		respondJSONError(w, http.StatusServiceUnavailable, "Antigravity OAuth is not configured.")
@@ -98,6 +99,10 @@ func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	session.ActorID = providerContributionActor(r)
+	session.ReloginAccountID = strings.TrimSpace(reloginAccountID)
+	if session.ReloginAccountID != "" {
+		session.ActorID = ""
+	}
 	session.RedirectURI = redirectURI
 	session.TargetOrigin = antigravityOAuthTargetOrigin(r, h)
 	challenge := sha256.Sum256([]byte(session.Verifier))
@@ -130,7 +135,42 @@ func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Reque
 			callbackMode = "automatic"
 		}
 	}
-	respondJSON(w, map[string]any{"oauth_url": u.String(), "session_id": session.ID, "state": session.State, "callback_mode": callbackMode})
+	respondJSON(w, map[string]any{"oauth_url": u.String(), "session_id": session.ID, "state": session.State, "callback_mode": callbackMode, "replaced": session.ReloginAccountID != ""})
+}
+
+func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Request) {
+	h.startAntigravityOAuth(w, r, "")
+}
+
+func (h *proxyHandler) handleAntigravityRelogin(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		respondJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	accountID := strings.TrimSpace(input.AccountID)
+	if accountID == "" {
+		respondJSONError(w, http.StatusBadRequest, "account_id is required")
+		return
+	}
+	var target *Account
+	for _, account := range h.pool.allAccounts() {
+		if account.ID == accountID {
+			target = account
+			break
+		}
+	}
+	if target == nil {
+		respondJSONError(w, http.StatusNotFound, "Antigravity account not found")
+		return
+	}
+	if target.Type != AccountTypeAntigravity {
+		respondJSONError(w, http.StatusBadRequest, "selected account is not Antigravity")
+		return
+	}
+	h.startAntigravityOAuth(w, r, accountID)
 }
 
 func (h *proxyHandler) handleAntigravityStatus(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +215,10 @@ func (h *proxyHandler) handleAntigravityExchange(w http.ResponseWriter, r *http.
 	antigravityOAuthSessions.Unlock()
 	if session == nil || time.Since(session.CreatedAt) > 30*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired OAuth session")
+		return
+	}
+	if session.ReloginAccountID != "" && !strings.HasPrefix(r.URL.Path, "/admin/antigravity/") {
+		respondJSONError(w, http.StatusForbidden, "relogin session requires operator access")
 		return
 	}
 	if session.ActorID != "" && session.ActorID != providerContributionActor(r) {
@@ -376,6 +420,34 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 	if err != nil {
 		return fail(fmt.Errorf("model discovery failed: %w", err))
 	}
+	if session.ReloginAccountID != "" {
+		if accountID != session.ReloginAccountID {
+			return fail(fmt.Errorf("signed-in Antigravity account does not match pool account %s", session.ReloginAccountID))
+		}
+		var target *Account
+		for _, candidate := range h.pool.allAccounts() {
+			if candidate.Type == AccountTypeAntigravity && candidate.ID == session.ReloginAccountID {
+				target = candidate
+				break
+			}
+		}
+		if target == nil {
+			return fail(fmt.Errorf("Antigravity account %q not found", session.ReloginAccountID))
+		}
+		if err := h.replaceAntigravityAccountCredentials(target, token, email, projectID, planType, snapshot); err != nil {
+			return fail(err)
+		}
+		h.reloadAccounts()
+		if h.passport != nil {
+			if err := h.passport.recordAudit(session.ActorID, "provider.account_relogin", target.ID, "antigravity"); err != nil {
+				log.Printf("record provider relogin audit: %v", err)
+			}
+		}
+		antigravityOAuthSessions.Lock()
+		session.Status, session.AccountID, session.Error = "complete", target.ID, ""
+		antigravityOAuthSessions.Unlock()
+		return target.ID, nil
+	}
 	antigravityModels.ReplaceAccount(account.ID, snapshot)
 	if err := saveAntigravityAccount(account); err != nil {
 		return fail(fmt.Errorf("save Antigravity account: %w", err))
@@ -390,6 +462,41 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 	session.Status, session.AccountID, session.Error = "complete", accountID, ""
 	antigravityOAuthSessions.Unlock()
 	return accountID, nil
+}
+
+func (h *proxyHandler) replaceAntigravityAccountCredentials(target *Account, token antigravityTokenResponse, email, projectID, planType string, snapshot AntigravityAccountSnapshot) error {
+	if target == nil || target.Type != AccountTypeAntigravity || strings.TrimSpace(target.File) == "" {
+		return errors.New("Antigravity account file is unavailable")
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(time.Duration(maxInt64(token.ExpiresIn, 3600)) * time.Second)
+	target.mu.Lock()
+	target.AccessToken = token.AccessToken
+	target.RefreshToken = token.RefreshToken
+	target.Email = email
+	target.ProjectID = projectID
+	if strings.TrimSpace(planType) != "" {
+		target.PlanType = planType
+	}
+	target.ExpiresAt = expiresAt
+	target.LastRefresh = now
+	target.Dead = false
+	target.NeedsVerification = false
+	target.VerificationURL = ""
+	target.HealthError = ""
+	target.mu.Unlock()
+	antigravityModels.ReplaceAccount(target.ID, snapshot)
+	if err := saveAntigravityAccount(target); err != nil {
+		return fmt.Errorf("save Antigravity account: %w", err)
+	}
+	return nil
+}
+
+func maxInt64(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func (h *proxyHandler) exchangeAntigravityCode(ctx context.Context, code, verifier, redirectURI string) (antigravityTokenResponse, error) {

@@ -85,6 +85,68 @@ func TestAntigravityAddBuildsRealGoogleAuthorizationURL(t *testing.T) {
 	antigravityOAuthSessions.Unlock()
 }
 
+func TestAntigravityReloginBindsOAuthSessionToAccount(t *testing.T) {
+	t.Setenv("ANTIGRAVITY_OAUTH_CLIENT_ID", "test-client-id")
+	t.Setenv("ANTIGRAVITY_OAUTH_REDIRECT_URI", "https://pool.example.test/admin/antigravity/callback")
+	account := &Account{Type: AccountTypeAntigravity, ID: "relogin-account", File: filepath.Join(t.TempDir(), "account.json")}
+	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false), cfg: &config{}}
+	request := httptest.NewRequest(http.MethodPost, "/admin/antigravity/relogin", strings.NewReader(`{"account_id":"relogin-account"}`))
+	request.Header.Set("Origin", "https://pool.example.test")
+	recorder := httptest.NewRecorder()
+	handler.handleAntigravityRelogin(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unexpected response %d %s", recorder.Code, recorder.Body.String())
+	}
+	var result struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	antigravityOAuthSessions.Lock()
+	session := antigravityOAuthSessions.byID[result.SessionID]
+	antigravityOAuthSessions.Unlock()
+	if session == nil || session.ReloginAccountID != account.ID || session.ActorID != "" {
+		t.Fatalf("OAuth session was not bound to account: %+v", session)
+	}
+	antigravityOAuthSessions.Lock()
+	delete(antigravityOAuthSessions.byID, session.ID)
+	delete(antigravityOAuthSessions.byState, session.State)
+	antigravityOAuthSessions.Unlock()
+}
+
+func TestReplaceAntigravityAccountCredentialsClearsVerification(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "account.json")
+	account := &Account{
+		Type: AccountTypeAntigravity, ID: "replace-account", File: file,
+		AccessToken: "old-access", RefreshToken: "old-refresh", ProjectID: "old-project",
+		PlanType: "pro", Disabled: true, Dead: true, NeedsVerification: true,
+		VerificationURL: "https://verify.example", HealthError: "403", ModelRateLimits: make(map[string]time.Time),
+	}
+	snapshot := AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
+	antigravityModels.ReplaceAccount(account.ID, snapshot)
+	if err := (&proxyHandler{}).replaceAntigravityAccountCredentials(account, antigravityTokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}, "user@example.com", "new-project", "ultra", snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if account.AccessToken != "new-access" || account.RefreshToken != "new-refresh" || account.ProjectID != "new-project" || account.PlanType != "ultra" {
+		t.Fatalf("credentials were not replaced: %+v", account)
+	}
+	if account.NeedsVerification || account.VerificationURL != "" || account.HealthError != "" || account.Dead || !account.Disabled {
+		t.Fatalf("health state was not cleared safely: %+v", account)
+	}
+	var saved AntigravityAuthJSON
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.NeedsVerification || saved.VerificationURL != "" || saved.HealthError != "" || saved.AccessToken != "new-access" {
+		t.Fatalf("persisted health state was not cleared: %+v", saved)
+	}
+}
+
 func TestSafeAntigravityAccountID(t *testing.T) {
 	if got := safeAntigravityAccountID("Person+AI@Example.COM"); got != "antigravity-person-ai-example.com" {
 		t.Fatalf("got %q", got)
