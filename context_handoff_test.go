@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -298,6 +303,121 @@ func TestAntigravitySameProviderLargeRequestIsCompacted(t *testing.T) {
 	text := normalizedContextText(t, "/v1/responses", rewritten)
 	if !strings.Contains(text, "Earlier conversation compacted") || !strings.Contains(text, "latest request") {
 		t.Fatalf("compaction lost the summary or latest turn: %q", text)
+	}
+}
+
+func TestAntigravityEstimatorCountsToolSchemas(t *testing.T) {
+	base := map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"input": []any{map[string]any{
+			"type": "message", "role": "user",
+			"content": []any{map[string]any{"type": "input_text", "text": "hello"}},
+		}},
+	}
+	withoutTools, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withToolsBody := cloneAnyMap(base)
+	withToolsBody["tools"] = []any{map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "lookup",
+			"description": strings.Repeat("schema-", 20_000),
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{"type": "string", "description": strings.Repeat("property-", 10_000)},
+				},
+			},
+		},
+	}}
+	withTools, err := json.Marshal(withToolsBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutTokens := estimateAntigravityRequestTokens("/v1/responses", withoutTools)
+	withTokens := estimateAntigravityRequestTokens("/v1/responses", withTools)
+	if withTokens <= withoutTokens+100 {
+		t.Fatalf("tool schema was not included in Antigravity estimate: without=%d with=%d", withoutTokens, withTokens)
+	}
+}
+
+func TestAntigravityImageEstimatorUsesTiles(t *testing.T) {
+	canvas := image.NewRGBA(image.Rect(0, 0, 769, 768))
+	canvas.Set(0, 0, color.RGBA{R: 255, A: 255})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, canvas); err != nil {
+		t.Fatal(err)
+	}
+	data := base64.StdEncoding.EncodeToString(encoded.Bytes())
+	want := 2*antigravityImageTileTokens + antigravityImageOverheadTokens
+	if got := estimateAntigravityImageTokens(data); got != want {
+		t.Fatalf("unexpected image estimate: got %d want %d", got, want)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"contents": []any{map[string]any{
+			"role":  "user",
+			"parts": []any{map[string]any{"inlineData": map[string]any{"mimeType": "image/png", "data": data}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := estimateAntigravityRequestTokens("/v1beta/models/gemini-3.8-flash-high:streamGenerateContent", body); got < want {
+		t.Fatalf("inline image was not included in request estimate: got %d want at least %d", got, want)
+	}
+}
+
+func TestAntigravityCompactionUsesNormalAndEmergencyRetention(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"model": "antigravity/gemini-3.8-flash-high",
+		"input": []any{
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": strings.Repeat("old-", 800_000)}}},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "LATEST-BEGIN-" + strings.Repeat("latest-", 60_000) + "-LATEST-END"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, didCompact, err := compactAntigravityRequestBodyWithRecentTokens("/v1/responses", body, antigravityNormalRecentTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !didCompact || !strings.Contains(normalizedContextText(t, "/v1/responses", normal), "LATEST-BEGIN") {
+		t.Fatal("normal Antigravity compaction did not retain the recent turn")
+	}
+	emergency, didCompact, err := compactAntigravityRequestBodyWithRecentTokens("/v1/responses", body, antigravityEmergencyRecentTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !didCompact {
+		t.Fatal("emergency Antigravity compaction did not run")
+	}
+	emergencyText := normalizedContextText(t, "/v1/responses", emergency)
+	if strings.Contains(emergencyText, "LATEST-BEGIN") || !strings.Contains(emergencyText, "LATEST-END") {
+		t.Fatal("emergency Antigravity compaction did not trim the recent turn")
+	}
+}
+
+func TestAntigravityToolResultTruncationPreservesCallPair(t *testing.T) {
+	messages := []Message{
+		{Role: "assistant", Parts: []MessagePart{{Type: "tool_call", ToolID: "call_bulky", ToolName: "lookup", Arguments: "{}"}}},
+		{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "call_bulky", Text: strings.Repeat("result-", 20_000)}}},
+	}
+	trimmed, changed := trimAntigravityToolResults(messages, antigravityEmergencyToolResultTokens)
+	if !changed {
+		t.Fatal("large tool result was not truncated")
+	}
+	if len(trimmed[0].Parts) != 1 || len(trimmed[1].Parts) != 1 {
+		t.Fatal("tool call/result pair was not preserved")
+	}
+	if trimmed[0].Parts[0].ToolID != "call_bulky" || trimmed[1].Parts[0].ToolID != "call_bulky" {
+		t.Fatal("tool call/result IDs changed during truncation")
+	}
+	if !strings.Contains(trimmed[1].Parts[0].Text, "tool output truncated by codex-pool") {
+		t.Fatal("tool result truncation marker missing")
 	}
 }
 

@@ -81,6 +81,23 @@ func TestCyberPolicyMetricsIgnoresEmptyAction(t *testing.T) {
 	}
 }
 
+func TestAntigravityInputResidualP99Metric(t *testing.T) {
+	m := newMetrics()
+	for value := int64(1); value <= 100; value++ {
+		m.recordAntigravityInputResidual(value)
+	}
+	summary := m.performanceSummary(nil)
+	if summary.AntigravityInputResidualP99 != 99 {
+		t.Fatalf("unexpected Antigravity residual p99: %v", summary.AntigravityInputResidualP99)
+	}
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+	m.serve(w, req)
+	if !strings.Contains(w.Body.String(), "codexpool_antigravity_input_residual_p99 99") {
+		t.Fatalf("missing Antigravity residual metric: %s", w.Body.String())
+	}
+}
+
 func TestComputeCyberPolicyStatsHealthSignals(t *testing.T) {
 	cyberLive := &Account{ID: "cyber-live", Type: AccountTypeCodex, CyberAccess: true}
 	cyberDead := &Account{ID: "cyber-dead", Type: AccountTypeCodex, CyberAccess: true, Dead: true}
