@@ -2659,11 +2659,12 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       <Instrument label="Primary" value={selectedAdmin.is_primary ? "Yes" : "No"} />
                     </div>
                     <pre className="score-trace">{selectedAdmin.score_tooltip || "No score detail is available."}</pre>
+                    {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}</p>}
                     <div className="operator-actions">
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
-                      {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer">Open Google verification</a>}
+                      {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Open the Google verification flow for ${selectedAdmin.email}. Sign in with that account in this browser before continuing.` : "Open the Google verification flow."}>Open Google verification</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                     </div>
 

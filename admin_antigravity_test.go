@@ -90,7 +90,7 @@ func TestAntigravityAddBuildsRealGoogleAuthorizationURL(t *testing.T) {
 func TestAntigravityReloginBindsOAuthSessionToAccount(t *testing.T) {
 	t.Setenv("ANTIGRAVITY_OAUTH_CLIENT_ID", "test-client-id")
 	t.Setenv("ANTIGRAVITY_OAUTH_REDIRECT_URI", "https://pool.example.test/admin/antigravity/callback")
-	account := &Account{Type: AccountTypeAntigravity, ID: "relogin-account", File: filepath.Join(t.TempDir(), "account.json")}
+	account := &Account{Type: AccountTypeAntigravity, ID: "relogin-account", Email: "target@example.com", File: filepath.Join(t.TempDir(), "account.json")}
 	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false), cfg: &config{}}
 	request := httptest.NewRequest(http.MethodPost, "/admin/antigravity/relogin", strings.NewReader(`{"account_id":"relogin-account"}`))
 	request.Header.Set("Origin", "https://pool.example.test")
@@ -101,9 +101,21 @@ func TestAntigravityReloginBindsOAuthSessionToAccount(t *testing.T) {
 	}
 	var result struct {
 		SessionID string `json:"session_id"`
+		OAuthURL  string `json:"oauth_url"`
+		LoginHint bool   `json:"login_hint"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
+	}
+	parsed, err := url.Parse(result.OAuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hint := parsed.Query().Get("login_hint"); hint != "target@example.com" {
+		t.Fatalf("oauth url did not preselect the account email: %q", hint)
+	}
+	if !result.LoginHint {
+		t.Fatal("expected login_hint to be reported")
 	}
 	antigravityOAuthSessions.Lock()
 	session := antigravityOAuthSessions.byID[result.SessionID]

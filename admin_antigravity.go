@@ -100,8 +100,18 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 	}
 	session.ActorID = providerContributionActor(r)
 	session.ReloginAccountID = strings.TrimSpace(reloginAccountID)
+	loginHint := ""
 	if session.ReloginAccountID != "" {
 		session.ActorID = ""
+		for _, account := range h.pool.allAccounts() {
+			if account.ID != session.ReloginAccountID {
+				continue
+			}
+			account.mu.Lock()
+			loginHint = strings.TrimSpace(account.Email)
+			account.mu.Unlock()
+			break
+		}
 	}
 	session.RedirectURI = redirectURI
 	session.TargetOrigin = antigravityOAuthTargetOrigin(r, h)
@@ -114,6 +124,9 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 	query.Set("scope", strings.Join(antigravityOAuthScopes, " "))
 	query.Set("access_type", "offline")
 	query.Set("prompt", "consent")
+	if loginHint != "" {
+		query.Set("login_hint", loginHint)
+	}
 	query.Set("state", session.State)
 	query.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
 	query.Set("code_challenge_method", "S256")
@@ -135,7 +148,7 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 			callbackMode = "automatic"
 		}
 	}
-	respondJSON(w, map[string]any{"oauth_url": u.String(), "session_id": session.ID, "state": session.State, "callback_mode": callbackMode, "replaced": session.ReloginAccountID != ""})
+	respondJSON(w, map[string]any{"oauth_url": u.String(), "session_id": session.ID, "state": session.State, "callback_mode": callbackMode, "replaced": session.ReloginAccountID != "", "login_hint": loginHint != ""})
 }
 
 func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Request) {

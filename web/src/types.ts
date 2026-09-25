@@ -308,6 +308,7 @@ export interface AdminAccount {
   public_id: string;
   type: Provider;
   plan_type: string;
+  email?: string;
   disabled: boolean;
   dead: boolean;
   needs_verification?: boolean;

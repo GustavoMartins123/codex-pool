@@ -27,6 +27,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		PublicID                string      `json:"public_id"`
 		Type                    AccountType `json:"type"`
 		PlanType                string      `json:"plan_type,omitempty"`
+		Email                   string      `json:"email,omitempty"`
 		AccountID               string      `json:"account_id,omitempty"`
 		IDTokenChatGPTAccountID string      `json:"id_token_chatgpt_account_id,omitempty"`
 		Disabled                bool        `json:"disabled"`
@@ -52,6 +53,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 	for _, a := range h.pool.accounts {
 		a.mu.Lock()
 		planType := a.PlanType
+		email := a.Email
 		accountID := a.AccountID
 		idTokID := a.IDTokenChatGPTAccountID
 		disabled := a.Disabled
@@ -76,6 +78,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 			PublicID:                hashAccountID(a.ID),
 			Type:                    a.Type,
 			PlanType:                planType,
+			Email:                   email,
 			AccountID:               accountID,
 			IDTokenChatGPTAccountID: idTokID,
 			Disabled:                disabled,
