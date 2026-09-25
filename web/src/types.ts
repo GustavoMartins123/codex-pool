@@ -314,6 +314,7 @@ export interface AdminAccount {
   needs_verification?: boolean;
   health_blocked?: boolean;
   verification_url?: string;
+  account_verification_url?: string;
   health_error?: string;
   inflight: number;
   expires_at?: string;

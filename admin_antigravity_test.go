@@ -254,3 +254,29 @@ func TestSaveAntigravityAccountIsOwnerOnlyAndDurable(t *testing.T) {
 		t.Fatalf("bad saved credential: %v %#v", err, saved)
 	}
 }
+
+func TestAntigravityAccountBoundVerificationURL(t *testing.T) {
+	raw := "https://accounts.google.com/signin/continue?continue=https%3A%2F%2Fdevelopers.google.com%2Fgemini-code-assist%2Fauth%2Fauth_success_gemini&flowName=GlifWebSignIn&scc=1"
+	bound := antigravityAccountBoundVerificationURL(raw, "target@example.com")
+	parsed, err := url.Parse(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "accounts.google.com" || parsed.Path != "/AccountChooser" {
+		t.Fatalf("verification url was not routed through the account chooser: %s", bound)
+	}
+	query := parsed.Query()
+	if query.Get("Email") != "target@example.com" {
+		t.Fatalf("chooser is not bound to the account e-mail: %q", query.Get("Email"))
+	}
+	if query.Get("continue") != raw {
+		t.Fatalf("upstream verification flow was not preserved: %q", query.Get("continue"))
+	}
+	if got := antigravityAccountBoundVerificationURL(raw, "  "); got != raw {
+		t.Fatalf("missing e-mail must leave the url untouched: %q", got)
+	}
+	foreign := "https://support.example.test/appeal/abc"
+	if got := antigravityAccountBoundVerificationURL(foreign, "target@example.com"); got != foreign {
+		t.Fatalf("non-Google url must be preserved: %q", got)
+	}
+}

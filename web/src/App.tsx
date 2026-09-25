@@ -2533,7 +2533,9 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
     const adminMatch = operatorToken ? adminAccounts.find((candidate) => candidate.public_id === account.id) : null;
     return (adminMatch?.id ?? account.id) === selected;
   }) ?? null;
-  const selectedVerificationURL = selectedAdmin ? safeVerificationURL(selectedAdmin.verification_url) : "";
+  const selectedVerificationURL = selectedAdmin
+    ? safeVerificationURL(selectedAdmin.account_verification_url) || safeVerificationURL(selectedAdmin.verification_url)
+    : "";
   const toggleAction: AccountAction | null = selectedAdmin ? selectedAdmin.disabled ? "enable" : "disable" : null;
 
   const perform = async (nextAction: AccountAction) => {
@@ -2659,12 +2661,12 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                       <Instrument label="Primary" value={selectedAdmin.is_primary ? "Yes" : "No"} />
                     </div>
                     <pre className="score-trace">{selectedAdmin.score_tooltip || "No score detail is available."}</pre>
-                    {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}</p>}
+                    {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}{selectedAccount.type === "antigravity" && selectedVerificationURL ? " · finish the phone verification on this account, then relogin" : ""}</p>}
                     <div className="operator-actions">
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
-                      {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Open the Google verification flow for ${selectedAdmin.email}. Sign in with that account in this browser before continuing.` : "Open the Google verification flow."}>Open Google verification</a>}
+                      {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                     </div>
 

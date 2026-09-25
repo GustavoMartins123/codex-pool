@@ -35,6 +35,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		NeedsVerification       bool        `json:"needs_verification,omitempty"`
 		HealthBlocked           bool        `json:"health_blocked,omitempty"`
 		VerificationURL         string      `json:"verification_url,omitempty"`
+		AccountVerificationURL  string      `json:"account_verification_url,omitempty"`
 		HealthError             string      `json:"health_error,omitempty"`
 		CyberAccess             bool        `json:"cyber_access,omitempty"`
 		Inflight                int64       `json:"inflight"`
@@ -61,6 +62,10 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		needsVerification := a.NeedsVerification
 		healthBlocked := accountHealthBlockedLocked(a)
 		verificationURL := a.VerificationURL
+		accountVerificationURL := ""
+		if a.Type == AccountTypeAntigravity {
+			accountVerificationURL = antigravityAccountBoundVerificationURL(verificationURL, email)
+		}
 		healthError := a.HealthError
 		cyberAccess := a.CyberAccess
 		expiresAt := a.ExpiresAt
@@ -86,6 +91,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 			NeedsVerification:       needsVerification,
 			HealthBlocked:           healthBlocked,
 			VerificationURL:         verificationURL,
+			AccountVerificationURL:  accountVerificationURL,
 			HealthError:             healthError,
 			CyberAccess:             cyberAccess,
 			Inflight:                atomic.LoadInt64(&a.Inflight),

@@ -28,6 +28,35 @@ const (
 	antigravityOAuthCallbackURL  = "http://localhost:51121/oauth-callback"
 )
 
+// antigravityAccountBoundVerificationURL rebinds an upstream Google verification
+// link to the pool account e-mail. Google otherwise continues the flow with
+// whichever account the browser session already has, which silently verifies the
+// wrong identity. accounts.google.com/AccountChooser honours Email= by selecting
+// the matching session account, or by pre-filling the identifier form.
+func antigravityAccountBoundVerificationURL(rawURL, email string) string {
+	raw := strings.TrimSpace(rawURL)
+	email = strings.TrimSpace(email)
+	if raw == "" || email == "" {
+		return raw
+	}
+	target, err := url.Parse(raw)
+	if err != nil || target.Scheme != "https" {
+		return raw
+	}
+	host := strings.ToLower(target.Hostname())
+	if host != "accounts.google.com" && host != "accounts.google.co.uk" && !strings.HasSuffix(host, ".google.com") {
+		return raw
+	}
+	chooser := &url.URL{Scheme: "https", Host: "accounts.google.com", Path: "/AccountChooser"}
+	query := chooser.Query()
+	query.Set("Email", email)
+	query.Set("continue", raw)
+	query.Set("oauth", "1")
+	query.Set("scc", "1")
+	chooser.RawQuery = query.Encode()
+	return chooser.String()
+}
+
 var antigravityOAuthScopes = []string{
 	"https://www.googleapis.com/auth/cloud-platform",
 	"https://www.googleapis.com/auth/userinfo.email",
