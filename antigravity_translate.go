@@ -63,6 +63,7 @@ type antigravityPreparedRequest struct {
 	Operation              string
 	ResponsesRequest       map[string]any
 	ResponsesFunctionNames map[string]string
+	EstimatedInputTokens   int
 }
 
 func shouldRouteAntigravityModel(model string) bool {
@@ -1502,6 +1503,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			transitionEpoch = state.TransitionEpoch
 		}
 		prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transitionEpoch, freshSession)
+		prepared.EstimatedInputTokens = estimateAntigravitySerializedTokens(prepared.Body)
 		if conversationID != "" {
 			var envelope map[string]any
 			if json.Unmarshal(prepared.Body, &envelope) == nil {
@@ -1559,6 +1561,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 						return true
 					}
 					prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transition.Epoch, true)
+					prepared.EstimatedInputTokens = estimateAntigravitySerializedTokens(prepared.Body)
 					var envelope map[string]any
 					if json.Unmarshal(prepared.Body, &envelope) == nil {
 						request, _ := envelope["request"].(map[string]any)
@@ -1603,7 +1606,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			}
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
 			if providerErr.Class == ProviderErrorContext {
-				compacted, didCompact, compactErr := compactAntigravityRequestBody(r.URL.Path, body)
+				compacted, didCompact, compactErr := compactAntigravityRequestBodyWithRecentTokens(r.URL.Path, body, antigravityEmergencyRecentTokens)
 				if compactErr == nil && didCompact {
 					antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 					logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, providerErr)
@@ -1962,6 +1965,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 				h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, text)
 			}
 		}
+		h.recordAntigravityTokenDrift(reqID, prepared, usage)
 		h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
 		return
 	}
@@ -2016,7 +2020,19 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	if conversationID != "" {
 		h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, assistantText.String())
 	}
+	h.recordAntigravityTokenDrift(reqID, prepared, usage)
 	h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
+}
+
+func (h *proxyHandler) recordAntigravityTokenDrift(reqID string, prepared antigravityPreparedRequest, usage *RequestUsage) {
+	if usage == nil || usage.InputTokens <= 0 || prepared.EstimatedInputTokens <= 0 {
+		return
+	}
+	residual := usage.InputTokens - int64(prepared.EstimatedInputTokens)
+	if residual > 0 {
+		h.metrics.recordAntigravityInputResidual(residual)
+	}
+	log.Printf("[%s] provider=antigravity estimated_input_tokens=%d upstream_input_tokens=%d residual=%d", reqID, prepared.EstimatedInputTokens, usage.InputTokens, residual)
 }
 
 func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUsage, model, userID, originID, reqID string) {

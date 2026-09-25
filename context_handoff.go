@@ -12,14 +12,20 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	contextHandoffMaxConversations = 2048
-	contextHandoffCompactTokens    = 100_000
-	contextHandoffRecentTokens     = 48_000
-	contextHandoffSummaryChars     = 16_000
-	antigravityWireCompactTokens   = 700_000
+	contextHandoffMaxConversations       = 2048
+	contextHandoffCompactTokens          = 100_000
+	contextHandoffRecentTokens           = 48_000
+	antigravityNormalRecentTokens        = 200_000
+	antigravityNormalMinRecentTokens     = 150_000
+	antigravityEmergencyRecentTokens     = 48_000
+	antigravityNormalToolResultTokens    = 32_000
+	antigravityEmergencyToolResultTokens = 12_000
+	contextHandoffSummaryChars           = 16_000
+	antigravityWireCompactTokens         = 700_000
 )
 
 // ConversationState is the provider-independent state retained by the pool.
@@ -781,11 +787,22 @@ func estimateContextTokens(messages []Message) int {
 }
 
 func compactConversationMessages(messages []Message) ([]Message, string, bool) {
-	if estimateContextTokens(messages) <= contextHandoffCompactTokens {
+	return compactConversationMessagesWithRecentTokens(messages, contextHandoffRecentTokens)
+}
+
+func compactConversationMessagesWithRecentTokens(messages []Message, recentTokens int) ([]Message, string, bool) {
+	return compactConversationMessagesWithRecentTokensAndThreshold(messages, recentTokens, contextHandoffCompactTokens)
+}
+
+func compactConversationMessagesWithRecentTokensAndThreshold(messages []Message, recentTokens, threshold int) ([]Message, string, bool) {
+	if recentTokens <= 0 {
+		recentTokens = contextHandoffRecentTokens
+	}
+	if estimateContextTokens(messages) <= threshold {
 		return messages, "", false
 	}
 
-	recent, recentStart := trimConversationMessagesWithStart(messages, contextHandoffRecentTokens*4)
+	recent, recentStart := trimConversationMessagesWithStart(messages, recentTokens*4)
 	if len(recent) == 0 {
 		return messages, "", false
 	}
@@ -818,6 +835,33 @@ func compactConversationMessages(messages []Message) ([]Message, string, bool) {
 	}}
 	compacted = append(compacted, recent...)
 	return compacted, summaryText, true
+}
+
+func trimAntigravityToolResults(messages []Message, maxTokens int) ([]Message, bool) {
+	if maxTokens <= 0 {
+		return messages, false
+	}
+	maxCharacters := maxTokens * 4
+	const suffix = "\n[tool output truncated by codex-pool]"
+	if maxCharacters <= len(suffix) {
+		return messages, false
+	}
+	changed := false
+	for messageIndex := range messages {
+		for partIndex := range messages[messageIndex].Parts {
+			part := &messages[messageIndex].Parts[partIndex]
+			if part.Type != "tool_result" || len(part.Text) <= maxCharacters {
+				continue
+			}
+			keep := maxCharacters - len(suffix)
+			for keep > 0 && keep < len(part.Text) && !utf8.RuneStart(part.Text[keep]) {
+				keep--
+			}
+			part.Text = part.Text[:keep] + suffix
+			changed = true
+		}
+	}
+	return messages, changed
 }
 
 func trimConversationMessagesWithStart(messages []Message, characterBudget int) ([]Message, int) {
@@ -1710,6 +1754,10 @@ func (h *proxyHandler) getContextHandoff() *conversationHandoffStore {
 }
 
 func compactAntigravityRequestBody(path string, body []byte) ([]byte, bool, error) {
+	return compactAntigravityRequestBodyWithRecentTokens(path, body, antigravityNormalRecentTokens)
+}
+
+func compactAntigravityRequestBodyWithRecentTokens(path string, body []byte, recentTokens int) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -1723,24 +1771,67 @@ func compactAntigravityRequestBody(path string, body []byte) ([]byte, bool, erro
 		return body, false, nil
 	}
 	messages, _ := sanitizeConversationToolPairs(normalizeConversationMessages(format, object))
-	if len(messages) == 0 || estimateContextTokens(messages) <= antigravityWireCompactTokens {
+	if len(messages) == 0 {
 		return body, false, nil
 	}
-	originalTokens := estimateContextTokens(messages)
-	compacted, _, ok := compactConversationMessages(messages)
-	if !ok {
+	originalTokens := estimateAntigravityRequestTokens(path, body)
+	if originalTokens == 0 {
+		originalTokens = estimateContextTokens(messages)
+	}
+	if originalTokens <= antigravityWireCompactTokens {
 		return body, false, nil
 	}
-	compacted, _ = sanitizeConversationToolPairs(compacted)
-	if estimateContextTokens(compacted) >= originalTokens {
-		return body, false, nil
+	if recentTokens <= 0 {
+		recentTokens = antigravityEmergencyRecentTokens
 	}
-	renderConversationMessages(format, object, compacted)
-	encoded, err := json.Marshal(root)
-	if err != nil {
-		return body, false, err
+	targets := []int{recentTokens}
+	if recentTokens > antigravityEmergencyRecentTokens {
+		targets = append(targets, antigravityNormalMinRecentTokens, antigravityEmergencyRecentTokens)
 	}
-	return encoded, true, nil
+	var lastBody []byte
+	for _, target := range targets {
+		var candidateRoot map[string]any
+		if json.Unmarshal(body, &candidateRoot) != nil {
+			continue
+		}
+		candidateObject := contextRequestObject(candidateRoot)
+		candidateMessages, _ := sanitizeConversationToolPairs(normalizeConversationMessages(format, candidateObject))
+		toolResultLimit := antigravityNormalToolResultTokens
+		if target <= antigravityEmergencyRecentTokens {
+			toolResultLimit = antigravityEmergencyToolResultTokens
+		}
+		candidateMessages, toolResultsTrimmed := trimAntigravityToolResults(candidateMessages, toolResultLimit)
+		compacted, _, compactedOK := compactConversationMessagesWithRecentTokensAndThreshold(candidateMessages, target, 0)
+		if !compactedOK && !toolResultsTrimmed {
+			continue
+		}
+		if !compactedOK {
+			compacted = candidateMessages
+		} else {
+			compacted, _ = trimAntigravityToolResults(compacted, toolResultLimit)
+		}
+		compacted, _ = sanitizeConversationToolPairs(compacted)
+		renderConversationMessages(format, candidateObject, compacted)
+		encoded, err := json.Marshal(candidateRoot)
+		if err != nil {
+			return body, false, err
+		}
+		candidateTokens := estimateAntigravityRequestTokens(path, encoded)
+		if candidateTokens == 0 {
+			candidateTokens = estimateContextTokens(compacted)
+		}
+		if candidateTokens >= originalTokens {
+			continue
+		}
+		lastBody = encoded
+		if candidateTokens <= antigravityWireCompactTokens {
+			return encoded, true, nil
+		}
+	}
+	if lastBody != nil {
+		return lastBody, true, nil
+	}
+	return body, false, nil
 }
 
 func (h *proxyHandler) prepareProviderContextHandoff(
