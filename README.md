@@ -93,9 +93,40 @@ pool/
 
 ### 2. Run it
 
+Builds include the dashboard. Run the binary from a directory where you want
+`pool/`, `data/`, and optional `config.toml` to live.
+
+**Linux (Docker with Buildx):**
+
 ```bash
-go build && ./codex-pool
+./scripts/build.sh amd64
+./dist/linux-amd64/codex-pool
 ```
+
+Use `arm64` for a Linux ARM64 host. To build and install for the current Linux
+architecture, run `./scripts/install.sh` (default: `~/.local/bin`); pass a
+directory to change the install location.
+
+**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC):**
+
+```powershell
+.\scripts\windows\build.ps1
+.\dist\windows-amd64\codex-pool.exe
+```
+
+Run `.\scripts\windows\install.ps1` to build and install into
+`$env:LOCALAPPDATA\Programs\codex-pool`, or pass `-InstallDir` to choose a
+directory. Install `mingw-w64-ucrt-x86_64-gcc` in MSYS2 first; if MSYS2 is not
+at `C:\msys64`, pass its UCRT64 `bin` path with `-CompilerBin` to `build.ps1`.
+`install.ps1` accepts the same option.
+Windows builds target `amd64`; DuckDB's pinned bindings do not
+include a Windows ARM64 target. Installation copies only the executable and
+does not change `PATH` or create a service.
+
+For development, use `scripts/dev_proxy.sh` on Linux or
+`scripts/windows/dev_proxy.ps1` on Windows after building the dashboard. For
+Docker deployment, use `scripts/deploy.sh` or
+`scripts/windows/deploy.ps1`, respectively.
 
 ### 3. Point your CLI
 
