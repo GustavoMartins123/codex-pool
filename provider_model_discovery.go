@@ -349,7 +349,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 				aggregates[key] = entry
 			}
 			entry.supporting++
-			if accountAvailableForRoutingLocked(account, now) && !account.NeedsVerification {
+			if accountAvailableForRoutingLocked(account, now) {
 				entry.available++
 			}
 		}

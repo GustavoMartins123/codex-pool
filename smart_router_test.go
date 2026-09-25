@@ -116,6 +116,19 @@ func TestSmartRouterProfilesSelectDeterministically(t *testing.T) {
 	}
 }
 
+func TestSmartRouterSkipsHealthBlockedAccounts(t *testing.T) {
+	now := time.Now()
+	blocked := routingTestAccount("blocked", 0.01, now.Add(6*24*time.Hour))
+	blocked.NeedsVerification = true
+	healthy := routingTestAccount("healthy", 0.80, now.Add(6*24*time.Hour))
+	pool := newPoolState([]*Account{blocked, healthy}, false)
+
+	decision := pool.smartCandidateForModel("", nil, AccountTypeCodex, "pro", "", "gpt-5.5", RoutingBalanced)
+	if decision.Account != healthy {
+		t.Fatalf("selected %v, want healthy account", decision.Account)
+	}
+}
+
 func TestSmartRouterConfigurationAndAliases(t *testing.T) {
 	cfg := RoutingConfigFile{
 		DefaultProfile: "fast",

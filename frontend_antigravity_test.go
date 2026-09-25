@@ -21,6 +21,54 @@ func TestPoolStatsUsesEmptyAccountArrayForFirstAccountSignIn(t *testing.T) {
 	}
 }
 
+func TestPoolStatsMarksHealthBlockedAccounts(t *testing.T) {
+	account := &Account{
+		Type:              AccountTypeAntigravity,
+		ID:                "blocked",
+		NeedsVerification: true,
+		HealthError:       "403 PERMISSION_DENIED",
+	}
+	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false)}
+	recorder := httptest.NewRecorder()
+	handler.handlePoolStats(recorder, httptest.NewRequest("GET", "/api/pool/stats", nil))
+
+	var payload PoolStats
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Accounts) != 1 {
+		t.Fatalf("account count = %d, want 1", len(payload.Accounts))
+	}
+	got := payload.Accounts[0]
+	if got.Status != "verification_required" || !got.NeedsVerification || !got.HealthBlocked {
+		t.Fatalf("health status = %+v", got)
+	}
+	if payload.ActiveAccounts != 0 || got.IsPrimary || got.Score != 0 {
+		t.Fatalf("blocked account was counted as active: active=%d account=%+v", payload.ActiveAccounts, got)
+	}
+
+	legacy := handler.pool.getPoolStats()
+	if legacy.HealthyCount != 0 || len(legacy.Accounts) != 1 || legacy.Accounts[0].Status != "verification_required" {
+		t.Fatalf("legacy pool stats ignored health block: %+v", legacy)
+	}
+}
+
+func TestPoolStatsMarksHealthErrorAsUnavailable(t *testing.T) {
+	account := &Account{Type: AccountTypeAntigravity, ID: "health-error", HealthError: "upstream unavailable"}
+	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false)}
+	recorder := httptest.NewRecorder()
+	handler.handlePoolStats(recorder, httptest.NewRequest("GET", "/api/pool/stats", nil))
+
+	var payload PoolStats
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.Accounts[0]
+	if got.Status != "degraded" || !got.HealthBlocked || payload.ActiveAccounts != 0 || got.Score != 0 {
+		t.Fatalf("health error status = %+v active=%d", got, payload.ActiveAccounts)
+	}
+}
+
 func TestPoolStatsExposesBankedResetExpirationsToFriends(t *testing.T) {
 	expiresAt := time.Date(2026, time.July, 18, 0, 35, 13, 709488000, time.UTC)
 	account := &Account{

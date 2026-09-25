@@ -216,7 +216,7 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 				liveCount := 0
 				for _, a := range accounts {
 					a.mu.Lock()
-					if !a.Dead && !a.Disabled {
+					if !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) {
 						liveCount++
 					}
 					a.mu.Unlock()

@@ -107,6 +107,7 @@ type accountUsageSnapshot struct {
 	Type           AccountType
 	Dead           bool
 	Disabled       bool
+	HealthBlocked  bool
 	RateLimitUntil time.Time
 	Usage          UsageSnapshot
 }
@@ -118,6 +119,7 @@ func snapshotAccountUsage(a *Account) accountUsageSnapshot {
 		Type:           a.Type,
 		Dead:           a.Dead,
 		Disabled:       a.Disabled,
+		HealthBlocked:  accountHealthBlockedLocked(a),
 		RateLimitUntil: a.RateLimitUntil,
 		Usage:          a.Usage,
 	}
@@ -602,7 +604,7 @@ func (p *poolState) candidateByID(id string, accountType AccountType, requiredPl
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
-	if a.Dead || a.Disabled || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
+	if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
 		return nil
 	}
 	if !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now) {
@@ -626,7 +628,7 @@ func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountTyp
 			continue
 		}
 		a.mu.Lock()
-		if a.Dead || a.Disabled || !a.CyberAccess || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
+		if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || !a.CyberAccess || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
 			a.mu.Unlock()
 			continue
 		}
@@ -757,7 +759,7 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 				// pinned excluded; fall through to selection
 			} else if a := p.getLocked(id); a != nil {
 				a.mu.Lock()
-				ok := !a.Dead && !a.Disabled && (accountType == "" || a.Type == accountType) && planMatchesRequired(a.PlanType, requiredPlan) && accountAllowsClientIPLocked(a, clientIP)
+				ok := !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) && (accountType == "" || a.Type == accountType) && planMatchesRequired(a.PlanType, requiredPlan) && accountAllowsClientIPLocked(a, clientIP)
 				if ok && a.Type == AccountTypeCodex && !isCodexProAccessPlan(a.PlanType) {
 					ok = false
 					if p.debug {
@@ -827,7 +829,7 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 			continue
 		}
 		a.mu.Lock()
-		if a.Dead || a.Disabled || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
+		if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
 			a.mu.Unlock()
 			continue
 		}
@@ -1294,6 +1296,9 @@ func scoreAccountBreakdownLocked(a *Account, now time.Time) scoreBreakdown {
 
 	out.HeadroomPreCredit = headroom
 	out.Score = headroom * out.CreditBonus
+	if accountHealthBlockedLocked(a) {
+		out.Score = 0
+	}
 	return out
 }
 
@@ -1307,6 +1312,12 @@ func scoreTooltipFromBreakdownLocked(a *Account, now time.Time, breakdown scoreB
 	}
 	if a.Dead {
 		return "Not scored because this account is marked dead."
+	}
+	if a.NeedsVerification || strings.TrimSpace(a.VerificationURL) != "" {
+		return "Not scored because this account requires revalidation."
+	}
+	if strings.TrimSpace(a.HealthError) != "" {
+		return "Not scored because this account has a health block."
 	}
 
 	lines := make([]string, 0, 12)
@@ -1766,7 +1777,7 @@ func (p *poolState) averageUsageByType(accountType AccountType) UsageSnapshot {
 	var latestPrimaryReset, latestSecondaryReset time.Time
 	for _, a := range p.accounts {
 		account := snapshotAccountUsage(a)
-		if account.Dead {
+		if account.Dead || account.HealthBlocked {
 			continue
 		}
 		if accountType != "" && account.Type != accountType {
@@ -1869,7 +1880,7 @@ func (p *poolState) timeWeightedUsageByType(accountType AccountType) UsageSnapsh
 
 	for _, a := range p.accounts {
 		account := snapshotAccountUsage(a)
-		if account.Dead {
+		if account.Dead || account.HealthBlocked {
 			continue
 		}
 		if accountType != "" && account.Type != accountType {
@@ -1987,6 +1998,9 @@ func (p *poolState) getPoolUtilization() []PoolUtilization {
 			continue
 		}
 		pa.total++
+		if account.HealthBlocked {
+			continue
+		}
 
 		usedP := account.Usage.PrimaryUsedPercent
 		if usedP == 0 {
@@ -2144,7 +2158,9 @@ type AccountBrief struct {
 	ID                 string  `json:"id"`
 	Type               string  `json:"type"`
 	Plan               string  `json:"plan"`
-	Status             string  `json:"status"` // "healthy", "dead", "disabled"
+	Status             string  `json:"status"` // "healthy", "degraded", "cooldown", "verification_required", "dead", "disabled"
+	NeedsVerification  bool    `json:"needs_verification,omitempty"`
+	HealthBlocked      bool    `json:"health_blocked,omitempty"`
 	PrimaryPct         int     `json:"primary_pct"`
 	SecondaryPct       int     `json:"secondary_pct"`
 	PrimaryAvailable   bool    `json:"primary_available"`
@@ -2201,11 +2217,17 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 
 		// Determine status
 		status := "healthy"
+		healthBlocked := accountHealthBlockedLocked(a)
+		needsVerification := a.NeedsVerification || strings.TrimSpace(a.VerificationURL) != ""
 		if a.Dead {
 			status = "dead"
 			stats.DeadCount++
 		} else if a.Disabled {
 			status = "disabled"
+		} else if needsVerification {
+			status = "verification_required"
+		} else if healthBlocked {
+			status = "degraded"
 		} else {
 			stats.HealthyCount++
 		}
@@ -2222,7 +2244,7 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 		primaryAvailable := usagePrimaryWindowAvailable(a.Usage)
 		secondaryAvailable := usageSecondaryWindowAvailable(a.Usage)
 
-		isHealthy := !a.Dead && !a.Disabled
+		isHealthy := !a.Dead && !a.Disabled && !healthBlocked
 
 		// Track min/max for healthy accounts with an actual window. An absent
 		// five-hour limit is not the same thing as a five-hour limit at 0%.
@@ -2300,6 +2322,8 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 			Type:               string(a.Type),
 			Plan:               a.PlanType,
 			Status:             status,
+			NeedsVerification:  needsVerification,
+			HealthBlocked:      healthBlocked,
 			PrimaryPct:         int(primaryUsed * 100),
 			SecondaryPct:       int(secondaryUsed * 100),
 			PrimaryAvailable:   primaryAvailable,
@@ -2453,7 +2477,7 @@ func (p *poolState) candidateWithTrace(conversationID string, exclude map[string
 	acc.mu.Lock()
 	sb := scoreAccountBreakdownLocked(acc, now)
 	inflight := atomic.LoadInt64(&acc.Inflight)
-	hadHealthError := acc.NeedsVerification || acc.HealthError != ""
+	hadHealthError := accountHealthBlockedLocked(acc)
 	acc.mu.Unlock()
 
 	score := sb.Score - float64(inflight)*0.02
@@ -2481,9 +2505,13 @@ func (p *poolState) candidateWithTrace(conversationID string, exclude map[string
 			continue
 		}
 		a.mu.Lock()
+		if accountHealthBlockedLocked(a) {
+			a.mu.Unlock()
+			continue
+		}
 		altSB := scoreAccountBreakdownLocked(a, now)
 		altInflight := atomic.LoadInt64(&a.Inflight)
-		altHealthErr := a.NeedsVerification || a.HealthError != ""
+		altHealthErr := accountHealthBlockedLocked(a)
 		a.mu.Unlock()
 
 		altScore := altSB.Score - float64(altInflight)*0.02

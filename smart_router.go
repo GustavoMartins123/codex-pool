@@ -293,7 +293,7 @@ func routingSignalsLocked(account *Account, telemetry routingTelemetry, pinned b
 	headroom = clampUnit(headroom)
 	resetProximity := routingResetProximity(account.Usage, now)
 	health := 1.0
-	if account.NeedsVerification || account.HealthError != "" {
+	if accountHealthBlockedLocked(account) {
 		health = 0
 	} else if telemetry.Samples > 0 {
 		health = clampUnit(telemetry.SuccessEWMA)
@@ -515,7 +515,7 @@ func (p *poolState) smartCandidateForModel(conversationID string, exclude map[st
 			continue
 		}
 		account.mu.Lock()
-		eligible := !account.Dead && !account.Disabled &&
+		eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) &&
 			(accountType == "" || account.Type == accountType) &&
 			planMatchesRequired(account.PlanType, requiredPlan) &&
 			accountAllowsClientIPLocked(account, clientIP) &&

@@ -89,6 +89,16 @@ func TestCandidateSkipsDeadOrDisabled(t *testing.T) {
 	}
 }
 
+func TestCandidateSkipsHealthBlockedAccounts(t *testing.T) {
+	blocked := &Account{ID: "blocked", Type: AccountTypeCodex, NeedsVerification: true}
+	healthy := &Account{ID: "healthy", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.5}}
+	pool := newPoolState([]*Account{blocked, healthy}, false)
+
+	if got := pool.candidate("", nil, AccountTypeCodex, "", ""); got != healthy {
+		t.Fatalf("candidate = %v, want healthy account", got)
+	}
+}
+
 func TestCandidateSkipsRateLimitedCodexAccount(t *testing.T) {
 	rateLimited := &Account{
 		ID:             "limited",

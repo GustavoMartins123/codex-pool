@@ -280,7 +280,7 @@ func antigravityAccountModelAvailable(pool *poolState, accountID, model string) 
 		}
 		account.mu.Lock()
 		defer account.mu.Unlock()
-		if account.Dead || account.Disabled || account.NeedsVerification {
+		if account.Dead || account.Disabled || accountHealthBlockedLocked(account) {
 			return false, time.Time{}
 		}
 		now := time.Now()
@@ -772,7 +772,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				account.mu.Lock()
 				until := account.ModelRateLimits[model]
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-				eligible := !account.Dead && !account.Disabled && !account.NeedsVerification && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
 					return account
@@ -787,7 +787,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				account.mu.Lock()
 				until := account.ModelRateLimits[model]
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-				eligible := !account.Dead && !account.Disabled && !account.NeedsVerification && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
 					p.convPin[pinKey] = account.ID
@@ -810,7 +810,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 		account.mu.Lock()
 		until := account.ModelRateLimits[model]
 		discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-		eligible := !account.Dead && !account.Disabled && !account.NeedsVerification && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+		eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 		score := scoreAccountLocked(account, now) - float64(atomic.LoadInt64(&account.Inflight))*0.02
 		account.mu.Unlock()
 		if eligible && (best == nil || score > bestScore) {
@@ -908,7 +908,7 @@ func (p *poolState) candidateForAntigravityModelWithTrace(conversationID string,
 	acc.mu.Lock()
 	sb := scoreAccountBreakdownLocked(acc, now)
 	inflight := atomic.LoadInt64(&acc.Inflight)
-	hadHealthError := acc.NeedsVerification || acc.HealthError != ""
+	hadHealthError := accountHealthBlockedLocked(acc)
 	acc.mu.Unlock()
 
 	score := sb.Score - float64(inflight)*0.02
@@ -922,9 +922,13 @@ func (p *poolState) candidateForAntigravityModelWithTrace(conversationID string,
 			continue
 		}
 		a.mu.Lock()
+		if accountHealthBlockedLocked(a) {
+			a.mu.Unlock()
+			continue
+		}
 		altSB := scoreAccountBreakdownLocked(a, now)
 		altInflight := atomic.LoadInt64(&a.Inflight)
-		altHealthErr := a.NeedsVerification || a.HealthError != ""
+		altHealthErr := accountHealthBlockedLocked(a)
 		a.mu.Unlock()
 
 		altScore := altSB.Score - float64(altInflight)*0.02

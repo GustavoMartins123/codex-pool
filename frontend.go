@@ -1773,7 +1773,9 @@ type AccountStats struct {
 	Type                      string            `json:"type"`
 	PlanType                  string            `json:"plan_type"`
 	ResetWindows              ResetWindowPolicy `json:"reset_windows"`
-	Status                    string            `json:"status"` // healthy, degraded, dead
+	Status                    string            `json:"status"` // healthy, degraded, cooldown, verification_required, dead
+	NeedsVerification         bool              `json:"needs_verification,omitempty"`
+	HealthBlocked             bool              `json:"health_blocked,omitempty"`
 	Penalty                   float64           `json:"penalty"`
 	PrimaryWindowUsed         float64           `json:"primary_window_used_pct"`
 	SecondaryWindowUsed       float64           `json:"secondary_window_used_pct"`
@@ -1900,14 +1902,18 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 		acc.mu.Lock()
 
 		status := "healthy"
+		healthBlocked := accountHealthBlockedLocked(acc)
+		needsVerification := acc.NeedsVerification || strings.TrimSpace(acc.VerificationURL) != ""
 		if acc.Dead || acc.Disabled {
 			status = "dead"
+		} else if needsVerification {
+			status = "verification_required"
 		} else if accountCoolingDownLocked(acc, stats.GeneratedAt) || accountUsageExhaustedLocked(acc) {
 			status = "cooldown"
-		} else if acc.Penalty > 2.0 {
+		} else if healthBlocked || acc.Penalty > 2.0 {
 			status = "degraded"
 		}
-		if status == "healthy" || status == "degraded" {
+		if !healthBlocked && (status == "healthy" || status == "degraded") {
 			activeCount++
 		}
 
@@ -1946,7 +1952,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 
 		breakdown := scoreBreakdown{}
 		score := float64(0)
-		if !acc.Dead && !acc.Disabled {
+		if !acc.Dead && !acc.Disabled && !healthBlocked {
 			breakdown = scoreAccountBreakdownLocked(acc, stats.GeneratedAt)
 			score = breakdown.Score
 		}
@@ -1958,6 +1964,8 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			PlanType:                 formatPlanWithTier(acc.PlanType, acc.RateLimitTier),
 			ResetWindows:             resetWindowPolicy(acc.Type, acc.PlanType),
 			Status:                   status,
+			NeedsVerification:        needsVerification,
+			HealthBlocked:            healthBlocked,
 			Penalty:                  acc.Penalty,
 			PrimaryWindowUsed:        primaryUsed,
 			SecondaryWindowUsed:      secondaryUsed,
@@ -2012,7 +2020,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 	highestScore := make(map[string]float64)
 	highestIdx := make(map[string]int)
 	for i, as := range stats.Accounts {
-		if (as.Status == "healthy" || as.Status == "degraded") && as.Score > highestScore[as.Type] {
+		if !as.HealthBlocked && (as.Status == "healthy" || as.Status == "degraded") && as.Score > highestScore[as.Type] {
 			highestScore[as.Type] = as.Score
 			highestIdx[as.Type] = i
 		}
@@ -2218,7 +2226,7 @@ func (h *proxyHandler) computeCyberPolicyStats(accounts []*Account) CyberPolicyS
 	now := time.Now()
 	for _, a := range accounts {
 		a.mu.Lock()
-		if a.CyberAccess && !a.Dead && !a.Disabled &&
+		if a.CyberAccess && !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) &&
 			(a.ExpiresAt.IsZero() || a.ExpiresAt.After(now) || h.cfg.disableRefresh) {
 			out.CyberCandidatesAvailable++
 		}

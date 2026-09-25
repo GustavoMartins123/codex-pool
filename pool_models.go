@@ -244,7 +244,7 @@ func poolModelAvailability(pool *poolState, accountType AccountType, modelIDs ..
 			}
 		}
 		supportingAccounts++
-		if accountAvailableForRoutingLocked(account, now) && !account.NeedsVerification {
+		if accountAvailableForRoutingLocked(account, now) {
 			availableAccounts++
 		}
 		account.mu.Unlock()

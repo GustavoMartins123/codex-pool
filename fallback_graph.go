@@ -244,7 +244,7 @@ func (fg *FallbackGraph) ResolveFallbackWithTransitionExcluding(
 			requiredPlan := requiredPlanForRequest(meta.Provider, nil, cand)
 			for _, a := range accounts {
 				a.mu.Lock()
-				live := !a.Dead && !a.Disabled &&
+				live := !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) &&
 					(a.RateLimitUntil.IsZero() || !a.RateLimitUntil.After(now)) &&
 					planMatchesRequired(a.PlanType, requiredPlan)
 				a.mu.Unlock()

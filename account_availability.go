@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 	"time"
 )
 
@@ -48,11 +49,18 @@ func accountUsageExhaustedLocked(a *Account) bool {
 		accountSecondaryUsageLocked(a) >= secondaryHardExcludeThreshold
 }
 
+func accountHealthBlockedLocked(a *Account) bool {
+	if a == nil {
+		return false
+	}
+	return a.NeedsVerification || strings.TrimSpace(a.HealthError) != "" || strings.TrimSpace(a.VerificationURL) != ""
+}
+
 func accountAvailableForRoutingLocked(a *Account, now time.Time) bool {
 	if a == nil {
 		return false
 	}
-	if a.Dead || a.Disabled {
+	if a.Dead || a.Disabled || accountHealthBlockedLocked(a) {
 		return false
 	}
 	if accountCoolingDownLocked(a, now) {

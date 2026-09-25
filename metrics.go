@@ -330,7 +330,7 @@ func (p *poolState) providerModelAvailability() (map[string]bool, map[string]boo
 
 	for _, a := range p.accounts {
 		a.mu.Lock()
-		isAvail := !a.Dead && !a.Disabled && !a.NeedsVerification && (a.RateLimitUntil.IsZero() || !a.RateLimitUntil.After(now))
+		isAvail := !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) && (a.RateLimitUntil.IsZero() || !a.RateLimitUntil.After(now))
 		provType := string(a.Type)
 		if isAvail {
 			providers[provType] = true

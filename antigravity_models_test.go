@@ -166,6 +166,19 @@ func TestAntigravityCanonicalModelUsesForcedPrefixAndDeprecatedAlias(t *testing.
 	}
 }
 
+func TestAntigravityModelSelectionSkipsVerificationBlockedAccount(t *testing.T) {
+	model := "gemini-verification-test"
+	blocked := &Account{Type: AccountTypeAntigravity, ID: "blocked-verification", NeedsVerification: true}
+	healthy := &Account{Type: AccountTypeAntigravity, ID: "healthy-verification"}
+	pool := newPoolState([]*Account{blocked, healthy}, false)
+	for _, account := range []*Account{blocked, healthy} {
+		antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{model: {ID: model}}})
+	}
+	if got := pool.candidateForAntigravityModel("", nil, model, ""); got != healthy {
+		t.Fatalf("selected %v, want healthy account", got)
+	}
+}
+
 func TestAntigravityModelCooldownDoesNotBlockAnotherModel(t *testing.T) {
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", ModelRateLimits: map[string]time.Time{"gemini-a": time.Now().Add(time.Hour)}}
 	pool := newPoolState([]*Account{account}, false)

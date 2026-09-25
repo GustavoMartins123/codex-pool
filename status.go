@@ -58,6 +58,8 @@ type AccountStatus struct {
 	PlanType           string
 	Disabled           bool
 	Dead               bool
+	NeedsVerification  bool
+	HealthBlocked      bool
 	CoolingDown        bool
 	PrimaryUsed        float64
 	SecondaryUsed      float64
@@ -129,6 +131,8 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 			PlanType:           a.PlanType,
 			Disabled:           a.Disabled,
 			Dead:               a.Dead,
+			NeedsVerification:  a.NeedsVerification,
+			HealthBlocked:      accountHealthBlockedLocked(a),
 			CoolingDown:        accountCoolingDownLocked(a, now),
 			PrimaryUsed:        primaryUsed * 100,
 			SecondaryUsed:      secondaryUsed * 100,
@@ -485,8 +489,11 @@ const statusHTML = `<!DOCTYPE html>
             <td>
                 {{.ID}}
                 {{if .Disabled}}<span class="tag tag-disabled">disabled</span>{{end}}
-                {{if .Dead}}<span class="tag tag-dead">dead</span>{{end}}
-                {{if .CoolingDown}}<span class="tag tag-disabled">cooldown</span>{{end}}
+                 {{if .Dead}}<span class="tag tag-dead">dead</span>{{end}}
+                 {{if .NeedsVerification}}<span class="tag tag-dead">revalidation</span>{{end}}
+                 {{if and .HealthBlocked (not .NeedsVerification)}}<span class="tag tag-disabled">health block</span>{{end}}
+                 {{if .CoolingDown}}<span class="tag tag-disabled">cooldown</span>{{end}}
+
             </td>
             <td>
                 {{if eq .Type "codex"}}<span class="tag tag-codex">codex</span>{{end}}
@@ -513,9 +520,11 @@ const statusHTML = `<!DOCTYPE html>
                 {{if .SecondaryResetIn}}<br><small>resets in {{.SecondaryResetIn}}</small>{{end}}
             </td>
             <td class="score-cell" title="{{.ScoreTooltip}}">
-                {{if .Dead}}<span class="status-dead">—</span>
-                {{else if .Disabled}}<span class="status-warn">—</span>
-                {{else}}{{score .Score}}{{end}}
+                 {{if .Dead}}<span class="status-dead">—</span>
+                 {{else if .Disabled}}<span class="status-warn">—</span>
+                 {{else if .HealthBlocked}}<span class="status-warn">—</span>
+                 {{else}}{{score .Score}}{{end}}
+
             </td>
             <td>{{.ExpiresIn}}</td>
             <td>{{.LastUsed}}</td>
