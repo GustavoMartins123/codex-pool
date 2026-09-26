@@ -472,6 +472,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	}
 
 	data = applyModelAliasToJSONFrame(s.h, s.opts.ReqID, data)
+	data = applyEffortCapToJSONFrame(s.h, s.opts.ReqID, s.opts.UserID, s.opts.ClientIP, data)
 	filtered, changed, err := filterHostedMCPRequestJSON(data)
 	if err != nil {
 		return nil, err
@@ -702,6 +703,26 @@ func applyModelAliasToJSONFrame(h *proxyHandler, reqID string, data []byte) []by
 		return rewritten
 	}
 	return data
+}
+
+// applyEffortCapToJSONFrame clamps reasoning effort on a websocket
+// response.create frame for capped principals/origins. Codex Desktop sends
+// effort inside the nested "response" envelope, which capCodexEffortInBody
+// handles alongside the flat shape.
+func applyEffortCapToJSONFrame(h *proxyHandler, reqID, userID, clientIP string, data []byte) []byte {
+	if h == nil || len(data) == 0 {
+		return data
+	}
+	limit := h.effortCap.limitFor(userID, clientIP)
+	if limit == "" {
+		return data
+	}
+	capped, previous, changed := capCodexEffortInBody(data, limit)
+	if !changed {
+		return data
+	}
+	log.Printf("[%s] ws effort cap: %s -> %s (user=%s ip=%s)", reqID, previous, limit, userID, clientIP)
+	return capped
 }
 
 func (s *codexRelayState) doSwap(cand *Account) error {

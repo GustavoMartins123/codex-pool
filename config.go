@@ -23,6 +23,12 @@ type ConfigFile struct {
 	TierThreshold    float64 `toml:"tier_threshold"` // Secondary usage % threshold for tier preference (default 0.15)
 
 	ModelAliases   map[string]string                `toml:"model_aliases"`
+
+	// Caps on Codex reasoning effort, keyed by pool user ID and by raw client
+	// IP. Values are effort names ("medium", "high", ...).
+	MaxReasoningEffortByUser   map[string]string `toml:"max_reasoning_effort_by_user"`
+	MaxReasoningEffortByOrigin map[string]string `toml:"max_reasoning_effort_by_origin"`
+
 	ClientPolicies map[string]ClientPolicy          `toml:"client_policies"`
 	Providers      map[string]GenericProviderConfig `toml:"providers"`
 	Experiments    ExperimentsConfig                `toml:"experiments"`

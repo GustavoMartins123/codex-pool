@@ -528,8 +528,11 @@ func main() {
 	}
 
 	var aliasesCfg map[string]string
+	var effortByUser, effortByOrigin map[string]string
 	if globalConfigFile != nil {
 		aliasesCfg = globalConfigFile.ModelAliases
+		effortByUser = globalConfigFile.MaxReasoningEffortByUser
+		effortByOrigin = globalConfigFile.MaxReasoningEffortByOrigin
 	}
 
 	// Initialize request pacer from env var. Default to disabled so the proxy
@@ -559,6 +562,7 @@ func main() {
 		duckAnalytics:        duckAnalytics,
 		pricing:              pricing,
 		aliases:              newModelAliases(aliasesCfg),
+		effortCap:            newEffortCap(effortByUser, effortByOrigin),
 		bruteForce:           newBruteForceTracker(),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
@@ -717,6 +721,7 @@ type proxyHandler struct {
 	duckAnalytics        *DuckAnalytics
 	pricing              *PricingData
 	aliases              *modelAliases
+	effortCap            *effortCap
 	bruteForce           *bruteForceTracker
 	metrics              *metrics
 	routeTraces          *routeTraceStore
@@ -2359,6 +2364,24 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		var baseModel string
 		bodyBytes, baseModel = applyCodexModelSuffixControls(bodyBytes, requestedModel)
 		requestedModel = baseModel
+		// Applied after suffix controls so a "-xhigh" model name cannot escape
+		// the cap. inspect is the routing/analytics view of the body and must
+		// stay consistent with what is actually sent upstream.
+		if limit := h.effortCap.limitFor(userID, originIP); limit != "" {
+			capped, previous, changed := capCodexEffortInBody(bodyBytes, limit)
+			if changed {
+				bodyBytes = capped
+				inspect = bodyForInspection(r, capped)
+				if json.Unmarshal(inspect, &originalObject) != nil {
+					originalObject = nil
+				}
+				if r.ContentLength >= 0 {
+					r.ContentLength = int64(len(bodyBytes))
+					r.Header.Del("Content-Length")
+				}
+				log.Printf("[%s] effort cap: %s -> %s (user=%s origin=%s model=%s)", reqID, previous, limit, userID, originID, requestedModel)
+			}
+		}
 	}
 
 	// Parse thinking budget suffix before routing (e.g. "claude-sonnet-4-5(16384)").
