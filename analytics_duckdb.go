@@ -136,6 +136,10 @@ func newDuckAnalytics(path string, bolt *bbolt.DB) (*DuckAnalytics, error) {
 	if os.Getenv("DUCKDB_LOW_MEMORY") != "" {
 		db.Exec("SET threads=1")
 		db.Exec("SET preserve_insertion_order=false")
+		// Also serialize access. Several DuckDB operations are not safe to
+		// interleave on one connection pool, and a single connection keeps
+		// peak resident memory at one query instead of four in flight.
+		db.SetMaxOpenConns(1)
 	}
 	schema := `
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -446,27 +450,20 @@ func totalsEqual(a, b analyticsTotals) bool {
 
 func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliation, error) {
 	result := &AnalyticsReconciliation{StartedAt: start.UTC(), EndedAt: end.UTC(), CheckedAt: time.Now().UTC()}
-	duckEvents := map[string]struct{}{}
-	rows, err := a.db.Query(`SELECT event_id,input_tokens,cache_read_tokens,cache_creation_tokens,output_tokens,reasoning_tokens,billable_tokens
- FROM usage_events WHERE observed_at>=? AND observed_at<?`, start.UTC(), end.UTC())
-	if err != nil {
+	// Aggregate in DuckDB instead of streaming every row back into Go. The
+	// old scan materialized one AnalyticsFact per event just to sum seven
+	// columns, which is the dominant cost once usage_events grows.
+	if err := a.db.QueryRow(`SELECT COUNT(*),
+ COALESCE(SUM(input_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_creation_tokens),0),
+ COALESCE(SUM(output_tokens),0),COALESCE(SUM(reasoning_tokens),0),COALESCE(SUM(billable_tokens),0)
+ FROM usage_events WHERE observed_at>=? AND observed_at<?`, start.UTC(), end.UTC()).Scan(
+		&result.Ledger.Events, &result.Ledger.Input, &result.Ledger.CacheRead, &result.Ledger.CacheCreation,
+		&result.Ledger.Output, &result.Ledger.Reasoning, &result.Ledger.Billable,
+	); err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var id string
-		var fact AnalyticsFact
-		if err := rows.Scan(&id, &fact.InputTokens, &fact.CacheReadTokens, &fact.CacheCreationTokens, &fact.OutputTokens, &fact.ReasoningTokens, &fact.BillableTokens); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		fact.EventID = id
-		duckEvents[id] = struct{}{}
-		addFactTotals(&result.Ledger, fact)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	err = a.bolt.View(func(tx *bbolt.Tx) error {
+	pending := make([]AnalyticsFact, 0)
+	err := a.bolt.View(func(tx *bbolt.Tx) error {
 		if bucket := tx.Bucket([]byte(bucketUsageRequests)); bucket != nil {
 			if err := bucket.ForEach(func(_, value []byte) error {
 				var usage RequestUsage
@@ -488,11 +485,8 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 		if bucket := tx.Bucket([]byte(bucketAnalyticsOutbox)); bucket != nil {
 			return bucket.ForEach(func(_, value []byte) error {
 				var fact AnalyticsFact
-				if json.Unmarshal(value, &fact) != nil || fact.ObservedAt.Before(start) || !fact.ObservedAt.Before(end) {
-					return nil
-				}
-				if _, alreadyCommitted := duckEvents[fact.EventID]; !alreadyCommitted {
-					addFactTotals(&result.Ledger, fact)
+				if json.Unmarshal(value, &fact) == nil && !fact.ObservedAt.Before(start) && fact.ObservedAt.Before(end) {
+					pending = append(pending, fact)
 				}
 				return nil
 			})
@@ -501,6 +495,18 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 	})
 	if err != nil {
 		return nil, err
+	}
+	// A pending outbox fact counts toward the ledger only if the row has not
+	// already been committed. Probe the primary key per fact instead of
+	// building a set of every event id in the window.
+	for _, fact := range pending {
+		var committed bool
+		if err := a.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_events WHERE event_id=?)`, fact.EventID).Scan(&committed); err != nil {
+			return nil, err
+		}
+		if !committed {
+			addFactTotals(&result.Ledger, fact)
+		}
 	}
 	result.Clean = totalsEqual(result.Bolt, result.Ledger)
 	if !result.Clean {
