@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -607,20 +608,35 @@ func (s *AnalyticsStore) runDailyRollup() {
 }
 
 // startDailyRollup runs the rollup once at startup and then daily at midnight UTC.
-func (s *AnalyticsStore) startDailyRollup() {
+func (s *AnalyticsStore) startDailyRollup(ctx ...context.Context) {
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+	c = ctx[0]
+	}
 	// Run once at startup to catch up
 	go func() {
-		time.Sleep(10 * time.Second) // brief delay to let startup finish
-		s.runDailyRollup()
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-c.Done():
+			return
+		case <-timer.C:
+			s.runDailyRollup()
+		}
 	}()
 
 	go func() {
 		for {
-			// Sleep until next midnight UTC
 			now := time.Now().UTC()
 			next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 5, 0, 0, time.UTC)
-			time.Sleep(time.Until(next))
-			s.runDailyRollup()
+			timer := time.NewTimer(time.Until(next))
+			select {
+			case <-c.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				s.runDailyRollup()
+			}
 		}
 	}()
 }
@@ -765,7 +781,6 @@ func (s *AnalyticsStore) Close() error {
 		if wasAsync && ch != nil {
 			close(ch)
 		}
-		s.writeCh = nil
 	} else {
 		ch = nil
 	}

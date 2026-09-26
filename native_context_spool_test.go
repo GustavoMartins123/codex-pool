@@ -61,7 +61,10 @@ func TestContextSpoolOpaque(t *testing.T) {
 }
 
 func TestContextSpoolExpand(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
 	a, b := contextTestAccount("a", "user-a"), contextTestAccount("b", "user-b")
 	s := contextTestService(t, "http://localhost", a, b)
 	ownerA, _, _ := contextIdentity(a)
@@ -114,7 +117,10 @@ func TestContextSpoolExpand(t *testing.T) {
 }
 
 func TestContextSpoolControlLimit(t *testing.T) {
-	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
 	body := `{"input":[],"client_metadata":{"extra":"` + strings.Repeat("x", contextRequestLimit) + `"}}`
 	if _, err := streamCodexResponsesRequest(strings.NewReader(body), int64(len(body))+1, nil); err == nil {
 		t.Fatal("oversized metadata accepted")
@@ -199,7 +205,10 @@ func BenchmarkContextSpool(b *testing.B) {
 func TestContextSpoolFailureAtomic(t *testing.T) {
 	for _, scenario := range []string{"malformed", "wrong-session", "missing-session", "wrong-scope", "changed-source", "blocked-ip"} {
 		t.Run(scenario, func(t *testing.T) {
-			t.Setenv("TMPDIR", t.TempDir())
+			dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
 			a := contextTestAccount("a", "user-a")
 			s := contextTestService(t, "http://localhost", a)
 			owner, _, _ := contextIdentity(a)

@@ -308,6 +308,8 @@ func buildConfig() *config {
 }
 
 func main() {
+	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopShutdownSignals()
 	cfg := buildConfig()
 	if err := validateSecretStrength(cfg); err != nil {
 		log.Fatalf("insecure configuration: %v", err)
@@ -332,7 +334,7 @@ func main() {
 		log.Printf("paired backup restored from %s", cfg.restoreManifest)
 		return
 	}
-	startCodexFingerprintUpdater()
+	startCodexFingerprintUpdater(shutdownCtx)
 
 	// Create provider registry
 	codexProvider := NewCodexProviderWithRealtime(cfg.responsesBase, cfg.realtimeBase, cfg.whamBase, cfg.refreshBase)
@@ -526,7 +528,7 @@ func main() {
 
 	// Initialize pricing data
 	pricing := newPricingData()
-	pricing.startPricingRefresh()
+	pricing.startPricingRefresh(shutdownCtx)
 
 	// Initialize canonical DuckDB analytics. SQLite remains during migration.
 	duckAnalytics, duckErr := newDuckAnalytics(duckPath, store.db)
@@ -551,7 +553,7 @@ func main() {
 				analyticsStore.seedFromBoltDB(store, pricing)
 			}
 		}()
-		analyticsStore.startDailyRollup()
+		analyticsStore.startDailyRollup(shutdownCtx)
 		log.Printf("analytics store initialized at %s", analyticsDBPath)
 	}
 
@@ -619,30 +621,25 @@ func main() {
 		}
 		h.nativeContext = &nativeContext{store: contextStore, pool: pool, provider: registry.ForType(AccountTypeCodex), transport: h.transport, refresh: h.refreshAccountAfterAuthFailure}
 	}
-	h.startUsagePoller()
+	defer h.bruteForce.stop()
+	h.startUsagePoller(shutdownCtx)
 	if getenv("PROXY_ENABLE_QUOTA_INTELLIGENCE", "1") != "0" {
-		h.startQuotaIntelligenceRefresher()
+		h.startQuotaIntelligenceRefresher(shutdownCtx)
 	} else {
 		log.Printf("quota intelligence disabled by PROXY_ENABLE_QUOTA_INTELLIGENCE")
 	}
-	startAntigravityVersionUpdater(context.Background())
-	h.startAntigravityModelPoller()
-	h.startProviderModelPoller()
-	h.startGenericProviderHealthPoller()
-	h.startFederationPoller()
+	startAntigravityVersionUpdater(shutdownCtx)
+	h.startAntigravityModelPoller(shutdownCtx)
+	h.startProviderModelPoller(shutdownCtx)
+	h.startGenericProviderHealthPoller(shutdownCtx)
+	h.startFederationPoller(shutdownCtx)
 
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
 	go h.probeClaudeAccountUUIDs()
 
 	// Background cleanup for request pacer (every 5 minutes)
 	if pacer != nil {
-		go func() {
-			ticker := time.NewTicker(5 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				pacer.cleanup(10 * time.Minute)
-			}
-		}()
+		pacer.startCleanup(shutdownCtx)
 	}
 
 	// Start file watcher for hot-reload of pool directory and config.
@@ -685,8 +682,6 @@ func main() {
 	if cfg.claudeTraceDir != "" {
 		log.Printf("claude traffic tracing enabled: dir=%s body_limit=%d include_secrets=%v", cfg.claudeTraceDir, cfg.claudeTraceBodyLimit, cfg.claudeTraceSecrets)
 	}
-	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopShutdownSignals()
 	if err := serveUntilShutdown(srv, h, shutdownCtx.Done(), cfg.shutdownGrace); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

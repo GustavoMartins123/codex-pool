@@ -290,7 +290,11 @@ func (p *GenericOpenAIProvider) healthURL() *url.URL {
 	return &target
 }
 
-func (h *proxyHandler) startGenericProviderHealthPoller() {
+func (h *proxyHandler) startGenericProviderHealthPoller(ctx ...context.Context) {
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
+	}
 	if h == nil || h.registry == nil || h.pool == nil {
 		return
 	}
@@ -315,9 +319,9 @@ func (h *proxyHandler) startGenericProviderHealthPoller() {
 		}
 		go func(provider *GenericOpenAIProvider, account *Account) {
 			check := func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				checkCtx, cancel := context.WithTimeout(c, 5*time.Second)
 				defer cancel()
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, provider.healthURL().String(), nil)
+				req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, provider.healthURL().String(), nil)
 				if err == nil {
 					provider.SetAuthHeaders(req, account)
 					var response *http.Response
@@ -342,8 +346,13 @@ func (h *proxyHandler) startGenericProviderHealthPoller() {
 			check()
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
-			for range ticker.C {
-				check()
+			for {
+				select {
+				case <-c.Done():
+					return
+				case <-ticker.C:
+					check()
+				}
 			}
 		}(provider, account)
 	}

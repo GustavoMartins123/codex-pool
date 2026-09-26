@@ -857,9 +857,13 @@ func clearAntigravityModelCooldown(account *Account, model string) {
 	}
 }
 
-func (h *proxyHandler) startAntigravityModelPoller() {
+func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 	if h == nil {
 		return
+	}
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
 	}
 	syncAll := func() {
 		provider, _ := h.registry.ForType(AccountTypeAntigravity).(*AntigravityProvider)
@@ -870,11 +874,11 @@ func (h *proxyHandler) startAntigravityModelPoller() {
 			if account.Type != AccountTypeAntigravity {
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			checkCtx, cancel := context.WithTimeout(c, 30*time.Second)
 			if h.needsRefresh(account) {
-				_ = h.refreshAccount(ctx, account)
+				_ = h.refreshAccount(checkCtx, account)
 			}
-			_ = syncAntigravityModels(ctx, h.transport, account, provider.DailyURL(), provider.ProductionURL())
+			_ = syncAntigravityModels(checkCtx, h.transport, account, provider.DailyURL(), provider.ProductionURL())
 			cancel()
 		}
 	}
@@ -882,8 +886,13 @@ func (h *proxyHandler) startAntigravityModelPoller() {
 		syncAll()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			syncAll()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-ticker.C:
+				syncAll()
+			}
 		}
 	}()
 }

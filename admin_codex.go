@@ -20,6 +20,8 @@ import (
 )
 
 // Codex OAuth constants (from codex-rs/login/src/server.rs)
+var codexLocalPartRegex = regexp.MustCompile(`^([a-zA-Z]{1,4})[a-zA-Z]*(_\d+)?$`)
+
 const (
 	CodexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	CodexOAuthRedirectURI  = "http://localhost:1455/auth/callback"
@@ -481,8 +483,7 @@ func generateCodexAccountID(idToken string) string {
 
 	// Truncate long prefixes, keep suffix
 	// e.g., "dlssnetsec_1" -> "dlss_1"
-	re := regexp.MustCompile(`^([a-zA-Z]{1,4})[a-zA-Z]*(_\d+)?$`)
-	if matches := re.FindStringSubmatch(localPart); len(matches) > 0 {
+	if matches := codexLocalPartRegex.FindStringSubmatch(localPart); len(matches) > 0 {
 		result := matches[1]
 		if len(matches) > 2 && matches[2] != "" {
 			result += matches[2]

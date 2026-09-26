@@ -19,9 +19,13 @@ import (
 const resetCreditAutoRedeemWindow = 15 * time.Minute
 const resetCreditPollInterval = 5 * time.Minute
 
-func (h *proxyHandler) startUsagePoller() {
+func (h *proxyHandler) startUsagePoller(ctx ...context.Context) {
 	if h == nil || h.cfg.usageRefresh <= 0 {
 		return
+	}
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
 	}
 	// Fetch usage immediately on startup
 	go h.pollUpstreamUsage()
@@ -32,8 +36,14 @@ func (h *proxyHandler) startUsagePoller() {
 	}
 	ticker := time.NewTicker(pollInterval)
 	go func() {
-		for range ticker.C {
-			h.pollUpstreamUsage()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-ticker.C:
+				h.pollUpstreamUsage()
+			}
 		}
 	}()
 }

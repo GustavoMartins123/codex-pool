@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"log"
 	"os"
 	"path/filepath"
@@ -96,6 +97,9 @@ func (pw *poolWatcher) loop() {
 }
 
 func (pw *poolWatcher) handleEvent(event fsnotify.Event) {
+	if strings.HasSuffix(event.Name, ".tmp") || strings.HasPrefix(filepath.Base(event.Name), ".") {
+		return
+	}
 	pw.mu.Lock()
 	defer pw.mu.Unlock()
 
@@ -184,5 +188,13 @@ func (pw *poolWatcher) reloadConfig() {
 }
 
 func (pw *poolWatcher) close() {
+	pw.mu.Lock()
+	if pw.debouncePool != nil {
+		pw.debouncePool.Stop()
+	}
+	if pw.debounceCfg != nil {
+		pw.debounceCfg.Stop()
+	}
+	pw.mu.Unlock()
 	pw.watcher.Close()
 }

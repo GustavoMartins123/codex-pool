@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -71,4 +72,22 @@ func (p *requestPacer) size() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.lastReq)
+}
+
+func (p *requestPacer) startCleanup(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.cleanup(10 * time.Minute)
+			}
+		}
+	}()
 }

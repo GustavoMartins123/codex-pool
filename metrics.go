@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const maxTrackedMetricModels = 1024
+
 type metrics struct {
 	mu                    sync.Mutex
 	requests              map[string]int64            // status -> count
@@ -160,28 +162,16 @@ func (m *metrics) recordPerformance(provider, model string, durationMs, ttftMs, 
 
 	const maxSamples = 1000
 	if ttftMs > 0 {
-		if len(m.ttftSamples) >= maxSamples {
-			m.ttftSamples = m.ttftSamples[1:]
-		}
-		m.ttftSamples = append(m.ttftSamples, ttftMs)
+		m.ttftSamples = appendMetricSample(m.ttftSamples, ttftMs, maxSamples)
 	}
 	if connectMs > 0 {
-		if len(m.connectSamples) >= maxSamples {
-			m.connectSamples = m.connectSamples[1:]
-		}
-		m.connectSamples = append(m.connectSamples, connectMs)
+		m.connectSamples = appendMetricSample(m.connectSamples, connectMs, maxSamples)
 	}
 	if durationMs > 0 {
-		if len(m.durationSamples) >= maxSamples {
-			m.durationSamples = m.durationSamples[1:]
-		}
-		m.durationSamples = append(m.durationSamples, durationMs)
+		m.durationSamples = appendMetricSample(m.durationSamples, durationMs, maxSamples)
 	}
 	if tokensPerSec > 0 {
-		if len(m.tokensPerSecSamples) >= maxSamples {
-			m.tokensPerSecSamples = m.tokensPerSecSamples[1:]
-		}
-		m.tokensPerSecSamples = append(m.tokensPerSecSamples, tokensPerSec)
+		m.tokensPerSecSamples = appendMetricSample(m.tokensPerSecSamples, tokensPerSec, maxSamples)
 	}
 	if retries > 0 {
 		m.retriesTotal += int64(retries)
@@ -202,10 +192,14 @@ func (m *metrics) recordPerformance(provider, model string, durationMs, ttftMs, 
 	if model != "" {
 		mp, ok := m.modelRequests[model]
 		if !ok {
-			mp = make(map[string]int64)
-			m.modelRequests[model] = mp
+			if len(m.modelRequests) < maxTrackedMetricModels {
+				mp = make(map[string]int64)
+				m.modelRequests[model] = mp
+			}
 		}
-		mp[statusStr]++
+		if mp != nil {
+			mp[statusStr]++
+		}
 	}
 }
 
@@ -227,6 +221,15 @@ func (m *metrics) incStreamInterruption() {
 	m.mu.Unlock()
 }
 
+func appendMetricSample(slice []float64, val float64, max int) []float64 {
+	if len(slice) >= max {
+		copy(slice, slice[1:])
+		slice[len(slice)-1] = val
+		return slice
+	}
+	return append(slice, val)
+}
+
 func (m *metrics) recordAntigravityInputResidual(residual int64) {
 	if m == nil || residual <= 0 {
 		return
@@ -234,10 +237,7 @@ func (m *metrics) recordAntigravityInputResidual(residual int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	const maxSamples = 1000
-	if len(m.antigravityInputResidualSamples) >= maxSamples {
-		m.antigravityInputResidualSamples = m.antigravityInputResidualSamples[1:]
-	}
-	m.antigravityInputResidualSamples = append(m.antigravityInputResidualSamples, float64(residual))
+	m.antigravityInputResidualSamples = appendMetricSample(m.antigravityInputResidualSamples, float64(residual), maxSamples)
 }
 
 func (m *metrics) performanceSummary(pool *poolState) PerformanceSummary {
@@ -307,12 +307,14 @@ func (m *metrics) performanceSummary(pool *poolState) PerformanceSummary {
 		StreamInterruptions:         m.streamInterrupts,
 		AntigravityInputResidualP99: antigravityInputResidualP99,
 	}
+	m.mu.Unlock()
 
 	if pool != nil {
 		provs, mods := pool.providerModelAvailability()
 		summary.ProviderAvailability = provs
 		summary.ModelAvailability = mods
 	}
+	m.mu.Lock()
 
 	return summary
 }
@@ -321,8 +323,8 @@ func (p *poolState) providerModelAvailability() (map[string]bool, map[string]boo
 	if p == nil {
 		return map[string]bool{}, map[string]bool{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	now := time.Now()
 
 	providers := make(map[string]bool)

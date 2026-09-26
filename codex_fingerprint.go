@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -195,9 +196,13 @@ func isPersistedCodexCookie(name string) bool {
 	}
 }
 
-func startCodexFingerprintUpdater() {
+func startCodexFingerprintUpdater(ctx ...context.Context) {
 	if getenv("CODEX_FINGERPRINT_AUTO_UPDATE", "1") == "0" {
 		return
+	}
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
 	}
 	go func() {
 		checkCodexFingerprintUpdate()
@@ -209,8 +214,13 @@ func startCodexFingerprintUpdater() {
 		}
 		ticker := time.NewTicker(period)
 		defer ticker.Stop()
-		for range ticker.C {
-			checkCodexFingerprintUpdate()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-ticker.C:
+				checkCodexFingerprintUpdate()
+			}
 		}
 	}()
 }
@@ -251,19 +261,30 @@ func checkCodexFingerprintUpdate() {
 	persistCodexFingerprintState(state)
 }
 
+var (
+	codexAppcastItemRegex       = regexp.MustCompile(`(?is)<item>(.*?)</item>`)
+	codexAppcastShortVerAttrRe = regexp.MustCompile(`sparkle:shortVersionString="([^"]+)"`)
+	codexAppcastShortVerTagRe  = regexp.MustCompile(`(?is)<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>`)
+	codexAppcastVerAttrRe      = regexp.MustCompile(`sparkle:version="([^"]+)"`)
+	codexAppcastVerTagRe       = regexp.MustCompile(`(?is)<sparkle:version>([^<]+)</sparkle:version>`)
+)
+
 func parseCodexAppcastVersion(xml string) (string, string) {
-	item := regexp.MustCompile(`(?is)<item>(.*?)</item>`).FindStringSubmatch(xml)
+	item := codexAppcastItemRegex.FindStringSubmatch(xml)
 	if len(item) < 2 {
 		return "", ""
 	}
-	version := firstRegexpGroup(item[1], `sparkle:shortVersionString="([^"]+)"`, `(?is)<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>`)
-	build := firstRegexpGroup(item[1], `sparkle:version="([^"]+)"`, `(?is)<sparkle:version>([^<]+)</sparkle:version>`)
+	version := firstCompiledRegexpGroup(item[1], codexAppcastShortVerAttrRe, codexAppcastShortVerTagRe)
+	build := firstCompiledRegexpGroup(item[1], codexAppcastVerAttrRe, codexAppcastVerTagRe)
 	return strings.TrimSpace(version), strings.TrimSpace(build)
 }
 
-func firstRegexpGroup(s string, patterns ...string) string {
-	for _, pattern := range patterns {
-		m := regexp.MustCompile(pattern).FindStringSubmatch(s)
+func firstCompiledRegexpGroup(s string, regexes ...*regexp.Regexp) string {
+	for _, re := range regexes {
+		if re == nil {
+			continue
+		}
+		m := re.FindStringSubmatch(s)
 		if len(m) > 1 {
 			return m[1]
 		}

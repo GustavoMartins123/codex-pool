@@ -20,10 +20,13 @@ type attemptRecord struct {
 
 // bruteForceTracker tracks failed authentication attempts per IP address
 // and bans IPs after too many failures.
+const maxTrackedBruteForceIPs = 16384
+
 type bruteForceTracker struct {
 	mu       sync.Mutex
 	attempts map[string]*attemptRecord
 	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func newBruteForceTracker() *bruteForceTracker {
@@ -61,6 +64,15 @@ func (t *bruteForceTracker) recordFailure(ip string) bool {
 	defer t.mu.Unlock()
 	rec, ok := t.attempts[ip]
 	if !ok {
+		if len(t.attempts) >= maxTrackedBruteForceIPs {
+			t.cleanupLocked(time.Now())
+			if len(t.attempts) >= maxTrackedBruteForceIPs {
+				for k := range t.attempts {
+					delete(t.attempts, k)
+					break
+				}
+			}
+		}
 		rec = &attemptRecord{firstAt: time.Now()}
 		t.attempts[ip] = rec
 	}
@@ -100,7 +112,10 @@ func (t *bruteForceTracker) cleanupLoop() {
 func (t *bruteForceTracker) cleanup() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := time.Now()
+	t.cleanupLocked(time.Now())
+}
+
+func (t *bruteForceTracker) cleanupLocked(now time.Time) {
 	for ip, rec := range t.attempts {
 		if !rec.bannedAt.IsZero() && now.Sub(rec.bannedAt) > bruteForceBanDuration {
 			delete(t.attempts, ip)
@@ -112,6 +127,8 @@ func (t *bruteForceTracker) cleanup() {
 }
 
 func (t *bruteForceTracker) stop() {
-	close(t.stopCh)
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
 }
 

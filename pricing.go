@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"io"
@@ -220,14 +221,24 @@ func (pd *PricingData) fetchAndUpdate() {
 }
 
 // startPricingRefresh fetches pricing on startup and refreshes every 24h.
-func (pd *PricingData) startPricingRefresh() {
+func (pd *PricingData) startPricingRefresh(ctx ...context.Context) {
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+	c = ctx[0]
+	}
 	// Fetch fresh data on startup (in background)
 	go pd.fetchAndUpdate()
 
 	ticker := time.NewTicker(24 * time.Hour)
 	go func() {
-		for range ticker.C {
-			pd.fetchAndUpdate()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-ticker.C:
+				pd.fetchAndUpdate()
+			}
 		}
 	}()
 }

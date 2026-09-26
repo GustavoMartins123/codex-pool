@@ -215,7 +215,6 @@ func (s *usageStore) Close() error {
 	if !s.originMetadataClosed && ch != nil {
 		s.originMetadataClosed = true
 		close(ch)
-		s.originMetadataCh = nil
 	} else {
 		ch = nil
 	}

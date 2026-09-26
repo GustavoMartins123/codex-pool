@@ -202,7 +202,11 @@ func (p *FederatedProvider) syncModels(ctx context.Context, transport http.Round
 	return nil
 }
 
-func (h *proxyHandler) startFederationPoller() {
+func (h *proxyHandler) startFederationPoller(ctx ...context.Context) {
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
+	}
 	if h == nil || h.registry == nil || h.pool == nil {
 		return
 	}
@@ -223,16 +227,21 @@ func (h *proxyHandler) startFederationPoller() {
 		}
 		go func(provider *FederatedProvider, account *Account) {
 			sync := func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err := provider.syncModels(ctx, h.transport, account)
+				syncCtx, cancel := context.WithTimeout(c, 10*time.Second)
+				err := provider.syncModels(syncCtx, h.transport, account)
 				cancel()
 				updateFederationHealth(account, err)
 			}
 			sync()
 			ticker := time.NewTicker(provider.interval)
 			defer ticker.Stop()
-			for range ticker.C {
+			for {
+				select {
+				case <-c.Done():
+					return
+				case <-ticker.C:
 				sync()
+				}
 			}
 		}(provider, account)
 	}

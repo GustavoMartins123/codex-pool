@@ -66,7 +66,11 @@ func TestGrokSpoolParity(t *testing.T) {
 
 func newGrokTestSpool(t *testing.T, body io.Reader, model string) *streamedResponsesRequest {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "grok-input-*.json")
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	t.Setenv("TMP", dir)
+	t.Setenv("TEMP", dir)
+	f, err := os.CreateTemp(dir, "grok-input-*.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +187,10 @@ func TestGrokSpoolFailureKeepsInput(t *testing.T) {
 	body := `{"model":"grok-4.6","metadata":{}}`
 	s := newGrokTestSpool(t, strings.NewReader(body), "grok-4.6")
 	original := s.File
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("TMPDIR", missing)
+	t.Setenv("TMP", missing)
+	t.Setenv("TEMP", missing)
 	if err := sanitizeSpooledGrokRequest(s); err == nil {
 		t.Fatal("expected replacement creation to fail")
 	}

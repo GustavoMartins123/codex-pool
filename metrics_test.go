@@ -1,6 +1,9 @@
 package main
 
 import (
+	"github.com/fsnotify/fsnotify"
+	"fmt"
+	"path/filepath"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -178,4 +181,63 @@ func TestComputeCyberPolicyStatsHealthSignals(t *testing.T) {
 			}
 		})
 	}
+}
+
+
+func TestMetricsBoundedSamplesAndModels(t *testing.T) {
+	m := newMetrics()
+
+	// Record 1200 performance samples (more than maxSamples 1000).
+	for i := 0; i < 1200; i++ {
+		m.recordPerformance("codex", fmt.Sprintf("model-%d", i), 10.0, 5.0, 2.0, 50.0, 200, 0, false)
+	}
+
+	m.mu.Lock()
+	ttftLen := len(m.ttftSamples)
+	connectLen := len(m.connectSamples)
+	durationLen := len(m.durationSamples)
+	tpsLen := len(m.tokensPerSecSamples)
+	modelCount := len(m.modelRequests)
+	m.mu.Unlock()
+
+	if ttftLen > 1000 || connectLen > 1000 || durationLen > 1000 || tpsLen > 1000 {
+		t.Fatalf("expected metric samples bounded to 1000, got ttft=%d connect=%d duration=%d tps=%d",
+			ttftLen, connectLen, durationLen, tpsLen)
+	}
+	if modelCount > maxTrackedMetricModels {
+		t.Fatalf("expected modelRequests bounded to %d, got %d", maxTrackedMetricModels, modelCount)
+	}
+}
+
+func TestBruteForceTrackerBoundedAndSafeStop(t *testing.T) {
+	bf := newBruteForceTracker()
+	defer bf.stop()
+
+	// Fill with more than maxTrackedBruteForceIPs.
+	for i := 0; i < maxTrackedBruteForceIPs+500; i++ {
+		bf.recordFailure(fmt.Sprintf("192.168.%d.%d", (i>>8)&255, i&255))
+	}
+
+	bf.mu.Lock()
+	count := len(bf.attempts)
+	bf.mu.Unlock()
+
+	if count > maxTrackedBruteForceIPs {
+		t.Fatalf("expected brute force attempts bounded to <= %d, got %d", maxTrackedBruteForceIPs, count)
+	}
+
+	// Multiple calls to stop() must not panic.
+	bf.stop()
+	bf.stop()
+}
+
+func TestPoolWatcherCloseStopsDebounceTimers(t *testing.T) {
+	dir := t.TempDir()
+	handler := &proxyHandler{pool: newPoolState(nil, false)}
+	pw, err := newPoolWatcher(dir, "", handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw.handleEvent(fsnotify.Event{Name: filepath.Join(dir, "account.json"), Op: fsnotify.Create})
+	pw.close()
 }

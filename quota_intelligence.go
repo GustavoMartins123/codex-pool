@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"math"
 	"sort"
@@ -17,16 +18,25 @@ type quotaIntelligenceSnapshot struct {
 	resetEvents     []ResetObservation
 }
 
-func (h *proxyHandler) startQuotaIntelligenceRefresher() {
+func (h *proxyHandler) startQuotaIntelligenceRefresher(ctx ...context.Context) {
 	if h == nil || h.store == nil {
 		return
+	}
+	c := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		c = ctx[0]
 	}
 	go h.refreshQuotaIntelligence()
 	go func() {
 		ticker := time.NewTicker(quotaIntelligenceRefreshInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			h.refreshQuotaIntelligence()
+		for {
+			select {
+			case <-c.Done():
+				return
+			case <-ticker.C:
+				h.refreshQuotaIntelligence()
+			}
 		}
 	}()
 }
