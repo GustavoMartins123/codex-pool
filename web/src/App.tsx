@@ -1260,7 +1260,7 @@ function localDateTime(value: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-function Passes() {
+export function Passes() {
   const [passes, setPasses] = useState<GuestPass[]>([]);
   const [note, setNote] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -1345,7 +1345,7 @@ function Passes() {
   </section>;
 }
 
-function PassportConsole({ principal }: { principal: PassportPrincipal }) {
+export function PassportConsole({ principal }: { principal: PassportPrincipal }) {
   const [principals, setPrincipals] = useState<ConsolePrincipal[]>([]);
   const [audit, setAudit] = useState<PassportAuditEntry[]>([]);
   const [selected, setSelected] = useState<ConsolePrincipal | null>(null);
@@ -1616,7 +1616,7 @@ function Header({ stats, loading, operator, onRefresh, onLock }: {
 
 type NavGroup = { label: string; items: Array<[View, string]> };
 
-function Navigation({ view, principal, onChange, onSignOut }: { view: View; principal: PassportPrincipal | null; onChange: (view: View) => void; onSignOut: () => void | Promise<void> }) {
+export function Navigation({ view, principal, onChange, onSignOut }: { view: View; principal: PassportPrincipal | null; onChange: (view: View) => void; onSignOut: () => void | Promise<void> }) {
   const [signingOut, setSigningOut] = useState(false);
   const signOut = async () => {
     if (signingOut) return;
