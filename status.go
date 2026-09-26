@@ -78,21 +78,23 @@ type AccountStatus struct {
 }
 
 func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
-	h.pool.mu.RLock()
-	defer h.pool.mu.RUnlock()
+	// Snapshot the accounts and drop the pool lock before rendering: holding
+	// p.mu.RLock across getPoolUtilization (which takes its own RLock)
+	// deadlocks whenever a writer queues between the two acquisitions.
+	accounts := h.pool.allAccounts()
 
 	now := time.Now()
 	data := StatusData{
 		GeneratedAt: now,
 		Uptime:      now.Sub(h.startTime),
-		TotalCount:  len(h.pool.accounts),
+		TotalCount:  len(accounts),
 	}
 
 	if h.poolUsers != nil {
 		data.PoolUsers = len(h.poolUsers.List())
 	}
 
-	for _, a := range h.pool.accounts {
+	for _, a := range accounts {
 		a.mu.Lock()
 
 		switch a.Type {
