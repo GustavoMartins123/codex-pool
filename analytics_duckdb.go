@@ -104,7 +104,13 @@ func putAnalyticsOutbox(tx *bbolt.Tx, fact AnalyticsFact) error {
 }
 
 type DuckAnalytics struct {
-	db             *sql.DB
+	db *sql.DB
+	// queryMu serializes DuckDB access: drain holds the write side around its
+	// insert transaction, and every reader (reconcile, ranking, hourly)
+	// holds the read side. Interleaving these on the connection pool is not
+	// safe, so writers exclude readers instead of relying on
+	// DUCKDB_LOW_MEMORY to shrink the pool.
+	queryMu        sync.RWMutex
 	bolt           *bbolt.DB
 	stop           chan struct{}
 	done           chan struct{}
@@ -295,6 +301,9 @@ func (a *DuckAnalytics) Close() error {
 		return nil
 	}
 	a.closeOnce.Do(func() { close(a.stop); <-a.done })
+	// Wait for in-flight readers before closing the pool underneath them.
+	a.queryMu.Lock()
+	defer a.queryMu.Unlock()
 	return a.db.Close()
 }
 
@@ -345,14 +354,17 @@ func (a *DuckAnalytics) drain(limit int) error {
 	if err != nil || len(rows) == 0 {
 		return err
 	}
+	a.queryMu.Lock()
 	tx, err := a.db.Begin()
 	if err != nil {
+		a.queryMu.Unlock()
 		a.setFault(err)
 		return err
 	}
 	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
+		a.queryMu.Unlock()
 		a.setFault(err)
 		return err
 	}
@@ -373,6 +385,7 @@ func (a *DuckAnalytics) drain(limit int) error {
 	} else {
 		_ = tx.Rollback()
 	}
+	a.queryMu.Unlock()
 	if err != nil {
 		a.setFault(err)
 		return err
@@ -453,14 +466,17 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 	// Aggregate in DuckDB instead of streaming every row back into Go. The
 	// old scan materialized one AnalyticsFact per event just to sum seven
 	// columns, which is the dominant cost once usage_events grows.
-	if err := a.db.QueryRow(`SELECT COUNT(*),
+	a.queryMu.RLock()
+	ledgerErr := a.db.QueryRow(`SELECT COUNT(*),
  COALESCE(SUM(input_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_creation_tokens),0),
  COALESCE(SUM(output_tokens),0),COALESCE(SUM(reasoning_tokens),0),COALESCE(SUM(billable_tokens),0)
  FROM usage_events WHERE observed_at>=? AND observed_at<?`, start.UTC(), end.UTC()).Scan(
 		&result.Ledger.Events, &result.Ledger.Input, &result.Ledger.CacheRead, &result.Ledger.CacheCreation,
 		&result.Ledger.Output, &result.Ledger.Reasoning, &result.Ledger.Billable,
-	); err != nil {
-		return nil, err
+	)
+	a.queryMu.RUnlock()
+	if ledgerErr != nil {
+		return nil, ledgerErr
 	}
 	pending := make([]AnalyticsFact, 0)
 	err := a.bolt.View(func(tx *bbolt.Tx) error {
@@ -499,15 +515,18 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 	// A pending outbox fact counts toward the ledger only if the row has not
 	// already been committed. Probe the primary key per fact instead of
 	// building a set of every event id in the window.
+	a.queryMu.RLock()
 	for _, fact := range pending {
 		var committed bool
 		if err := a.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM usage_events WHERE event_id=?)`, fact.EventID).Scan(&committed); err != nil {
+			a.queryMu.RUnlock()
 			return nil, err
 		}
 		if !committed {
 			addFactTotals(&result.Ledger, fact)
 		}
 	}
+	a.queryMu.RUnlock()
 	result.Clean = totalsEqual(result.Bolt, result.Ledger)
 	if !result.Clean {
 		result.Detail = "closed-hour Bolt totals do not match DuckDB plus the durable outbox"
@@ -587,6 +606,8 @@ type PrincipalUsageSummary struct {
 }
 
 func (a *DuckAnalytics) PrincipalRanking(ctx context.Context, since time.Time) ([]PrincipalUsageSummary, error) {
+	a.queryMu.RLock()
+	defer a.queryMu.RUnlock()
 	rows, err := a.db.QueryContext(ctx, `SELECT principal_id, SUM(billable_tokens), COUNT(DISTINCT proxy_request_id),
  CAST(SUM(api_equivalent_cost_usd) AS DOUBLE), MAX(observed_at)
  FROM usage_events WHERE observed_at>=? GROUP BY principal_id ORDER BY SUM(billable_tokens) DESC`, since.UTC())
@@ -606,6 +627,8 @@ func (a *DuckAnalytics) PrincipalRanking(ctx context.Context, since time.Time) (
 }
 
 func (a *DuckAnalytics) UserHourly(ctx context.Context, principalID string, since time.Time) ([]AnalyticsPoint, error) {
+	a.queryMu.RLock()
+	defer a.queryMu.RUnlock()
 	rows, err := a.db.QueryContext(ctx, `SELECT strftime(observed_at, '%Y-%m-%dT%H'), account_type, client_credential_id,
  SUM(input_tokens),SUM(cache_read_tokens),SUM(output_tokens),SUM(reasoning_tokens),SUM(billable_tokens),
  COUNT(DISTINCT proxy_request_id),CAST(SUM(api_equivalent_cost_usd) AS DOUBLE)

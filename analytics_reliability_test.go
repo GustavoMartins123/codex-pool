@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,5 +120,72 @@ func TestDuckAnalyticsReplayIsIdempotent(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].BillableTokens != 10 || rows[0].RequestCount != 1 {
 		t.Fatalf("rows=%+v", rows)
+	}
+}
+
+// Regression test: the outbox drainer's DuckDB writes and the HTTP-facing
+// readers share one connection pool, so a drain must exclude concurrent
+// readers instead of interleaving on it. Readers race the drain; the final
+// ledger must still contain every fact exactly once.
+func TestDuckAnalyticsDrainExcludesConcurrentReaders(t *testing.T) {
+	store := testUsageStore(t)
+	duck, err := newDuckAnalytics(filepath.Join(t.TempDir(), "usage.duckdb"), store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = duck.Close() })
+
+	now := time.Now().UTC()
+	const facts = 60
+	for i := 0; i < facts; i++ {
+		fact := AnalyticsFact{
+			EventID: fmt.Sprintf("event-race-%d", i), ProxyRequestID: fmt.Sprintf("request-race-%d", i),
+			ObservedAt: now, PrincipalID: "p1", ClientCredentialID: "mac", AccountID: "a", AccountType: "codex",
+			NormalizationVersion: "v1", BillableTokens: 1, PricingVersion: "v1", UsageCompleteness: "complete",
+			Source: "live", SourceGrain: "request",
+		}
+		if err := store.db.Update(func(tx *bbolt.Tx) error { return putAnalyticsOutbox(tx, fact) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < facts/16+1; i++ {
+			if err := duck.drain(16); err != nil {
+				t.Errorf("drain: %v", err)
+				return
+			}
+		}
+	}()
+	for r := 0; r < 3; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 5; i++ {
+				rows, err := duck.UserHourly(context.Background(), "p1", now.Add(-time.Minute))
+				if err != nil {
+					t.Errorf("user hourly: %v", err)
+					return
+				}
+				for _, row := range rows {
+					if row.BillableTokens < 0 || row.RequestCount > facts {
+						t.Errorf("reader observed impossible ledger state: %+v", row)
+						return
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	rows, err := duck.UserHourly(context.Background(), "p1", now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].BillableTokens != facts || rows[0].RequestCount != facts {
+		t.Fatalf("final ledger rows=%+v, want exactly %d tokens and requests", rows, facts)
 	}
 }
