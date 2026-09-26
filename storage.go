@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -114,7 +115,9 @@ type UserHourlyUsage struct {
 type usageStore struct {
 	db        *bbolt.DB
 	retention time.Duration
-	nextPrune time.Time
+	// nextPrune holds a UnixNano deadline (0 = due) and is read from
+	// concurrent request goroutines, so it must stay atomic.
+	nextPrune atomic.Int64
 
 	// In-memory cache of last known rate limits per account for delta calculation
 	lastRateLimits     map[string]rateLimitSnapshot
@@ -187,12 +190,12 @@ func newUsageStore(path string, retentionDays int) (*usageStore, error) {
 	store := &usageStore{
 		db:                 db,
 		retention:          time.Duration(retentionDays) * 24 * time.Hour,
-		nextPrune:          time.Now().Add(1 * time.Hour),
 		lastRateLimits:     make(map[string]rateLimitSnapshot),
 		originMetadataCh:   make(chan OriginMetadata, 4096),
 		originMetadataDone: make(chan struct{}),
 		analyticsGapPath:   path + ".analytics-gap.json",
 	}
+	store.nextPrune.Store(time.Now().Add(1 * time.Hour).UnixNano())
 	store.loadActiveAccountingGapSidecar()
 	go store.runOriginMetadataWriter()
 	if needsOriginBackfill {
@@ -481,7 +484,7 @@ func (s *usageStore) recordWithCost(u RequestUsage, costUSD float64) error {
 	if err != nil {
 		return err
 	}
-	if time.Now().After(s.nextPrune) {
+	if deadline := s.nextPrune.Load(); deadline == 0 || time.Now().UnixNano() > deadline {
 		s.prune()
 	}
 	return nil
@@ -1001,9 +1004,9 @@ func (s *usageStore) prune() {
 		return nil
 	})
 	if deleted >= maxRequestDeletes {
-		s.nextPrune = time.Now().Add(1 * time.Minute)
+		s.nextPrune.Store(time.Now().Add(1 * time.Minute).UnixNano())
 	} else {
-		s.nextPrune = time.Now().Add(1 * time.Hour)
+		s.nextPrune.Store(time.Now().Add(1 * time.Hour).UnixNano())
 	}
 }
 

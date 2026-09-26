@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,7 +133,7 @@ func TestUsageStorePrune(t *testing.T) {
 	s.record(RequestUsage{AccountID: "aaa", BillableTokens: 1, Timestamp: time.Now()})
 	s.record(RequestUsage{AccountID: "zzz", BillableTokens: 1, Timestamp: old})
 	// Force prune
-	s.nextPrune = time.Now().Add(-time.Hour)
+	s.nextPrune.Store(time.Now().Add(-time.Hour).UnixNano())
 	_ = s.record(RequestUsage{AccountID: "aaa", BillableTokens: 1, Timestamp: time.Now()})
 
 	err = s.db.View(func(tx *bbolt.Tx) error {
@@ -147,6 +148,35 @@ func TestUsageStorePrune(t *testing.T) {
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
+}
+
+// Regression test: the prune deadline is read by every recording goroutine
+// and rewritten by prune(), so it must be atomic. Run with -race to catch the
+// unsynchronized time.Time access.
+func TestUsageStoreConcurrentRecordsCheckPruneDeadline(t *testing.T) {
+	s, err := newUsageStore(filepath.Join(t.TempDir(), "db.db"), 1)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	// Make the deadline due so recordings race prune rescheduling.
+	s.nextPrune.Store(time.Now().Add(-time.Hour).UnixNano())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 25; j++ {
+				if err := s.record(RequestUsage{AccountID: fmt.Sprintf("acc-%d", i%2), BillableTokens: 1, Timestamp: time.Now()}); err != nil {
+					t.Errorf("record: %v", err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestUsageStoreBackfillsLegacyOriginWeeklyIndex(t *testing.T) {
