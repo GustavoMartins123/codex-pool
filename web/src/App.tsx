@@ -764,31 +764,43 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [errors, setErrors] = useState({ clients: "", usage: "", passkeys: "", profile: "" });
+  // One guard per resource: mutations reload them concurrently, and a slow
+  // older response must not overwrite the list a newer reload produced.
+  const [clientsGuard] = useState(() => new ResponseVersion());
+  const [usageGuard] = useState(() => new ResponseVersion());
+  const [passkeysGuard] = useState(() => new ResponseVersion());
 
   const loadClientsData = useCallback(async () => {
+    const version = clientsGuard.begin();
     setClientsLoading(true);
     try {
-      setClients(await loadMyClients());
+      const next = await loadMyClients();
+      if (!clientsGuard.isCurrent(version)) return;
+      setClients(next);
       setErrors((current) => ({ ...current, clients: "" }));
     } catch (cause) {
+      if (!clientsGuard.isCurrent(version)) return;
       setErrors((current) => ({ ...current, clients: cause instanceof Error ? cause.message : "Unable to load clients" }));
     } finally {
-      setClientsLoading(false);
+      if (clientsGuard.isCurrent(version)) setClientsLoading(false);
     }
-  }, []);
+  }, [clientsGuard]);
 
   const loadUsageData = useCallback(async () => {
+    const version = usageGuard.begin();
     setUsageLoading(true);
     try {
       const result = await loadMyUsage();
+      if (!usageGuard.isCurrent(version)) return;
       setUsage(result.hourly);
       setErrors((current) => ({ ...current, usage: "" }));
     } catch (cause) {
+      if (!usageGuard.isCurrent(version)) return;
       setErrors((current) => ({ ...current, usage: cause instanceof Error ? cause.message : "Unable to load usage" }));
     } finally {
-      setUsageLoading(false);
+      if (usageGuard.isCurrent(version)) setUsageLoading(false);
     }
-  }, []);
+  }, [usageGuard]);
 
   const loadPasskeysData = useCallback(async () => {
     if (principal.kind === "guest") {
@@ -797,16 +809,20 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
       return;
     }
 
+    const version = passkeysGuard.begin();
     setPasskeysLoading(true);
     try {
-      setPasskeys(await loadPasskeys());
+      const next = await loadPasskeys();
+      if (!passkeysGuard.isCurrent(version)) return;
+      setPasskeys(next);
       setErrors((current) => ({ ...current, passkeys: "" }));
     } catch (cause) {
+      if (!passkeysGuard.isCurrent(version)) return;
       setErrors((current) => ({ ...current, passkeys: cause instanceof Error ? cause.message : "Unable to load passkeys" }));
     } finally {
-      setPasskeysLoading(false);
+      if (passkeysGuard.isCurrent(version)) setPasskeysLoading(false);
     }
-  }, [principal.kind]);
+  }, [principal.kind, passkeysGuard]);
 
   useEffect(() => {
     void loadClientsData();
@@ -1334,10 +1350,15 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const usageLoadVersion = useRef(0);
+  // Drops console responses superseded by a newer refresh (window switch or
+  // post-mutation) so a slow older payload cannot paint the wrong window.
+  const [refreshGuard] = useState(() => new ResponseVersion());
 
   const refresh = useCallback(async () => {
+    const version = refreshGuard.begin();
     try {
       const [ranking, entries, analyticsHealth] = await Promise.all([loadConsolePrincipals(hours), loadConsoleAudit(), loadAnalyticsHealth()]);
+      if (!refreshGuard.isCurrent(version)) return;
       setPrincipals(ranking.principals);
       setAudit(entries);
       setHealth(analyticsHealth);
@@ -1347,9 +1368,10 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
         return requestedID ? ranking.principals.find((item) => item.id === requestedID) || ranking.principals[0] || null : ranking.principals[0] || null;
       });
     } catch (cause) {
+      if (!refreshGuard.isCurrent(version)) return;
       setError(cause instanceof Error ? cause.message : "Unable to load console");
     }
-  }, [hours]);
+  }, [hours, refreshGuard]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
