@@ -16,12 +16,12 @@ func TestOperatorBootstrapSetsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &proxyHandler{cfg: &config{adminToken: "ui-bootstrap"}, passport: p, metrics: newMetrics()}
+	h := &proxyHandler{cfg: &config{adminToken: "configured-test-admin-token"}, passport: p, metrics: newMetrics()}
 
 	body := `{"username":"root","email":"root@local","password":"correct-horse-battery","display_name":"Root"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/operator", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Admin-Token", "ui-bootstrap")
+	req.Header.Set("X-Admin-Token", "configured-test-admin-token")
 	rr := httptest.NewRecorder()
 	h.handleOperatorBootstrap(rr, req)
 
