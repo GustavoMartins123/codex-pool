@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-//go:embed templates/local_landing.html templates/friend_landing.html templates/cute_code_landing.html templates/og-image.png templates/og-image-transparent.webp
+//go:embed templates/friend_landing.html templates/cute_code_landing.html templates/og-image.png templates/og-image-transparent.webp
 var friendContent embed.FS
 
 //go:embed web/dist/index.html web/dist/assets/*
