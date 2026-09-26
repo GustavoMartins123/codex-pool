@@ -17,6 +17,7 @@ export interface PassportPrincipal {
   email?: string;
   expires_at?: string | null;
   avatar_url?: string;
+  max_reasoning_effort?: string;
 }
 
 export interface ConsolePrincipal {
@@ -34,6 +35,7 @@ export interface ConsolePrincipal {
   billable_tokens: number;
   request_count: number;
   api_equivalent_cost_usd: number;
+  max_reasoning_effort?: string;
 }
 
 export interface PassportAuditEntry {

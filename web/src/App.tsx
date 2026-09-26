@@ -61,6 +61,7 @@ import {
   loadConsoleAudit,
   loadAnalyticsHealth,
   setPrincipalStatus,
+  setPrincipalReasoningEffort,
   lockOperator,
   mutateAccount,
   reloadAccounts,
@@ -1393,6 +1394,20 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
     }
   };
 
+  const changeEffortCap = async (target: ConsolePrincipal, cap: string) => {
+    setBusy(`effort:${target.id}`);
+    try {
+      await setPrincipalReasoningEffort(target.id, cap);
+      setSelected((curr) => (curr && curr.id === target.id ? { ...curr, max_reasoning_effort: cap } : curr));
+      setPrincipals((list) => list.map((p) => (p.id === target.id ? { ...p, max_reasoning_effort: cap } : p)));
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to update reasoning effort cap");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const issueMemberLink = async (event: FormEvent) => {
     event.preventDefault();
     setBusy("onboard");
@@ -1469,7 +1484,11 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
           return <button className={classNames("principal-row", selected?.id === item.id && "selected", item.status !== "active" && "inactive")} key={item.id} onClick={() => { updateURL({ member: item.id }, "push"); setSelected(item); }} aria-label={`Open ${primary}`}>
             <span className="rank">{String(index + 1).padStart(2, "0")}</span>
             <span className="passport-avatar small">{item.avatar_url ? <img src={item.avatar_url} alt="" /> : (item.display_name || item.email || "G").slice(0, 2).toUpperCase()}</span>
-            <span className="principal-copy"><strong>{primary}</strong><small>{secondary}</small></span>
+            <span className="principal-copy">
+              <strong>{primary}</strong>
+              <small>{secondary}</small>
+              {item.max_reasoning_effort && <small className="effort-cap-badge">cap: {item.max_reasoning_effort}</small>}
+            </span>
             <span className="principal-usage"><strong>{formatTokens(item.billable_tokens)}</strong><small>{preciseMoney.format(item.api_equivalent_cost_usd)}</small></span>
             <span className={classNames("pass-status", item.status !== "active" && "inactive")}>{item.status !== "active" ? item.status : ""}</span>
           </button>;
@@ -1484,6 +1503,35 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
               <button className={selected.status === "active" ? "danger-action" : "quiet-button"} disabled={busy === `status:${selected.id}`} onClick={() => changeStatus(selected)}>{busy === `status:${selected.id}` ? "Updating…" : selected.status === "active" ? "Suspend" : "Restore"}</button>
             </div>}
           </div>
+          {principal.kind === "operator" && <div className="effort-cap-row">
+            <label>
+              <span>Reasoning effort cap</span>
+              <select
+                value={selected.max_reasoning_effort || ""}
+                disabled={busy === `effort:${selected.id}`}
+                onChange={(event) => changeEffortCap(selected, event.target.value)}
+                aria-label="Codex reasoning effort cap"
+              >
+                <option value="">No cap (Default / Unrestricted)</option>
+                <option value="none">none (Reasoning disabled)</option>
+                <option value="minimal">minimal</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+            </label>
+            {busy === `effort:${selected.id}` && <small className="saving-indicator">Saving…</small>}
+            {selected.max_reasoning_effort && <button
+              type="button"
+              className="quiet-button"
+              disabled={busy === `effort:${selected.id}`}
+              onClick={() => changeEffortCap(selected, "")}
+            >
+              Remove cap
+            </button>}
+          </div>}
           <div className="detail-facts"><span>Last seen <b>{selected.last_seen_at ? new Date(selected.last_seen_at).toLocaleDateString() : "Never"}</b></span><span>Requests <b>{selected.request_count.toLocaleString()}</b></span><span>Value <b>{preciseMoney.format(selected.api_equivalent_cost_usd)}</b></span>{selected.expires_at && <span>Expires <b>{new Date(selected.expires_at).toLocaleDateString()}</b></span>}</div>
           <SignalPanel title={`Usage · ${windowLabel}`}>{usageLoading ? <div className="empty-state">Loading usage…</div> : chartData.length ? <div className="chart-stage medium"><AreaChart data={chartData} config={{ tokens: { label: "Tokens", color: "orange" } }} margins={{ left: 52, bottom: 34 }}><Grid horizontal /><Area dataKey="tokens" variant="hatched" isClickable /><XAxis dataKey="hour" tickFormatter={(value) => String(value).slice(5, 13)} maxTicks={7} /><YAxis tickFormatter={(value) => compact.format(Number(value))} /><Tooltip /></AreaChart></div> : <div className="empty-state">No usage in this period.</div>}</SignalPanel>
         </>}

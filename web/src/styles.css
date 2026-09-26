@@ -1112,6 +1112,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .detail-heading button { min-height: 40px; padding: 0 12px; cursor: pointer; border: 1px solid var(--rule); background: transparent; color: var(--gold); font: .6875rem "IBM Plex Mono", monospace; }
 .detail-heading .danger-action { border-color: rgba(255,91,77,.55); color: #ff8b80; }
 .detail-heading .danger-action:hover { background: rgba(255,91,77,.1); border-color: var(--danger); }
+.effort-cap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 18px; padding: 10px 14px; background: rgba(200,155,54,.04); border: 1px solid var(--rule); border-radius: 4px; }
+.effort-cap-row label { display: flex; align-items: center; gap: 10px; color: var(--ink); font: 500 .85rem "IBM Plex Sans Condensed", sans-serif; flex-grow: 1; }
+.effort-cap-row select { min-height: 36px; padding: 4px 10px; background: var(--surface); color: var(--gold-hot); border: 1px solid var(--rule); font: .8rem "IBM Plex Mono", monospace; border-radius: 3px; cursor: pointer; }
+.effort-cap-row button { min-height: 36px; padding: 0 12px; }
+.effort-cap-badge { display: inline-block; margin-top: 4px; padding: 1px 6px; background: rgba(200,155,54,.12); color: var(--gold-hot) !important; border: 1px solid rgba(200,155,54,.3); border-radius: 3px; font: .65rem "IBM Plex Mono", monospace; letter-spacing: 0.02em; }
 .detail-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 24px; margin: 8px 0 24px; }
 .detail-facts span { min-height: 54px; padding: 9px 0; color: var(--muted); font: .75rem "IBM Plex Sans Condensed", sans-serif; overflow-wrap: anywhere; }
 .detail-facts b { display: block; margin-top: 5px; color: var(--ink); font: 500 .85rem "IBM Plex Mono", monospace; }

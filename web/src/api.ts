@@ -135,6 +135,9 @@ export async function loadAnalyticsHealth(): Promise<{ health: { state: "CURRENT
 export async function setPrincipalStatus(id: string, status: "active" | "suspended", kind?: "operator" | "member" | "guest"): Promise<PassportPrincipal> {
   return decode(await fetch(`/api/principals/${encodeURIComponent(id)}`, { method: "PATCH", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify(kind === undefined ? { status } : { status, kind }) }));
 }
+export async function setPrincipalReasoningEffort(id: string, maxReasoningEffort: string): Promise<PassportPrincipal> {
+  return decode(await fetch(`/api/principals/${encodeURIComponent(id)}`, { method: "PATCH", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ max_reasoning_effort: maxReasoningEffort }) }));
+}
 
 async function decode<T>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => null)) as T | { error?: string } | null;
