@@ -2939,7 +2939,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     const costInfo = pCost && pCost.api_cost > 0
                         ? `<br><span style="font-size: 0.65rem; opacity: 0.7;">${formatCost(pCost.subscription_cost)} spent · $${pCost.monthly_subscription_cost || 0}/mo → ${formatCost(pCost.api_cost)} API${pCost.roi > 0 ? ' → ' + pCost.roi.toFixed(1) + 'x' : ''}</span>`
                         : '';
-                    breakdownEl.innerHTML += `<span style="background: ${colors.bg}; color: ${colors.fg}; padding: 4px 14px; border-radius: 12px; font-size: 0.8rem; font-family: 'Space Mono', monospace; text-align: center; line-height: 1.6;">${type} <span style="font-weight: bold;">${healthy}</span><span style="opacity: 0.5;">/${count}</span>${costInfo}</span>`;
+                    breakdownEl.innerHTML += `<span style="background: ${colors.bg}; color: ${colors.fg}; padding: 4px 14px; border-radius: 12px; font-size: 0.8rem; font-family: 'Space Mono', monospace; text-align: center; line-height: 1.6;">${escapeHTML(type)} <span style="font-weight: bold;">${healthy}</span><span style="opacity: 0.5;">/${count}</span>${costInfo}</span>`;
                 });
 
                 // Cost ROI banner
@@ -3074,9 +3074,9 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     const row = document.createElement('tr');
                     row.style.cssText = rowStyle;
                     row.innerHTML = `
-                        <td style="font-family: monospace; color: #888;">${acc.id}${primaryBadge}</td>
-                        <td style="text-transform: uppercase; color: var(--text-subtle);">${acc.plan_type}</td>
-                        <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</td>
+                        <td style="font-family: monospace; color: #888;">${escapeHTML(acc.id)}${primaryBadge}</td>
+                        <td style="text-transform: uppercase; color: var(--text-subtle);">${escapeHTML(acc.plan_type)}</td>
+                        <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</td>
                         <td title="${scoreTooltip}" style="${scoreCellStyle(scoreColor, acc.is_primary)}">${scoreDisplay}</td>
                         <td style="text-align: center;">${resetBadge}</td>
                         <td style="text-align: right; font-family: monospace; color: ${priColor};">${primaryUsage}${pri5hrReset ? ` <span style="color: var(--text-muted); font-size: 0.7rem;">${pri5hrReset}</span>` : ''}</td>
@@ -3126,9 +3126,9 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                         const row = document.createElement('tr');
                         row.style.cssText = rowStyle;
                         row.innerHTML = `
-                            <td style="font-family: monospace; color: #888;">${acc.id}${primaryBadge}</td>
-                            <td style="text-transform: uppercase; color: var(--text-subtle);">${acc.plan_type || 'pro'}</td>
-                            <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</td>
+                            <td style="font-family: monospace; color: #888;">${escapeHTML(acc.id)}${primaryBadge}</td>
+                            <td style="text-transform: uppercase; color: var(--text-subtle);">${escapeHTML(acc.plan_type || 'pro')}</td>
+                            <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</td>
                             <td title="${scoreTooltip}" style="${scoreCellStyle(scoreColor, acc.is_primary)}">${scoreDisplay}</td>
                             <td style="text-align: right; font-family: monospace;">${formatPct(acc.primary_window_used_pct)} <span style="color: var(--text-muted); font-size: 0.7rem;">${pri5hrReset}</span></td>
                             <td style="text-align: right; font-family: monospace;">${formatPct(acc.secondary_window_used_pct)} <span style="color: var(--text-muted); font-size: 0.7rem;">${weekReset}</span></td>
@@ -3160,8 +3160,8 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                         const tokens = acc.total_billable_tokens > 0 ? formatNumber(acc.total_billable_tokens) : '0';
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td style="font-family: monospace; color: #888;">${acc.id}</td>
-                            <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</td>
+                            <td style="font-family: monospace; color: #888;">${escapeHTML(acc.id)}</td>
+                            <td style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</td>
                             <td style="text-align: right; font-family: monospace; color: var(--gold-dim);">${tokens}</td>
                         `;
                         geminiTbody.appendChild(row);
@@ -3191,8 +3191,8 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                             </div>` : '';
                         kimiList.innerHTML += `
                             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; ${kimiAccounts.indexOf(acc) < kimiAccounts.length - 1 ? 'border-bottom: 1px solid #1a1a1a;' : ''}">
-                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${acc.id}</span>
-                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</span>
+                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${escapeHTML(acc.id)}</span>
+                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</span>
                                 ${usageBar}
                                 <span style="font-family: monospace; color: #60a5fa; font-size: 0.85rem;">${tokens} tokens</span>
                             </div>`;
@@ -3222,8 +3222,8 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                             </div>` : '';
                         minimaxList.innerHTML += `
                             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; ${minimaxAccounts.indexOf(acc) < minimaxAccounts.length - 1 ? 'border-bottom: 1px solid #1a1a1a;' : ''}">
-                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${acc.id}</span>
-                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</span>
+                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${escapeHTML(acc.id)}</span>
+                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</span>
                                 ${usageBar}
                                 <span style="font-family: monospace; color: #fbbf24; font-size: 0.85rem;">${tokens} tokens</span>
                             </div>`;
@@ -3253,8 +3253,8 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                             </div>` : '';
                         xiaomiList.innerHTML += `
                             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; ${xiaomiAccounts.indexOf(acc) < xiaomiAccounts.length - 1 ? 'border-bottom: 1px solid #1a1a1a;' : ''}">
-                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${acc.id}</span>
-                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</span>
+                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${escapeHTML(acc.id)}</span>
+                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</span>
                                 ${usageBar}
                                 <span style="font-family: monospace; color: #fb923c; font-size: 0.85rem;">${tokens} tokens</span>
                             </div>`;
@@ -3284,8 +3284,8 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                             </div>` : '';
                         grokList.innerHTML += `
                             <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; ${grokAccounts.indexOf(acc) < grokAccounts.length - 1 ? 'border-bottom: 1px solid #1a1a1a;' : ''}">
-                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${acc.id}</span>
-                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${acc.status}</span>
+                                <span style="font-family: monospace; color: #888; font-size: 0.85rem;">${escapeHTML(acc.id)}</span>
+                                <span style="color: ${rowStatusColor}; text-transform: uppercase; font-weight: bold; font-size: 0.7rem;">${escapeHTML(acc.status)}</span>
                                 ${usageBar}
                                 <span style="font-family: monospace; color: #22d3ee; font-size: 0.85rem;">${tokens} tokens</span>
                             </div>`;
@@ -3348,7 +3348,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                         row.style.cssText = rowStyle;
                         row.innerHTML = `
                             <td style="font-family: monospace; color: var(--text-muted);">${index + 1}</td>
-                            <td style="font-family: monospace; ${idStyle}">${user.user_id}${isCurrentUser ? ' (you)' : ''}</td>
+                            <td style="font-family: monospace; ${idStyle}">${escapeHTML(user.user_id)}${isCurrentUser ? ' (you)' : ''}</td>
                             <td style="text-align: right; font-family: monospace; color: var(--gold-dim);">${formatNumber(user.total_billable_tokens)}</td>
                             <td style="text-align: right; font-family: monospace;">${user.request_count}</td>
                             <td style="text-align: right; color: var(--text-muted); font-size: 0.75rem;">${lastSeen}</td>
@@ -3375,7 +3375,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     row.style.cssText = rowStyle;
                     row.innerHTML = `
                         <td style="font-family: monospace; color: var(--text-muted);">${index + 1}</td>
-                        <td style="font-family: monospace; ${idStyle}">${origin.origin_id}${isCurrentOrigin ? ' (you)' : ''}</td>
+                        <td style="font-family: monospace; ${idStyle}">${escapeHTML(origin.origin_id)}${isCurrentOrigin ? ' (you)' : ''}</td>
                         <td style="text-align: right; font-family: monospace; color: #60a5fa;">${formatNumber(origin.total_billable_tokens)}</td>
                         <td style="text-align: right; font-family: monospace;">${origin.request_count}</td>
                         <td style="text-align: right; color: var(--text-muted); font-size: 0.75rem;">${lastSeen}</td>
@@ -3474,13 +3474,17 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
             return '#e67e22';
         }
 
-        function escapeAttr(value) {
+        function escapeHTML(value) {
             return String(value ?? '')
                 .replace(/&/g, '&amp;')
-                .replace(/"/g, '&quot;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;')
-                .replace(/\n/g, '&#10;');
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function escapeAttr(value) {
+            return escapeHTML(value).replace(/\n/g, '&#10;');
         }
 
         function scoreCellStyle(scoreColor, isPrimary) {
@@ -3557,7 +3561,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 usedSurfaces.forEach(surface => {
                     const item = document.createElement('div');
                     item.style.cssText = 'display: flex; align-items: center; gap: 4px;';
-                    item.innerHTML = `<div style="width: 10px; height: 10px; background: ${surfaceColors[surface] || 'var(--text-disabled)'}; border-radius: 2px;"></div><span style="color: var(--text-muted);">${surface}</span>`;
+                    item.innerHTML = `<div style="width: 10px; height: 10px; background: ${surfaceColors[surface] || 'var(--text-disabled)'}; border-radius: 2px;"></div><span style="color: var(--text-muted);">${escapeHTML(surface)}</span>`;
                     legend.appendChild(item);
                 });
 
@@ -3617,7 +3621,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
             usedTypes.forEach(type => {
                 const item = document.createElement('div');
                 item.style.cssText = 'display: flex; align-items: center; gap: 4px;';
-                item.innerHTML = `<div style="width: 10px; height: 10px; background: ${costProviderColors[type] || 'var(--text-disabled)'}; border-radius: 2px;"></div><span style="color: var(--text-muted);">${type}</span>`;
+                item.innerHTML = `<div style="width: 10px; height: 10px; background: ${costProviderColors[type] || 'var(--text-disabled)'}; border-radius: 2px;"></div><span style="color: var(--text-muted);">${escapeHTML(type)}</span>`;
                 legend.appendChild(item);
             });
         }
@@ -3697,7 +3701,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 document.getElementById('codex-add-oauth').style.display = 'block';
                 statusEl.innerHTML = '';
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3746,7 +3750,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 }
 
                 const data = await response.json();
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Account added: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Account added: ${escapeHTML(data.account_id)}</span>`;
 
                 // Reset the form
                 codexOAuthVerifier = null;
@@ -3757,7 +3761,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 // Reload stats to show new account
                 setTimeout(() => loadStats(), 1000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3784,7 +3788,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 document.getElementById('claude-add-oauth').style.display = 'block';
                 statusEl.innerHTML = '';
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3833,7 +3837,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                 }
 
                 const data = await response.json();
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Account added: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Account added: ${escapeHTML(data.account_id)}</span>`;
 
                 claudeOAuthVerifier = null;
                 document.getElementById('claude-callback-url').value = '';
@@ -3842,7 +3846,7 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
 
                 setTimeout(() => loadStats(), 1000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">Error: ${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3870,11 +3874,11 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     throw new Error(data.error || 'Failed to add key');
                 }
 
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${escapeHTML(data.account_id)}</span>`;
                 input.value = '';
                 setTimeout(() => { statusEl.innerHTML = ''; loadStats(); }, 2000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3902,11 +3906,11 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     throw new Error(data.error || 'Failed to add key');
                 }
 
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${escapeHTML(data.account_id)}</span>`;
                 input.value = '';
                 setTimeout(() => { statusEl.innerHTML = ''; loadStats(); }, 2000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3934,11 +3938,11 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     throw new Error(data.error || 'Failed to add key');
                 }
 
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Added: ${escapeHTML(data.account_id)}</span>`;
                 input.value = '';
                 setTimeout(() => { statusEl.innerHTML = ''; loadStats(); }, 2000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">${escapeHTML(err.message)}</span>`;
             }
         }
 
@@ -3967,11 +3971,11 @@ irm "${result.public_url}/setup/pi/${result.download_token}?shell=powershell" | 
                     throw new Error(data.error || 'Failed to import Grok auth');
                 }
 
-                statusEl.innerHTML = `<span style="color: var(--success-green);">Imported: ${data.account_id}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--success-green);">Imported: ${escapeHTML(data.account_id)}</span>`;
                 input.value = '';
                 setTimeout(() => { statusEl.innerHTML = ''; loadStats(); }, 2000);
             } catch (err) {
-                statusEl.innerHTML = `<span style="color: var(--error-red);">${err.message}</span>`;
+                statusEl.innerHTML = `<span style="color: var(--error-red);">${escapeHTML(err.message)}</span>`;
             }
         }
 
