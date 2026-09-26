@@ -19,6 +19,8 @@ import (
 type AnalyticsStore struct {
 	db          *sql.DB
 	mu          sync.Mutex // serialize maintenance transactions
+	writeMu     sync.RWMutex
+	closed      bool
 	writeCh     chan analyticsWrite
 	writeDone   chan struct{}
 	dropped     atomic.Uint64
@@ -199,16 +201,23 @@ func (s *AnalyticsStore) recordRequest(ru RequestUsage, costUSD float64) error {
 		return nil
 	}
 	if s.asyncWrites.Load() {
-		select {
-		case s.writeCh <- analyticsWrite{ru: ru, costUSD: costUSD}:
-			return nil
-		default:
-			dropped := s.dropped.Add(1)
-			if dropped == 1 || dropped%1000 == 0 {
-				log.Printf("analytics: write queue full, dropped=%d", dropped)
+		s.writeMu.RLock()
+		if !s.closed && s.writeCh != nil {
+			select {
+			case s.writeCh <- analyticsWrite{ru: ru, costUSD: costUSD}:
+				s.writeMu.RUnlock()
+				return nil
+			default:
+				s.writeMu.RUnlock()
+				dropped := s.dropped.Add(1)
+				if dropped == 1 || dropped%1000 == 0 {
+					log.Printf("analytics: write queue full, dropped=%d", dropped)
+				}
+				return nil
 			}
-			return nil
 		}
+		s.writeMu.RUnlock()
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -748,10 +757,21 @@ func (s *AnalyticsStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	if s.writeCh != nil && s.asyncWrites.Load() {
-		close(s.writeCh)
-		<-s.writeDone
+	s.writeMu.Lock()
+	wasAsync := s.asyncWrites.Load()
+	ch := s.writeCh
+	if !s.closed {
+		s.closed = true
+		if wasAsync && ch != nil {
+			close(ch)
+		}
 		s.writeCh = nil
+	} else {
+		ch = nil
+	}
+	s.writeMu.Unlock()
+	if wasAsync && ch != nil {
+		<-s.writeDone
 	}
 	return s.db.Close()
 }

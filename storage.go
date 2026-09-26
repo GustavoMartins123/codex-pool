@@ -120,11 +120,13 @@ type usageStore struct {
 	nextPrune atomic.Int64
 
 	// In-memory cache of last known rate limits per account for delta calculation
-	lastRateLimits     map[string]rateLimitSnapshot
-	lastRateLimitsMu   sync.RWMutex
-	originBackfillMu   sync.Mutex
-	originMetadataCh   chan OriginMetadata
-	originMetadataDone chan struct{}
+	lastRateLimits       map[string]rateLimitSnapshot
+	lastRateLimitsMu     sync.RWMutex
+	originBackfillMu     sync.Mutex
+	originMetadataMu     sync.RWMutex
+	originMetadataClosed bool
+	originMetadataCh     chan OriginMetadata
+	originMetadataDone   chan struct{}
 
 	analyticsReliabilityMu sync.Mutex
 	analyticsReservePath   string
@@ -208,10 +210,18 @@ func (s *usageStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	if s.originMetadataCh != nil {
-		close(s.originMetadataCh)
-		<-s.originMetadataDone
+	s.originMetadataMu.Lock()
+	ch := s.originMetadataCh
+	if !s.originMetadataClosed && ch != nil {
+		s.originMetadataClosed = true
+		close(ch)
 		s.originMetadataCh = nil
+	} else {
+		ch = nil
+	}
+	s.originMetadataMu.Unlock()
+	if ch != nil {
+		<-s.originMetadataDone
 	}
 	return s.db.Close()
 }
@@ -485,7 +495,9 @@ func (s *usageStore) recordWithCost(u RequestUsage, costUSD float64) error {
 		return err
 	}
 	if deadline := s.nextPrune.Load(); deadline == 0 || time.Now().UnixNano() > deadline {
-		s.prune()
+		if s.nextPrune.CompareAndSwap(deadline, time.Now().Add(1*time.Hour).UnixNano()) {
+			s.prune()
+		}
 	}
 	return nil
 }
@@ -720,7 +732,12 @@ func startOfUTCWeek(value time.Time) time.Time {
 }
 
 func (s *usageStore) enqueueOriginMetadata(originID, rawIP, userID, userAgent, path string, seenAt time.Time) {
-	if s == nil || s.originMetadataCh == nil || originID == "" || rawIP == "" {
+	if s == nil || originID == "" || rawIP == "" {
+		return
+	}
+	s.originMetadataMu.RLock()
+	defer s.originMetadataMu.RUnlock()
+	if s.originMetadataClosed || s.originMetadataCh == nil {
 		return
 	}
 	meta := OriginMetadata{OriginID: originID, RawIP: rawIP, LastUserID: userID, LastUserAgent: userAgent, LastPath: path, LastSeen: seenAt}
@@ -1001,6 +1018,56 @@ func (s *usageStore) prune() {
 			}
 			break
 		}
+
+		hourCutoff := cutoff.UTC().Truncate(time.Hour).Format("2006-01-02T15")
+		globalHourly := tx.Bucket([]byte(bucketGlobalHourlyUsage)).Cursor()
+		for key, _ := globalHourly.First(); key != nil; key, _ = globalHourly.Next() {
+			hour, _, ok := strings.Cut(string(key), "|")
+			if !ok {
+				continue
+			}
+			if hour < hourCutoff {
+				_ = globalHourly.Delete()
+				continue
+			}
+			break
+		}
+
+		userHourlyDeletes := 0
+		userHourly := tx.Bucket([]byte(bucketUserHourlyUsage)).Cursor()
+		for key, _ := userHourly.First(); key != nil; key, _ = userHourly.Next() {
+			parts := strings.SplitN(string(key), "|", 3)
+			if len(parts) >= 2 && parts[1] < hourCutoff {
+				if err := userHourly.Delete(); err == nil {
+					userHourlyDeletes++
+				}
+				if userHourlyDeletes >= maxRequestDeletes {
+					break
+				}
+			}
+		}
+		if userHourlyDeletes > deleted {
+			deleted = userHourlyDeletes
+		}
+
+		dateCutoff := cutoff.UTC().Format("2006-01-02")
+		userDailyDeletes := 0
+		userDaily := tx.Bucket([]byte(bucketUserDailyUsage)).Cursor()
+		for key, _ := userDaily.First(); key != nil; key, _ = userDaily.Next() {
+			parts := strings.SplitN(string(key), "|", 2)
+			if len(parts) == 2 && parts[1] < dateCutoff {
+				if err := userDaily.Delete(); err == nil {
+					userDailyDeletes++
+				}
+				if userDailyDeletes >= maxRequestDeletes {
+					break
+				}
+			}
+		}
+		if userDailyDeletes > deleted {
+			deleted = userDailyDeletes
+		}
+
 		return nil
 	})
 	if deleted >= maxRequestDeletes {
@@ -1208,7 +1275,13 @@ func (s *usageStore) getRecentRequestUsage(days int) ([]RequestUsage, error) {
 		if bucket == nil {
 			return nil
 		}
-		return bucket.ForEach(func(_, value []byte) error {
+		return bucket.ForEach(func(rawKey, value []byte) error {
+			parts := strings.SplitN(string(rawKey), "|", 3)
+			if len(parts) >= 2 {
+				if ts, err := timeFromKey(parts[1]); err == nil && ts.Before(cutoff) {
+					return nil
+				}
+			}
 			var row RequestUsage
 			if err := json.Unmarshal(value, &row); err == nil && !row.Timestamp.Before(cutoff) {
 				rows = append(rows, row)

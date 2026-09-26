@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,12 +15,13 @@ import (
 // zombie SSE connections where the upstream stops sending data but never
 // closes the TCP connection.
 type idleTimeoutReader struct {
-	rc      io.ReadCloser
-	timeout time.Duration
-	timer   *time.Timer
-	done    chan struct{}
-	cancel  func() // cancel the request context
-	closed  bool
+	rc        io.ReadCloser
+	timeout   time.Duration
+	timer     *time.Timer
+	done      chan struct{}
+	cancel    func() // cancel the request context
+	timedOut  atomic.Bool
+	closeOnce sync.Once
 }
 
 func newIdleTimeoutReader(rc io.ReadCloser, timeout time.Duration, cancel func()) *idleTimeoutReader {
@@ -39,7 +41,10 @@ func (r *idleTimeoutReader) watchdog() {
 	case <-r.timer.C:
 		// Idle timeout expired - cancel the request context which will
 		// cause the Read to return with a context error.
-		r.cancel()
+		r.timedOut.Store(true)
+		if r.cancel != nil {
+			r.cancel()
+		}
 	case <-r.done:
 		r.timer.Stop()
 	}
@@ -52,25 +57,19 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 		r.timer.Reset(r.timeout)
 	}
 	if err != nil {
-		// Wrap context.Canceled with a more descriptive message
-		if err.Error() == "context canceled" || err.Error() == "context deadline exceeded" {
-			// Check if our timer fired (as opposed to a client disconnect)
-			select {
-			case <-r.timer.C:
-				return n, fmt.Errorf("SSE stream idle for %v, closing", r.timeout)
-			default:
-			}
+		// Wrap context.Canceled with a more descriptive message when our idle timer fired
+		if r.timedOut.Load() && (err.Error() == "context canceled" || err.Error() == "context deadline exceeded") {
+			return n, fmt.Errorf("SSE stream idle for %v, closing", r.timeout)
 		}
 	}
 	return n, err
 }
 
 func (r *idleTimeoutReader) Close() error {
-	if !r.closed {
-		r.closed = true
+	r.closeOnce.Do(func() {
 		close(r.done)
 		r.timer.Stop()
-	}
+	})
 	return r.rc.Close()
 }
 

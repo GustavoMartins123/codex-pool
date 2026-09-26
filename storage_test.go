@@ -281,3 +281,57 @@ func TestUsageStoreReadsBoundedTimeSeries(t *testing.T) {
 		t.Fatalf("daily total = %d, want 3", dailyTotal)
 	}
 }
+
+func TestUsageStorePrunesHourlyAndDailyBucketsAndSafeClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prune-buckets.db")
+	s, err := newUsageStore(path, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	oldTime := now.AddDate(0, 0, -10)
+	if err := s.record(RequestUsage{
+		Timestamp:      oldTime,
+		AccountID:      "acc1",
+		AccountType:    AccountTypeCodex,
+		UserID:         "u1",
+		InputTokens:    100,
+		BillableTokens: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.record(RequestUsage{
+		Timestamp:      now,
+		AccountID:      "acc1",
+		AccountType:    AccountTypeCodex,
+		UserID:         "u1",
+		InputTokens:    200,
+		BillableTokens: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.prune()
+
+	var dailyCount, userHourlyCount, globalHourlyCount int
+	if err := s.db.View(func(tx *bbolt.Tx) error {
+		dailyCount = tx.Bucket([]byte(bucketUserDailyUsage)).Stats().KeyN
+		userHourlyCount = tx.Bucket([]byte(bucketUserHourlyUsage)).Stats().KeyN
+		globalHourlyCount = tx.Bucket([]byte(bucketGlobalHourlyUsage)).Stats().KeyN
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if dailyCount != 1 || userHourlyCount != 1 || globalHourlyCount != 1 {
+		t.Fatalf("expected 1 retained row per bucket after prune, got daily=%d userHourly=%d globalHourly=%d",
+			dailyCount, userHourlyCount, globalHourlyCount)
+	}
+
+	// Verify Close() is idempotent and safe when enqueueOriginMetadata is called after/during Close().
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.enqueueOriginMetadata("orig1", "127.0.0.1", "u1", "agent", "/v1/responses", now)
+	_ = s.Close()
+}

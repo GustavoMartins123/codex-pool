@@ -362,10 +362,21 @@ func (p *PassportStore) createSession(principalID string) (token, csrf string, e
 	if err != nil {
 		return
 	}
-	s := passportSession{PrincipalID: principalID, ExpiresAt: time.Now().Add(30 * 24 * time.Hour), CSRFHash: hashToken(csrf)}
+	now := time.Now()
+	s := passportSession{PrincipalID: principalID, ExpiresAt: now.Add(30 * 24 * time.Hour), CSRFHash: hashToken(csrf)}
 	v, _ := json.Marshal(s)
 	h := hashToken(token)
-	err = p.db.Update(func(tx *bbolt.Tx) error { return tx.Bucket([]byte(bucketPassportSessions)).Put(h[:], v) })
+	err = p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketPassportSessions))
+		cursor := bucket.Cursor()
+		for k, raw := cursor.First(); k != nil; k, raw = cursor.Next() {
+			var existing passportSession
+			if json.Unmarshal(raw, &existing) != nil || !now.Before(existing.ExpiresAt) {
+				_ = cursor.Delete()
+			}
+		}
+		return bucket.Put(h[:], v)
+	})
 	return
 }
 func (p *PassportStore) renewSession(w http.ResponseWriter, r *http.Request, session *passportSession) {

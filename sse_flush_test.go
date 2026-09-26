@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"bufio"
 	"bytes"
 	"errors"
@@ -281,3 +283,25 @@ func (*flushBenchSink) Header() http.Header         { return nil }
 func (*flushBenchSink) WriteHeader(int)             {}
 func (*flushBenchSink) Write(p []byte) (int, error) { return len(p), nil }
 func (s *flushBenchSink) Flush()                    { s.flushes++ }
+
+func TestIdleTimeoutReaderDetectsTimeoutAndDoubleCloseSafe(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	go func() {
+		<-ctx.Done()
+		_ = pw.CloseWithError(ctx.Err())
+	}()
+
+	reader := newIdleTimeoutReader(pr, 20*time.Millisecond, cancel)
+	buf := make([]byte, 16)
+	_, err := reader.Read(buf)
+	if err == nil || !strings.Contains(err.Error(), "SSE stream idle") {
+		t.Fatalf("expected SSE stream idle error, got %v", err)
+	}
+
+	// Calling Close multiple times must not panic.
+	_ = reader.Close()
+	_ = reader.Close()
+}

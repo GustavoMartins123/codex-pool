@@ -182,8 +182,19 @@ func (p *PassportStore) saveWebAuthnChallenge(principalID, purpose string, sessi
 	if err != nil {
 		return "", err
 	}
-	record := storedWebAuthnChallenge{ID: id, PrincipalID: principalID, Purpose: purpose, Session: *session, ExpiresAt: time.Now().UTC().Add(5 * time.Minute)}
-	err = p.db.Update(func(tx *bbolt.Tx) error { return putJSON(tx.Bucket([]byte(bucketWebAuthnChallenges)), id, &record) })
+	now := time.Now().UTC()
+	record := storedWebAuthnChallenge{ID: id, PrincipalID: principalID, Purpose: purpose, Session: *session, ExpiresAt: now.Add(5 * time.Minute)}
+	err = p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketWebAuthnChallenges))
+		cursor := bucket.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			var existing storedWebAuthnChallenge
+			if json.Unmarshal(v, &existing) != nil || !now.Before(existing.ExpiresAt) {
+				_ = cursor.Delete()
+			}
+		}
+		return putJSON(bucket, id, &record)
+	})
 	return id, err
 }
 
