@@ -4953,12 +4953,18 @@ func timeoutForRequestIntent(r *http.Request, reqTimeout, streamTimeout time.Dur
 		return streamTimeout
 	}
 
+	const maxClientRequestTimeout = 10 * time.Minute
+
 	// Honour SDK/client-requested timeouts for non-streaming requests, but do
 	// not let short 60s/120s client defaults cut off image generation before
-	// Codex's expected 300s window.
+	// Codex's expected 300s window. Bound against arbitrary client values to prevent
+	// lingering connection denial-of-service.
 	if v := r.Header.Get("X-Stainless-Timeout"); v != "" {
 		if secs, err := strconv.ParseFloat(v, 64); err == nil && secs > 0 {
 			requested := time.Duration(secs * float64(time.Second))
+			if requested > maxClientRequestTimeout {
+				requested = maxClientRequestTimeout
+			}
 			if isImageGeneration && requested < codexExpectedStreamTimeout {
 				return codexExpectedStreamTimeout
 			}

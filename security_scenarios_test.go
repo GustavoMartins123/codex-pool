@@ -558,8 +558,8 @@ func TestSecurityUnauthenticatedPassthroughOpenProxy(t *testing.T) {
 	}
 }
 
-// TestSecurityUnboundedStainlessTimeout demonstrates that clients can supply an
-// arbitrarily large X-Stainless-Timeout to hold connections open indefinitely.
+// TestSecurityUnboundedStainlessTimeout demonstrates that clients supplying an
+// arbitrarily large X-Stainless-Timeout are clamped to 10 minutes to prevent resource exhaustion.
 func TestSecurityUnboundedStainlessTimeout(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	// Attacker requests 86400 seconds (24 hours) timeout
@@ -569,11 +569,9 @@ func TestSecurityUnboundedStainlessTimeout(t *testing.T) {
 	configuredStreamTimeout := 5 * time.Minute
 
 	timeout := timeoutForRequestIntent(req, configuredReqTimeout, configuredStreamTimeout, requestIntent{})
-	if timeout != 24*time.Hour {
-		t.Fatalf("expected X-Stainless-Timeout to grant 24 hours, got %v", timeout)
-	}
-	if timeout <= configuredReqTimeout {
-		t.Fatalf("timeout %v did not override configured timeout %v", timeout, configuredReqTimeout)
+	const expectedCap = 10 * time.Minute
+	if timeout != expectedCap {
+		t.Fatalf("expected X-Stainless-Timeout to be clamped to %v, got %v", expectedCap, timeout)
 	}
 }
 
