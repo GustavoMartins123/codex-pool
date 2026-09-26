@@ -463,31 +463,41 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 // TestSecurityInternalHeaderTampering demonstrates how untrusted incoming headers
 // (X-Pool-Canary-Bypass, X-Pool-Routing) manipulate internal routing behavior.
 func TestSecurityInternalHeaderTampering(t *testing.T) {
-	// 1. Canary bypass via X-Pool-Canary-Bypass
-	tracker, err := newExperimentTracker(nil, ExperimentsConfig{
-		Canary: map[string]CanaryConfig{
-			"gpt-5.5": {Candidate: "gpt-5.5-canary", Percent: 100},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+	h := &proxyHandler{
+		cfg: &config{adminToken: "valid-admin-secret"},
 	}
 
-	// Normal request without header gets assigned the canary model
-	assigned := tracker.Assign("gpt-5.5", "session-key")
-	if assigned == nil || assigned.Model != "gpt-5.5-canary" {
-		t.Fatalf("expected canary assignment gpt-5.5-canary, got %+v", assigned)
+	// 1. Canary bypass via X-Pool-Canary-Bypass is rejected for non-admin/non-operator
+	reqUser := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	reqUser.Header.Set("X-Pool-Canary-Bypass", "1")
+	if h.isOperatorOrAdmin(reqUser) {
+		t.Fatal("unauthenticated request should not be considered operator or admin")
 	}
 
-	// Request with X-Pool-Canary-Bypass: 1 bypasses the experiment block in main.go:2290
-	reqBypass := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	reqBypass.Header.Set("X-Pool-Canary-Bypass", "1")
-	bypassActive := reqBypass.Header.Get("X-Pool-Canary-Bypass") != ""
-	if !bypassActive {
-		t.Fatal("expected X-Pool-Canary-Bypass to be active")
+	// But is allowed when X-Admin-Token is provided
+	reqAdmin := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	reqAdmin.Header.Set("X-Pool-Canary-Bypass", "1")
+	reqAdmin.Header.Set("X-Admin-Token", "valid-admin-secret")
+	if !h.isOperatorOrAdmin(reqAdmin) {
+		t.Fatal("admin request should be allowed operator/admin privileges")
 	}
 
-	// 2. Client-specified X-Pool-Routing override
+	// 2. Client forging X-Codex-Pool-Image-Fanout is rejected without valid token
+	reqFakeFanout := httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	reqFakeFanout.Header.Set("X-Codex-Pool-Image-Fanout", "1")
+	if h.isValidImageFanout(reqFakeFanout) {
+		t.Fatal("client request forging X-Codex-Pool-Image-Fanout without token must be rejected")
+	}
+
+	// Valid internal fanout request carrying the token is accepted
+	reqValidFanout := httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	reqValidFanout.Header.Set("X-Codex-Pool-Image-Fanout", "1")
+	reqValidFanout.Header.Set("X-Codex-Pool-Image-Fanout-Token", h.getFanoutToken())
+	if !h.isValidImageFanout(reqValidFanout) {
+		t.Fatal("internal fanout with valid token must be accepted")
+	}
+
+	// 3. Client-specified X-Pool-Routing override
 	pool := newPoolState(nil, false)
 	reqProfile := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	reqProfile.Header.Set("X-Pool-Routing", "quota-saver")

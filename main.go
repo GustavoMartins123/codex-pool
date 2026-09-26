@@ -768,6 +768,9 @@ type proxyHandler struct {
 	turnStateMu      sync.Mutex
 	turnStateOrigins map[string]codexTurnStateOrigin
 	turnStateWrites  uint64
+
+	fanoutTokenMu sync.Mutex
+	fanoutToken   string
 }
 
 type refreshCall struct {
@@ -919,6 +922,7 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 				req.Header.Set("X-Codex-Pool-Image-Fanout", "1")
 				req.Header.Set("X-Codex-Pool-Image-Fanout-Index", strconv.Itoa(i))
 				req.Header.Set("X-Codex-Pool-Image-Fanout-Attempt", strconv.Itoa(slotAttempt))
+				req.Header.Set("X-Codex-Pool-Image-Fanout-Token", h.getFanoutToken())
 				resp, err := client.Do(req)
 				if err != nil {
 					results[i].err = err
@@ -993,6 +997,44 @@ func (h *proxyHandler) imageFanoutEndpoint(r *http.Request) string {
 	}
 	baseURL := h.getEffectivePublicURL(r)
 	return strings.TrimRight(baseURL, "/") + "/v1/images/generations"
+}
+
+func (h *proxyHandler) getFanoutToken() string {
+	if h == nil {
+		return ""
+	}
+	h.fanoutTokenMu.Lock()
+	defer h.fanoutTokenMu.Unlock()
+	if h.fanoutToken == "" {
+		h.fanoutToken = randomHex(16)
+	}
+	return h.fanoutToken
+}
+
+func (h *proxyHandler) isValidImageFanout(r *http.Request) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	if r.Header.Get("X-Codex-Pool-Image-Fanout") == "" {
+		return false
+	}
+	token := r.Header.Get("X-Codex-Pool-Image-Fanout-Token")
+	return token != "" && token == h.getFanoutToken()
+}
+
+func (h *proxyHandler) isOperatorOrAdmin(r *http.Request) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") == h.cfg.adminToken {
+		return true
+	}
+	if h.passport != nil {
+		if principal, _ := h.passport.authenticate(r); principal != nil && principal.Kind == PrincipalOperator {
+			return true
+		}
+	}
+	return false
 }
 
 func mapResponsesPath(in string) string {
@@ -2286,8 +2328,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	requestedModel, bodyBytes = routedModel, routedBody
+	canaryBypass := false
+	if r.Header.Get("X-Pool-Canary-Bypass") != "" {
+		if h.isOperatorOrAdmin(r) {
+			canaryBypass = true
+		}
+	}
 	var experiment *experimentAssignment
-	if h.experiments != nil && r.Header.Get("X-Pool-Canary-Bypass") == "" {
+	if h.experiments != nil && !canaryBypass {
 		experimentKey := conversationID
 		if experimentKey == "" {
 			experimentKey = firstNonEmpty(userID, originID, reqID)
@@ -2680,7 +2728,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	const maxCooldownWait = 10 * time.Second // max time to wait for a rate-limited account
 	const preferredImageCodexAccountID = "neon"
-	imageFanoutChild := r.Header.Get("X-Codex-Pool-Image-Fanout") != ""
+	imageFanoutChild := h.isValidImageFanout(r)
 	imageFanoutIndex, _ := strconv.Atoi(r.Header.Get("X-Codex-Pool-Image-Fanout-Index"))
 
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -4509,6 +4557,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	outReq.Header.Del("Authorization")
 	outReq.Header.Del("X-Api-Key")
 	outReq.Header.Del("x-goog-api-key")
+	outReq.Header.Del("ChatGPT-Account-ID")
 
 	// Remove Cloudflare/proxy headers that would cause issues with OpenAI's Cloudflare
 	outReq.Header.Del("Cdn-Loop")
