@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -140,7 +141,7 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 			EffectiveSecondary: effectiveSecondary * 100,
 			Score:              scoreBreakdown.Score,
 			ScoreTooltip:       scoreTooltipFromBreakdownLocked(a, now, scoreBreakdown),
-			Inflight:           a.Inflight,
+			Inflight:           atomic.LoadInt64(&a.Inflight),
 			TotalTokens:        a.Totals.TotalBillableTokens,
 		}
 
