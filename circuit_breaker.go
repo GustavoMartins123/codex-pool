@@ -15,6 +15,8 @@ const (
 	StateClosed   CircuitState = "CLOSED"
 	StateOpen     CircuitState = "OPEN"
 	StateHalfOpen CircuitState = "HALF_OPEN"
+
+	maxCircuitEntries = 8192
 )
 
 var (
@@ -32,11 +34,58 @@ type circuitEntry struct {
 	cooldownUntil        time.Time
 	lastFailure          time.Time
 	lastSuccess          time.Time
+	probeStartedAt       time.Time
 	probesInFlight       int
 	failureThreshold     int
 	successThreshold     int
 	cooldownDuration     time.Duration
 	maxProbes            int
+}
+
+func (e *circuitEntry) expireStaleProbeLocked(now time.Time) {
+	if e.state != StateHalfOpen || e.probesInFlight <= 0 || e.probeStartedAt.IsZero() {
+		return
+	}
+	lease := e.cooldownDuration
+	if lease < 5*time.Second {
+		lease = 5 * time.Second
+	}
+	if now.Sub(e.probeStartedAt) > lease {
+		e.probesInFlight = 0
+		e.probeStartedAt = time.Time{}
+	}
+}
+
+// CanAllow performs a non-mutating check of whether a request could be admitted
+// without consuming a HALF_OPEN probe slot during candidate evaluation.
+func (e *circuitEntry) CanAllow() (bool, error) {
+	if e == nil {
+		return true, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	now := time.Now()
+	switch e.state {
+	case StateClosed:
+		return true, nil
+
+	case StateOpen:
+		if now.After(e.cooldownUntil) {
+			return true, nil
+		}
+		return false, ErrCircuitOpen
+
+	case StateHalfOpen:
+		e.expireStaleProbeLocked(now)
+		if e.probesInFlight < e.maxProbes {
+			return true, nil
+		}
+		return false, ErrCircuitHalfOpenProbing
+
+	default:
+		return true, nil
+	}
 }
 
 func (e *circuitEntry) Allow() (bool, error) {
@@ -53,13 +102,16 @@ func (e *circuitEntry) Allow() (bool, error) {
 			// Transition to HALF_OPEN and permit 1 probe request
 			e.state = StateHalfOpen
 			e.probesInFlight = 1
+			e.probeStartedAt = now
 			return true, nil
 		}
 		return false, ErrCircuitOpen
 
 	case StateHalfOpen:
+		e.expireStaleProbeLocked(now)
 		if e.probesInFlight < e.maxProbes {
 			e.probesInFlight++
+			e.probeStartedAt = now
 			return true, nil
 		}
 		return false, ErrCircuitHalfOpenProbing
@@ -70,7 +122,24 @@ func (e *circuitEntry) Allow() (bool, error) {
 	}
 }
 
+func (e *circuitEntry) ReleaseProbe() {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state == StateHalfOpen && e.probesInFlight > 0 {
+		e.probesInFlight--
+		if e.probesInFlight == 0 {
+			e.probeStartedAt = time.Time{}
+		}
+	}
+}
+
 func (e *circuitEntry) RecordSuccess() {
+	if e == nil {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -78,6 +147,9 @@ func (e *circuitEntry) RecordSuccess() {
 	if e.state == StateHalfOpen {
 		if e.probesInFlight > 0 {
 			e.probesInFlight--
+		}
+		if e.probesInFlight == 0 {
+			e.probeStartedAt = time.Time{}
 		}
 		e.consecutiveSuccesses++
 		if e.consecutiveSuccesses >= e.successThreshold {
@@ -91,12 +163,21 @@ func (e *circuitEntry) RecordSuccess() {
 }
 
 func (e *circuitEntry) RecordFailure(errClass ErrorClass) {
-	if !shouldTripCircuit(errClass) {
+	if e == nil {
 		return
 	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if !shouldTripCircuit(errClass) {
+		if e.state == StateHalfOpen && e.probesInFlight > 0 {
+			e.probesInFlight--
+			if e.probesInFlight == 0 {
+				e.probeStartedAt = time.Time{}
+			}
+		}
+		return
+	}
 
 	now := time.Now()
 	e.lastFailure = now
@@ -107,6 +188,7 @@ func (e *circuitEntry) RecordFailure(errClass ErrorClass) {
 		if e.probesInFlight > 0 {
 			e.probesInFlight--
 		}
+		e.probeStartedAt = time.Time{}
 		e.consecutiveFailures++
 		e.consecutiveSuccesses = 0
 		e.cooldownUntil = now.Add(e.cooldownDuration * 2)
@@ -189,12 +271,33 @@ func newCircuitBreakerManager() *CircuitBreakerManager {
 	}
 }
 
+func (m *CircuitBreakerManager) get(key string) *circuitEntry {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	entry := m.entries[key]
+	m.mu.RUnlock()
+	return entry
+}
+
 func (m *CircuitBreakerManager) getOrCreate(key, level string, failThreshold, succThreshold int, cooldown time.Duration) *circuitEntry {
+	m.mu.RLock()
+	if entry, ok := m.entries[key]; ok {
+		m.mu.RUnlock()
+		return entry
+	}
+	m.mu.RUnlock()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if entry, ok := m.entries[key]; ok {
 		return entry
+	}
+
+	if len(m.entries) >= maxCircuitEntries {
+		m.evictIdleEntriesLocked()
 	}
 
 	entry := &circuitEntry{
@@ -208,6 +311,19 @@ func (m *CircuitBreakerManager) getOrCreate(key, level string, failThreshold, su
 	}
 	m.entries[key] = entry
 	return entry
+}
+
+func (m *CircuitBreakerManager) evictIdleEntriesLocked() {
+	now := time.Now()
+	for k, e := range m.entries {
+		e.mu.Lock()
+		idleClosed := e.state == StateClosed && e.consecutiveFailures == 0
+		expiredOpen := e.state == StateOpen && !e.cooldownUntil.IsZero() && now.Sub(e.cooldownUntil) > 10*time.Minute
+		e.mu.Unlock()
+		if idleClosed || expiredOpen {
+			delete(m.entries, k)
+		}
+	}
 }
 
 // Level-specific keys
@@ -227,12 +343,77 @@ func accountCapabilityKey(accountID, capability string) string {
 	return "ac:" + strings.TrimSpace(accountID) + ":" + strings.ToLower(strings.TrimSpace(capability))
 }
 
+// CanAllowProvider checks provider-level circuit without consuming a probe slot.
+func (m *CircuitBreakerManager) CanAllowProvider(provider string) (bool, error) {
+	if m == nil || provider == "" {
+		return true, nil
+	}
+	return m.get(providerKey(provider)).CanAllow()
+}
+
+// CanAllowAccount checks account-level circuit without consuming a probe slot.
+func (m *CircuitBreakerManager) CanAllowAccount(accountID string) (bool, error) {
+	if m == nil || accountID == "" {
+		return true, nil
+	}
+	return m.get(accountKey(accountID)).CanAllow()
+}
+
+// CanAllowAccountModel checks model-specific circuit without consuming a probe slot.
+func (m *CircuitBreakerManager) CanAllowAccountModel(accountID, model string) (bool, error) {
+	if m == nil || accountID == "" || model == "" {
+		return true, nil
+	}
+	return m.get(accountModelKey(accountID, model)).CanAllow()
+}
+
+// CanAllowAccountCapability checks capability circuit without consuming a probe slot.
+func (m *CircuitBreakerManager) CanAllowAccountCapability(accountID, capability string) (bool, error) {
+	if m == nil || accountID == "" || capability == "" {
+		return true, nil
+	}
+	return m.get(accountCapabilityKey(accountID, capability)).CanAllow()
+}
+
+// CanAllowTarget checks all 4 levels without mutating state or consuming probe slots.
+func (m *CircuitBreakerManager) CanAllowTarget(provider, accountID, model string, capabilities []string) (bool, string, error) {
+	if m == nil {
+		return true, "", nil
+	}
+	if provider != "" {
+		if ok, err := m.CanAllowProvider(provider); !ok {
+			return false, fmt.Sprintf("provider_%s_circuit_%v", provider, err), err
+		}
+	}
+	if accountID != "" {
+		if ok, err := m.CanAllowAccount(accountID); !ok {
+			return false, fmt.Sprintf("account_%s_circuit_%v", accountID, err), err
+		}
+	}
+	if accountID != "" && model != "" {
+		if ok, err := m.CanAllowAccountModel(accountID, model); !ok {
+			return false, fmt.Sprintf("account_%s_model_%s_circuit_%v", accountID, model, err), err
+		}
+	}
+	if accountID != "" {
+		for _, cap := range capabilities {
+			if ok, err := m.CanAllowAccountCapability(accountID, cap); !ok {
+				return false, fmt.Sprintf("account_%s_capability_%s_circuit_%v", accountID, cap, err), err
+			}
+		}
+	}
+	return true, "", nil
+}
+
 // AllowProvider checks provider-level circuit.
 func (m *CircuitBreakerManager) AllowProvider(provider string) (bool, error) {
 	if m == nil || provider == "" {
 		return true, nil
 	}
-	entry := m.getOrCreate(providerKey(provider), "provider", 5, 1, 30*time.Second)
+	entry := m.get(providerKey(provider))
+	if entry == nil {
+		return true, nil
+	}
 	return entry.Allow()
 }
 
@@ -241,7 +422,10 @@ func (m *CircuitBreakerManager) AllowAccount(accountID string) (bool, error) {
 	if m == nil || accountID == "" {
 		return true, nil
 	}
-	entry := m.getOrCreate(accountKey(accountID), "account", 3, 1, 30*time.Second)
+	entry := m.get(accountKey(accountID))
+	if entry == nil {
+		return true, nil
+	}
 	return entry.Allow()
 }
 
@@ -250,7 +434,10 @@ func (m *CircuitBreakerManager) AllowAccountModel(accountID, model string) (bool
 	if m == nil || accountID == "" || model == "" {
 		return true, nil
 	}
-	entry := m.getOrCreate(accountModelKey(accountID, model), "account_model", 2, 1, 45*time.Second)
+	entry := m.get(accountModelKey(accountID, model))
+	if entry == nil {
+		return true, nil
+	}
 	return entry.Allow()
 }
 
@@ -259,7 +446,10 @@ func (m *CircuitBreakerManager) AllowAccountCapability(accountID, capability str
 	if m == nil || accountID == "" || capability == "" {
 		return true, nil
 	}
-	entry := m.getOrCreate(accountCapabilityKey(accountID, capability), "account_capability", 2, 1, 60*time.Second)
+	entry := m.get(accountCapabilityKey(accountID, capability))
+	if entry == nil {
+		return true, nil
+	}
 	return entry.Allow()
 }
 
@@ -269,32 +459,59 @@ func (m *CircuitBreakerManager) AllowTarget(provider, accountID, model string, c
 		return true, "", nil
 	}
 
+	// Pre-validate all levels before claiming any HALF_OPEN probe slots.
+	if ok, reason, err := m.CanAllowTarget(provider, accountID, model, capabilities); !ok {
+		return false, reason, err
+	}
+
+	var acquired []*circuitEntry
+	rollback := func() {
+		for _, entry := range acquired {
+			entry.ReleaseProbe()
+		}
+	}
+
 	// 1. Provider level
 	if provider != "" {
-		if ok, err := m.AllowProvider(provider); !ok {
-			return false, fmt.Sprintf("provider_%s_circuit_%v", provider, err), err
+		if entry := m.get(providerKey(provider)); entry != nil {
+			if ok, err := entry.Allow(); !ok {
+				return false, fmt.Sprintf("provider_%s_circuit_%v", provider, err), err
+			}
+			acquired = append(acquired, entry)
 		}
 	}
 
 	// 2. Account level
 	if accountID != "" {
-		if ok, err := m.AllowAccount(accountID); !ok {
-			return false, fmt.Sprintf("account_%s_circuit_%v", accountID, err), err
+		if entry := m.get(accountKey(accountID)); entry != nil {
+			if ok, err := entry.Allow(); !ok {
+				rollback()
+				return false, fmt.Sprintf("account_%s_circuit_%v", accountID, err), err
+			}
+			acquired = append(acquired, entry)
 		}
 	}
 
 	// 3. Account + Model level
 	if accountID != "" && model != "" {
-		if ok, err := m.AllowAccountModel(accountID, model); !ok {
-			return false, fmt.Sprintf("account_%s_model_%s_circuit_%v", accountID, model, err), err
+		if entry := m.get(accountModelKey(accountID, model)); entry != nil {
+			if ok, err := entry.Allow(); !ok {
+				rollback()
+				return false, fmt.Sprintf("account_%s_model_%s_circuit_%v", accountID, model, err), err
+			}
+			acquired = append(acquired, entry)
 		}
 	}
 
 	// 4. Account + Capability level
 	if accountID != "" {
 		for _, cap := range capabilities {
-			if ok, err := m.AllowAccountCapability(accountID, cap); !ok {
-				return false, fmt.Sprintf("account_%s_capability_%s_circuit_%v", accountID, cap, err), err
+			if entry := m.get(accountCapabilityKey(accountID, cap)); entry != nil {
+				if ok, err := entry.Allow(); !ok {
+					rollback()
+					return false, fmt.Sprintf("account_%s_capability_%s_circuit_%v", accountID, cap, err), err
+				}
+				acquired = append(acquired, entry)
 			}
 		}
 	}
@@ -308,17 +525,17 @@ func (m *CircuitBreakerManager) RecordSuccess(provider, accountID, model string,
 		return
 	}
 	if provider != "" {
-		m.getOrCreate(providerKey(provider), "provider", 5, 1, 30*time.Second).RecordSuccess()
+		m.get(providerKey(provider)).RecordSuccess()
 	}
 	if accountID != "" {
-		m.getOrCreate(accountKey(accountID), "account", 3, 1, 30*time.Second).RecordSuccess()
+		m.get(accountKey(accountID)).RecordSuccess()
 	}
 	if accountID != "" && model != "" {
-		m.getOrCreate(accountModelKey(accountID, model), "account_model", 2, 1, 45*time.Second).RecordSuccess()
+		m.get(accountModelKey(accountID, model)).RecordSuccess()
 	}
 	if accountID != "" {
 		for _, cap := range capabilities {
-			m.getOrCreate(accountCapabilityKey(accountID, cap), "account_capability", 2, 1, 60*time.Second).RecordSuccess()
+			m.get(accountCapabilityKey(accountID, cap)).RecordSuccess()
 		}
 	}
 }
@@ -326,6 +543,23 @@ func (m *CircuitBreakerManager) RecordSuccess(provider, accountID, model string,
 // RecordFailure reports an error to increment failure counters or trip breakers.
 func (m *CircuitBreakerManager) RecordFailure(provider, accountID, model string, capabilities []string, errClass ErrorClass) {
 	if m == nil {
+		return
+	}
+	if !shouldTripCircuit(errClass) {
+		if provider != "" {
+			m.get(providerKey(provider)).RecordFailure(errClass)
+		}
+		if accountID != "" {
+			m.get(accountKey(accountID)).RecordFailure(errClass)
+		}
+		if accountID != "" && model != "" && len(capabilities) == 0 {
+			m.get(accountModelKey(accountID, model)).RecordFailure(errClass)
+		}
+		if accountID != "" {
+			for _, cap := range capabilities {
+				m.get(accountCapabilityKey(accountID, cap)).RecordFailure(errClass)
+			}
+		}
 		return
 	}
 	if provider != "" {

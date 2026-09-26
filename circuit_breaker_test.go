@@ -141,3 +141,130 @@ func TestAccountCapabilityCircuitBreaker(t *testing.T) {
 		t.Fatalf("expected text request to still be allowed, got %v (%v)", allowedText, errText)
 	}
 }
+
+func TestCircuitBreakerCandidateSelectionDoesNotConsumeUnselectedProbes(t *testing.T) {
+	acc1 := &Account{ID: "acc_1", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.8}}
+	acc2 := &Account{ID: "acc_2", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
+	pool := newPoolState([]*Account{acc1, acc2}, false)
+
+	// Trip both accounts and the provider to OPEN, then expire their cooldowns.
+	for i := 0; i < 5; i++ {
+		pool.circuitBreakers.RecordFailure("codex", "", "", nil, ErrorClassTransient)
+	}
+	for _, id := range []string{"acc_1", "acc_2"} {
+		for i := 0; i < 3; i++ {
+			pool.circuitBreakers.RecordFailure("codex", id, "gpt-5.5", nil, ErrorClassTransient)
+		}
+	}
+	for _, key := range []string{
+		providerKey("codex"),
+		accountKey("acc_1"),
+		accountKey("acc_2"),
+		accountModelKey("acc_1", "gpt-5.5"),
+		accountModelKey("acc_2", "gpt-5.5"),
+	} {
+		entry := pool.circuitBreakers.get(key)
+		if entry == nil {
+			t.Fatalf("missing circuit entry for %s", key)
+		}
+		entry.mu.Lock()
+		entry.cooldownUntil = time.Now().Add(-time.Second)
+		entry.mu.Unlock()
+	}
+
+	// Candidate selection evaluates both accounts, picks acc_2 (lower usage),
+	// and must only claim the probe on acc_2 - not acc_1.
+	decision := pool.smartCandidateForModelForUser("u1", "", nil, AccountTypeCodex, "", "127.0.0.1", "gpt-5.5", RoutingBalanced)
+	if decision.Account == nil || decision.Account.ID != "acc_2" {
+		t.Fatalf("expected acc_2 to be selected as probe, got %+v", decision.Account)
+	}
+
+	// Complete acc_2 probe -> provider and acc_2 recover to CLOSED.
+	pool.circuitBreakers.RecordSuccess("codex", "acc_2", "gpt-5.5", nil)
+
+	// acc_1 must NOT be stuck in HALF_OPEN with probesInFlight=1; it must still be eligible to probe.
+	allowed, _, err := pool.circuitBreakers.AllowTarget("codex", "acc_1", "gpt-5.5", nil)
+	if !allowed || err != nil {
+		t.Fatalf("unselected account acc_1 should still be able to probe, got allowed=%v err=%v", allowed, err)
+	}
+}
+
+func TestCircuitBreakerAllowTargetDoesNotLeakParentProbeWhenChildOpen(t *testing.T) {
+	cb := newCircuitBreakerManager()
+	for i := 0; i < 5; i++ {
+		cb.RecordFailure("codex", "", "", nil, ErrorClassTransient)
+	}
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassTransient)
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassTransient)
+
+	// Provider cooldown expires, but account+model is still in cooldown.
+	provEntry := cb.get(providerKey("codex"))
+	provEntry.mu.Lock()
+	provEntry.cooldownUntil = time.Now().Add(-time.Second)
+	provEntry.mu.Unlock()
+
+	// Request to acc_1/gpt-6-astra must be rejected by account_model circuit.
+	allowed, _, err := cb.AllowTarget("codex", "acc_1", "gpt-6-astra", nil)
+	if allowed || err != ErrCircuitOpen {
+		t.Fatalf("expected rejection by open model circuit, got allowed=%v err=%v", allowed, err)
+	}
+
+	// Provider probe slot must NOT have been consumed by the rejected target check.
+	allowedOther, _, errOther := cb.AllowTarget("codex", "acc_2", "gpt-5.5", nil)
+	if !allowedOther || errOther != nil {
+		t.Fatalf("expected provider probe to remain available for acc_2, got allowed=%v err=%v", allowedOther, errOther)
+	}
+}
+
+func TestCircuitBreakerNonTrippingFailureReleasesHalfOpenProbe(t *testing.T) {
+	cb := newCircuitBreakerManager()
+	cb.RecordFailure("codex", "acc_1", "gpt-5.5", nil, ErrorClassTransient)
+	cb.RecordFailure("codex", "acc_1", "gpt-5.5", nil, ErrorClassTransient)
+
+	for _, key := range []string{accountKey("acc_1"), accountModelKey("acc_1", "gpt-5.5")} {
+		if entry := cb.get(key); entry != nil {
+			entry.mu.Lock()
+			entry.cooldownUntil = time.Now().Add(-time.Second)
+			entry.mu.Unlock()
+		}
+	}
+
+	allowed, _, err := cb.AllowTarget("codex", "acc_1", "gpt-5.5", nil)
+	if !allowed || err != nil {
+		t.Fatalf("expected probe admitted, got %v (%v)", allowed, err)
+	}
+
+	// Probe finishes with a client 400 (ErrorClassInvalid) or context cancel (ErrorClassNone).
+	cb.RecordFailure("codex", "acc_1", "gpt-5.5", nil, ErrorClassInvalid)
+
+	// Probe slot must be released so the next request is not deadlocked in ErrCircuitHalfOpenProbing.
+	allowedNext, _, errNext := cb.AllowTarget("codex", "acc_1", "gpt-5.5", nil)
+	if !allowedNext || errNext != nil {
+		t.Fatalf("expected probe slot released after non-tripping error, got allowed=%v err=%v", allowedNext, errNext)
+	}
+}
+
+func TestCircuitBreakerStaleProbeLeaseExpires(t *testing.T) {
+	cb := newCircuitBreakerManager()
+	cb.RecordFailure("codex", "acc_1", "gpt-5.5", nil, ErrorClassTransient)
+	cb.RecordFailure("codex", "acc_1", "gpt-5.5", nil, ErrorClassTransient)
+
+	entry := cb.get(accountModelKey("acc_1", "gpt-5.5"))
+	entry.mu.Lock()
+	entry.cooldownUntil = time.Now().Add(-time.Second)
+	entry.cooldownDuration = 10 * time.Millisecond
+	entry.mu.Unlock()
+
+	if ok, _, _ := cb.AllowTarget("codex", "acc_1", "gpt-5.5", nil); !ok {
+		t.Fatal("expected initial probe to be admitted")
+	}
+
+	// Simulate an abandoned probe whose lease expired > 5s ago.
+	entry.mu.Lock()
+	entry.probeStartedAt = time.Now().Add(-10 * time.Second)
+	entry.mu.Unlock()
+
+	if ok, _, err := cb.AllowTarget("codex", "acc_1", "gpt-5.5", nil); !ok || err != nil {
+		t.Fatalf("expected expired probe lease to admit new probe, got ok=%v err=%v", ok, err)
+	}
+}

@@ -803,7 +803,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 			continue
 		}
 		if p.circuitBreakers != nil {
-			if allowed, _, _ := p.circuitBreakers.AllowTarget(string(AccountTypeAntigravity), account.ID, model, nil); !allowed {
+			if allowed, _, _ := p.circuitBreakers.CanAllowTarget(string(AccountTypeAntigravity), account.ID, model, nil); !allowed {
 				continue
 			}
 		}
@@ -816,6 +816,9 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 		if eligible && (best == nil || score > bestScore) {
 			best, bestScore = account, score
 		}
+	}
+	if best != nil && p.circuitBreakers != nil {
+		_, _, _ = p.circuitBreakers.AllowTarget(string(AccountTypeAntigravity), best.ID, model, nil)
 	}
 	if best != nil && conversationID != "" {
 		p.convPin[pinKey] = best.ID

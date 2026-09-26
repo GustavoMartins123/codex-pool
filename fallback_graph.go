@@ -228,7 +228,7 @@ func (fg *FallbackGraph) ResolveFallbackWithTransitionExcluding(
 			}
 		}
 		if cb != nil {
-			if allowed, _ := cb.AllowProvider(string(meta.Provider)); !allowed {
+			if allowed, _ := cb.CanAllowProvider(string(meta.Provider)); !allowed {
 				continue
 			}
 		}

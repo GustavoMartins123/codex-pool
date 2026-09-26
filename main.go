@@ -2999,7 +2999,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
 		if err != nil {
-			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, ErrorClassTransient)
+			errClass := ErrorClassTransient
+			if ctx.Err() != nil || isContextError(err) {
+				errClass = ErrorClassNone
+			}
+			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass)
 			if isContextError(err) {
 				writeContextError(w, err)
 				return

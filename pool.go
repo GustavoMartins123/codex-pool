@@ -682,27 +682,32 @@ func (p *poolState) candidateForModel(conversationID string, exclude map[string]
 	if p.circuitBreakers != nil && model != "" {
 		for _, account := range p.allAccounts() {
 			if account != nil {
-				if allowed, _ := p.circuitBreakers.AllowAccountModel(account.ID, model); !allowed {
+				if allowed, _ := p.circuitBreakers.CanAllowAccountModel(account.ID, model); !allowed {
 					filtered[account.ID] = true
 				}
 			}
 		}
 	}
-	if !p.discoveredModelRequiresEntitlement(accountType, model) {
-		return p.candidate(conversationID, filtered, accountType, requiredPlan, clientIP)
-	}
-	for _, account := range p.allAccounts() {
-		if account.Type != accountType {
-			continue
+	if p.discoveredModelRequiresEntitlement(accountType, model) {
+		for _, account := range p.allAccounts() {
+			if account.Type != accountType {
+				continue
+			}
+			account.mu.Lock()
+			_, supported := accountDiscoveredModel(account, model)
+			account.mu.Unlock()
+			if !supported {
+				filtered[account.ID] = true
+			}
 		}
-		account.mu.Lock()
-		_, supported := accountDiscoveredModel(account, model)
-		account.mu.Unlock()
-		if !supported {
-			filtered[account.ID] = true
+	}
+	acc := p.candidate(conversationID, filtered, accountType, requiredPlan, clientIP)
+	if acc != nil && p.circuitBreakers != nil && model != "" {
+		if allowed, _ := p.circuitBreakers.AllowAccountModel(acc.ID, model); !allowed {
+			return nil
 		}
 	}
-	return p.candidate(conversationID, filtered, accountType, requiredPlan, clientIP)
+	return acc
 }
 
 func accountSupportsDiscoveredModel(account *Account, model string) bool {
@@ -821,6 +826,16 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 					}
 				}
 				a.mu.Unlock()
+				if ok && p.circuitBreakers != nil {
+					if allowed, _ := p.circuitBreakers.CanAllowProvider(string(a.Type)); !allowed {
+						ok = false
+					} else if allowed, _ := p.circuitBreakers.CanAllowAccount(a.ID); !allowed {
+						ok = false
+					} else {
+						_, _ = p.circuitBreakers.AllowProvider(string(a.Type))
+						_, _ = p.circuitBreakers.AllowAccount(a.ID)
+					}
+				}
 				if ok {
 					return a
 				}
@@ -856,11 +871,11 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 			continue
 		}
 		if p.circuitBreakers != nil {
-			if allowed, _ := p.circuitBreakers.AllowProvider(string(a.Type)); !allowed {
+			if allowed, _ := p.circuitBreakers.CanAllowProvider(string(a.Type)); !allowed {
 				a.mu.Unlock()
 				continue
 			}
-			if allowed, _ := p.circuitBreakers.AllowAccount(a.ID); !allowed {
+			if allowed, _ := p.circuitBreakers.CanAllowAccount(a.ID); !allowed {
 				a.mu.Unlock()
 				continue
 			}
@@ -980,6 +995,10 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 				}
 			}
 			p.rr++
+			if p.circuitBreakers != nil && selected.acc != nil {
+				_, _ = p.circuitBreakers.AllowProvider(string(selected.acc.Type))
+				_, _ = p.circuitBreakers.AllowAccount(selected.acc.ID)
+			}
 			return selected.acc
 		}
 

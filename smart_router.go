@@ -541,14 +541,8 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 			_, eligible = accountDiscoveredModel(account, model)
 		}
 		if eligible && p.circuitBreakers != nil {
-			if allowed, _ := p.circuitBreakers.AllowProvider(string(account.Type)); !allowed {
+			if allowed, _, _ := p.circuitBreakers.CanAllowTarget(string(account.Type), account.ID, model, nil); !allowed {
 				eligible = false
-			} else if allowed, _ := p.circuitBreakers.AllowAccount(account.ID); !allowed {
-				eligible = false
-			} else if model != "" {
-				if allowed, _ := p.circuitBreakers.AllowAccountModel(account.ID, model); !allowed {
-					eligible = false
-				}
 			}
 		}
 		if eligible {
@@ -576,6 +570,9 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 				break
 			}
 		}
+	}
+	if p.circuitBreakers != nil {
+		_, _, _ = p.circuitBreakers.AllowTarget(string(selected.account.Type), selected.account.ID, model, nil)
 	}
 	if conversationID != "" {
 		p.convPin[conversationID] = selected.account.ID
