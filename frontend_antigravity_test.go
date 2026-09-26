@@ -146,7 +146,7 @@ func TestPoolStatsUsesRecentRequestsForAccount24hBurn(t *testing.T) {
 	}
 }
 
-func TestPreserveUsageSnapshotsCarriesBankedResetsAcrossHotReload(t *testing.T) {
+func TestMergeReloadedAccountsCarriesBankedResetsAcrossHotReload(t *testing.T) {
 	expiresAt := time.Date(2026, time.August, 12, 17, 44, 43, 0, time.UTC)
 	retrievedAt := time.Date(2026, time.July, 17, 16, 57, 33, 0, time.UTC)
 	current := &Account{
@@ -158,17 +158,15 @@ func TestPreserveUsageSnapshotsCarriesBankedResetsAcrossHotReload(t *testing.T) 
 	}
 	loaded := &Account{Type: AccountTypeCodex, ID: "account"}
 
-	preserveUsageSnapshots([]*Account{current}, []*Account{loaded})
+	merged := mergeReloadedAccounts([]*Account{current}, []*Account{loaded})
 
-	if loaded.ResetCreditsAvailable != 5 || !loaded.ResetCreditsRetrievedAt.Equal(retrievedAt) {
-		t.Fatalf("preserved reset summary = available %d, retrieved %s", loaded.ResetCreditsAvailable, loaded.ResetCreditsRetrievedAt)
+	if len(merged) != 1 || merged[0] != current {
+		t.Fatal("surviving account must keep its pointer identity")
 	}
-	if len(loaded.RateLimitResetCredits) != 1 || loaded.RateLimitResetCredits[0].ID != "credit" || !loaded.RateLimitResetCredits[0].ExpiresAt.Equal(expiresAt) {
-		t.Fatalf("preserved reset credits = %+v", loaded.RateLimitResetCredits)
+	if current.ResetCreditsAvailable != 5 || !current.ResetCreditsRetrievedAt.Equal(retrievedAt) {
+		t.Fatalf("preserved reset summary = available %d, retrieved %s", current.ResetCreditsAvailable, current.ResetCreditsRetrievedAt)
 	}
-
-	current.RateLimitResetCredits[0].ID = "mutated"
-	if loaded.RateLimitResetCredits[0].ID != "credit" {
-		t.Fatal("hot-reloaded account shares reset credit backing storage")
+	if len(current.RateLimitResetCredits) != 1 || current.RateLimitResetCredits[0].ID != "credit" || !current.RateLimitResetCredits[0].ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("preserved reset credits = %+v", current.RateLimitResetCredits)
 	}
 }

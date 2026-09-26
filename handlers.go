@@ -138,8 +138,7 @@ func (h *proxyHandler) reloadAccounts() {
 	}
 	accs = append(accs, configuredGenericAccounts(h.registry)...)
 	accs = append(accs, configuredFederatedAccounts(h.registry)...)
-	preserveUsageSnapshots(h.pool.allAccounts(), accs)
-	h.pool.replace(accs)
+	h.pool.replace(mergeReloadedAccounts(h.pool.allAccounts(), accs))
 	if h.pool.count() == 0 {
 		log.Printf("warning: loaded 0 accounts from %s", h.cfg.poolDir)
 	}
@@ -160,34 +159,67 @@ func (h *proxyHandler) reloadAccounts() {
 	}
 }
 
-func preserveUsageSnapshots(current, loaded []*Account) {
-	byID := make(map[string]*Account, len(current))
+// mergeReloadedAccounts reuses existing account objects for accounts that
+// survive a reload, so pointers held by in-flight requests, pollers, and admin
+// handlers keep mutating live state instead of silently-discarded orphans.
+// File-derived fields are copied onto the existing object; runtime-only state
+// (cooldowns, penalties, usage telemetry, in-flight atomics) stays in place.
+// Accounts missing from loaded are dropped and unknown accounts pass through.
+func mergeReloadedAccounts(current, loaded []*Account) []*Account {
+	byKey := make(map[string]*Account, len(current))
 	for _, account := range current {
 		if account != nil {
-			byID[string(account.Type)+"\x00"+account.ID] = account
+			byKey[string(account.Type)+"\x00"+account.ID] = account
 		}
 	}
+	merged := make([]*Account, 0, len(loaded))
 	for _, account := range loaded {
 		if account == nil {
 			continue
 		}
-		previous := byID[string(account.Type)+"\x00"+account.ID]
-		if previous == nil {
+		existing := byKey[string(account.Type)+"\x00"+account.ID]
+		if existing == nil {
+			merged = append(merged, account)
 			continue
 		}
-		previous.mu.Lock()
-		usage := previous.Usage
-		resetCredits := append([]RateLimitResetCredit(nil), previous.RateLimitResetCredits...)
-		resetCreditsAvailable := previous.ResetCreditsAvailable
-		resetCreditsRetrievedAt := previous.ResetCreditsRetrievedAt
-		previous.mu.Unlock()
-		account.mu.Lock()
-		account.Usage = mergeUsage(account.Usage, usage)
-		account.RateLimitResetCredits = resetCredits
-		account.ResetCreditsAvailable = resetCreditsAvailable
-		account.ResetCreditsRetrievedAt = resetCreditsRetrievedAt
-		account.mu.Unlock()
+		copyAccountFileState(existing, account)
+		merged = append(merged, existing)
 	}
+	return merged
+}
+
+// copyAccountFileState copies fields whose source of truth is the account
+// file onto an existing account. loaded is not yet shared with other
+// goroutines when this runs, so only existing needs its mutex held. Every
+// field not copied here is runtime state that must survive a reload.
+func copyAccountFileState(existing, loaded *Account) {
+	existing.mu.Lock()
+	defer existing.mu.Unlock()
+	existing.File = loaded.File
+	existing.Label = loaded.Label
+	existing.AccessToken = loaded.AccessToken
+	existing.RefreshToken = loaded.RefreshToken
+	existing.IDToken = loaded.IDToken
+	existing.AccountID = loaded.AccountID
+	existing.IDTokenChatGPTAccountID = loaded.IDTokenChatGPTAccountID
+	existing.PlanType = loaded.PlanType
+	existing.RateLimitTier = loaded.RateLimitTier
+	existing.MonthlyCost = loaded.MonthlyCost
+	existing.DailyTokenLimit = loaded.DailyTokenLimit
+	existing.ExpiresAt = loaded.ExpiresAt
+	existing.LastRefresh = loaded.LastRefresh
+	existing.AddedAt = loaded.AddedAt
+	existing.Disabled = loaded.Disabled
+	existing.Dead = loaded.Dead
+	existing.AllowedSourceIPs = loaded.AllowedSourceIPs
+	existing.AccountUUID = loaded.AccountUUID
+	existing.CyberAccess = loaded.CyberAccess
+	existing.CodexCookies = loaded.CodexCookies
+	existing.Email = loaded.Email
+	existing.ProjectID = loaded.ProjectID
+	existing.Models = loaded.Models
+	existing.ModelsFetchedAt = loaded.ModelsFetchedAt
+	existing.Usage = mergeUsage(loaded.Usage, existing.Usage)
 }
 
 // setAccountDisabled changes whether an account may receive traffic and
