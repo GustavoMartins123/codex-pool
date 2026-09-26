@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 )
 
 func randomID() string {
@@ -28,31 +30,152 @@ func safeText(b []byte) string {
 	return s
 }
 
-// getClientIP extracts the client IP from the request, checking common proxy headers.
-func getClientIP(r *http.Request) string {
-	// Check CF-Connecting-IP first (Cloudflare, most reliable when present)
-	if cfip := r.Header.Get("CF-Connecting-IP"); cfip != "" {
-		return cfip
+var (
+	trustedProxiesMu     sync.RWMutex
+	trustedProxyNets     []*net.IPNet
+	trustedProxyTrustAll bool
+)
+
+func init() {
+	initTrustedProxiesFromEnv()
+}
+
+func initTrustedProxiesFromEnv() {
+	raw := os.Getenv("PROXY_TRUSTED_PROXIES")
+	if raw == "" {
+		raw = os.Getenv("TRUSTED_PROXIES")
 	}
-	// Check X-Forwarded-For (may contain multiple IPs, take first valid one)
+	if raw != "" {
+		var list []string
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				list = append(list, part)
+			}
+		}
+		setTrustedProxies(list)
+	} else {
+		// By default, only loopback addresses are trusted proxies.
+		setTrustedProxies(nil)
+	}
+}
+
+// setTrustedProxies configures the list of trusted proxy CIDRs/IPs.
+// Passing "*" or "all" trusts all peer connections.
+// If empty, only loopback addresses (127.0.0.1, ::1) are trusted.
+func setTrustedProxies(entries []string) {
+	trustedProxiesMu.Lock()
+	defer trustedProxiesMu.Unlock()
+
+	trustedProxyTrustAll = false
+	trustedProxyNets = nil
+
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if entry == "*" || strings.EqualFold(entry, "all") {
+			trustedProxyTrustAll = true
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			_, ipNet, err := net.ParseCIDR(entry)
+			if err == nil && ipNet != nil {
+				trustedProxyNets = append(trustedProxyNets, ipNet)
+			}
+			continue
+		}
+		ip := net.ParseIP(entry)
+		if ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				trustedProxyNets = append(trustedProxyNets, &net.IPNet{
+					IP:   v4,
+					Mask: net.CIDRMask(32, 32),
+				})
+			} else {
+				trustedProxyNets = append(trustedProxyNets, &net.IPNet{
+					IP:   ip,
+					Mask: net.CIDRMask(128, 128),
+				})
+			}
+		}
+	}
+}
+
+// isTrustedProxy returns true if the remote peer IP is a trusted proxy.
+func isTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	trustedProxiesMu.RLock()
+	defer trustedProxiesMu.RUnlock()
+
+	if trustedProxyTrustAll {
+		return true
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, n := range trustedProxyNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// getClientIP extracts the client IP from the request.
+// Proxy headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are ONLY trusted
+// when the immediate connecting peer (r.RemoteAddr) is a verified trusted proxy
+// (e.g. loopback or configured trusted proxy CIDRs). Direct untrusted connections will always
+// use the IP from RemoteAddr to prevent header spoofing.
+func getClientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteHost = strings.TrimSpace(r.RemoteAddr)
+	}
+	remoteHost = strings.Trim(remoteHost, "[]")
+	peerIP := net.ParseIP(remoteHost)
+
+	// If remote peer is not a trusted proxy, do not trust proxy headers.
+	if peerIP == nil || !isTrustedProxy(peerIP) {
+		if peerIP != nil {
+			return peerIP.String()
+		}
+		return remoteHost
+	}
+
+	// Peer is trusted, so inspect proxy headers.
+	// Check CF-Connecting-IP first (Cloudflare, most reliable when present).
+	if cfip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfip != "" {
+		if ip := net.ParseIP(cfip); ip != nil {
+			return ip.String()
+		}
+	}
+	// Check X-Forwarded-For (may contain multiple IPs, take first valid one).
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		for _, part := range strings.Split(xff, ",") {
 			part = strings.TrimSpace(part)
 			if ip := net.ParseIP(part); ip != nil {
-				return part
+				return ip.String()
 			}
 		}
 	}
-	// Check X-Real-IP
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
+	// Check X-Real-IP.
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		if ip := net.ParseIP(xri); ip != nil {
+			return ip.String()
+		}
 	}
-	// Fall back to RemoteAddr
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	// Fall back to RemoteAddr.
+	if peerIP != nil {
+		return peerIP.String()
 	}
-	return ip
+	return remoteHost
 }
 
 func poolHashSalt(legacySalt string) string {

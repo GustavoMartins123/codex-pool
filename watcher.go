@@ -166,6 +166,10 @@ func (pw *poolWatcher) reloadConfig() {
 		pw.handler.aliases.reload(cfg.ModelAliases)
 		log.Printf("reloaded model aliases (config overrides=%d)", len(cfg.ModelAliases))
 	}
+	if len(cfg.TrustedProxies) > 0 && os.Getenv("PROXY_TRUSTED_PROXIES") == "" && os.Getenv("TRUSTED_PROXIES") == "" {
+		setTrustedProxies(cfg.TrustedProxies)
+		log.Printf("reloaded trusted proxies (%d entries)", len(cfg.TrustedProxies))
+	}
 
 	// Reasoning-effort caps are operational throttles, so they retune without
 	// a restart like aliases do.

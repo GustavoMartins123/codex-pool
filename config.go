@@ -33,6 +33,7 @@ type ConfigFile struct {
 	Providers      map[string]GenericProviderConfig `toml:"providers"`
 	Experiments    ExperimentsConfig                `toml:"experiments"`
 	Federation     FederationConfig                 `toml:"federation"`
+	TrustedProxies []string                         `toml:"trusted_proxies"`
 
 	PoolUsers PoolUsersConfig   `toml:"pool_users"`
 	Routing   RoutingConfigFile `toml:"routing"`

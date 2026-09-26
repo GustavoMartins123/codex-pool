@@ -216,6 +216,9 @@ func buildConfig() *config {
 			cfg.retentionDays = int(n)
 		}
 	}
+	if len(fileCfg.TrustedProxies) > 0 && os.Getenv("PROXY_TRUSTED_PROXIES") == "" && os.Getenv("TRUSTED_PROXIES") == "" {
+		setTrustedProxies(fileCfg.TrustedProxies)
+	}
 
 	// Request and stream timeouts default to disabled so long-running jobs can finish.
 	// Set a positive value to enable a hard timeout.

@@ -374,11 +374,14 @@ func TestSecurityEffortCapBypassDefense(t *testing.T) {
 	}
 }
 
-// TestSecurityClientIPHeaderSpoofing demonstrates how trusting untrusted proxy headers
-// (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) allows clients to bypass IP filters,
-// evade effort caps, circumvent brute-force tracking, and frame/DoS victim IPs.
+// TestSecurityClientIPHeaderSpoofing verifies that untrusted remote peers cannot spoof
+// their client IP via proxy headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP),
+// preventing account whitelist bypass, effort cap evasion, and brute-force ban framing.
 func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
-	// 1. IP extraction directly trusts headers over RemoteAddr
+	// Reset trusted proxies to default (only loopback trusted)
+	setTrustedProxies(nil)
+
+	// 1. Untrusted remote peer (e.g. 203.0.113.50) cannot spoof IP via proxy headers
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	req.RemoteAddr = "203.0.113.50:12345"
 
@@ -386,18 +389,27 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 		t.Fatalf("expected remote addr 203.0.113.50, got %s", ip)
 	}
 
+	// Direct untrusted peer tries CF-Connecting-IP
 	req.Header.Set("CF-Connecting-IP", "199.45.144.95")
-	if ip := getClientIP(req); ip != "199.45.144.95" {
-		t.Fatalf("expected CF-Connecting-IP spoof to yield 199.45.144.95, got %s", ip)
+	if ip := getClientIP(req); ip != "203.0.113.50" {
+		t.Fatalf("expected untrusted peer CF-Connecting-IP to be ignored, got %s", ip)
 	}
 
+	// Direct untrusted peer tries X-Forwarded-For
 	req.Header.Del("CF-Connecting-IP")
 	req.Header.Set("X-Forwarded-For", "198.51.100.77, 10.0.0.1")
-	if ip := getClientIP(req); ip != "198.51.100.77" {
-		t.Fatalf("expected XFF spoof to yield 198.51.100.77, got %s", ip)
+	if ip := getClientIP(req); ip != "203.0.113.50" {
+		t.Fatalf("expected untrusted peer XFF to be ignored, got %s", ip)
 	}
 
-	// 2. Spoofed IP bypasses Account.AllowedSourceIPs protection
+	// Direct untrusted peer tries X-Real-IP
+	req.Header.Del("X-Forwarded-For")
+	req.Header.Set("X-Real-IP", "198.51.100.88")
+	if ip := getClientIP(req); ip != "203.0.113.50" {
+		t.Fatalf("expected untrusted peer X-Real-IP to be ignored, got %s", ip)
+	}
+
+	// 2. Untrusted client attempting to bypass Account.AllowedSourceIPs is rejected
 	restricted := &Account{
 		ID:               "restricted-corp-account",
 		Type:             AccountTypeCodex,
@@ -413,50 +425,62 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 	}
 	p := newPoolState([]*Account{restricted, fallback}, false)
 
-	// Legitimate client from 203.0.113.50 is denied restricted account
-	legitCand := p.candidate("", nil, AccountTypeCodex, "", "203.0.113.50")
-	if legitCand == nil || legitCand.ID != "public-fallback-account" {
-		t.Fatalf("legitimate non-whitelisted IP should get public account, got %+v", legitCand)
+	// Attacker sends X-Forwarded-For: 198.51.100.77, but getClientIP returns real IP 203.0.113.50
+	req.Header.Set("X-Forwarded-For", "198.51.100.77")
+	clientIP := getClientIP(req)
+	cand := p.candidate("", nil, AccountTypeCodex, "", clientIP)
+	if cand == nil || cand.ID != "public-fallback-account" {
+		t.Fatalf("untrusted client should not access restricted account via spoofed header, got %+v", cand)
 	}
 
-	// Spoofing client supplying XFF: 198.51.100.77 accesses restricted account
-	spoofedIP := getClientIP(req)
-	spoofedCand := p.candidate("", nil, AccountTypeCodex, "", spoofedIP)
-	if spoofedCand == nil || spoofedCand.ID != "restricted-corp-account" {
-		t.Fatalf("spoofed client IP should have bypassed filter and accessed restricted account, got %+v", spoofedCand)
-	}
-
-	// 3. Spoofed IP evades origin-based reasoning effort caps
-	// Administrator configured an effort cap for the physical origin 203.0.113.50
+	// 3. Untrusted client cannot evade origin-based reasoning effort caps
 	cap := newEffortCap(nil, map[string]string{"203.0.113.50": "low"})
-	if limit := cap.limitFor("unrestricted-user", "203.0.113.50"); limit != "low" {
-		t.Fatalf("cap for 203.0.113.50 should be low, got %q", limit)
-	}
-	// By forging X-Forwarded-For, the client completely evades the cap
-	if limit := cap.limitFor("unrestricted-user", spoofedIP); limit != "" {
-		t.Fatalf("spoofed IP %s should have bypassed the origin cap, got %q", spoofedIP, limit)
+	if limit := cap.limitFor("unrestricted-user", clientIP); limit != "low" {
+		t.Fatalf("effort cap for physical origin 203.0.113.50 must be enforced, got %q", limit)
 	}
 
-	// 4. Spoofed IP evades brute-force tracking & enables Denial-of-Service / IP framing
+	// 4. Untrusted client cannot evade brute-force tracking by rotating headers
 	bf := newBruteForceTracker()
 	defer bf.stop()
 
-	// Attacker rotates X-Forwarded-For: attacker real IP is never tracked/banned
-	for i := 0; i < 10; i++ {
-		fakeIP := fmt.Sprintf("185.220.101.%d", i)
-		bf.recordFailure(fakeIP)
+	// Attacker makes 5 failed attempts from 203.0.113.50 with rotating spoofed XFF headers
+	for i := 0; i < 5; i++ {
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("185.220.101.%d", i))
+		bf.recordFailure(getClientIP(req))
 	}
-	if bf.isBanned("203.0.113.50") {
-		t.Fatal("attacker real IP was unexpectedly banned despite rotating spoofed XFF headers")
+	// Attacker's real IP 203.0.113.50 is banned!
+	if !bf.isBanned("203.0.113.50") {
+		t.Fatal("attacker real IP 203.0.113.50 should have been banned despite rotating XFF headers")
 	}
 
-	// Attacker frames victim IP by sending 5 failures with victim's IP in XFF
+	// Victim IP cannot be framed by untrusted peer sending spoofed headers
 	victimIP := "192.0.2.100"
-	for i := 0; i < bruteForceMaxAttempts; i++ {
-		bf.recordFailure(victimIP)
+	if bf.isBanned(victimIP) {
+		t.Fatalf("victim IP %s was framed and banned!", victimIP)
 	}
-	if !bf.isBanned(victimIP) {
-		t.Fatalf("victim IP %s was not banned as expected in framing scenario", victimIP)
+
+	// 5. Trusted proxy (e.g. loopback) properly forwards client IP
+	trustedReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	trustedReq.RemoteAddr = "127.0.0.1:44321" // Loopback proxy (Caddy/Nginx)
+	trustedReq.Header.Set("X-Forwarded-For", "198.51.100.77, 127.0.0.1")
+	if ip := getClientIP(trustedReq); ip != "198.51.100.77" {
+		t.Fatalf("trusted proxy XFF should be respected, got %s", ip)
+	}
+
+	trustedReq.Header.Set("CF-Connecting-IP", "199.45.144.95")
+	if ip := getClientIP(trustedReq); ip != "199.45.144.95" {
+		t.Fatalf("trusted proxy CF-Connecting-IP should take precedence, got %s", ip)
+	}
+
+	// 6. Explicitly configured trusted proxy CIDR
+	setTrustedProxies([]string{"10.0.0.0/8"})
+	defer setTrustedProxies(nil)
+
+	cidrReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	cidrReq.RemoteAddr = "10.244.0.15:55123"
+	cidrReq.Header.Set("X-Real-IP", "203.0.113.99")
+	if ip := getClientIP(cidrReq); ip != "203.0.113.99" {
+		t.Fatalf("trusted CIDR proxy X-Real-IP should be respected, got %s", ip)
 	}
 }
 
