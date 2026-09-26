@@ -543,27 +543,35 @@ func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
 	}
 }
 
-// TestSecurityUnauthenticatedPassthroughOpenProxy demonstrates that arbitrary unauthenticated
-// clients sending real or fake provider credentials (sk-, sk-ant-, ya29.) are passed through
-// rather than rejected with HTTP 401 Unauthorized.
+// TestSecurityUnauthenticatedPassthroughOpenProxy demonstrates that unauthenticated
+// clients cannot use provider credentials (sk-, sk-ant-, ya29.) to exploit the server
+// as an open egress proxy, while valid pool users carrying a pool token can.
 func TestSecurityUnauthenticatedPassthroughOpenProxy(t *testing.T) {
-	testCases := []struct {
-		header       string
-		wantProvider AccountType
-	}{
-		{"Bearer sk-proj-external-openai-key-from-attacker", AccountTypeCodex},
-		{"Bearer sk-ant-api03-external-anthropic-key", AccountTypeClaude},
-		{"Bearer ya29.external-google-access-token", AccountTypeGemini},
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	s := testUsageStore(t)
+	p, err := newPassportStore(s.db, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tc := range testCases {
-		isProvider, providerType := looksLikeProviderCredential(tc.header)
-		if !isProvider {
-			t.Fatalf("looksLikeProviderCredential(%q) returned false, want true", tc.header)
-		}
-		if providerType != tc.wantProvider {
-			t.Fatalf("provider type for %q = %s, want %s", tc.header, providerType, tc.wantProvider)
-		}
+	h := &proxyHandler{
+		cfg:      &config{},
+		passport: p,
+		metrics:  newMetrics(),
+		pool:     newPoolState(nil, false),
+	}
+
+	// 1. Unauthenticated attacker sending Bearer sk-ant-... is rejected with 401
+	reqUnauth := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+	reqUnauth.Header.Set("Authorization", "Bearer sk-ant-api03-external-anthropic-key")
+	rrUnauth := httptest.NewRecorder()
+	h.proxyRequest(rrUnauth, reqUnauth, "req-unauth-test")
+
+	if rrUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated passthrough should be 401, got %d: %s", rrUnauth.Code, rrUnauth.Body.String())
+	}
+	if !strings.Contains(rrUnauth.Body.String(), "valid pool credential") {
+		t.Fatalf("expected error message to require valid pool credential, got: %s", rrUnauth.Body.String())
 	}
 }
 

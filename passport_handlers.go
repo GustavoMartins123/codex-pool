@@ -56,6 +56,14 @@ func parsePoolCredentialRequest(r *http.Request, secret string) (identity string
 			return identity, issuedAt, "gemini_oauth", true
 		}
 	}
+	if poolToken := strings.TrimSpace(r.Header.Get("X-Pool-Token")); poolToken != "" {
+		if identity, issuedAt, ok = parsePoolUserToken(secret, "Bearer "+poolToken); ok {
+			return identity, issuedAt, "jwt", true
+		}
+		if identity, issuedAt, ok = parseClaudePoolCredential(secret, poolToken); ok {
+			return identity, issuedAt, "claude", true
+		}
+	}
 	return "", time.Time{}, "", false
 }
 

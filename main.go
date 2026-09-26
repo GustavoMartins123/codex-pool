@@ -2033,16 +2033,27 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		log.Printf("[%s] %s pool user request: user_id=%s", reqID, credentialKind, userID)
 	}
 
-	// Check if this looks like a real provider credential that should be passed through
-	// This allows users to use their own API keys while benefiting from the proxy infrastructure
-	if userID == "" {
-		if isProviderCred, providerType := looksLikeProviderCredential(authHeader); isProviderCred {
-			if h.cfg.debug.Load() {
-				log.Printf("[%s] pass-through request with %s credential", reqID, providerType)
+	// Check if this looks like a real provider credential that should be passed through.
+	// When Passport authentication is active, passthrough requests must be authorized
+	// by a valid pool credential (e.g. via X-Pool-Token, session cookie, or admin token)
+	// so the server is not exploited as an anonymous open egress proxy.
+	if isProviderCred, providerType := looksLikeProviderCredential(authHeader); isProviderCred {
+		isAuthorized := userID != "" || h.isOperatorOrAdmin(r)
+		if !isAuthorized && h.passport != nil {
+			if principal, _ := h.passport.authenticate(r); principal != nil && principal.Kind != PrincipalGuest {
+				isAuthorized = true
+				userID = principal.ID
 			}
-			h.proxyPassthrough(w, r, reqID, providerType, start)
+		}
+		if h.passport != nil && !isAuthorized {
+			http.Error(w, "unauthorized: passthrough requests require a valid pool credential", http.StatusUnauthorized)
 			return
 		}
+		if h.cfg.debug.Load() {
+			log.Printf("[%s] pass-through request with %s credential", reqID, providerType)
+		}
+		h.proxyPassthrough(w, r, reqID, providerType, start)
+		return
 	}
 
 	// Reject unauthenticated requests - require a valid pool token
