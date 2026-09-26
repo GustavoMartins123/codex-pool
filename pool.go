@@ -607,6 +607,68 @@ func (p *poolState) nearestCooldown(accountType AccountType, exclude map[string]
 	return nearest
 }
 
+// hasRoutableAccountOfType reports whether at least one live account of the
+// type passes the routing gates (health, cooldown, usage thresholds).
+func (p *poolState) hasRoutableAccountOfType(accountType AccountType) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	for _, a := range p.accounts {
+		if a == nil || a.Type != accountType {
+			continue
+		}
+		a.mu.Lock()
+		ok := accountAvailableForRoutingLocked(a, now)
+		a.mu.Unlock()
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// nearestUsageReset returns how long until the next usage-exhausted account
+// of the given type clears its hard exclude, and whether any exhausted
+// account has a known future window reset at all. This lets the request path
+// hold requests for the 5h/weekly window reset instead of returning 503
+// immediately.
+func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[string]bool) (time.Duration, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	var nearest time.Duration
+	known := false
+	for _, a := range p.accounts {
+		if a == nil || (exclude != nil && exclude[a.ID]) {
+			continue
+		}
+		a.mu.Lock()
+		if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || (accountType != "" && a.Type != accountType) {
+			a.mu.Unlock()
+			continue
+		}
+		for _, window := range []struct {
+			used    float64
+			limit   float64
+			resetAt time.Time
+		}{
+			{accountPrimaryUsageLocked(a), primaryHardExcludeThreshold, a.Usage.PrimaryResetAt},
+			{accountSecondaryUsageLocked(a), secondaryHardExcludeThreshold, a.Usage.SecondaryResetAt},
+		} {
+			if window.used < window.limit || window.resetAt.IsZero() || !window.resetAt.After(now) {
+				continue
+			}
+			if wait := window.resetAt.Sub(now); !known || wait < nearest {
+				nearest, known = wait, true
+			}
+		}
+		a.mu.Unlock()
+	}
+	return nearest, known
+}
+
 // candidate selects the best account using tiered selection, optionally filtering by type.
 // If accountType is empty, all account types are considered.
 //

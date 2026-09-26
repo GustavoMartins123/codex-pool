@@ -90,6 +90,70 @@ func TestCandidateSkipsDeadOrDisabled(t *testing.T) {
 	}
 }
 
+func TestNearestUsageResetPrefersSoonestKnownWindow(t *testing.T) {
+	now := time.Now()
+	primaryExhausted := &Account{ID: "p1", Type: AccountTypeCodex, Usage: UsageSnapshot{
+		PrimaryUsedPercent: 0.96, PrimaryResetAt: now.Add(10 * time.Minute),
+	}}
+	secondaryExhausted := &Account{ID: "s1", Type: AccountTypeCodex, Usage: UsageSnapshot{
+		PrimaryUsedPercent: 0.2, SecondaryUsedPercent: 0.995, SecondaryResetAt: now.Add(3 * time.Minute),
+	}}
+	underThreshold := &Account{ID: "ok", Type: AccountTypeCodex, Usage: UsageSnapshot{
+		PrimaryUsedPercent: 0.94, PrimaryResetAt: now.Add(time.Minute),
+	}}
+	unknownReset := &Account{ID: "u1", Type: AccountTypeCodex, Usage: UsageSnapshot{
+		PrimaryUsedPercent: 0.99,
+	}}
+	p := newPoolState([]*Account{primaryExhausted, secondaryExhausted, underThreshold, unknownReset}, false)
+
+	got, known := p.nearestUsageReset(AccountTypeCodex, nil)
+	if !known {
+		t.Fatal("expected a known usage reset")
+	}
+	if got <= 0 || got > 3*time.Minute {
+		t.Fatalf("nearest usage reset = %s, want the 3m secondary window", got)
+	}
+
+	got, known = p.nearestUsageReset(AccountTypeCodex, map[string]bool{"s1": true})
+	if !known {
+		t.Fatal("expected a known usage reset after excluding the secondary window")
+	}
+	if got <= 3*time.Minute || got > 10*time.Minute {
+		t.Fatalf("nearest usage reset = %s, want the 10m primary window", got)
+	}
+
+	if _, known = p.nearestUsageReset(AccountTypeCodex, map[string]bool{"p1": true, "s1": true}); known {
+		t.Fatal("expected no known reset when exhausted accounts lack reset timestamps")
+	}
+
+	if _, known = p.nearestUsageReset(AccountTypeGemini, nil); known {
+		t.Fatal("expected no known reset for a type with no accounts")
+	}
+}
+
+func TestHasRoutableAccountOfType(t *testing.T) {
+	exhausted := &Account{ID: "ex", Type: AccountTypeCodex, Usage: UsageSnapshot{
+		PrimaryUsedPercent: 0.96, PrimaryResetAt: time.Now().Add(time.Hour),
+	}}
+	cooling := &Account{ID: "cool", Type: AccountTypeCodex, RateLimitUntil: time.Now().Add(time.Minute)}
+	healthy := &Account{ID: "ok", Type: AccountTypeClaude, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
+	p := newPoolState([]*Account{exhausted, cooling, healthy}, false)
+
+	if p.hasRoutableAccountOfType(AccountTypeCodex) {
+		t.Fatal("expected no routable codex accounts while exhausted or cooling down")
+	}
+	if !p.hasRoutableAccountOfType(AccountTypeClaude) {
+		t.Fatal("expected the healthy claude account to be routable")
+	}
+
+	exhausted.mu.Lock()
+	exhausted.Usage.PrimaryUsedPercent = 0.1
+	exhausted.mu.Unlock()
+	if !p.hasRoutableAccountOfType(AccountTypeCodex) {
+		t.Fatal("expected the recovered codex account to be routable")
+	}
+}
+
 func TestCandidateSkipsHealthBlockedAccounts(t *testing.T) {
 	blocked := &Account{ID: "blocked", Type: AccountTypeCodex, NeedsVerification: true}
 	healthy := &Account{ID: "healthy", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.5}}
@@ -545,7 +609,7 @@ func TestPoolConversationPinEvictionAndUnpinCleanup(t *testing.T) {
 	base := time.Now().Add(-time.Hour)
 	p.mu.Lock()
 	for i := 0; i < maxConversationPins+500; i++ {
-		p.pinForUserLocked("u", "conv-" + strconv.Itoa(i), "a1", base.Add(time.Duration(i)*time.Millisecond))
+		p.pinForUserLocked("u", "conv-"+strconv.Itoa(i), "a1", base.Add(time.Duration(i)*time.Millisecond))
 	}
 	pinCount := len(p.convPin)
 	ownerCount := len(p.convOwner)
