@@ -85,6 +85,10 @@ type config struct {
 	genericProviders           map[string]GenericProviderConfig
 	experiments                ExperimentsConfig
 	federation                 FederationConfig
+
+	// hotMu guards the fields above that the config watcher republishes at
+	// runtime while request goroutines read them.
+	hotMu sync.RWMutex
 }
 
 func getenv(key, def string) string {
@@ -2113,7 +2117,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 	var admission *policyAdmission
 	if h.passport != nil {
-		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.clientPolicies, time.Now())
+		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.hotClientPolicies(), time.Now())
 		if policyErr != nil {
 			h.auditPolicyDecision(&policyAdmission{principalID: principalID, clientID: clientID}, "policy.request_blocked", policyErr)
 			respondPolicyError(w, policyErr)

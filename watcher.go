@@ -144,19 +144,19 @@ func (pw *poolWatcher) reloadConfig() {
 	// Only reload safe, non-sensitive fields.
 	newDebug := getConfigBool("DEBUG", cfg.Debug, false)
 	pw.handler.cfg.debug.Store(newDebug)
-	pw.handler.cfg.tierThreshold = getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.15)
-	pw.handler.pool.mu.Lock()
-	pw.handler.pool.debug = newDebug
-	pw.handler.pool.mu.Unlock()
+	threshold := getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.15)
+	routing := pw.handler.cfg.hotRouting()
 	if err := validateRoutingConfig(cfg.Routing); err != nil {
 		log.Printf("routing config reload rejected: %v", err)
 	} else {
-		pw.handler.cfg.routing = cfg.Routing
-		pw.handler.pool.configureRouting(cfg.Routing)
+		routing = cfg.Routing
+		pw.handler.pool.configureRouting(routing)
 		log.Printf("reloaded routing profiles (default=%s overrides=%d)", pw.handler.pool.defaultRoutingProfile(), len(cfg.Routing.Profiles))
 	}
-	pw.handler.cfg.clientPolicies = cfg.ClientPolicies
-	pw.handler.cfg.experiments = cfg.Experiments
+	pw.handler.pool.mu.Lock()
+	pw.handler.pool.debug = newDebug
+	pw.handler.pool.mu.Unlock()
+	pw.handler.cfg.setHotReloadable(threshold, routing, cfg.ClientPolicies, cfg.Experiments)
 	if pw.handler.experiments != nil {
 		pw.handler.experiments.Configure(cfg.Experiments)
 	}
@@ -180,7 +180,7 @@ func (pw *poolWatcher) reloadConfig() {
 	}
 
 	log.Printf("config hot-reload complete (debug=%v, tier_threshold=%.2f)",
-		newDebug, pw.handler.cfg.tierThreshold)
+		newDebug, pw.handler.cfg.hotTierThreshold())
 }
 
 func (pw *poolWatcher) close() {

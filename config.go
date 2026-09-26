@@ -53,6 +53,41 @@ type RoutingConfigFile struct {
 	Profiles       map[string]RoutingProfileWeights `toml:"profiles"`
 }
 
+// setHotReloadable publishes the fields the config watcher can refresh at
+// runtime. Request goroutines read them through the hot* getters below.
+func (c *config) setHotReloadable(tierThreshold float64, routing RoutingConfigFile, clientPolicies map[string]ClientPolicy, experiments ExperimentsConfig) {
+	c.hotMu.Lock()
+	c.tierThreshold = tierThreshold
+	c.routing = routing
+	c.clientPolicies = clientPolicies
+	c.experiments = experiments
+	c.hotMu.Unlock()
+}
+
+func (c *config) hotTierThreshold() float64 {
+	c.hotMu.RLock()
+	defer c.hotMu.RUnlock()
+	return c.tierThreshold
+}
+
+func (c *config) hotRouting() RoutingConfigFile {
+	c.hotMu.RLock()
+	defer c.hotMu.RUnlock()
+	return c.routing
+}
+
+func (c *config) hotClientPolicies() map[string]ClientPolicy {
+	c.hotMu.RLock()
+	defer c.hotMu.RUnlock()
+	return c.clientPolicies
+}
+
+func (c *config) hotExperiments() ExperimentsConfig {
+	c.hotMu.RLock()
+	defer c.hotMu.RUnlock()
+	return c.experiments
+}
+
 // loadConfigFile loads config.toml if it exists.
 // Returns nil if the file doesn't exist.
 func loadConfigFile(path string) (*ConfigFile, error) {
