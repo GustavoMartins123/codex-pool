@@ -91,6 +91,7 @@ import {
   type AccountFlow,
   type CapacityForecast,
 } from "./insights";
+import { ResponseVersion } from "./response-version";
 import type {
   AccountStats,
   AdminAccount,
@@ -333,6 +334,9 @@ export function App() {
   const [operatorToken, setOperatorToken] = useState(storedAdminToken());
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
   const adminLoadVersion = useRef(0);
+  // Drops dashboard responses superseded by a newer refresh (poll vs manual
+  // vs post-mutation) so a slow older payload cannot overwrite newer state.
+  const [refreshGuard] = useState(() => new ResponseVersion());
 
   const goToView = useCallback((nextView: View, params: Record<string, string | null> = {}) => {
     const cleanup: Record<string, string | null> = { account: null, member: null };
@@ -343,19 +347,22 @@ export function App() {
   }, []);
 
   const refresh = useCallback(async () => {
+    const version = refreshGuard.begin();
     setLoading(true);
     try {
 	  const [nextStats, nextSignal, nextCatalog] = await Promise.all([loadPoolStats(), loadSignalAnalytics(), loadModelCatalog()]);
+      if (!refreshGuard.isCurrent(version)) return;
       setStats(nextStats);
       setSignal(nextSignal);
 	  setModels(nextCatalog.models);
       setError("");
     } catch (cause) {
+      if (!refreshGuard.isCurrent(version)) return;
       setError(cause instanceof Error ? cause.message : "Unable to refresh pool data. Try again.");
     } finally {
-      setLoading(false);
+      if (refreshGuard.isCurrent(version)) setLoading(false);
     }
-  }, []);
+  }, [refreshGuard]);
 
   useEffect(() => {
     const boot = async () => {
@@ -477,6 +484,7 @@ export function App() {
   const signOut = async () => {
     if (passport) await passportLogout().catch(() => undefined);
     adminLoadVersion.current++;
+    refreshGuard.invalidate();
     clearFriendSession();
     lockOperator();
     setOperatorToken("");
