@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -112,6 +113,137 @@ func TestClientPolicyPersistentTokenBudget(t *testing.T) {
 		client.ID: {Limits: PolicyLimits{DailyTokens: 300}},
 	}, now)
 	requirePolicyCode(t, err, "policy_daily_tokens_exceeded")
+}
+
+// Regression test for the token-budget TOCTOU: concurrent admissions used to
+// check committed tokens only, so N in-flight requests could each pass the
+// check before any usage landed. Reservations must bound concurrent overshoot:
+// with a budget of exactly three default reservations, a fourth admission
+// while three are in flight is blocked, and releasing them restores headroom.
+func TestClientPolicyTokenBudgetBlocksConcurrentOvershoot(t *testing.T) {
+	passport, client := testPolicyPassport(t)
+	policies := map[string]ClientPolicy{client.ID: {
+		Limits: PolicyLimits{DailyTokens: 3 * defaultPolicyTokenReservation},
+	}}
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	var admitted []*policyAdmission
+	for i := 0; i < 4; i++ {
+		admission, err := passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+		if err == nil {
+			admitted = append(admitted, admission)
+		}
+	}
+	if len(admitted) != 3 {
+		t.Fatalf("admitted %d requests against a 3-reservation budget, want 3", len(admitted))
+	}
+	_, err := passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+	requirePolicyCode(t, err, "policy_daily_tokens_exceeded")
+
+	for _, admission := range admitted {
+		admission.Release()
+	}
+	after, err := passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+	if err != nil {
+		t.Fatalf("release did not restore reserved headroom: %v", err)
+	}
+	after.Release()
+}
+
+// Same invariant under real concurrency: every goroutine passes the barrier,
+// then races beginPolicyRequest. The serialized check-and-reserve must admit
+// exactly three and block the rest — before the reservation fix every
+// goroutine observed zero committed usage and was admitted.
+func TestClientPolicyTokenBudgetConcurrentAdmissionsRace(t *testing.T) {
+	passport, client := testPolicyPassport(t)
+	policies := map[string]ClientPolicy{client.ID: {
+		Limits: PolicyLimits{DailyTokens: 3 * defaultPolicyTokenReservation},
+	}}
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	const attempts = 12
+	results := make([]*policyAdmission, attempts)
+	failures := make([]error, attempts)
+	var wg sync.WaitGroup
+	barrier := make(chan struct{})
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-barrier
+			results[i], failures[i] = passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+		}(i)
+	}
+	close(barrier)
+	wg.Wait()
+
+	admitted := 0
+	for i := range results {
+		if failures[i] == nil {
+			admitted++
+			results[i].Release()
+		}
+	}
+	if admitted != 3 {
+		t.Fatalf("concurrently admitted %d requests against a 3-reservation budget, want exactly 3", admitted)
+	}
+}
+
+// Sequential request flow (admit -> debit -> release) must keep working
+// exactly as before: the debit replaces the reservation once the request
+// finishes, so follow-up admissions see committed usage, not a stuck hold.
+func TestClientPolicyTokenBudgetSequentialDebitFlow(t *testing.T) {
+	passport, client := testPolicyPassport(t)
+	policies := map[string]ClientPolicy{client.ID: {
+		Limits: PolicyLimits{DailyTokens: 500},
+	}}
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+
+	first, err := passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.reservedTokens <= 0 || first.reservedTokens > 500 {
+		t.Fatalf("reservation = %d, want it bounded by the daily headroom", first.reservedTokens)
+	}
+	if err := passport.recordPolicyTokens(client.ID, 300, now); err != nil {
+		t.Fatal(err)
+	}
+	first.Release()
+
+	second, err := passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+	if err != nil {
+		t.Fatalf("sequential admission after debit+release failed: %v", err)
+	}
+	second.Release()
+
+	if err := passport.recordPolicyTokens(client.ID, 200, now); err != nil {
+		t.Fatal(err)
+	}
+	_, err = passport.beginPolicyRequest("policy-user", client.ID, policies, now)
+	requirePolicyCode(t, err, "policy_daily_tokens_exceeded")
+}
+
+func TestPolicyTokenReservationEstimate(t *testing.T) {
+	limits := PolicyLimits{DailyTokens: 100_000}
+	day := policyUsageCounter{Requests: 4, Tokens: 40_000}
+	if got := policyTokenReservation(limits, day, policyUsageCounter{}, 0); got != 10_000 {
+		t.Fatalf("reservation = %d, want the observed average 10000", got)
+	}
+	capped := policyTokenReservation(limits, policyUsageCounter{Requests: 4, Tokens: 95_000}, policyUsageCounter{}, 0)
+	if capped != 5_000 {
+		t.Fatalf("reservation = %d, want it capped by the 5000 headroom", capped)
+	}
+	if got := policyTokenReservation(PolicyLimits{}, day, policyUsageCounter{}, 0); got != 0 {
+		t.Fatalf("reservation = %d without token limits, want 0", got)
+	}
+	if got := policyTokenReservation(limits, policyUsageCounter{}, policyUsageCounter{}, 0); got != defaultPolicyTokenReservation {
+		t.Fatalf("reservation = %d without history, want the default %d", got, defaultPolicyTokenReservation)
+	}
+	monthly := policyTokenReservation(PolicyLimits{MonthlyTokens: 30_000}, policyUsageCounter{}, policyUsageCounter{Requests: 3, Tokens: 21_000}, 0)
+	if monthly != 7_000 {
+		t.Fatalf("monthly reservation = %d, want the observed average 7000", monthly)
+	}
 }
 
 func TestPolicyErrorHasStableJSONShape(t *testing.T) {

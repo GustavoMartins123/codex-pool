@@ -90,6 +90,7 @@ type PassportStore struct {
 	analyticsSalt  string
 	policyMu       sync.Mutex
 	policyInflight map[string]int
+	policyReserved map[string]int64
 }
 
 func passportAEAD() (cipher.AEAD, error) {
@@ -116,7 +117,7 @@ func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt .
 	if err != nil {
 		return nil, err
 	}
-	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}}
+	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
 		for _, n := range []string{bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketPassportAvatars, bucketJoinLinks, bucketMemberRecoveryLinks, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
