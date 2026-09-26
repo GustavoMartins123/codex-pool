@@ -256,6 +256,24 @@ export async function startAccountOAuth(provider: "codex" | "claude") {
   }));
 }
 
+export async function startZAILogin() {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/zai/login/init", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: "{}",
+  }));
+}
+
+export async function zaiLoginStatus(sessionID: string) {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/zai/login/poll", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ session_id: sessionID }),
+  }));
+}
+
 export async function startCodexRelogin(accountID: string) {
   return decode<AccountContributionResult>(await fetch("/admin/codex/relogin", {
     method: "POST",

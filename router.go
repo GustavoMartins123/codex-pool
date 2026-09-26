@@ -747,6 +747,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleMinimaxAdd(w, r)
 		case "/api/pool/accounts/zai/add":
 			h.handleZAIAdd(w, r)
+		case "/api/pool/accounts/zai/login/init":
+			h.handleZAILoginInit(w, r)
+		case "/api/pool/accounts/zai/login/poll":
+			h.handleZAILoginPoll(w, r)
 		case "/api/pool/accounts/xiaomi/add":
 			h.handleXiaomiAdd(w, r)
 		case "/api/pool/accounts/grok/add":

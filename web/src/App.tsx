@@ -18,6 +18,7 @@ import {
 } from "./components/dither-kit";
 import {
 	  antigravityOAuthStatus,
+	  zaiLoginStatus,
   clearFriendSession,
   contributeAPIKey,
   contributeGrok,
@@ -66,6 +67,7 @@ import {
   storedAdminToken,
   storedFriendSession,
   startAccountOAuth,
+  startZAILogin,
   startCodexRelogin,
   exchangeCodexRelogin,
 	  startAntigravityOAuth,
@@ -2685,7 +2687,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
   );
 }
 
-type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "opencode_go";
+type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go";
 
 const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; mode: "oauth" | "key" | "json" }> = [
   { id: "codex", label: "Codex", mode: "oauth" },
@@ -2693,7 +2695,8 @@ const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; 
 	  { id: "antigravity", label: "Google Antigravity", mode: "oauth" },
   { id: "kimi", label: "Kimi", mode: "key" },
   { id: "minimax", label: "MiniMax", mode: "key" },
-  { id: "zai", label: "Z.ai", mode: "key" },
+  { id: "zai", label: "Z.ai", mode: "oauth" },
+  { id: "zai_key", label: "Z.ai API key", mode: "key" },
   { id: "xiaomi", label: "Xiaomi", mode: "key" },
   { id: "grok", label: "Grok", mode: "json" },
   { id: "opencode_go", label: "OpenCode Go", mode: "key" },
@@ -2754,6 +2757,35 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
 	    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener("message", onMessage); };
 	  }, [oauth?.sessionID, onAdded, provider]);
 
+  useEffect(() => {
+    if (provider !== "zai" || !oauth?.sessionID) return;
+    let stopped = false;
+    let polling = false;
+    const timer = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const result = await zaiLoginStatus(oauth.sessionID!);
+        if (stopped) return;
+        if (result.status === "complete") {
+          window.clearInterval(timer);
+          await onAdded();
+        } else if (result.status === "error") {
+          window.clearInterval(timer);
+          setError(result.error || "Z.ai login failed");
+        }
+      } catch (cause) {
+        if (!stopped) {
+          window.clearInterval(timer);
+          setError(cause instanceof Error ? cause.message : "Z.ai login status failed");
+        }
+      } finally {
+        polling = false;
+      }
+    }, 2000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [oauth?.sessionID, onAdded, provider]);
+
 	  const choose = (next: ContributableProvider) => {
 	    oauthCompleted.current = false;
     setProvider(next);
@@ -2770,14 +2802,16 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
     setBusy(true);
     setError("");
     try {
-	      const result = provider === "antigravity"
+	      const result = provider === "zai"
+	        ? await startZAILogin()
+	        : provider === "antigravity"
 	        ? reloginAccountID
 	          ? await startAntigravityRelogin(reloginAccountID)
 	          : await startAntigravityOAuth()
 	        : reloginAccountID
 	          ? await startCodexRelogin(reloginAccountID)
 	          : await startAccountOAuth(provider as "codex" | "claude");
-	      if (!result.oauth_url || (provider === "antigravity" ? !result.session_id : !result.verifier)) throw new Error("Provider did not return an OAuth session");
+	      if (!result.oauth_url || ((provider === "antigravity" || provider === "zai") ? !result.session_id : !result.verifier)) throw new Error("Provider did not return an OAuth session");
 	      oauthCompleted.current = false;
 	      setOAuth({ verifier: result.verifier, sessionID: result.session_id, state: result.state, url: result.oauth_url });
       authorizationWindow?.location.replace(result.oauth_url);
@@ -2799,7 +2833,9 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
           await startOAuth();
           return;
         }
-	        if (provider === "antigravity") {
+	        if (provider === "zai") {
+	          throw new Error("Finish Z.ai sign-in in the opened page");
+	        } else if (provider === "antigravity") {
 	          if (!oauth.sessionID || !credential.trim()) throw new Error("Paste the authorization code or callback URL");
 	          if (reloginAccountID) {
 	            await exchangeAntigravityRelogin(oauth.sessionID, credential, oauth.state || "");
@@ -2818,7 +2854,7 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
       } else if (selected.mode === "json") {
         await contributeGrok(credential);
       } else {
-        await contributeAPIKey(provider as "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go", credential);
+        await contributeAPIKey(provider === "zai_key" ? "zai" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go", credential);
       }
       await onAdded();
     } catch (cause) {
@@ -2845,17 +2881,17 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
             ) : (
               <>
                 <a href={oauth.url} target="_blank" rel="noreferrer">Open sign-in page</a>
-                <label className="contribution-field"><span>Authorization code or callback URL</span><input value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
+                {provider === "zai" ? <p>Finish signing in on the Z.ai page. Your Coding Plan will be checked automatically.</p> : <label className="contribution-field"><span>Authorization code or callback URL</span><input value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>}
               </>
             )}
           </div>
         ) : selected.mode === "json" ? (
           <label className="contribution-field"><span>Grok auth JSON</span><textarea value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus spellCheck={false} required /></label>
         ) : (
-          <label className="contribution-field"><span>{selected.label} API key</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
+          <label className="contribution-field"><span>{provider === "zai_key" ? "Z.ai API key" : `${selected.label} API key`}</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
         )}
         {error && <div className="access-error" role="alert">{error}</div>}
-        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && <button className="gold-button" disabled={busy}>{busy ? "Adding…" : "Add to pool"}</button>}</div>
+        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? "Adding…" : "Add to pool"}</button>}</div>
       </form>
     </div>
   );

@@ -160,6 +160,8 @@ The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `h
 
 `ANTIGRAVITY_OAUTH_CLIENT_ID`, `ANTIGRAVITY_OAUTH_CLIENT_SECRET`, and `ANTIGRAVITY_OAUTH_REDIRECT_URI` remain available for tests or a separately registered Google OAuth client. `ANTIGRAVITY_CLIENT_VERSION` overrides the Antigravity client version used in upstream requests. `UPSTREAM_ANTIGRAVITY_BASE`, `UPSTREAM_ANTIGRAVITY_DAILY_BASE`, and `UPSTREAM_ANTIGRAVITY_ONBOARD_BASE` override the production, generation, and onboarding Cloud Code Assist hosts.
 
+**Z.ai Individual Coding Plan account**: choose "Z.ai" in "Contribute an account" and finish the ZCode OAuth login in the opened page. The pool checks the active Individual Coding Plan and a model request before saving the linked account. It stores the account identity and OAuth session with the account's API credential in `pool/zai/` (file mode `0600`). This flow requires exactly one personal Z.ai project. "Z.ai API key" remains a separate manual contribution method.
+
 ---
 
 ## Pool Passport
