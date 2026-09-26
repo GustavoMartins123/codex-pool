@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { operatorBootstrap } from "./api";
 import { AccountResetWindows, formatAPIValue, isArmedAccountAction, Models, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
@@ -119,6 +120,27 @@ describe("providerDisplay", () => {
       dither: "grey",
       glyph: "·",
     });
+  });
+});
+
+
+describe("operator bootstrap", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("never sends a fabricated admin token header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ principal: { id: "p1", kind: "operator", status: "active" } }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await operatorBootstrap("root", "root@local", "correct-horse-battery");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Admin-Token"]).toBeUndefined();
+    expect((init.credentials as string) || "").not.toBe("");
   });
 });
 
