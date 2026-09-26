@@ -107,7 +107,7 @@ Use `arm64` for a Linux ARM64 host. To build and install for the current Linux
 architecture, run `./scripts/install.sh` (default: `~/.local/bin`); pass a
 directory to change the install location.
 
-**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC):**
+**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC 15.2.0):**
 
 ```powershell
 .\scripts\windows\build.ps1
@@ -116,8 +116,9 @@ directory to change the install location.
 
 Run `.\scripts\windows\install.ps1` to build and install into
 `$env:LOCALAPPDATA\Programs\codex-pool`, or pass `-InstallDir` to choose a
-directory. Install `mingw-w64-ucrt-x86_64-gcc` in MSYS2 first; if MSYS2 is not
-at `C:\msys64`, pass its UCRT64 `bin` path with `-CompilerBin` to `build.ps1`.
+directory. Install GCC 15.2.0 from the MSYS2 package archive; GCC 16 cannot
+link the pinned DuckDB Windows library because its C++ TLS ABI changed. If
+MSYS2 is not at `C:\msys64`, pass its UCRT64 `bin` path with `-CompilerBin` to `build.ps1`.
 `install.ps1` accepts the same option.
 Windows builds target `amd64`; DuckDB's pinned bindings do not
 include a Windows ARM64 target. Installation copies only the executable and

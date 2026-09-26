@@ -17,6 +17,10 @@ if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
 }
 $CompilerBin = (Resolve-Path -LiteralPath $CompilerBin).Path
 $compiler = Join-Path $CompilerBin 'gcc.exe'
+$compilerVersion = (& $compiler -dumpfullversion).Trim()
+if ($LASTEXITCODE -ne 0 -or $compilerVersion -ne '15.2.0') {
+    throw "MSYS2 UCRT64 GCC 15.2.0 required for the pinned DuckDB bindings; found $compilerVersion"
+}
 
 Push-Location (Join-Path $root 'web')
 try {

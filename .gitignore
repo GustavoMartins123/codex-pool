@@ -46,6 +46,7 @@ codex-pool-proxy-linux-*
 codex-pool-proxy-test-linux-*
 codexpool
 tmp/
+.toolchains/
 bin/
 dist/
 coverage.out
