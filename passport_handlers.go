@@ -339,5 +339,13 @@ func (h *proxyHandler) handleOperatorBootstrap(w http.ResponseWriter, r *http.Re
 		respondJSONError(w, status, err.Error())
 		return
 	}
-	respondJSON(w, publicPrincipal(principal))
+	// Sign the new operator in, same as login: without a session the setup
+	// screen would render the principal and then 401 on every later request.
+	token, csrf, err := h.passport.createSession(principal.ID)
+	if err != nil {
+		respondJSONError(w, http.StatusInternalServerError, "session unavailable")
+		return
+	}
+	setSessionCookies(w, token, csrf)
+	respondJSON(w, map[string]any{"principal": publicPrincipal(principal), "csrf": csrf})
 }
