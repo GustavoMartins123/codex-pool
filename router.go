@@ -220,7 +220,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 		log.Printf("admin auth: credential_present=%v", token != "")
 	}
 
-	if token != h.cfg.adminToken {
+	if !secureSecretEquals(token, h.cfg.adminToken) {
 		if h.bruteForce != nil {
 			h.bruteForce.recordFailure(ip)
 		}
@@ -250,7 +250,7 @@ func (h *proxyHandler) checkMemberOrAdminAuth(w http.ResponseWriter, r *http.Req
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return false
 	}
-	if h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") == h.cfg.adminToken {
+	if h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
 		if h.bruteForce != nil {
 			h.bruteForce.recordSuccess(ip)
 		}
@@ -990,7 +990,7 @@ func (h *proxyHandler) isOperatorRequest(r *http.Request) bool {
 			return true
 		}
 	}
-	if h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") == h.cfg.adminToken {
+	if h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
 		return true
 	}
 	return false

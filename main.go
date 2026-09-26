@@ -126,6 +126,24 @@ func parseBoolEnv(key string, def bool) bool {
 // Global config file reference for pool users config
 var globalConfigFile *ConfigFile
 
+// validateSecretStrength enforces fail-closed minimum lengths for the
+// symmetric secrets that gate the deployment. A short POOL_JWT_SECRET lets
+// attackers forge pool credentials; a short break-glass ADMIN_TOKEN or
+// POOL_AUTH_ENCRYPTION_KEY weakens admin access and sealed token storage.
+// Refuse to start instead of silently running with a guessable secret.
+func validateSecretStrength(cfg *config) error {
+	if secret := getPoolJWTSecret(); secret != "" && len(secret) < 32 {
+		return fmt.Errorf("POOL_JWT_SECRET must be at least 32 characters (generate one with: openssl rand -hex 32)")
+	}
+	if key := os.Getenv("POOL_AUTH_ENCRYPTION_KEY"); key != "" && len(key) < 32 {
+		return fmt.Errorf("POOL_AUTH_ENCRYPTION_KEY must be at least 32 characters (generate one with: openssl rand -hex 32)")
+	}
+	if cfg != nil && cfg.adminToken != "" && len(cfg.adminToken) < 16 {
+		return fmt.Errorf("ADMIN_TOKEN must be at least 16 characters (generate one with: openssl rand -hex 16)")
+	}
+	return nil
+}
+
 func buildConfig() *config {
 	cfg := &config{}
 	// Load config.toml if it exists
@@ -287,6 +305,9 @@ func buildConfig() *config {
 
 func main() {
 	cfg := buildConfig()
+	if err := validateSecretStrength(cfg); err != nil {
+		log.Fatalf("insecure configuration: %v", err)
+	}
 	duckPath := getenv("DUCKDB_PATH", "./data/usage.duckdb")
 	cfg.duckPath = duckPath
 	if cfg.backupDir != "" && cfg.restoreManifest != "" {
@@ -1029,7 +1050,7 @@ func (h *proxyHandler) isOperatorOrAdmin(r *http.Request) bool {
 	if h == nil || r == nil {
 		return false
 	}
-	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") == h.cfg.adminToken {
+	if h.cfg != nil && h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
 		return true
 	}
 	if h.passport != nil {

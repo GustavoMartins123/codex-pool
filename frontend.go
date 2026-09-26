@@ -168,7 +168,7 @@ func (h *proxyHandler) handleFriendClaim(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.FriendCode != h.cfg.legacyFriendCode {
+	if !secureSecretEquals(req.FriendCode, h.cfg.legacyFriendCode) {
 		if h.bruteForce != nil {
 			h.bruteForce.recordFailure(ip)
 		}
