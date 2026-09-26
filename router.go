@@ -336,7 +336,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"transition_epoch": state.TransitionEpoch, "transitions": h.getContextHandoff().TransitionDiagnostics(id)})
 		return
 	}
-	if h.cfg.debug.Load() {
+	if h.cfg != nil && h.cfg.debug.Load() {
 		log.Printf("[%s] incoming %s %s", reqID, r.Method, r.URL.Path)
 	}
 
@@ -534,8 +534,14 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/favicon.ico":
 		http.NotFound(w, r)
 		return
-	case "/healthz":
+	case "/healthz", "/healthz/":
 		h.serveHealth(w)
+		return
+	case "/livez", "/livez/":
+		h.serveLivez(w)
+		return
+	case "/readyz", "/readyz/":
+		h.serveReadyz(w)
 		return
 	case "/metrics":
 		if !h.checkAdminAuth(w, r) {

@@ -594,6 +594,8 @@ const statusHTML = `<!DOCTYPE html>
         <a href="/admin/accounts">Raw account data</a> ·
         <a href="/admin/tokens">Token analytics API</a> ·
         <a href="/healthz">Health check</a> ·
+        <a href="/livez">Liveness</a> ·
+        <a href="/readyz">Readiness</a> ·
         <a href="/metrics">Prometheus metrics</a>
     </p>
 </body>

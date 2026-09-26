@@ -21,6 +21,28 @@ func (h *proxyHandler) serveHealth(w http.ResponseWriter) {
 	})
 }
 
+func (h *proxyHandler) serveLivez(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	respondJSON(w, map[string]any{
+		"status": "ok",
+	})
+}
+
+func (h *proxyHandler) serveReadyz(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	if h.pool == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		respondJSON(w, map[string]any{
+			"status": "not_ready",
+			"error":  "pool not initialized",
+		})
+		return
+	}
+	respondJSON(w, map[string]any{
+		"status": "ready",
+	})
+}
+
 func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 	type row struct {
 		ID                      string      `json:"id"`
