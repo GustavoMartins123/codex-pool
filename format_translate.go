@@ -544,6 +544,12 @@ func convertClaudeToolsToOpenAI(tools []any) []map[string]any {
 // sanitizeToolSchema recursively strips JSON Schema fields that OpenAI rejects.
 // Currently strips: "format":"uri" (and other format values that cause issues).
 func sanitizeToolSchema(schema map[string]any) map[string]any {
+	// OpenAI rejects a null "required"; an empty list is the equivalent
+	// meaning and is what clients that omit mandatory fields should have sent.
+	if required, ok := schema["required"]; ok && required == nil {
+		schema["required"] = []any{}
+	}
+
 	// Strip problematic format values
 	if f, ok := schema["format"].(string); ok {
 		switch f {

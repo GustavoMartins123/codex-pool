@@ -2606,6 +2606,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		imageGenerationRequest = valueHasImageGenerationTool(upstreamObject)
 	}
 
+	bodyBytes = normalizeResponsesSchemaBody(bodyBytes)
 	if accountType == AccountTypeGrok {
 		bodyBytes = rewriteAndSanitizeGrokRequestBody(bodyBytes, requestedModel)
 	}

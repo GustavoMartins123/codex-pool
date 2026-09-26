@@ -552,8 +552,8 @@ func TestPollUpstreamUsageFetchesGrokWhileCoolingDown(t *testing.T) {
 	}
 	handler := &proxyHandler{
 		cfg: &config{
-			grokBase:      mustParse(server.URL + "/v1"),
-			usageRefresh:  time.Minute,
+			grokBase:       mustParse(server.URL + "/v1"),
+			usageRefresh:   time.Minute,
 			disableRefresh: true,
 		},
 		pool:      newPoolState([]*Account{account}, false),
@@ -633,5 +633,24 @@ func writeTestFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
+	}
+}
+
+func TestNormalizeResponsesSchemaBodyAcrossProviders(t *testing.T) {
+	body := []byte(`{"model":"muse-spark-1.3-contributor","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"nested":{"type":"object","required":null}},"required":null}}],"required":null}`)
+	rewritten := normalizeResponsesSchemaBody(body)
+	if strings.Count(string(rewritten), `"required":[]`) != 2 {
+		t.Fatalf("tool schemas were not normalized: %s", rewritten)
+	}
+	if !strings.Contains(string(rewritten), `"required":null`) {
+		t.Fatalf("non-schema field was unexpectedly normalized: %s", rewritten)
+	}
+}
+
+func TestGrokSchemaCompatibility(t *testing.T) {
+	body := []byte(`{"model":"grok-4.5","input":"hello","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"filter":{"type":"object","required":null}},"required":null}}]}`)
+	rewritten := rewriteAndSanitizeGrokRequestBody(body, "grok-4.5")
+	if strings.Count(string(rewritten), `"required":[]`) != 2 {
+		t.Fatalf("nested null required values were not normalized: %s", rewritten)
 	}
 }

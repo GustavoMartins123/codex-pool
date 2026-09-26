@@ -1192,6 +1192,11 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 	result := make(map[string]any, len(working))
 	description := stringValue(working["description"])
 	for key, value := range working {
+		// Gemini rejects a null "required" outright, so drop the key instead of
+		// replacing it with an empty list as the OpenAI-family paths do.
+		if key == "required" && value == nil {
+			continue
+		}
 		if key == "description" || key == "const" || key == "allOf" || key == "anyOf" || key == "oneOf" || key == "$ref" {
 			continue
 		}

@@ -644,3 +644,20 @@ func TestAntigravityResponsesMergesConsecutiveRolesInMultiTurnHistory(t *testing
 		lastRole = role
 	}
 }
+
+func TestCleanAntigravitySchemaDropsNullRequired(t *testing.T) {
+	got := cleanAntigravitySchema(map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"nested": map[string]any{"type": "object", "required": nil},
+		},
+		"required": nil,
+	})
+	if _, ok := got["required"]; ok {
+		t.Fatalf("top-level null required survived: %#v", got)
+	}
+	nested := got["properties"].(map[string]any)["nested"].(map[string]any)
+	if _, ok := nested["required"]; ok {
+		t.Fatalf("nested null required survived: %#v", nested)
+	}
+}

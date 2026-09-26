@@ -732,6 +732,9 @@ func sanitizeGrokTools(obj map[string]any) bool {
 			changed = true
 			continue
 		}
+		if sanitizeGrokToolSchema(tool) {
+			changed = true
+		}
 		if sanitizeGrokNestedUnsupportedFields(tool) {
 			changed = true
 		}
@@ -749,6 +752,35 @@ func sanitizeGrokTools(obj map[string]any) bool {
 	}
 	obj["tools"] = tools
 	return changed
+}
+
+// sanitizeGrokToolSchema replaces a null "required" at any depth. xAI rejects
+// JSON null there, and coding clients emit it for an optional tool list.
+func sanitizeGrokToolSchema(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		changed := false
+		if required, ok := v["required"]; ok && required == nil {
+			v["required"] = []any{}
+			changed = true
+		}
+		for _, child := range v {
+			if sanitizeGrokToolSchema(child) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, child := range v {
+			if sanitizeGrokToolSchema(child) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
 }
 
 func sanitizeGrokNestedUnsupportedFields(value any) bool {
