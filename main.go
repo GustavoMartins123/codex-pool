@@ -760,6 +760,14 @@ type proxyHandler struct {
 	quotaIntelMu    sync.RWMutex
 	quotaIntelBusy  bool
 	quotaIntel      quotaIntelligenceSnapshot
+
+	// turnStateOrigins tracks which Codex account minted the
+	// x-codex-turn-state blob each downstream session currently holds, so
+	// failover retries and hot-swaps can strip a known cross-account echo
+	// instead of replaying it to an account that did not mint it.
+	turnStateMu      sync.Mutex
+	turnStateOrigins map[string]codexTurnStateOrigin
+	turnStateWrites  uint64
 }
 
 type refreshCall struct {
@@ -3834,6 +3842,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	}
 	provider.SetAuthHeaders(tmpReq, authAccount)
 	upstreamHeaders = tmpReq.Header
+	h.guardCodexTurnStateEcho(userID, conversationID, acc, upstreamHeaders)
 	// The Codex Responses relay still uses its websocket beta header, but the
 	// GA Realtime API explicitly rejects that legacy beta shape. Preserve the
 	// client-provided Realtime headers (for example openai-alpha) instead.
@@ -4474,6 +4483,9 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	outReq.Header = cloneHeader(r.Header)
 	removeHopByHopHeaders(outReq.Header)
 	removeConflictingProxyHeaders(outReq.Header)
+	// Single-account path has no retry, but the next request may pin this
+	// session elsewhere; never hand this account a known foreign echo.
+	h.guardCodexTurnStateEcho(userID, extractConversationIDFromHeaders(r.Header), acc, outReq.Header)
 	if r.ContentLength >= 0 {
 		outReq.ContentLength = r.ContentLength
 	}
@@ -4574,6 +4586,11 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	copyHeader(w.Header(), resp.Header)
 	removeHopByHopHeaders(w.Header())
 	h.replaceUsageHeaders(w.Header())
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// Single-account path commits here; every exit below writes to the
+		// client, so the blob (if any) is confirmedly downstream-held.
+		h.noteCodexTurnState(userID, extractConversationIDFromHeaders(r.Header), acc, resp.Header.Get("x-codex-turn-state"))
+	}
 	flusher, _ := w.(http.Flusher)
 	if isSSE {
 		applyStreamingResponseHeaders(w.Header())
@@ -4776,6 +4793,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		if conversationID != "" && !cyberPinned {
 			h.pool.pin(conversationID, acc.ID)
 		}
+		h.noteCodexTurnState(userID, conversationID, acc, resp.Header.Get(codexTurnStateHeader))
 		acc.mu.Lock()
 		acc.LastUsed = time.Now()
 		if acc.Penalty > 0 {
@@ -5669,6 +5687,10 @@ func (h *proxyHandler) tryOnce(
 		outReq.Header = cloneHeader(in.Header)
 		removeHopByHopHeaders(outReq.Header)
 		removeConflictingProxyHeaders(outReq.Header)
+		// A client echo minted by another account is a proxy-chain-only
+		// contradiction upstream never sees from real Codex; strip it before
+		// this attempt's account sees it.
+		h.guardCodexTurnStateEcho(userID, conversationID, acc, outReq.Header)
 
 		// Always overwrite client-provided auth; the proxy is the single source of truth.
 		outReq.Header.Del("Authorization")
