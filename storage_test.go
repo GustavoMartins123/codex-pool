@@ -203,3 +203,51 @@ func TestUsageStoreBackfillsLegacyOriginWeeklyIndex(t *testing.T) {
 		t.Fatalf("weekly row = %+v", rows[0])
 	}
 }
+
+func TestUsageStoreReadsBoundedTimeSeries(t *testing.T) {
+	s, err := newUsageStore(filepath.Join(t.TempDir(), "db.db"), 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC().Truncate(time.Hour)
+	for _, usage := range []RequestUsage{
+		{Timestamp: now, AccountID: "a", AccountType: AccountTypeCodex, UserID: "p1", BillableTokens: 1},
+		{Timestamp: now.Add(-time.Hour), AccountID: "a", AccountType: AccountTypeCodex, UserID: "p1", BillableTokens: 2},
+		{Timestamp: now.Add(-72 * time.Hour), AccountID: "a", AccountType: AccountTypeCodex, UserID: "p1", BillableTokens: 100},
+	} {
+		if err := s.record(usage); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	daily, err := s.getUserDailyUsage("p1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hourly, err := s.getUserHourlyUsage("p1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	global, err := s.getGlobalHourlyUsage(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, rows := range map[string][]UserHourlyUsage{"user": hourly, "global": global} {
+		var total int64
+		for _, row := range rows {
+			total += row.BillableTokens
+		}
+		if total != 3 {
+			t.Fatalf("%s hourly total = %d, want 3", name, total)
+		}
+	}
+	var dailyTotal int64
+	for _, row := range daily {
+		dailyTotal += row.BillableTokens
+	}
+	if dailyTotal != 3 {
+		t.Fatalf("daily total = %d, want 3", dailyTotal)
+	}
+}

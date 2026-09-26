@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -960,6 +961,31 @@ func (s *usageStore) prune() {
 			}
 		}
 
+		// Capacity samples were only ever read newest-first, so nothing ever
+		// removed them and the bucket grew without bound. Keep the same
+		// retention window as request usage so the persisted capacity estimate
+		// and its recent-sample history stay consistent.
+		sampleDeletes := 0
+		samples := tx.Bucket([]byte(bucketCapacitySamples)).Cursor()
+		for key, _ := samples.First(); key != nil; key, _ = samples.Next() {
+			parts := strings.SplitN(string(key), "|", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			timestamp, err := timeFromKey(parts[1])
+			if err == nil && timestamp.Before(cutoff) {
+				if err := samples.Delete(); err == nil {
+					sampleDeletes++
+				}
+				if sampleDeletes >= maxRequestDeletes {
+					break
+				}
+			}
+		}
+		if sampleDeletes > deleted {
+			deleted = sampleDeletes
+		}
+
 		weeklyCutoff := startOfUTCWeek(cutoff).Format("2006-01-02")
 		weekly := tx.Bucket([]byte(bucketOriginWeeklyUsage)).Cursor()
 		for key, _ := weekly.First(); key != nil; key, _ = weekly.Next() {
@@ -1318,25 +1344,26 @@ func (s *usageStore) getUserDailyUsage(userID string, days int) ([]UserDailyUsag
 		days = 30
 	}
 
-	// Generate date keys for the last N days
-	today := time.Now().UTC()
-	dateKeys := make(map[string]bool)
-	for i := 0; i < days; i++ {
-		d := today.AddDate(0, 0, -i)
-		dateKeys[d.Format("2006-01-02")] = true
-	}
+	// Keys under this prefix are lexicographically ordered dates, so the
+	// wanted window can be seeked directly instead of walking the whole
+	// user range and filtering, which also made the final sort quadratic.
+	now := time.Now().UTC()
+	today := now.Format("2006-01-02")
+	oldest := now.AddDate(0, 0, -(days - 1)).Format("2006-01-02")
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketUserDailyUsage))
 		prefix := []byte(userID + "|")
+		start := append(append([]byte(nil), prefix...), oldest...)
 		c := b.Cursor()
-		for k, v := c.Seek(prefix); k != nil && len(k) > len(prefix) && string(k[:len(prefix)]) == string(prefix); k, v = c.Next() {
-			dateStr := string(k[len(prefix):])
-			if dateKeys[dateStr] {
-				var d UserDailyUsage
-				if err := json.Unmarshal(v, &d); err == nil {
-					daily = append(daily, d)
-				}
+		for k, v := c.Seek(start); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			date := string(k[len(prefix):])
+			if date > today {
+				break
+			}
+			var item UserDailyUsage
+			if err := json.Unmarshal(v, &item); err == nil {
+				daily = append(daily, item)
 			}
 		}
 		return nil
@@ -1345,14 +1372,9 @@ func (s *usageStore) getUserDailyUsage(userID string, days int) ([]UserDailyUsag
 		return nil, err
 	}
 
-	// Sort by date descending (most recent first)
-	for i := 0; i < len(daily); i++ {
-		for j := i + 1; j < len(daily); j++ {
-			if daily[j].Date > daily[i].Date {
-				daily[i], daily[j] = daily[j], daily[i]
-			}
-		}
-	}
+	sort.Slice(daily, func(i, j int) bool {
+		return daily[i].Date > daily[j].Date
+	})
 	return daily, nil
 }
 
@@ -1366,31 +1388,31 @@ func (s *usageStore) getUserHourlyUsage(userID string, hours int) ([]UserHourlyU
 		hours = 24
 	}
 
-	// Generate hour keys for the last N hours
-	now := time.Now().UTC()
-	hourKeys := make(map[string]bool)
-	for i := 0; i < hours; i++ {
-		h := now.Add(-time.Duration(i) * time.Hour)
-		hourKeys[h.Format("2006-01-02T15")] = true
-	}
+	// Hour keys are lexicographically ordered, so seek straight to the oldest
+	// wanted hour and stop at the current one instead of walking every hour
+	// the user has and filtering, then sorting quadratically.
+	now := time.Now().UTC().Truncate(time.Hour)
+	currentHour := now.Format("2006-01-02T15")
+	oldestHour := now.Add(-time.Duration(hours-1) * time.Hour).Format("2006-01-02T15")
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketUserHourlyUsage))
 		prefix := []byte(userID + "|")
+		start := append(append([]byte(nil), prefix...), oldestHour...)
 		c := b.Cursor()
-		for k, v := c.Seek(prefix); k != nil && len(k) > len(prefix) && string(k[:len(prefix)]) == string(prefix); k, v = c.Next() {
+		for k, v := c.Seek(start); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 			// Key format: userID|hourKey|accountType
 			rest := string(k[len(prefix):])
-			parts := strings.SplitN(rest, "|", 2)
-			if len(parts) < 1 {
+			hour, _, ok := strings.Cut(rest, "|")
+			if !ok {
 				continue
 			}
-			hourKey := parts[0]
-			if hourKeys[hourKey] {
-				var h UserHourlyUsage
-				if err := json.Unmarshal(v, &h); err == nil {
-					result = append(result, h)
-				}
+			if hour > currentHour {
+				break
+			}
+			var item UserHourlyUsage
+			if err := json.Unmarshal(v, &item); err == nil {
+				result = append(result, item)
 			}
 		}
 		return nil
@@ -1399,14 +1421,9 @@ func (s *usageStore) getUserHourlyUsage(userID string, hours int) ([]UserHourlyU
 		return nil, err
 	}
 
-	// Sort by hour descending
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[j].Hour > result[i].Hour {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Hour > result[j].Hour
+	})
 	return result, nil
 }
 
@@ -1420,44 +1437,37 @@ func (s *usageStore) getGlobalHourlyUsage(hours int) ([]UserHourlyUsage, error) 
 		hours = 24
 	}
 
-	// Generate hour keys for the last N hours
-	now := time.Now().UTC()
-	hourKeys := make(map[string]bool)
-	for i := 0; i < hours; i++ {
-		h := now.Add(-time.Duration(i) * time.Hour)
-		hourKeys[h.Format("2006-01-02T15")] = true
-	}
+	// The global bucket is keyed hourKey|accountType, so the hour range can
+	// be seeked instead of scanning every hour ever recorded.
+	now := time.Now().UTC().Truncate(time.Hour)
+	currentHour := now.Format("2006-01-02T15")
+	oldestHour := now.Add(-time.Duration(hours-1) * time.Hour).Format("2006-01-02T15")
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGlobalHourlyUsage))
-		return b.ForEach(func(k, v []byte) error {
+		c := b.Cursor()
+		for k, v := c.Seek([]byte(oldestHour + "|")); k != nil; k, v = c.Next() {
 			// Key format: hourKey|accountType
-			key := string(k)
-			parts := strings.SplitN(key, "|", 2)
-			if len(parts) < 1 {
-				return nil
+			hour, _, ok := strings.Cut(string(k), "|")
+			if !ok {
+				continue
 			}
-			hourKey := parts[0]
-			if hourKeys[hourKey] {
-				var h UserHourlyUsage
-				if err := json.Unmarshal(v, &h); err == nil {
-					result = append(result, h)
-				}
+			if hour > currentHour {
+				break
 			}
-			return nil
-		})
+			var item UserHourlyUsage
+			if err := json.Unmarshal(v, &item); err == nil {
+				result = append(result, item)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Sort by hour descending
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[j].Hour > result[i].Hour {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Hour > result[j].Hour
+	})
 	return result, nil
 }
