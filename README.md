@@ -10,6 +10,19 @@
 
 ---
 
+> [!NOTE]
+> **Fork Notice & Attribution**:
+> Este repositório é um **fork** mantido por [Gustavo Martins](https://github.com/GustavoMartins123) com modificações e melhorias personalizadas baseadas no projeto original criado por **[Darvell](https://github.com/darvell)** ([darvell/codex-pool](https://github.com/darvell/codex-pool)).
+>
+> **Principais adições e modificações implementadas neste fork:**
+> - **Suporte Nativo a Windows / MSYS2 UCRT64**: Scripts automatizados de compilação e instalação (`scripts/windows/build.ps1`, `install.ps1`, `dev_proxy.ps1`, `deploy.ps1`) com auto-detecção de toolchain local e um runtime shim C completo (`duckdb_windows_shim.go`) resolvendo o linkage de emutls e `std::call_once` do DuckDB no GCC moderno (GCC 15 e GCC 16+).
+> - **Integração Completa de Contas Z.ai**: Suporte aos modelos `glm-5.3`, `glm-5.3-flash` e `glm-5.3-flashx`, autenticação OAuth via navegador com polling de sessão (`/api/pool/accounts/zai/login/init`), importação em 1 clique das credenciais do ZCode Desktop (`~/.zcode/cli/config.json`) e persistência segura de contas no pool.
+> - **Gestão Avançada de Contas Google Antigravity**: Login OAuth dedicado, renovação de tokens (relogin flow), acompanhamento de reset windows e ritmo de cotas, e compactação automática de contexto.
+> - **Ecossistema Expandido de Provedores**: Suporte e mapeamento de cotas para OpenCode Go (`opencode_go`), Grok, Xiaomi (MiMo), Kimi, MiniMax e Adversarial (CyberKimi).
+> - **Handoff e Transições de Contexto Heterogêneas**: Conversação portátil com representação canônica (IR) entre diferentes provedores (Codex, Claude, Antigravity, Z.ai).
+
+---
+
 A reverse proxy that distributes coding-agent sessions across pooled provider accounts. Got three Codex accounts? Five Claude logins? The proxy spreads your usage across all of them automatically - no manual switching, no juggling auth files. Google subscription accounts use the Antigravity sign-in flow; Gemini remains the API-key provider.
 
 The setup dashboard configures **Codex CLI**, **Claude Code**, **Gemini CLI**, **Grok Build**, **Pi**, and **Cute Code**. Grok Build runs through the proxy without its own login and can select the other pool models; Pi merges pool providers into its existing `models.json`.
@@ -60,7 +73,7 @@ Share your pool with others using a friend code.
 ### 1. Add your accounts
 
 ```bash
-mkdir -p pool/codex pool/claude pool/gemini pool/antigravity pool/opencode_go
+mkdir -p pool/codex pool/claude pool/gemini pool/antigravity pool/zai pool/opencode_go pool/grok pool/xiaomi pool/kimi pool/minimax
 
 # Codex accounts
 cp ~/.codex/auth.json pool/codex/work.json
@@ -72,11 +85,32 @@ cp ~/.claude/credentials.json pool/claude/main.json
 # Gemini accounts
 cp ~/.gemini/oauth_creds.json pool/gemini/main.json
 
+# Z.ai accounts (or use Dashboard / ZCode Desktop import)
+cat > pool/zai/main.json <<'EOF'
+{"api_key": "your-zcode-api-key"}
+EOF
+
 # OpenCode Go subscription (API key from https://opencode.ai/auth)
 cat > pool/opencode_go/main.json <<'EOF'
 {"api_key": "sk-..."}
 EOF
-chmod 600 pool/opencode_go/main.json
+
+# Xiaomi MiMo accounts
+cat > pool/xiaomi/main.json <<'EOF'
+{"api_key": "tp-..."}
+EOF
+
+# Kimi accounts
+cat > pool/kimi/main.json <<'EOF'
+{"api_key": "sk-..."}
+EOF
+
+# MiniMax accounts
+cat > pool/minimax/main.json <<'EOF'
+{"api_key": "..."}
+EOF
+
+chmod 600 pool/*/*.json
 ```
 
 Structure:
@@ -87,7 +121,21 @@ pool/
 │   └── personal.json
 ├── claude/
 │   └── main.json
-└── gemini/
+├── gemini/
+│   └── main.json
+├── antigravity/
+│   └── main.json
+├── zai/
+│   └── main.json
+├── opencode_go/
+│   └── main.json
+├── grok/
+│   └── main.json
+├── xiaomi/
+│   └── main.json
+├── kimi/
+│   └── main.json
+└── minimax/
     └── main.json
 ```
 
@@ -107,7 +155,7 @@ Use `arm64` for a Linux ARM64 host. To build and install for the current Linux
 architecture, run `./scripts/install.sh` (default: `~/.local/bin`); pass a
 directory to change the install location.
 
-**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC 15.2.0):**
+**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC):**
 
 ```powershell
 .\scripts\windows\build.ps1
@@ -116,10 +164,13 @@ directory to change the install location.
 
 Run `.\scripts\windows\install.ps1` to build and install into
 `$env:LOCALAPPDATA\Programs\codex-pool`, or pass `-InstallDir` to choose a
-directory. Install GCC 15.2.0 from the MSYS2 package archive; GCC 16 cannot
-link the pinned DuckDB Windows library because its C++ TLS ABI changed. If
-MSYS2 is not at `C:\msys64`, pass its UCRT64 `bin` path with `-CompilerBin` to `build.ps1`.
-`install.ps1` accepts the same option.
+directory. The build scripts automatically detect MSYS2 UCRT64 from workspace-local
+toolchains (`.toolchains\msys64\ucrt64\bin`) or standard installation (`C:\msys64\ucrt64\bin`),
+or you can pass a custom path with `-CompilerBin`.
+
+Both GCC 15 and modern GCC 16+ are fully supported out-of-the-box thanks to our
+built-in DuckDB C++ runtime shim (`duckdb_windows_shim.go`) which bridges emulated
+TLS and `std::call_once` linkage.
 Windows builds target `amd64`; DuckDB's pinned bindings do not
 include a Windows ARM64 target. Installation copies only the executable and
 does not change `PATH` or create a service.
@@ -160,7 +211,7 @@ The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `h
 
 `ANTIGRAVITY_OAUTH_CLIENT_ID`, `ANTIGRAVITY_OAUTH_CLIENT_SECRET`, and `ANTIGRAVITY_OAUTH_REDIRECT_URI` remain available for tests or a separately registered Google OAuth client. `ANTIGRAVITY_CLIENT_VERSION` overrides the Antigravity client version used in upstream requests. `UPSTREAM_ANTIGRAVITY_BASE`, `UPSTREAM_ANTIGRAVITY_DAILY_BASE`, and `UPSTREAM_ANTIGRAVITY_ONBOARD_BASE` override the production, generation, and onboarding Cloud Code Assist hosts.
 
-**Z.ai Individual Coding Plan account**: choose "Z.ai" in "Contribute an account" and finish the ZCode OAuth login in the opened page. The pool checks the active Individual Coding Plan and a model request before saving the linked account. It stores the account identity and OAuth session with the account's API credential in `pool/zai/`; on Linux, the file is created with mode `0600`. This flow requires exactly one personal Z.ai project. "Z.ai API key" remains a separate manual contribution method.
+**Z.ai Individual Coding Plan account**: choose "Z.ai" in "Contribute an account" to sign in via the browser ZCode OAuth flow (with automated session polling), import your existing configuration with a single click from ZCode Desktop (`~/.zcode/cli/config.json`), or enter an API key manually. The pool checks the active Individual Coding Plan and a model request before saving the linked account with full identity metadata in `pool/zai/`. On Linux, files are created with mode `0600`.
 
 ---
 
@@ -260,14 +311,46 @@ Native-tool endpoints are same-origin relative paths. The `native_tools` map key
 {"type":"antigravity","access_token":"ya29...","refresh_token":"1//...","email":"person@example.com","project_id":"project-id","expiry_date":1234567890000}
 ```
 
+**Z.ai** - `pool/zai/*.json`
+```json
+{"api_key": "...", "auth_type": "oauth", "user_id": "...", "business_token": "...", "zcode_jwt": "...", "plan_type": "coding_plan", "label": "my-account"}
+```
+*(Or simple `{"api_key": "..."}` for manual keys)*
+
 **OpenCode Go** - `pool/opencode_go/*.json`
 ```json
 {"api_key": "sk-..."}
 ```
 
+**Grok** - `pool/grok/*.json`
+```json
+{"access_token": "...", "refresh_token": "...", "plan_type": "grok"}
+```
+
+**Xiaomi (MiMo)** - `pool/xiaomi/*.json`
+```json
+{"api_key": "tp-..."}
+```
+
+**Kimi** - `pool/kimi/*.json`
+```json
+{"api_key": "sk-..."}
+```
+
+**MiniMax** - `pool/minimax/*.json`
+```json
+{"api_key": "..."}
+```
+
 OpenCode Go models are namespaced as `opencode-go/<model-id>` (e.g. `opencode-go/longcat-2.0`), matching OpenCode's own config convention. Bare IDs also route to Go unless another provider already claims them (`kimi-k3` is Go-only; bare `mimo-v2.5-pro` stays on Xiaomi, bare `grok-4.6` stays on Grok). Go quota (rolling/weekly/monthly from `GET /zen/go/v1/usage`) is polled every 15 minutes; the weekly window drives routing score. Configure a different endpoint with `UPSTREAM_OPENCODE_GO_BASE`.
 
 Antigravity model names come from Google's live `fetchAvailableModels` response. Use `antigravity/<model-id>` to force this provider. `/api/pool/models`, `/v1/models`, `/v1beta/models`, Pi, Cute Code, and the Codex catalog consume the same registry. Temporary quota exhaustion changes `available_now` without removing a supported model from the catalog.
+
+---
+
+## Credits & Upstream Reference
+
+This project is a fork of the original [codex-pool](https://github.com/darvell/codex-pool) created by **[Darvell](https://github.com/darvell)**. Special thanks and full credit to Darvell for the foundational architecture, reverse proxy design, session multiplexing, and dashboard implementation.
 
 ---
 
