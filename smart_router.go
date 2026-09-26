@@ -484,6 +484,10 @@ func (p *poolState) recordRoutingOutcome(accountID string, duration time.Duratio
 }
 
 func (p *poolState) smartCandidateForModel(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) smartRouteDecision {
+	return p.smartCandidateForModelForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
+}
+
+func (p *poolState) smartCandidateForModelForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) smartRouteDecision {
 	if p == nil {
 		return smartRouteDecision{Profile: profile}
 	}
@@ -495,7 +499,13 @@ func (p *poolState) smartCandidateForModel(conversationID string, exclude map[st
 		weights, _ = p.routing.weights(profile)
 	}
 	now := time.Now()
-	pinnedID := p.convPin[conversationID]
+	pinnedID := ""
+	if conversationID != "" {
+		owner := p.convOwner[conversationID]
+		if owner == "" || userID == "" || owner == userID {
+			pinnedID = p.convPin[conversationID]
+		}
+	}
 	canonicalAntigravityModel := ""
 	if accountType == AccountTypeAntigravity {
 		canonicalAntigravityModel = antigravityCanonicalModel(model)
@@ -585,10 +595,14 @@ func (p *poolState) smartCandidateForModel(conversationID string, exclude map[st
 }
 
 func (p *poolState) candidateWithRoutingTrace(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	return p.candidateWithRoutingTraceForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
+}
+
+func (p *poolState) candidateWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
 	if profile == RoutingLegacy {
 		return p.candidateWithTrace(conversationID, exclude, accountType, requiredPlan, clientIP, model)
 	}
-	decision := p.smartCandidateForModel(conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
+	decision := p.smartCandidateForModelForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
 	if decision.Account == nil {
 		return nil, string(decision.Profile), nil, 0, nil, nil
 	}
@@ -596,10 +610,14 @@ func (p *poolState) candidateWithRoutingTrace(conversationID string, exclude map
 }
 
 func (p *poolState) candidateForAntigravityModelWithRoutingTrace(conversationID string, exclude map[string]bool, model, clientIP string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	return p.candidateForAntigravityModelWithRoutingTraceForUser("", conversationID, exclude, model, clientIP, profile)
+}
+
+func (p *poolState) candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, model, clientIP string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
 	if profile == RoutingLegacy {
 		return p.candidateForAntigravityModelWithTrace(conversationID, exclude, model, clientIP)
 	}
-	decision := p.smartCandidateForModel(conversationID, exclude, AccountTypeAntigravity, "", clientIP, model, profile)
+	decision := p.smartCandidateForModelForUser(userID, conversationID, exclude, AccountTypeAntigravity, "", clientIP, model, profile)
 	if decision.Account == nil {
 		return nil, string(decision.Profile), nil, 0, nil, nil
 	}
@@ -607,6 +625,12 @@ func (p *poolState) candidateForAntigravityModelWithRoutingTrace(conversationID 
 		canonical := antigravityCanonicalModel(model)
 		p.mu.Lock()
 		p.convPin["antigravity:"+canonical+":"+conversationID] = decision.Account.ID
+		if userID != "" {
+			if p.convOwner == nil {
+				p.convOwner = make(map[string]string)
+			}
+			p.convOwner["antigravity:"+canonical+":"+conversationID] = userID
+		}
 		p.mu.Unlock()
 	}
 	return decision.Account, string(decision.Profile), decision.Reasons, decision.Score.Score, decision.Alternatives, newRoutingBreakdownView(decision.Score)

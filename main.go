@@ -2770,7 +2770,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if imageGenerationRequest {
 				candidateConversationID = ""
 			}
-			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTrace(candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
+			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTraceForUser(userID, candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
 		}
 		if acc == nil {
 			reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
@@ -3722,7 +3722,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 			if conversationID != "" && !cyberPinned {
-				h.pool.pin(conversationID, acc.ID)
+				h.pool.pin(conversationPinKey(userID, conversationID), acc.ID)
 			}
 			acc.mu.Lock()
 			acc.LastUsed = time.Now()
@@ -3814,7 +3814,8 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		}
 		selectionConversationID = "cyber-fallback:" + fallbackID
 	}
-	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTrace(
+	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTraceForUser(
+		userID,
 		selectionConversationID,
 		map[string]bool{},
 		accountType,
@@ -3965,7 +3966,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		if swap.statusCode != 0 {
 			h.metrics.inc(strconv.Itoa(swap.statusCode), finalAcc.ID)
 		}
-		h.applyWebSocketStatusEffects(reqID, finalAcc, conversationID, swap.swapped, refreshFailed, swap.statusCode)
+		h.applyWebSocketStatusEffects(reqID, finalAcc, userID, conversationID, swap.swapped, refreshFailed, swap.statusCode)
 		if h.cfg.debug.Load() {
 			log.Printf("[%s] websocket done status=%d account=%s user=%s origin=%s duration_ms=%d cyber_swapped=%v", reqID, swap.statusCode, finalAcc.ID, userID, originID, time.Since(start).Milliseconds(), swap.swapped)
 		}
@@ -3997,7 +3998,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		h.metrics.inc(strconv.Itoa(statusCode), acc.ID)
 	}
 
-	h.applyWebSocketStatusEffects(reqID, acc, conversationID, cyberPinned, refreshFailed, statusCode)
+	h.applyWebSocketStatusEffects(reqID, acc, userID, conversationID, cyberPinned, refreshFailed, statusCode)
 
 	if h.cfg.debug.Load() {
 		log.Printf("[%s] websocket done status=%d account=%s user=%s origin=%s duration_ms=%d", reqID, statusCode, acc.ID, userID, originID, time.Since(start).Milliseconds())
@@ -4008,7 +4009,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 // (rate-limit cooldown, auth-failure marking, success-path penalty
 // decay, conversation pinning) shared between the Codex cyber-aware
 // relay and the legacy passthrough/Claude/Gemini relay.
-func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, conversationID string, cyberPinned, refreshFailed bool, statusCode int) {
+func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, userID, conversationID string, cyberPinned, refreshFailed bool, statusCode int) {
 	switch {
 	case statusCode == http.StatusTooManyRequests:
 		h.applyRateLimit(acc, nil)
@@ -4024,7 +4025,7 @@ func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, c
 		}
 	case statusCode == http.StatusSwitchingProtocols || (statusCode >= 200 && statusCode < 300):
 		if conversationID != "" && !cyberPinned {
-			h.pool.pin(conversationID, acc.ID)
+			h.pool.pin(conversationPinKey(userID, conversationID), acc.ID)
 		}
 		acc.mu.Lock()
 		acc.LastUsed = time.Now()
@@ -4438,7 +4439,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		http.Error(w, fmt.Sprintf("unknown routing profile %q", r.Header.Get("X-Pool-Routing")), http.StatusBadRequest)
 		return
 	}
-	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTrace(contextSession, map[string]bool{}, accountType, requiredPlan, clientIP, requestedModel, routingProfile)
+	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTraceForUser(userID, contextSession, map[string]bool{}, accountType, requiredPlan, clientIP, requestedModel, routingProfile)
 	if acc == nil {
 		http.Error(w, fmt.Sprintf("no live %s accounts", accountType), http.StatusServiceUnavailable)
 		return
@@ -4900,7 +4901,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			conversationID = extractConversationIDFromSSE(respSample)
 		}
 		if conversationID != "" && !cyberPinned {
-			h.pool.pin(conversationID, acc.ID)
+			h.pool.pin(conversationPinKey(userID, conversationID), acc.ID)
 		}
 		h.noteCodexTurnState(userID, conversationID, acc, resp.Header.Get(codexTurnStateHeader))
 		acc.mu.Lock()

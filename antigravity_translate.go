@@ -1459,7 +1459,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	}
 	contextCompactionRetry := false
 	for attempt := 0; attempt < attempts; attempt++ {
-		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTrace(conversationID, exclude, canonical, clientIP, routingProfile)
+		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID, exclude, canonical, clientIP, routingProfile)
 		if account == nil {
 			break
 		}
@@ -1709,7 +1709,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			return true
 		}
 		if conversationID != "" {
-			h.pool.pin(conversationID, account.ID)
+			h.pool.pinForUser(userID, conversationID, account.ID)
 		}
 		h.writeAntigravityResponse(w, resp, prepared, replayScope, account, conversationID, userID, originID, reqID)
 		return true

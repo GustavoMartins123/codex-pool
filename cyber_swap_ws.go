@@ -104,7 +104,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 					break
 				}
 			}
-			h.applyWebSocketStatusEffects(opts.ReqID, opts.InitialAccount, "", false, false, http.StatusUnauthorized)
+			h.applyWebSocketStatusEffects(opts.ReqID, opts.InitialAccount, opts.UserID, "", false, false, http.StatusUnauthorized)
 			if attempt+1 >= h.cfg.maxAttempts {
 				break
 			}
@@ -781,7 +781,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 			if newResp.Body != nil {
 				newResp.Body.Close()
 			}
-			s.h.applyWebSocketStatusEffects(s.opts.ReqID, cand, "", false, false, newResp.StatusCode)
+			s.h.applyWebSocketStatusEffects(s.opts.ReqID, cand, s.opts.UserID, "", false, false, newResp.StatusCode)
 		}
 		return err
 	}

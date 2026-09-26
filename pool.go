@@ -460,6 +460,7 @@ type poolState struct {
 	mu               sync.RWMutex
 	accounts         []*Account
 	convPin          map[string]string // conversation_id -> account ID
+	convOwner        map[string]string // conversation_id -> user ID owner
 	routing          routingPolicySet
 	routingTelemetry map[string]routingTelemetry
 	circuitBreakers  *CircuitBreakerManager
@@ -471,7 +472,7 @@ type poolState struct {
 
 func newPoolState(accs []*Account, debug bool) *poolState {
 	return &poolState{
-		accounts: accs, convPin: map[string]string{}, debug: debug, tierThreshold: 0.50,
+		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, debug: debug, tierThreshold: 0.50,
 		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
 		circuitBreakers: newCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
 	}
@@ -483,6 +484,7 @@ func (p *poolState) replace(accs []*Account) {
 	defer p.mu.Unlock()
 	p.accounts = accs
 	p.convPin = map[string]string{}
+	p.convOwner = map[string]string{}
 	p.rr = 0
 }
 
@@ -760,6 +762,10 @@ func (p *poolState) discoveredModelRequiresEntitlement(accountType AccountType, 
 }
 
 func (p *poolState) candidate(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
+	return p.candidateForUser("", conversationID, exclude, accountType, requiredPlan, clientIP)
+}
+
+func (p *poolState) candidateForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -767,7 +773,9 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 
 	// Conversation pinning — keep using the same account unless at hard limits
 	if conversationID != "" {
-		if id, ok := p.convPin[conversationID]; ok {
+		owner := p.convOwner[conversationID]
+		if owner == "" || userID == "" || owner == userID {
+			if id, ok := p.convPin[conversationID]; ok {
 			if exclude != nil && exclude[id] {
 				// pinned excluded; fall through to selection
 			} else if a := p.getLocked(id); a != nil {
@@ -818,6 +826,7 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 				}
 			}
 		}
+	}
 	}
 
 	n := len(p.accounts)
@@ -1390,12 +1399,36 @@ func scoreTooltipLocked(a *Account, now time.Time) string {
 }
 
 func (p *poolState) pin(conversationID, accountID string) {
+	p.pinForUser("", conversationID, accountID)
+}
+
+func (p *poolState) pinForUser(userID, conversationID, accountID string) {
 	if conversationID == "" || accountID == "" {
 		return
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.convPin[conversationID] = accountID
-	p.mu.Unlock()
+	if userID != "" {
+		if p.convOwner == nil {
+			p.convOwner = make(map[string]string)
+		}
+		p.convOwner[conversationID] = userID
+	}
+}
+
+// conversationPinKey namespaces conversation pinning by user/principal ID to prevent
+// cross-user account stickiness collisions and pinning hijacking.
+func conversationPinKey(userID, conversationID string) string {
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return ""
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return conversationID
+	}
+	return userID + "\x00" + conversationID
 }
 
 // allAccounts returns a copy of all accounts for stats/reporting.

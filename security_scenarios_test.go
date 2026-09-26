@@ -508,18 +508,27 @@ func TestSecurityInternalHeaderTampering(t *testing.T) {
 }
 
 // TestSecurityConversationPinningCrossUserInterference demonstrates that conversation
-// pinning is keyed globally without user/principal scoping, allowing one client to
-// force their traffic onto another user's pinned upstream account.
+// pinning is keyed with user/principal scoping, preventing User B from latching
+// onto User A's pinned upstream account even if they send the same conversation ID.
 func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
-	acc1 := &Account{ID: "acc-pinned-1", Type: AccountTypeCodex, PlanType: "pro"}
-	acc2 := &Account{ID: "acc-pinned-2", Type: AccountTypeCodex, PlanType: "pro"}
+	acc1 := &Account{ID: "acc-pinned-1", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.9}}
+	acc2 := &Account{ID: "acc-pinned-2", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
 	pool := newPoolState([]*Account{acc1, acc2}, false)
 
 	sharedConvID := "shared-thread-uuid-12345"
-	// User A has a conversation pinned to acc-pinned-1
-	pool.pin(sharedConvID, acc1.ID)
+	userA := "user_alice"
+	userB := "user_bob"
 
-	// User B sends a request with session_id header matching User A's conversation
+	// User A pins their conversation to acc-pinned-1
+	pool.pinForUser(userA, sharedConvID, acc1.ID)
+
+	// User A's subsequent requests route to the pinned account acc-pinned-1
+	candA := pool.candidateForUser(userA, sharedConvID, nil, AccountTypeCodex, "", "198.51.100.1")
+	if candA == nil || candA.ID != "acc-pinned-1" {
+		t.Fatalf("User A should route to pinned account acc-pinned-1, got %+v", candA)
+	}
+
+	// User B sends a request with the exact same session_id header
 	reqUserB := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	reqUserB.Header.Set("session_id", sharedConvID)
 	extractedB := extractConversationIDFromHeaders(reqUserB.Header)
@@ -527,10 +536,10 @@ func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
 		t.Fatalf("expected extracted conversation ID %s, got %s", sharedConvID, extractedB)
 	}
 
-	// User B routes to the exact same account pinned by User A
-	candB := pool.candidate(extractedB, nil, AccountTypeCodex, "", "198.51.100.2")
-	if candB == nil || candB.ID != "acc-pinned-1" {
-		t.Fatalf("User B should have collided onto User A's pinned account acc-pinned-1, got %+v", candB)
+	// User B does NOT get forced onto User A's heavily used acc-pinned-1 (0.9 vs 0.1)
+	candB := pool.candidateForUser(userB, extractedB, nil, AccountTypeCodex, "", "198.51.100.2")
+	if candB == nil || candB.ID != "acc-pinned-2" {
+		t.Fatalf("User B should route to best available account (acc-pinned-2), not User A's pinned account, got %+v", candB)
 	}
 }
 
