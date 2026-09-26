@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -506,5 +507,52 @@ func TestSaveAccountPreservesUnknownFields(t *testing.T) {
 	}
 	if _, ok := tokens["extra_token"]; !ok {
 		t.Fatalf("expected tokens.extra_token preserved")
+	}
+}
+
+func TestPoolConversationPinEvictionAndUnpinCleanup(t *testing.T) {
+	a1 := &Account{ID: "a1", Type: AccountTypeCodex, PlanType: "pro"}
+	a2 := &Account{ID: "a2", Type: AccountTypeCodex, PlanType: "pro"}
+	p := newPoolState([]*Account{a1, a2}, false)
+
+	// 1. Pin to a1, then mark a1 rate-limited -> candidateForUser must unpin and remove from convPin/convOwner.
+	p.pinForUser("user1", "conv-rate-limited", "a1")
+	a1.RateLimitUntil = time.Now().Add(time.Minute)
+	got := p.candidateForUser("user1", "conv-rate-limited", nil, AccountTypeCodex, "", "")
+	if got == nil || got.ID != "a2" {
+		t.Fatalf("expected failover to a2, got %+v", got)
+	}
+	if _, exists := p.convPin["conv-rate-limited"]; exists {
+		t.Fatal("stale pin for rate-limited account was not removed from convPin")
+	}
+	if _, exists := p.convOwner["conv-rate-limited"]; exists {
+		t.Fatal("stale owner for rate-limited account was not removed from convOwner")
+	}
+	a1.RateLimitUntil = time.Time{}
+
+	// 2. replace() preserves pins for surviving accounts and removes pins for dropped accounts.
+	p.pinForUser("user1", "conv-survives", "a1")
+	p.pinForUser("user1", "conv-dropped", "a2")
+	p.replace([]*Account{a1})
+	if p.convPin["conv-survives"] != "a1" {
+		t.Fatalf("expected surviving account pin to be preserved across replace, got %q", p.convPin["conv-survives"])
+	}
+	if _, exists := p.convPin["conv-dropped"]; exists {
+		t.Fatal("expected dropped account pin to be removed on replace")
+	}
+
+	// 3. Capacity bound: inserting more than maxConversationPins evicts oldest entries.
+	base := time.Now().Add(-time.Hour)
+	p.mu.Lock()
+	for i := 0; i < maxConversationPins+500; i++ {
+		p.pinForUserLocked("u", "conv-" + strconv.Itoa(i), "a1", base.Add(time.Duration(i)*time.Millisecond))
+	}
+	pinCount := len(p.convPin)
+	ownerCount := len(p.convOwner)
+	tsCount := len(p.convUpdatedAt)
+	p.mu.Unlock()
+	if pinCount > maxConversationPins || ownerCount > maxConversationPins || tsCount > maxConversationPins {
+		t.Fatalf("expected conversation pin maps bounded to <= %d, got pins=%d owners=%d ts=%d",
+			maxConversationPins, pinCount, ownerCount, tsCount)
 	}
 }

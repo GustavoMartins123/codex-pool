@@ -126,6 +126,11 @@ func (s *routeTraceStore) Record(trace *RouteTrace) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if _, exists := s.traces[trace.RequestID]; exists {
+		s.traces[trace.RequestID] = trace
+		return
+	}
+
 	// If slot has old ID, evict it
 	oldID := s.order[s.head]
 	if oldID != "" && oldID != trace.RequestID {

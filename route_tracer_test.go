@@ -320,3 +320,23 @@ func TestCircuitBreakersEndpoint(t *testing.T) {
 		t.Errorf("expected state OPEN, got %s", info.State)
 	}
 }
+
+func TestRouteTraceStoreDuplicateRecordUpdatesInPlace(t *testing.T) {
+	store := newRouteTraceStore(3)
+	store.Record(&RouteTrace{RequestID: "req-1", StatusCode: 429})
+	store.Record(&RouteTrace{RequestID: "req-2", StatusCode: 200})
+	// Re-recording req-1 on retry must update in place without advancing the ring head.
+	store.Record(&RouteTrace{RequestID: "req-1", StatusCode: 200, Attempts: 2})
+	store.Record(&RouteTrace{RequestID: "req-3", StatusCode: 200})
+
+	// All 3 distinct request IDs must still be present in the 3-slot ring buffer.
+	for _, id := range []string{"req-1", "req-2", "req-3"} {
+		if _, ok := store.Get(id); !ok {
+			t.Fatalf("expected %s to remain in trace store", id)
+		}
+	}
+	got, _ := store.Get("req-1")
+	if got.StatusCode != 200 || got.Attempts != 2 {
+		t.Fatalf("expected updated trace for req-1, got %+v", got)
+	}
+}

@@ -575,7 +575,7 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 		_, _, _ = p.circuitBreakers.AllowTarget(string(selected.account.Type), selected.account.ID, model, nil)
 	}
 	if conversationID != "" {
-		p.convPin[conversationID] = selected.account.ID
+		p.pinForUserLocked(userID, conversationID, selected.account.ID, now)
 	}
 	alternatives := make([]RouteAlternative, 0, len(candidates)-1)
 	for _, item := range candidates[1:] {
@@ -621,13 +621,7 @@ func (p *poolState) candidateForAntigravityModelWithRoutingTraceForUser(userID, 
 	if conversationID != "" {
 		canonical := antigravityCanonicalModel(model)
 		p.mu.Lock()
-		p.convPin["antigravity:"+canonical+":"+conversationID] = decision.Account.ID
-		if userID != "" {
-			if p.convOwner == nil {
-				p.convOwner = make(map[string]string)
-			}
-			p.convOwner["antigravity:"+canonical+":"+conversationID] = userID
-		}
+		p.pinForUserLocked(userID, "antigravity:"+canonical+":"+conversationID, decision.Account.ID, time.Now())
 		p.mu.Unlock()
 	}
 	return decision.Account, string(decision.Profile), decision.Reasons, decision.Score.Score, decision.Alternatives, newRoutingBreakdownView(decision.Score)

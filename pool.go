@@ -456,11 +456,17 @@ func applyCommonAccountFileState(account *Account, data []byte) {
 // - provider_gemini.go: GeminiProvider.LoadAccount
 
 // poolState wraps accounts with a mutex.
+const (
+	maxConversationPins = 16384
+	conversationPinTTL  = 6 * time.Hour
+)
+
 type poolState struct {
 	mu               sync.RWMutex
 	accounts         []*Account
 	convPin          map[string]string // conversation_id -> account ID
 	convOwner        map[string]string // conversation_id -> user ID owner
+	convUpdatedAt    map[string]time.Time
 	routing          routingPolicySet
 	routingTelemetry map[string]routingTelemetry
 	circuitBreakers  *CircuitBreakerManager
@@ -472,19 +478,28 @@ type poolState struct {
 
 func newPoolState(accs []*Account, debug bool) *poolState {
 	return &poolState{
-		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, debug: debug, tierThreshold: 0.50,
+		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, convUpdatedAt: map[string]time.Time{}, debug: debug, tierThreshold: 0.50,
 		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
 		circuitBreakers: newCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
 	}
 }
 
-// replace swaps the pool accounts (used on reload).
+// replace swaps the pool accounts while preserving conversation pins for surviving accounts.
 func (p *poolState) replace(accs []*Account) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.accounts = accs
-	p.convPin = map[string]string{}
-	p.convOwner = map[string]string{}
+	liveAccountIDs := make(map[string]bool, len(accs))
+	for _, a := range accs {
+		if a != nil && !a.Dead && !a.Disabled {
+			liveAccountIDs[a.ID] = true
+		}
+	}
+	for convID, accountID := range p.convPin {
+		if !liveAccountIDs[accountID] {
+			p.unpinLocked(convID)
+		}
+	}
 	p.rr = 0
 }
 
@@ -778,6 +793,9 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 
 	// Conversation pinning — keep using the same account unless at hard limits
 	if conversationID != "" {
+		if updated, ok := p.convUpdatedAt[conversationID]; ok && now.Sub(updated) > conversationPinTTL {
+			p.unpinLocked(conversationID)
+		}
 		owner := p.convOwner[conversationID]
 		if owner == "" || userID == "" || owner == userID {
 			if id, ok := p.convPin[conversationID]; ok {
@@ -837,8 +855,15 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 					}
 				}
 				if ok {
+					if p.convUpdatedAt == nil {
+						p.convUpdatedAt = make(map[string]time.Time)
+					}
+					p.convUpdatedAt[conversationID] = now
 					return a
 				}
+				p.unpinLocked(conversationID)
+			} else {
+				p.unpinLocked(conversationID)
 			}
 		}
 	}
@@ -1427,12 +1452,66 @@ func (p *poolState) pinForUser(userID, conversationID, accountID string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.pinForUserLocked(userID, conversationID, accountID, time.Now())
+}
+
+func (p *poolState) pinForUserLocked(userID, conversationID, accountID string, now time.Time) {
+	if conversationID == "" || accountID == "" {
+		return
+	}
+	if p.convPin == nil {
+		p.convPin = make(map[string]string)
+	}
+	if p.convOwner == nil {
+		p.convOwner = make(map[string]string)
+	}
+	if p.convUpdatedAt == nil {
+		p.convUpdatedAt = make(map[string]time.Time)
+	}
 	p.convPin[conversationID] = accountID
 	if userID != "" {
-		if p.convOwner == nil {
-			p.convOwner = make(map[string]string)
-		}
 		p.convOwner[conversationID] = userID
+	} else {
+		delete(p.convOwner, conversationID)
+	}
+	p.convUpdatedAt[conversationID] = now
+	if len(p.convPin) > maxConversationPins {
+		p.evictOldestPinsLocked(now)
+	}
+}
+
+func (p *poolState) unpinLocked(conversationID string) {
+	if conversationID == "" {
+		return
+	}
+	delete(p.convPin, conversationID)
+	delete(p.convOwner, conversationID)
+	delete(p.convUpdatedAt, conversationID)
+}
+
+func (p *poolState) evictOldestPinsLocked(now time.Time) {
+	cutoff := now.Add(-conversationPinTTL)
+	for id, updated := range p.convUpdatedAt {
+		if updated.Before(cutoff) {
+			p.unpinLocked(id)
+		}
+	}
+	if len(p.convPin) > maxConversationPins {
+		type pinAge struct {
+			id      string
+			updated time.Time
+		}
+		ages := make([]pinAge, 0, len(p.convUpdatedAt))
+		for id, updated := range p.convUpdatedAt {
+			ages = append(ages, pinAge{id: id, updated: updated})
+		}
+		sort.Slice(ages, func(i, j int) bool {
+			return ages[i].updated.Before(ages[j].updated)
+		})
+		toEvict := len(p.convPin) - maxConversationPins + maxConversationPins/10
+		for i := 0; i < toEvict && i < len(ages); i++ {
+			p.unpinLocked(ages[i].id)
+		}
 	}
 }
 
