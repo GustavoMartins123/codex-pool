@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -157,6 +158,43 @@ func (p *PassportStore) setPrincipalKind(actorID, principalID string, kind Princ
 			}
 		}
 		return p.audit(tx, actorID, "principal.kind_changed", principalID, string(current.Kind)+" -> "+string(kind))
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.principals[principalID] = &updated
+	cp := updated
+	return &cp, nil
+}
+
+func (p *PassportStore) setPrincipalReasoningEffort(actorID, principalID, effort string) (*Principal, error) {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort != "" {
+		if _, ok := codexEffortRank[effort]; !ok {
+			return nil, fmt.Errorf("invalid reasoning effort: %s", effort)
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	current := p.principals[principalID]
+	if current == nil {
+		return nil, errors.New("principal not found")
+	}
+	if current.MaxReasoningEffort == effort {
+		cp := *current
+		return &cp, nil
+	}
+	updated := *current
+	updated.MaxReasoningEffort = effort
+	err := p.db.Update(func(tx *bbolt.Tx) error {
+		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), principalID, &updated); err != nil {
+			return err
+		}
+		detail := effort
+		if detail == "" {
+			detail = "none (cleared)"
+		}
+		return p.audit(tx, actorID, "principal.effort_cap_changed", principalID, detail)
 	})
 	if err != nil {
 		return nil, err
@@ -536,8 +574,9 @@ func (h *proxyHandler) handlePrincipalItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var input struct {
-		Status *PrincipalStatus `json:"status"`
-		Kind   *PrincipalKind   `json:"kind"`
+		Status             *PrincipalStatus `json:"status"`
+		Kind               *PrincipalKind   `json:"kind"`
+		MaxReasoningEffort *string          `json:"max_reasoning_effort"`
 	}
 	if json.NewDecoder(r.Body).Decode(&input) != nil {
 		respondJSONError(w, http.StatusBadRequest, "invalid json")
@@ -568,6 +607,20 @@ func (h *proxyHandler) handlePrincipalItem(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+	}
+	if input.MaxReasoningEffort != nil {
+		var err error
+		principal, err = h.passport.setPrincipalReasoningEffort(actor.ID, principalID, *input.MaxReasoningEffort)
+		if err != nil {
+			respondJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if h.effortCap != nil {
+			h.effortCap.setDynamicUser(principal.ID, *input.MaxReasoningEffort)
+			if principal.Username != "" {
+				h.effortCap.setDynamicUser(principal.Username, *input.MaxReasoningEffort)
+			}
 		}
 	}
 	respondJSON(w, publicPrincipal(principal))

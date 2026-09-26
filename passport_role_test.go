@@ -186,3 +186,55 @@ func TestPrincipalItemPatchRequiresOperator(t *testing.T) {
 		t.Fatalf("status = %d, want 403 without CSRF", rr.Code)
 	}
 }
+
+func TestPrincipalItemPatchMaxReasoningEffort(t *testing.T) {
+	p, operator := testPassportWithOperator(t)
+	member := insertTestPrincipal(t, p, "member-1", PrincipalMember, "neon", "neon@pool.local")
+
+	opToken, opCsrf, err := p.createSession(operator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cap := newEffortCap(nil, nil)
+	h := &proxyHandler{passport: p, effortCap: cap}
+
+	// Set effort cap to medium
+	req := httptest.NewRequest(http.MethodPatch, "/api/principals/"+member.ID, strings.NewReader(`{"max_reasoning_effort":"medium"}`))
+	req.AddCookie(&http.Cookie{Name: "pool_session", Value: opToken})
+	req.AddCookie(&http.Cookie{Name: "pool_csrf", Value: opCsrf})
+	req.Header.Set("X-CSRF-Token", opCsrf)
+	rr := httptest.NewRecorder()
+	h.handlePrincipalItem(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if got := p.principal(member.ID).MaxReasoningEffort; got != "medium" {
+		t.Fatalf("stored MaxReasoningEffort = %q, want medium", got)
+	}
+	if got := cap.limitFor(member.ID, ""); got != "medium" {
+		t.Fatalf("cap.limitFor(%s) = %q, want medium", member.ID, got)
+	}
+	if got := cap.limitFor("neon", ""); got != "medium" {
+		t.Fatalf("cap.limitFor(neon) = %q, want medium", got)
+	}
+
+	// Clear effort cap
+	req = httptest.NewRequest(http.MethodPatch, "/api/principals/"+member.ID, strings.NewReader(`{"max_reasoning_effort":""}`))
+	req.AddCookie(&http.Cookie{Name: "pool_session", Value: opToken})
+	req.AddCookie(&http.Cookie{Name: "pool_csrf", Value: opCsrf})
+	req.Header.Set("X-CSRF-Token", opCsrf)
+	rr = httptest.NewRecorder()
+	h.handlePrincipalItem(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	if got := p.principal(member.ID).MaxReasoningEffort; got != "" {
+		t.Fatalf("stored MaxReasoningEffort = %q, want empty", got)
+	}
+	if got := cap.limitFor(member.ID, ""); got != "" {
+		t.Fatalf("cap.limitFor(%s) = %q, want empty", member.ID, got)
+	}
+}

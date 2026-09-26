@@ -572,6 +572,18 @@ func main() {
 		pacer:                pacer,
 		largeReplayBodies:    make(chan struct{}, 1),
 	}
+	if passport != nil && h.effortCap != nil {
+		passport.mu.RLock()
+		for _, pr := range passport.principals {
+			if pr.MaxReasoningEffort != "" {
+				h.effortCap.setDynamicUser(pr.ID, pr.MaxReasoningEffort)
+				if pr.Username != "" {
+					h.effortCap.setDynamicUser(pr.Username, pr.MaxReasoningEffort)
+				}
+			}
+		}
+		passport.mu.RUnlock()
+	}
 	if store != nil {
 		contextStore, err := newNativeContextStore(store.db)
 		if err != nil {

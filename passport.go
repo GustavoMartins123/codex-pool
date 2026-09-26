@@ -56,6 +56,7 @@ type Principal struct {
 	LastSeenAt            time.Time       `json:"last_seen_at,omitempty"`
 	AvatarUpdatedAt       *time.Time      `json:"avatar_updated_at,omitempty"`
 	WebAuthnUserID        []byte          `json:"webauthn_user_id,omitempty"`
+	MaxReasoningEffort    string          `json:"max_reasoning_effort,omitempty"`
 }
 
 type ClientCredential struct {

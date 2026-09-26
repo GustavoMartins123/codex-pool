@@ -25,13 +25,16 @@ var codexEffortRank = map[string]int{
 // suffix) and by raw client IP, so a single noisy machine can be capped
 // without affecting the rest of that principal's clients.
 type effortCap struct {
-	mu      sync.RWMutex
-	users   map[string]string
-	origins map[string]string
+	mu           sync.RWMutex
+	users        map[string]string
+	origins      map[string]string
+	dynamicUsers map[string]string
 }
 
 func newEffortCap(users, origins map[string]string) *effortCap {
-	c := &effortCap{}
+	c := &effortCap{
+		dynamicUsers: make(map[string]string),
+	}
 	c.reload(users, origins)
 	return c
 }
@@ -58,13 +61,33 @@ func (c *effortCap) reload(users, origins map[string]string) {
 	c.origins = normalized(origins)
 }
 
+func (c *effortCap) setDynamicUser(userID, effort string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dynamicUsers == nil {
+		c.dynamicUsers = make(map[string]string)
+	}
+	userID = strings.ToLower(strings.TrimSpace(userID))
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		delete(c.dynamicUsers, userID)
+		return
+	}
+	if _, ok := codexEffortRank[effort]; ok {
+		c.dynamicUsers[userID] = effort
+	}
+}
+
 func (c *effortCap) configured() bool {
 	if c == nil {
 		return false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.users) > 0 || len(c.origins) > 0
+	return len(c.users) > 0 || len(c.origins) > 0 || len(c.dynamicUsers) > 0
 }
 
 // limitFor returns the strictest configured cap for this identity, or "" when
@@ -76,7 +99,7 @@ func (c *effortCap) limitFor(userID, clientIP string) string {
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if len(c.users) == 0 && len(c.origins) == 0 {
+	if len(c.users) == 0 && len(c.origins) == 0 && len(c.dynamicUsers) == 0 {
 		return ""
 	}
 
@@ -92,10 +115,13 @@ func (c *effortCap) limitFor(userID, clientIP string) string {
 
 	if userID = strings.ToLower(strings.TrimSpace(userID)); userID != "" {
 		consider(c.users[userID])
+		consider(c.dynamicUsers[userID])
 		// A credential-scoped ID ("principal-c-client") must also honor a rule
 		// written against the bare principal.
 		if principal, _ := splitClientIdentity(userID); principal != userID {
-			consider(c.users[strings.ToLower(principal)])
+			principalLower := strings.ToLower(principal)
+			consider(c.users[principalLower])
+			consider(c.dynamicUsers[principalLower])
 		}
 	}
 	if clientIP = strings.ToLower(strings.TrimSpace(clientIP)); clientIP != "" {

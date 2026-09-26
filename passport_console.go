@@ -27,6 +27,7 @@ type ConsolePrincipal struct {
 	BillableTokens       int64           `json:"billable_tokens"`
 	RequestCount         int64           `json:"request_count"`
 	APIEquivalentCostUSD float64         `json:"api_equivalent_cost_usd"`
+	MaxReasoningEffort   string          `json:"max_reasoning_effort,omitempty"`
 }
 
 func (p *PassportStore) consolePrincipals(usage []PrincipalUsageSummary) []ConsolePrincipal {
@@ -51,7 +52,7 @@ func (p *PassportStore) consolePrincipals(usage []PrincipalUsageSummary) []Conso
 			lastSeenCopy := lastSeen
 			lastSeenAt = &lastSeenCopy
 		}
-		out = append(out, ConsolePrincipal{ID: principal.ID, Kind: principal.Kind, Status: principal.Status, Note: principal.Note, DisplayName: principal.DisplayName, Username: principal.Username, Email: principal.Email, AvatarURL: avatar, ExpiresAt: principal.ExpiresAt, CreatedAt: principal.CreatedAt, LastSeenAt: lastSeenAt, BillableTokens: item.BillableTokens, RequestCount: item.RequestCount, APIEquivalentCostUSD: item.APIEquivalentCostUSD})
+		out = append(out, ConsolePrincipal{ID: principal.ID, Kind: principal.Kind, Status: principal.Status, Note: principal.Note, DisplayName: principal.DisplayName, Username: principal.Username, Email: principal.Email, AvatarURL: avatar, ExpiresAt: principal.ExpiresAt, CreatedAt: principal.CreatedAt, LastSeenAt: lastSeenAt, BillableTokens: item.BillableTokens, RequestCount: item.RequestCount, APIEquivalentCostUSD: item.APIEquivalentCostUSD, MaxReasoningEffort: principal.MaxReasoningEffort})
 	}
 	p.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
