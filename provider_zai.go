@@ -29,6 +29,12 @@ func (p *ZAIProvider) Type() AccountType {
 
 type ZAIAuthJSON struct {
 	APIKey           string   `json:"api_key"`
+	AuthType         string   `json:"auth_type,omitempty"`
+	UserID           string   `json:"user_id,omitempty"`
+	BusinessToken    string   `json:"business_token,omitempty"`
+	ZCodeJWT         string   `json:"zcode_jwt,omitempty"`
+	LinkedAt         string   `json:"linked_at,omitempty"`
+	AddedAt          string   `json:"added_at,omitempty"`
 	PlanType         string   `json:"plan_type,omitempty"`
 	Label            string   `json:"label,omitempty"`
 	Email            string   `json:"email,omitempty"`
@@ -48,6 +54,12 @@ func (p *ZAIProvider) LoadAccount(name, path string, data []byte) (*Account, err
 	var zj ZAIAuthJSON
 	if err := json.Unmarshal(data, &zj); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if zj.AuthType == "oauth" && (zj.APIKey == "" || zj.UserID == "" || zj.BusinessToken == "" || zj.ZCodeJWT == "" || zj.PlanType != "coding_plan") {
+		return nil, fmt.Errorf("parse %s: incomplete Z.ai OAuth account", path)
+	}
+	if zj.AuthType != "" && zj.AuthType != "oauth" {
+		return nil, fmt.Errorf("parse %s: unsupported Z.ai auth type %q", path, zj.AuthType)
 	}
 	if zj.APIKey == "" {
 		return nil, nil
