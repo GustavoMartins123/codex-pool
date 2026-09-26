@@ -22,6 +22,10 @@ type ConfigFile struct {
 	AdminToken       string  `toml:"admin_token"`
 	TierThreshold    float64 `toml:"tier_threshold"` // Secondary usage % threshold for tier preference (default 0.15)
 
+	// ExhaustionWaitSeconds holds requests while all accounts of a type are
+	// usage-exhausted, instead of failing fast with 503. 0 keeps the default.
+	ExhaustionWaitSeconds int64 `toml:"exhaustion_wait_seconds"`
+
 	ModelAliases   map[string]string                `toml:"model_aliases"`
 
 	// Caps on Codex reasoning effort, keyed by pool user ID and by raw client

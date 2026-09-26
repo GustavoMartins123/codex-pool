@@ -64,6 +64,7 @@ type config struct {
 	flushInterval              time.Duration
 	usageRefresh               time.Duration
 	maxAttempts                int
+	exhaustionWait             time.Duration // Hold requests while all accounts of a type are usage-exhausted (0 = fail fast)
 	storePath                  string
 	retentionDays              int
 	legacyFriendCode           string
@@ -229,6 +230,16 @@ func buildConfig() *config {
 		}
 	}
 	cfg.maxAttempts = getConfigInt("PROXY_MAX_ATTEMPTS", fileCfg.MaxAttempts, 3)
+	// Hold requests when every account of a type sits at the usage hard-exclude
+	// thresholds, instead of failing fast with 503. 0 disables the hold.
+	cfg.exhaustionWait = 15 * time.Minute
+	if v := getenv("PROXY_EXHAUSTION_WAIT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.exhaustionWait = time.Duration(n) * time.Second
+		}
+	} else if fileCfg.ExhaustionWaitSeconds > 0 {
+		cfg.exhaustionWait = time.Duration(fileCfg.ExhaustionWaitSeconds) * time.Second
+	}
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
 	cfg.legacyFriendCode = getConfigString("FRIEND_CODE", fileCfg.LegacyFriendCode, "")
 	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
@@ -2750,6 +2761,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	exclude := map[string]bool{}
+	exhaustionRetries := 0
 	var lastErr error
 	var lastStatus int
 	var fallbackApplied bool
@@ -2906,6 +2918,19 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					continue
 				case <-ctx.Done():
 				}
+			}
+
+			// All accounts usage-exhausted (primary/secondary windows at the
+			// hard-exclude thresholds). Hold the request until a window resets
+			// instead of failing fast, bounded by exhaustion_wait and the
+			// request deadline.
+			if h.cfg.exhaustionWait > 0 && exhaustionRetries < 3 && h.waitForUsageReset(ctx, accountType, reqID) {
+				exhaustionRetries++
+				exclude = map[string]bool{}
+				if attempt == attempts {
+					attempts++
+				}
+				continue
 			}
 
 			if lastErr != nil {
