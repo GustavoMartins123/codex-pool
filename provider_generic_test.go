@@ -122,12 +122,12 @@ func TestGenericProviderCanJoinFallbackGraph(t *testing.T) {
 }
 
 func TestGenericProviderUsesSmartRouter(t *testing.T) {
-	_, first := testGenericProvider(t)
-	second := *first
+	provider, first := testGenericProvider(t)
+	second := provider.syntheticAccount()
 	second.ID = "configured-local-vllm-2"
 	first.Usage.SecondaryUsed = 0.95
 	second.Usage.SecondaryUsed = 0.10
-	pool := newPoolState([]*Account{first, &second}, false)
+	pool := newPoolState([]*Account{first, second}, false)
 	selected, profile, _, _, _, _ := pool.candidateWithRoutingTrace(
 		"", nil, first.Type, "", "", "local-vllm/qwen", RoutingQuotaSaver,
 	)
