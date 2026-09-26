@@ -324,6 +324,7 @@ export function App() {
   const [booting, setBooting] = useState(true);
   const [view, setView] = useState<View>(() => viewFromSearch(window.location.search));
   const [pendingJoin, setPendingJoin] = useState<{ token: string; current: PassportPrincipal } | null>(null);
+  const [joinBusy, setJoinBusy] = useState(false);
   const [recoveryToken, setRecoveryToken] = useState("");
   const [joinError, setJoinError] = useState("");
   const [stats, setStats] = useState<PoolStats | null>(null);
@@ -463,7 +464,9 @@ export function App() {
   if (booting) return <BootScreen />;
   if (recoveryToken && !passport) return <MemberRecovery token={recoveryToken} onAccess={(next) => { setRecoveryToken(""); setPassport(next); setView("mine"); refresh(); }} />;
   if (pendingJoin) {
-    return <JoinSwitch current={pendingJoin.current} onCancel={() => { setPassport(pendingJoin.current); setView("mine"); setPendingJoin(null); }} onConfirm={async () => {
+    return <JoinSwitch current={pendingJoin.current} busy={joinBusy} onCancel={() => { setPassport(pendingJoin.current); setView("mine"); setPendingJoin(null); }} onConfirm={async () => {
+      if (joinBusy) return;
+      setJoinBusy(true);
       try {
         const result = await passportJoin(pendingJoin.token, true);
         if (result.principal) {
@@ -474,6 +477,8 @@ export function App() {
       } catch (cause) {
         setPendingJoin(null);
         setJoinError(cause instanceof Error ? cause.message : "This pass is unavailable");
+      } finally {
+        setJoinBusy(false);
       }
     }} />;
   }
@@ -577,13 +582,13 @@ function JoinUnavailable() {
   );
 }
 
-function JoinSwitch({ current, onConfirm, onCancel }: { current: PassportPrincipal; onConfirm: () => void | Promise<void>; onCancel: () => void }) {
+function JoinSwitch({ current, busy, onConfirm, onCancel }: { current: PassportPrincipal; busy: boolean; onConfirm: () => void | Promise<void>; onCancel: () => void }) {
   const who = current.display_name || current.email || current.id.slice(0, 8);
   return (
     <Threshold title="Switch accounts?" lede={`You are signed in as ${who}. Accepting this pass replaces that session in this browser.`}>
       <div className="threshold-actions">
-        <button className="threshold-submit" onClick={onConfirm}>Accept the pass</button>
-        <button type="button" className="threshold-alt" onClick={onCancel}>Stay signed in as {who}</button>
+        <button className="threshold-submit" disabled={busy} onClick={onConfirm}>{busy ? "Accepting…" : "Accept the pass"}</button>
+        <button type="button" className="threshold-alt" disabled={busy} onClick={onCancel}>Stay signed in as {who}</button>
       </div>
     </Threshold>
   );
@@ -1013,7 +1018,7 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
       </header>
       {showMint && <form className="access-form client-create" onSubmit={create}>
         <label><span>Label</span><input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="MacBook, server, work laptop…" maxLength={80} required autoFocus /></label>
-        <button className="gold-button" disabled={busy === "create-client"}>{busy === "create-client" ? "Creating…" : "Create client"}</button>
+        <button className="gold-button" disabled={Boolean(busy)}>{busy === "create-client" ? "Creating…" : "Create client"}</button>
         {clients.length > 0 && <button type="button" className="quiet-button" onClick={() => setShowMint(false)}>Cancel</button>}
       </form>}
       {clientsLoading ? <div className="empty-state">Loading clients…</div> : clients.length === 0 && !showMint ? <div className="empty-state client-empty"><p>No client credentials yet.</p><button className="gold-button" onClick={() => setShowMint(true)}>Create first client</button></div> : clients.map((client) => <article key={client.id} className="client-card">
@@ -1267,9 +1272,14 @@ function Passes() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Drops pass-list responses superseded by a newer refresh so a pre-revoke
+  // snapshot cannot repaint a revoked pass as active.
+  const [refreshGuard] = useState(() => new ResponseVersion());
   const refresh = useCallback(async () => {
+    const version = refreshGuard.begin();
     try {
       const items = await loadPasses();
+      if (!refreshGuard.isCurrent(version)) return;
       setPasses(items);
       if (initialLoad.current) {
         setShowForm(shouldShowPassFormOnLoad(items));
@@ -1277,11 +1287,12 @@ function Passes() {
       }
       setError("");
     } catch (cause) {
+      if (!refreshGuard.isCurrent(version)) return;
       setError(cause instanceof Error ? cause.message : "Unable to load passes. Try again.");
     } finally {
-      setLoading(false);
+      if (refreshGuard.isCurrent(version)) setLoading(false);
     }
-  }, []);
+  }, [refreshGuard]);
   useEffect(() => { refresh(); }, [refresh]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1328,7 +1339,7 @@ function Passes() {
         <div className="passport-avatar small">{pass.avatar_url ? <img src={pass.avatar_url} alt="" /> : <span>{(pass.display_name || "G").slice(0, 2).toUpperCase()}</span>}</div>
         <div className="pass-identity"><strong>{pass.note}</strong><span>{pass.display_name || pass.id.slice(0, 8)}</span><small>{pass.expires_at ? `Expires ${new Date(pass.expires_at).toLocaleDateString()}` : "No expiry"} · {pass.clients} client{pass.clients === 1 ? "" : "s"}</small></div>
         <span className={classNames("pass-status", pass.status !== "active" && "inactive")}>{pass.status !== "active" ? pass.status : ""}</span>
-        <div className="row-actions"><CopyButton text={window.location.origin + pass.link} label="Copy link" /><button disabled={busy} onClick={() => beginEdit(pass)}>Edit</button><button disabled={busy} onClick={() => window.confirm(`Replace the invitation link for ${pass.note}? The old link will stop working.`) && act(async () => { const result = await rotatePassLink(pass.id); setFresh({ link: result.link }); })}>Replace link</button>{pass.status === "active" ? <button className="danger-action" disabled={busy} onClick={() => window.confirm(`Revoke access for ${pass.note}? Their ${pass.clients} client${pass.clients === 1 ? "" : "s"} will lose pool access.`) && act(() => revokePass(pass.id))}>Revoke</button> : <button disabled={busy} onClick={() => act(() => restorePass(pass.id))}>Restore</button>}</div>
+        <div className="row-actions"><CopyButton text={window.location.origin + pass.link} label="Copy link" /><button disabled={busy || loading} onClick={() => beginEdit(pass)}>Edit</button><button disabled={busy || loading} onClick={() => window.confirm(`Replace the invitation link for ${pass.note}? The old link will stop working.`) && act(async () => { const result = await rotatePassLink(pass.id); setFresh({ link: result.link }); })}>Replace link</button>{pass.status === "active" ? <button className="danger-action" disabled={busy || loading} onClick={() => window.confirm(`Revoke access for ${pass.note}? Their ${pass.clients} client${pass.clients === 1 ? "" : "s"} will lose pool access.`) && act(() => revokePass(pass.id))}>Revoke</button> : <button disabled={busy || loading} onClick={() => act(() => restorePass(pass.id))}>Restore</button>}</div>
       </article>)}
     </div>
   </section>;
@@ -1491,7 +1502,7 @@ function PassportConsole({ principal }: { principal: PassportPrincipal }) {
       <form className="access-form" onSubmit={issueMemberLink}>
         <label><span>Email</span><input type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /></label>
         <label><span>Name</span><input value={memberName} onChange={(event) => setMemberName(event.target.value)} maxLength={48} /></label>
-        <button className="gold-button" disabled={busy === "onboard"}>{busy === "onboard" ? "Creating…" : "Create invite link"}</button>
+        <button className="gold-button" disabled={Boolean(busy)}>{busy === "onboard" ? "Creating…" : "Create invite link"}</button>
         <button type="button" className="quiet-button" onClick={() => setShowMemberForm(false)}>Cancel</button>
       </form>
     </div>}
@@ -1606,6 +1617,16 @@ function Header({ stats, loading, operator, onRefresh, onLock }: {
 type NavGroup = { label: string; items: Array<[View, string]> };
 
 function Navigation({ view, principal, onChange, onSignOut }: { view: View; principal: PassportPrincipal | null; onChange: (view: View) => void; onSignOut: () => void | Promise<void> }) {
+  const [signingOut, setSigningOut] = useState(false);
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await onSignOut();
+    } finally {
+      setSigningOut(false);
+    }
+  };
   const groups: NavGroup[] = principal?.kind === "guest"
     ? [{ label: "Your access", items: [["mine", "Usage"], ["setup", "Setup"]] }]
     : principal?.kind === "operator"
@@ -1627,7 +1648,7 @@ function Navigation({ view, principal, onChange, onSignOut }: { view: View; prin
             {groups.map((group) => <optgroup label={group.label} key={group.label}>{group.items.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</optgroup>)}
           </select>
         </label>
-        <button onClick={onSignOut}>Sign out</button>
+        <button onClick={signOut} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button>
       </div>
       <div className="nav-groups">
         {groups.map((group) => (
@@ -1644,7 +1665,7 @@ function Navigation({ view, principal, onChange, onSignOut }: { view: View; prin
       <div className="nav-account">
         <span>{principal?.display_name || principal?.username || principal?.email || "Pool member"}</span>
         <small>{principal?.kind ?? "member"}</small>
-        <button onClick={onSignOut}>Sign out</button>
+        <button onClick={signOut} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button>
       </div>
     </nav>
   );
@@ -2825,12 +2846,17 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
 	      if (event.data.status === "error") setError(event.data.error || "Google sign-in failed");
 	    };
 	    window.addEventListener("message", onMessage);
+	    let polling = false;
 	    const timer = window.setInterval(async () => {
+	      if (polling) return;
+	      polling = true;
 	      try {
 	        const status = await antigravityOAuthStatus(oauth.sessionID!);
+	        if (stopped) return;
 	        if (status.status === "complete") { window.clearInterval(timer); await complete(); }
 	        if (status.status === "error") { window.clearInterval(timer); setError(status.error || "Google sign-in failed"); }
 	      } catch { /* polling is only a fallback for a missed popup message */ }
+	      finally { polling = false; }
 	    }, 1200);
 	    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener("message", onMessage); };
 	  }, [oauth?.sessionID, onAdded, provider]);
