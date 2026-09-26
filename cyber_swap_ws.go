@@ -91,15 +91,54 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 
 	upstreamConn, upstreamResp, subprotocols, err := dialUpstreamWebSocket(ctx, opts.InitialOutURL, opts.InitialUpstreamHeaders, clientReq.Header, opts.ReadLimit, opts.CompressionEnabled)
 	if err != nil {
-		if upstreamResp != nil {
-			if upstreamTokenRevoked(upstreamResp) {
-				h.disableAccountPermanently(opts.InitialAccount, opts.ReqID, "upstream token revoked")
+		// A rejected account credential is recoverable: refresh and redial the
+		// same account once, then fall over to another eligible account
+		// before giving up. Exhausting the pool is reported as a retryable
+		// upstream condition, never as a client credential failure.
+		excluded := map[string]bool{opts.InitialAccount.ID: true}
+		for attempt := 0; err != nil && upstreamResp != nil && upstreamResp.StatusCode == http.StatusUnauthorized; attempt++ {
+			if h.retryPoolAuth(ctx, opts.InitialAccount) {
+				_ = upstreamResp.Body.Close()
+				upstreamConn, upstreamResp, opts.InitialContextAccount, err = h.dialSwappedUpstream(ctx, opts, opts.InitialAccount, subprotocols)
+				if err == nil || upstreamResp == nil || upstreamResp.StatusCode != http.StatusUnauthorized {
+					break
+				}
 			}
-			status := writeWebSocketRejection(w, upstreamResp)
-			return codexCyberSwapResult{statusCode: status, finalAccount: opts.InitialAccount}
+			h.applyWebSocketStatusEffects(opts.ReqID, opts.InitialAccount, "", false, false, http.StatusUnauthorized)
+			if attempt+1 >= h.cfg.maxAttempts {
+				break
+			}
+			next := h.pool.candidate(opts.ConversationID, excluded, AccountTypeCodex, opts.RequiredPlan, opts.ClientIP)
+			if next == nil {
+				break
+			}
+			_ = upstreamResp.Body.Close()
+			excluded[next.ID] = true
+			opts.InitialAccount = next
+			if opts.SetActiveAccount != nil {
+				opts.SetActiveAccount(next)
+			}
+			upstreamConn, upstreamResp, opts.InitialContextAccount, err = h.dialSwappedUpstream(ctx, opts, next, subprotocols)
 		}
-		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
-		return codexCyberSwapResult{err: err, finalAccount: opts.InitialAccount}
+		if err != nil {
+			if upstreamResp != nil {
+				if upstreamTokenRevoked(upstreamResp) {
+					h.disableAccountPermanently(opts.InitialAccount, opts.ReqID, "upstream token revoked")
+				}
+				// Withhold the upstream 401: a websocket upgrade rejected for
+				// account reasons must not read as a pool credential failure.
+				if upstreamResp.StatusCode == http.StatusUnauthorized {
+					_ = upstreamResp.Body.Close()
+					log.Printf("[%s] upstream authentication unavailable: account=%s path=websocket", opts.ReqID, opts.InitialAccount.ID)
+					writeUpstreamAuthError(w)
+					return codexCyberSwapResult{statusCode: http.StatusServiceUnavailable, finalAccount: opts.InitialAccount}
+				}
+				status := writeWebSocketRejection(w, upstreamResp)
+				return codexCyberSwapResult{statusCode: status, finalAccount: opts.InitialAccount}
+			}
+			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+			return codexCyberSwapResult{err: err, finalAccount: opts.InitialAccount}
+		}
 	}
 	turnState := upstreamResp.Header.Get("x-codex-turn-state")
 	if turnState != "" {

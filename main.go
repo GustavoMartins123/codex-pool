@@ -4437,6 +4437,12 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		r.Body = spooled.File
+		// A spooled body is not re-readable, so replay needs a fresh reader
+		// over the same section. Authentication recovery may issue the
+		// request twice and must send identical bytes both times.
+		r.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(io.NewSectionReader(spooled.File, 0, spooled.Size)), nil
+		}
 		r.ContentLength = spooled.Size
 		r.Header.Del("Content-Length")
 		authAccount = contextAuthSnapshot(acc)
@@ -4469,9 +4475,17 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	var reqSample *bytes.Buffer
 	var body io.Reader = r.Body
+	if r.GetBody != nil {
+		var err error
+		body, err = r.GetBody()
+		if err != nil {
+			http.Error(w, "request replay unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
 	if spooled == nil && h.cfg.logBodies && h.cfg.bodyLogLimit > 0 {
 		reqSample = &bytes.Buffer{}
-		body = io.TeeReader(r.Body, &limitedWriter{w: reqSample, n: h.cfg.bodyLogLimit})
+		body = io.TeeReader(body, &limitedWriter{w: reqSample, n: h.cfg.bodyLogLimit})
 	}
 
 	outReq, err := http.NewRequestWithContext(ctx, r.Method, outURL.String(), body)
@@ -4527,7 +4541,55 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+
+	// A 401 here means the account credential was rejected, not the client
+	// credential. Recover once by refreshing and replaying the identical body,
+	// so a mid-stream token expiry does not surface to the caller as an
+	// upstream 401 that looks like their own login failed.
+	if resp.StatusCode == http.StatusUnauthorized && r.GetBody != nil && h.retryPoolAuth(ctx, acc) {
+		_ = resp.Body.Close()
+		authAccount = contextAuthSnapshot(acc)
+		if spooled != nil {
+			if err := h.nativeContext.recordDispatch(contextScope(userID), spooled.contextMetadata, authAccount, clientIP); err != nil {
+				writeContextError(w, err)
+				return
+			}
+		}
+		retry := outReq.Clone(ctx)
+		retry.Body, err = r.GetBody()
+		if err != nil {
+			http.Error(w, "request replay unavailable", http.StatusInternalServerError)
+			return
+		}
+		provider.SetAuthHeaders(retry, authAccount)
+		resp, err = h.transport.RoundTrip(retry)
+		captureCodexResponseState(acc, resp, reqID)
+		if err != nil {
+			http.Error(w, "upstream request failed after authentication recovery", http.StatusBadGateway)
+			return
+		}
+	}
 	defer resp.Body.Close()
+
+	// The replay either succeeded or the credential is genuinely unusable.
+	// Report a retryable upstream condition and deliberately withhold the
+	// upstream 401 headers, which would otherwise read to the client as a
+	// rejection of its own pool token.
+	if resp.StatusCode == http.StatusUnauthorized {
+		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
+			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
+		}
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		if markedDead {
+			if err := saveAccount(acc); err != nil {
+				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
+			}
+		}
+		log.Printf("[%s] upstream authentication unavailable: account=%s path=streamed", reqID, acc.ID)
+		h.metrics.inc(strconv.Itoa(http.StatusServiceUnavailable), acc.ID)
+		writeUpstreamAuthError(w)
+		return
+	}
 
 	if h.cfg.logBodies && reqSample != nil && reqSample.Len() > 0 {
 		log.Printf("[%s] request body sample (%d bytes): %s", reqID, reqSample.Len(), safeText(reqSample.Bytes()))
@@ -4539,7 +4601,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		acc.Penalty += 0.2
 		acc.mu.Unlock()
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusForbidden {
 		// Log the error body for debugging
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		decompressed := bodyForInspection(nil, errBody) // nil request - will auto-detect gzip
@@ -4547,9 +4609,6 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		// Replace body so client still gets the error
 		resp.Body = io.NopCloser(bytes.NewReader(errBody))
 
-		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
-			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
-		}
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
 		if markedDead {
 			if err := saveAccount(acc); err != nil {
