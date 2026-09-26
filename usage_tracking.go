@@ -312,14 +312,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 			}
 			if isPermanentRefreshTokenError(err) {
 				if retireAfterRefreshFail(a, err, now) {
-					a.mu.Lock()
-					a.Dead = true
-					a.Penalty += 100.0
-					a.mu.Unlock()
-					log.Printf("marking account %s as dead: refresh token revoked/invalid", a.ID)
-					if err := saveAccount(a); err != nil {
-						log.Printf("warning: failed to save dead account %s: %v", a.ID, err)
-					}
+					persistDeadAccount(a, "refresh token revoked/invalid")
 					return fmt.Errorf("refresh token invalid: %w", err)
 				}
 				a.mu.Lock()
@@ -374,6 +367,12 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// Codex 401s with a still-valid access JWT are not a refresh signal.
+		accType := a.Type
+		if accType == AccountTypeCodex && codexAccessFarFromExpiry(a, now) {
+			return fmt.Errorf("usage unauthorized: %s", resp.Status)
+		}
+
 		// Got 401/403 - force a refresh attempt to recover (bypass needsRefresh check)
 		a.mu.Lock()
 		hasRefreshToken := a.RefreshToken != ""
@@ -408,13 +407,8 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 					return nil
 				}
 				if isPermanentRefreshTokenError(err) {
-					a.mu.Lock()
-					a.Dead = true
-					a.Penalty += 100.0
-					a.mu.Unlock()
-					log.Printf("marking account %s as dead: refresh token revoked", a.ID)
-					if err := saveAccount(a); err != nil {
-						log.Printf("warning: failed to save dead account %s: %v", a.ID, err)
+					if retireAfterRefreshFail(a, err, now) {
+						persistDeadAccount(a, "refresh token revoked")
 					}
 					return fmt.Errorf("refresh token invalid: %w", err)
 				}
@@ -426,14 +420,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 			}
 		} else {
 			// No refresh token - mark as dead
-			a.mu.Lock()
-			a.Dead = true
-			a.Penalty += 100.0
-			a.mu.Unlock()
-			log.Printf("marking account %s as dead: no refresh token and usage 401/403", a.ID)
-			if err := saveAccount(a); err != nil {
-				log.Printf("warning: failed to save dead account %s: %v", a.ID, err)
-			}
+			persistDeadAccount(a, "no refresh token and usage 401/403")
 			return fmt.Errorf("usage unauthorized, no refresh token: %s", resp.Status)
 		}
 	}
@@ -457,7 +444,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 	}
 	if planType, ok := payload["plan_type"].(string); ok && planType != "" {
 		a.mu.Lock()
-		a.PlanType = planType
+		a.PlanType = normalizeCodexPlanType(planType)
 		a.mu.Unlock()
 	}
 	log.Printf("usage fetch %s: 5hr=%.1f%% weekly=%.1f%%", a.ID, usagePrimaryUsed(whamSnap)*100, usageSecondaryUsed(whamSnap)*100)

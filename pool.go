@@ -523,8 +523,21 @@ func accountTier(accType AccountType, planType string) int {
 	return 2
 }
 
+// normalizeCodexPlanType maps Codex plan variants to their canonical form.
+// Business/self-serve variants such as "self_serve_business_prolite" carry
+// the same quota as Pro Lite, so they normalize to "prolite". Matching is
+// substring-based so future "business_prolite" variants work without a new
+// special case.
+func normalizeCodexPlanType(planType string) string {
+	p := strings.ToLower(strings.TrimSpace(planType))
+	if strings.Contains(p, "prolite") {
+		return "prolite"
+	}
+	return p
+}
+
 func isCodexProAccessPlan(planType string) bool {
-	switch strings.ToLower(strings.TrimSpace(planType)) {
+	switch normalizeCodexPlanType(planType) {
 	case "pro", "prolite":
 		return true
 	default:
@@ -1106,6 +1119,9 @@ func planMatchesRequired(planType, requiredPlan string) bool {
 	}
 	plan := strings.ToLower(strings.TrimSpace(planType))
 	required := strings.ToLower(strings.TrimSpace(requiredPlan))
+	if normalizeCodexPlanType(plan) == normalizeCodexPlanType(required) {
+		return true
+	}
 	if required == requiredPlanClaudePremium {
 		return strings.HasPrefix(plan, "max") || strings.HasPrefix(plan, "team")
 	}

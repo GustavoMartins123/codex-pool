@@ -83,6 +83,9 @@ var subscriptionCosts = map[subscriptionKey]struct {
 // getSubscriptionCost returns monthly cost and label for an account.
 func getSubscriptionCost(accType AccountType, planType string) (monthly float64, label string) {
 	planType = strings.ToLower(strings.TrimSpace(planType))
+	if accType == AccountTypeCodex {
+		planType = normalizeCodexPlanType(planType)
+	}
 	// Try exact match first
 	if info, ok := subscriptionCosts[subscriptionKey{accType, planType}]; ok {
 		return info.monthly, info.label

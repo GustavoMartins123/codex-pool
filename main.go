@@ -6004,15 +6004,9 @@ func (h *proxyHandler) tryOnce(
 				errStr := err.Error()
 				if isRateLimitError(err) {
 					h.applyRateLimit(acc, nil)
-				} else if strings.Contains(errStr, "invalid_grant") || strings.Contains(errStr, "refresh_token_reused") {
-					// If refresh token is permanently invalid, mark account as dead immediately
-					acc.mu.Lock()
-					acc.Dead = true
-					acc.Penalty += 100.0
-					acc.mu.Unlock()
-					log.Printf("[%s] marking account %s as dead: refresh token revoked/invalid", reqID, acc.ID)
-					if err := saveAccount(acc); err != nil {
-						log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
+				} else if isPermanentRefreshTokenError(err) {
+					if retireAfterRefreshFail(acc, err, time.Now()) {
+						persistDeadAccount(acc, "refresh token revoked/invalid")
 					}
 					refreshFailed = true
 				} else if !strings.Contains(errStr, "rate limited") {
@@ -6125,6 +6119,13 @@ func (h *proxyHandler) needsRefresh(a *Account) bool {
 		return true
 	}
 
+	// Codex access JWTs last about ten days. Refresh from the usage poller
+	// when that window is nearly closed instead of spending the refresh token
+	// on every WHAM/proxy 401.
+	if a.Type == AccountTypeCodex && !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now.Add(codexRefreshHeadroom)) {
+		return true
+	}
+
 	// Other providers refresh after expiry and recover early invalidation with
 	// their existing same-account 401 retry.
 	if !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now) {
@@ -6139,6 +6140,10 @@ func (h *proxyHandler) needsRefresh(a *Account) bool {
 
 // refreshMinInterval is the minimum time between ANY refresh attempts globally
 const refreshMinInterval = 5 * time.Second
+
+// codexRefreshHeadroom is how soon before access-token expiry the poller
+// should rotate. Codex access JWTs carry an `exp` claim of about ten days.
+const codexRefreshHeadroom = 6 * time.Hour
 
 // refreshPerAccountInterval is the minimum time between refresh attempts for a single account
 // This is persisted to disk and survives restarts, preventing hammering OAuth endpoints
@@ -6193,6 +6198,18 @@ func (h *proxyHandler) refreshAccount(ctx context.Context, a *Account) error {
 }
 
 func (h *proxyHandler) refreshAccountAfterAuthFailure(ctx context.Context, a *Account) error {
+	if a == nil {
+		return errors.New("nil account")
+	}
+	if a.Type == AccountTypeCodex {
+		// A 401 with a still-valid access JWT is not permission to spend the
+		// refresh token. OpenAI treats reuse as "session has ended" and can
+		// log out every copy of that login.
+		if codexAccessFarFromExpiry(a, time.Now()) {
+			return fmt.Errorf("codex access token still live, skipping refresh")
+		}
+		return h.refreshAccount(ctx, a)
+	}
 	a.mu.Lock()
 	a.LastRefresh = time.Time{}
 	a.RefreshBlocked = false
