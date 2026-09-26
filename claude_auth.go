@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -29,7 +30,10 @@ const (
 	ClaudeOAuthProfileURL    = "https://api.anthropic.com/api/oauth/profile"
 	ClaudeOAuthAllScopes     = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 	ClaudeOAuthRefreshScopes = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+	claudeOAuthHTTPTimeout   = 30 * time.Second
 )
+
+var claudeOAuthHTTPClient = &http.Client{Timeout: claudeOAuthHTTPTimeout}
 
 // PKCE contains the code verifier and challenge for OAuth PKCE flow.
 type PKCE struct {
@@ -142,7 +146,10 @@ func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	ctx, cancel := context.WithTimeout(context.Background(), claudeOAuthHTTPTimeout)
+	defer cancel()
+	req = req.WithContext(ctx)
+	resp, err := claudeOAuthHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -163,6 +170,10 @@ func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) 
 
 // ClaudeRefresh refreshes an access token using the refresh token.
 func ClaudeRefresh(refreshToken string) (*ClaudeTokenResponse, error) {
+	return ClaudeRefreshWithContext(context.Background(), refreshToken, nil)
+}
+
+func ClaudeRefreshWithContext(ctx context.Context, refreshToken string, transport http.RoundTripper) (*ClaudeTokenResponse, error) {
 	body := map[string]string{
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
@@ -175,13 +186,20 @@ func ClaudeRefresh(refreshToken string) (*ClaudeTokenResponse, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, ClaudeOAuthTokenURL, bytes.NewReader(bodyJSON))
+	refreshCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(refreshCtx, http.MethodPost, ClaudeOAuthTokenURL, bytes.NewReader(bodyJSON))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := claudeOAuthHTTPClient
+	if transport != nil {
+		client = &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +211,7 @@ func ClaudeRefresh(refreshToken string) (*ClaudeTokenResponse, error) {
 	}
 
 	var result ClaudeTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
@@ -208,7 +226,14 @@ type ClaudeProfileInfo struct {
 
 // FetchClaudeProfile calls /api/oauth/profile to get the account's plan info.
 func FetchClaudeProfile(accessToken string) (*ClaudeProfileInfo, error) {
-	req, err := http.NewRequest(http.MethodGet, ClaudeOAuthProfileURL, nil)
+	return FetchClaudeProfileWithContext(context.Background(), accessToken, nil)
+}
+
+func FetchClaudeProfileWithContext(ctx context.Context, accessToken string, transport http.RoundTripper) (*ClaudeProfileInfo, error) {
+	profileCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(profileCtx, http.MethodGet, ClaudeOAuthProfileURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +247,11 @@ func FetchClaudeProfile(accessToken string) (*ClaudeProfileInfo, error) {
 	req.Header.Set("Accept", "application/json")
 	ccStainlessHeaders(req.Header.Set)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := claudeOAuthHTTPClient
+	if transport != nil {
+		client = &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +304,14 @@ func extractProfileInfo(profile map[string]any) *ClaudeProfileInfo {
 // discover the real account UUID for an OAuth token. This UUID is injected
 // into metadata.user_id to match real Claude Code traffic.
 func FetchClaudeAccountUUID(accessToken string, transport http.RoundTripper) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, "https://api.anthropic.com/api/claude_cli/bootstrap", nil)
+	return FetchClaudeAccountUUIDWithContext(context.Background(), accessToken, transport)
+}
+
+func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, transport http.RoundTripper) (string, error) {
+	uuidCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(uuidCtx, http.MethodGet, "https://api.anthropic.com/api/claude_cli/bootstrap", nil)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +325,7 @@ func FetchClaudeAccountUUID(accessToken string, transport http.RoundTripper) (st
 	req.Header.Set("Accept", "application/json")
 	ccStainlessHeaders(req.Header.Set)
 
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -365,8 +401,29 @@ func SaveClaudeAccount(poolDir, accountID string, tokens *ClaudeTokenResponse) e
 
 // saveClaudeAccount persists a Claude OAuth account back to its JSON file.
 func saveClaudeAccount(a *Account) error {
+	if a == nil {
+		return errors.New("nil account")
+	}
+	a.mu.Lock()
+	file := a.File
+	accessToken := a.AccessToken
+	refreshToken := a.RefreshToken
+	expiresAt := a.ExpiresAt
+	planType := a.PlanType
+	rateLimitTier := a.RateLimitTier
+	lastRefresh := a.LastRefresh
+	allowedSourceIPs := append([]string(nil), a.AllowedSourceIPs...)
+	dead := a.Dead
+	disabled := a.Disabled
+	accountUUID := a.AccountUUID
+	a.mu.Unlock()
+
+	if strings.TrimSpace(file) == "" {
+		return errors.New("cannot save account without file path")
+	}
+
 	// Read existing file to preserve any extra fields
-	raw, err := os.ReadFile(a.File)
+	raw, err := os.ReadFile(file)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -374,7 +431,7 @@ func saveClaudeAccount(a *Account) error {
 	var root map[string]any
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &root); err != nil {
-			return fmt.Errorf("parse %s: %w", a.File, err)
+			return fmt.Errorf("parse %s: %w", file, err)
 		}
 	} else {
 		root = make(map[string]any)
@@ -383,9 +440,9 @@ func saveClaudeAccount(a *Account) error {
 
 	// Update OAuth data
 	oauth := map[string]any{
-		"accessToken":  a.AccessToken,
-		"refreshToken": a.RefreshToken,
-		"expiresAt":    a.ExpiresAt.UnixMilli(),
+		"accessToken":  accessToken,
+		"refreshToken": refreshToken,
+		"expiresAt":    expiresAt.UnixMilli(),
 	}
 
 	// Preserve existing fields like scopes, and carry forward subscriptionType/rateLimitTier
@@ -403,23 +460,23 @@ func saveClaudeAccount(a *Account) error {
 	}
 
 	// Override with in-memory values if they're real (not the default "claude")
-	if a.PlanType != "" && a.PlanType != "claude" {
-		oauth["subscriptionType"] = a.PlanType
+	if planType != "" && planType != "claude" {
+		oauth["subscriptionType"] = planType
 	}
-	if a.RateLimitTier != "" {
-		oauth["rateLimitTier"] = a.RateLimitTier
+	if rateLimitTier != "" {
+		oauth["rateLimitTier"] = rateLimitTier
 	}
 
 	root["claudeAiOauth"] = oauth
 
 	// Save last_refresh at root level for rate limiting across restarts
-	if !a.LastRefresh.IsZero() {
-		root["last_refresh"] = a.LastRefresh.UTC().Format(time.RFC3339Nano)
+	if !lastRefresh.IsZero() {
+		root["last_refresh"] = lastRefresh.UTC().Format(time.RFC3339Nano)
 	}
-	if len(a.AllowedSourceIPs) > 0 {
-		root["allowed_source_ips"] = a.AllowedSourceIPs
-		if len(a.AllowedSourceIPs) == 1 {
-			root["allowed_ip"] = a.AllowedSourceIPs[0]
+	if len(allowedSourceIPs) > 0 {
+		root["allowed_source_ips"] = allowedSourceIPs
+		if len(allowedSourceIPs) == 1 {
+			root["allowed_ip"] = allowedSourceIPs[0]
 		} else {
 			delete(root, "allowed_ip")
 		}
@@ -430,32 +487,42 @@ func saveClaudeAccount(a *Account) error {
 
 	// Persist account state flags so disabled/dead accounts stay unavailable
 	// across reloads and restarts.
-	if a.Dead {
+	if dead {
 		root["dead"] = true
 	} else {
 		delete(root, "dead")
 	}
-	if a.Disabled {
+	if disabled {
 		root["disabled"] = true
 	} else {
 		delete(root, "disabled")
 	}
 
 	// Persist learned account UUID
-	if a.AccountUUID != "" {
-		root["account_uuid"] = a.AccountUUID
+	if accountUUID != "" {
+		root["account_uuid"] = accountUUID
 	}
 
-	return atomicWriteJSON(a.File, root)
+	return atomicWriteJSON(file, root)
 }
 
 // RefreshClaudeAccountTokens refreshes tokens for a Claude account and updates it.
 func RefreshClaudeAccountTokens(acc *Account) error {
-	if acc.RefreshToken == "" {
+	return RefreshClaudeAccountTokensWithContext(context.Background(), acc, http.DefaultTransport)
+}
+
+func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, transport http.RoundTripper) error {
+	if acc == nil {
+		return errors.New("nil account")
+	}
+	acc.mu.Lock()
+	refreshToken := acc.RefreshToken
+	acc.mu.Unlock()
+	if refreshToken == "" {
 		return errors.New("no refresh token")
 	}
 
-	tokens, err := ClaudeRefresh(acc.RefreshToken)
+	tokens, err := ClaudeRefreshWithContext(ctx, refreshToken, transport)
 	if err != nil {
 		return err
 	}
@@ -468,10 +535,12 @@ func RefreshClaudeAccountTokens(acc *Account) error {
 	acc.ExpiresAt = time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
 	acc.LastRefresh = time.Now().UTC()
 	acc.Dead = false
+	accessToken := acc.AccessToken
+	accountUUID := acc.AccountUUID
 	acc.mu.Unlock()
 
 	// Fetch updated plan info from the profile API
-	if profile, err := FetchClaudeProfile(acc.AccessToken); err == nil && profile != nil {
+	if profile, err := FetchClaudeProfileWithContext(ctx, accessToken, transport); err == nil && profile != nil {
 		acc.mu.Lock()
 		if profile.SubscriptionType != "" {
 			acc.PlanType = profile.SubscriptionType
@@ -486,8 +555,8 @@ func RefreshClaudeAccountTokens(acc *Account) error {
 	}
 
 	// Re-probe account UUID if we don't have one yet
-	if acc.AccountUUID == "" {
-		if uuid, err := FetchClaudeAccountUUID(acc.AccessToken, http.DefaultTransport); err == nil && uuid != "" {
+	if accountUUID == "" {
+		if uuid, err := FetchClaudeAccountUUIDWithContext(ctx, accessToken, transport); err == nil && uuid != "" {
 			acc.mu.Lock()
 			acc.AccountUUID = uuid
 			acc.mu.Unlock()

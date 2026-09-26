@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -103,13 +104,19 @@ func (p *ClaudeProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 }
 
 func (p *ClaudeProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
+	if acc == nil {
+		return errors.New("nil account")
+	}
+	acc.mu.Lock()
+	access := acc.AccessToken
+	acc.mu.Unlock()
 	// Only OAuth tokens (not API keys) can be refreshed
-	if !strings.HasPrefix(acc.AccessToken, "sk-ant-oat") {
+	if !strings.HasPrefix(access, "sk-ant-oat") {
 		// API keys don't need refresh
 		return nil
 	}
 
-	return RefreshClaudeAccountTokens(acc)
+	return RefreshClaudeAccountTokensWithContext(ctx, acc, transport)
 }
 
 func (p *ClaudeProvider) ParseUsage(obj map[string]any) *RequestUsage {

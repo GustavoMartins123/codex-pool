@@ -201,6 +201,7 @@ func (d *bunDialer) DialTLSContext(ctx context.Context, network, addr string) (n
 			proxyConn.Close()
 			return nil, fmt.Errorf("read CONNECT response: %w", err)
 		}
+		resp.Body.Close()
 		if resp.StatusCode != 200 {
 			proxyConn.Close()
 			return nil, fmt.Errorf("CONNECT failed: %s", resp.Status)

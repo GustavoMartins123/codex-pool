@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -58,7 +60,9 @@ func (h *proxyHandler) handleKimiAdd(w http.ResponseWriter, r *http.Request) {
 
 	// Validate key by calling GET /v1/models
 	validationURL := h.cfg.kimiBase.String() + "/v1/models"
-	validReq, _ := http.NewRequest(http.MethodGet, validationURL, nil)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	validReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, validationURL, nil)
 	validReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.transport.RoundTrip(validReq)
@@ -66,6 +70,7 @@ func (h *proxyHandler) handleKimiAdd(w http.ResponseWriter, r *http.Request) {
 		respondJSONError(w, http.StatusBadGateway, "failed to validate key: "+err.Error())
 		return
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {

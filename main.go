@@ -907,7 +907,7 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 	endpoint := h.imageFanoutEndpoint(r)
 	oneBody := setImagesGenerationCount(body, 1)
 	ctx := r.Context()
-	client := &http.Client{Timeout: clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, oneBody)}
+	client := &http.Client{Transport: h.transport, Timeout: clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, oneBody)}
 	type imageFanoutResult struct {
 		index   int
 		body    []byte
@@ -6109,10 +6109,11 @@ func (h *proxyHandler) tryOnce(
 			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
 			refreshFailed = true
 		}
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(errBody))
 		// Log the error response body for debugging
 		if h.cfg.debug.Load() {
-			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-			// Try to decompress if gzip
 			decompressed := bodyForInspection(nil, errBody)
 			log.Printf("[%s] got %d from upstream, body: %s", reqID, resp.StatusCode, safeText(decompressed))
 		}
@@ -6120,7 +6121,6 @@ func (h *proxyHandler) tryOnce(
 		hasRefresh := acc.RefreshToken != ""
 		acc.mu.Unlock()
 		if hasRefresh {
-			_ = resp.Body.Close()
 			if err := h.refreshAccountAfterAuthFailure(ctx, acc); err == nil {
 				outReq, err = buildReq()
 				if err != nil {
@@ -6151,11 +6151,12 @@ func (h *proxyHandler) tryOnce(
 				}
 				// Log response after retry
 				if h.cfg.debug.Load() && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
-					errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-					decompressed := bodyForInspection(nil, errBody)
+					retryErrBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+					_ = resp.Body.Close()
+					decompressed := bodyForInspection(nil, retryErrBody)
 					log.Printf("[%s] after refresh retry got %d, body: %s", reqID, resp.StatusCode, safeText(decompressed))
 					// Recreate body for downstream processing
-					resp.Body = io.NopCloser(bytes.NewReader(errBody))
+					resp.Body = io.NopCloser(bytes.NewReader(retryErrBody))
 				}
 				// Refresh succeeded - if we still get 401/403 after refresh,
 				// the account is truly dead (fresh token still rejected)
@@ -6313,6 +6314,9 @@ func (h *proxyHandler) refreshAccount(ctx context.Context, a *Account) error {
 	if a == nil {
 		return errors.New("nil account")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	key := fmt.Sprintf("%s:%s", a.Type, a.ID)
 
 	h.refreshCallsMu.Lock()
@@ -6332,28 +6336,39 @@ func (h *proxyHandler) refreshAccount(ctx context.Context, a *Account) error {
 	h.refreshCalls[key] = call
 	h.refreshCallsMu.Unlock()
 
-	defer func() {
-		h.refreshCallsMu.Lock()
-		delete(h.refreshCalls, key)
-		h.refreshCallsMu.Unlock()
-		close(call.done)
+	go func() {
+		defer func() {
+			h.refreshCallsMu.Lock()
+			delete(h.refreshCalls, key)
+			h.refreshCallsMu.Unlock()
+			close(call.done)
+		}()
+
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err := h.refreshAccountOnce(refreshCtx, a)
+		if err == nil {
+			a.mu.Lock()
+			a.RefreshBlocked = false
+			a.mu.Unlock()
+		} else if !isPermanentRefreshTokenError(err) && !isRateLimitError(err) && !errors.Is(err, context.Canceled) {
+			// A transport or upstream availability failure says nothing about the
+			// current access token. Keep using it until an authenticated request
+			// proves that it no longer works.
+			a.mu.Lock()
+			a.RefreshBlocked = true
+			a.mu.Unlock()
+		}
+		call.err = err
 	}()
 
-	err := h.refreshAccountOnce(ctx, a)
-	if err == nil {
-		a.mu.Lock()
-		a.RefreshBlocked = false
-		a.mu.Unlock()
-	} else if !isPermanentRefreshTokenError(err) && !isRateLimitError(err) {
-		// A transport or upstream availability failure says nothing about the
-		// current access token. Keep using it until an authenticated request
-		// proves that it no longer works.
-		a.mu.Lock()
-		a.RefreshBlocked = true
-		a.mu.Unlock()
+	select {
+	case <-call.done:
+		return call.err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	call.err = err
-	return err
 }
 
 func (h *proxyHandler) refreshAccountAfterAuthFailure(ctx context.Context, a *Account) error {

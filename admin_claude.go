@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -232,7 +233,9 @@ func (h *proxyHandler) fetchClaudeOAuthProfile(accessToken string) (map[string]a
 	u := *h.cfg.claudeBase
 	u.Path = singleJoin(u.Path, "/api/oauth/profile")
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}

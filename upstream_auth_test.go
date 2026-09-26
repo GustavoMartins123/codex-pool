@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"context"
 	"io"
 	"net/http"
@@ -229,5 +231,95 @@ func TestPassthroughAuthUnchanged(t *testing.T) {
 	result := relayWebSocket(w, httptest.NewRequest(http.MethodGet, "/responses", nil), base, nil, webSocketRelayOptions{ReadLimit: 1024})
 	if result.statusCode != http.StatusUnauthorized || w.Code != http.StatusUnauthorized {
 		t.Fatalf("caller-owned upstream credential status=%d", w.Code)
+	}
+}
+
+func TestRefreshAccountIsolatedFromClientDisconnect(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "account.json")
+	_ = os.WriteFile(file, []byte(`{"tokens":{"access_token":"old-token"}}`), 0600)
+	acc := &Account{
+		Type:         AccountTypeCodex,
+		ID:           "codex_test_singleflight",
+		File:         file,
+		AccessToken:  "old-token",
+		RefreshToken: "valid-refresh",
+	}
+
+	refreshStarted := make(chan struct{})
+	refreshBlocked := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/token" {
+			select {
+			case <-refreshStarted:
+			default:
+				close(refreshStarted)
+			}
+			<-refreshBlocked
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "fresh-token",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	serverURL, _ := url.Parse(server.URL)
+	h := &proxyHandler{
+		refreshTransport: server.Client().Transport,
+		registry:         NewProviderRegistry(NewCodexProvider(serverURL, serverURL, serverURL), nil, nil),
+	}
+
+	// Caller 1 starts refresh with a context that will be cancelled.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	err1Ch := make(chan error, 1)
+	go func() {
+		err1Ch <- h.refreshAccount(ctx1, acc)
+	}()
+
+	// Wait until refresh is in flight.
+	<-refreshStarted
+
+	// Caller 2 starts refresh with a live context and joins the singleflight.
+	ctx2 := context.Background()
+	err2Ch := make(chan error, 1)
+	go func() {
+		err2Ch <- h.refreshAccount(ctx2, acc)
+	}()
+
+	// Cancel Caller 1. Caller 1 must exit immediately with context.Canceled.
+	cancel1()
+	select {
+	case err1 := <-err1Ch:
+		if !errors.Is(err1, context.Canceled) {
+			t.Fatalf("expected caller 1 to receive context.Canceled, got %v", err1)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller 1 did not exit promptly after context cancellation")
+	}
+
+	// Release the mock server response so Caller 2 can complete.
+	close(refreshBlocked)
+	select {
+	case err2 := <-err2Ch:
+		if err2 != nil {
+			t.Fatalf("expected caller 2 to succeed despite caller 1 disconnect, got %v", err2)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("caller 2 timed out waiting for refresh completion")
+	}
+
+	acc.mu.Lock()
+	blocked := acc.RefreshBlocked
+	token := acc.AccessToken
+	acc.mu.Unlock()
+
+	if blocked {
+		t.Fatal("account must not be marked RefreshBlocked when caller 1 disconnected")
+	}
+	if token != "fresh-token" {
+		t.Fatalf("expected refreshed token fresh-token, got %s", token)
 	}
 }

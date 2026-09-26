@@ -337,8 +337,10 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 	}
 
 	usageURL := buildWhamUsageURL(h.cfg.whamBase)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	doReq := func() (*http.Response, error) {
-		req, _ := http.NewRequest(http.MethodGet, usageURL, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 		a.mu.Lock()
 		access := a.AccessToken
 		accountID := a.AccountID
@@ -429,7 +431,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 	}
 
 	var payload map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return err
 	}
 	whamSnap, ok := parseWhamUsage(payload, now)
@@ -482,7 +484,9 @@ func buildWhamConsumeResetCreditURL(base *url.URL) string {
 }
 
 func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
-	req, err := http.NewRequest(http.MethodGet, buildWhamResetCreditsURL(h.cfg.whamBase), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, buildWhamResetCreditsURL(h.cfg.whamBase), nil)
 	if err != nil {
 		return err
 	}
@@ -518,7 +522,7 @@ func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 			ExpiresAt *string `json:"expires_at"`
 		} `json:"credits"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return err
 	}
 
@@ -616,7 +620,9 @@ func (h *proxyHandler) consumeCodexResetCredit(a *Account, credit RateLimitReset
 		return "", 0, err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, buildWhamConsumeResetCreditURL(h.cfg.whamBase), bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildWhamConsumeResetCreditURL(h.cfg.whamBase), bytes.NewReader(body))
 	if err != nil {
 		return "", 0, err
 	}
@@ -649,7 +655,7 @@ func (h *proxyHandler) consumeCodexResetCredit(a *Account, credit RateLimitReset
 		Code         string `json:"code"`
 		WindowsReset int    `json:"windows_reset"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return "", 0, err
 	}
 	return payload.Code, payload.WindowsReset, nil
@@ -705,7 +711,9 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 	}
 
 	usageURL := h.cfg.claudeBase.String() + "/api/oauth/usage"
-	req, _ := http.NewRequest(http.MethodGet, usageURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 
 	// Set all the Claude Code headers
 	req.Header.Set("Authorization", "Bearer "+access)
@@ -813,7 +821,7 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 		} `json:"extra_usage"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return err
 	}
 
@@ -915,7 +923,9 @@ func (h *proxyHandler) fetchDailyBreakdownData(a *Account) ([]DailyBreakdownDay,
 	u.Path = joined
 	u.RawQuery = ""
 
-	req, _ := http.NewRequest(http.MethodGet, u.String(), nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	a.mu.Lock()
 	access := a.AccessToken
 	accountID := a.AccountID
@@ -946,7 +956,7 @@ func (h *proxyHandler) fetchDailyBreakdownData(a *Account) ([]DailyBreakdownDay,
 			ProductSurfaceUsageValues map[string]float64 `json:"product_surface_usage_values"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return nil, err
 	}
 
@@ -1150,7 +1160,9 @@ func (h *proxyHandler) fetchKimiUsage(now time.Time, a *Account) error {
 	a.mu.Unlock()
 
 	usageURL := h.cfg.kimiBase.String() + "/v1/usages"
-	req, _ := http.NewRequest(http.MethodGet, usageURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 	req.Header.Set("Authorization", "Bearer "+access)
 
 	resp, err := h.transport.RoundTrip(req)
@@ -1191,7 +1203,7 @@ func (h *proxyHandler) fetchKimiUsage(now time.Time, a *Account) error {
 		} `json:"limits"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return err
 	}
 
@@ -1255,7 +1267,9 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 	seedURL := h.cfg.minimaxBase.String() + "/v1/messages"
 	body := []byte(`{"model":"MiniMax-M3","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)
 
-	req, _ := http.NewRequest(http.MethodPost, seedURL, bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, seedURL, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+access)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", ccAnthropicVersion)
@@ -1264,7 +1278,10 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		a.mu.Lock()
@@ -1295,7 +1312,9 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 	// expose immediate request/token rate-limit headers, but those headers are
 	// not a substitute for Coding Plan's separate 5-hour and weekly quotas.
 	modelsURL := h.cfg.zaiBase.String() + "/v1/models"
-	req, _ := http.NewRequest(http.MethodGet, modelsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	req.Header.Set("X-Api-Key", access)
 	req.Header.Set("Authorization", "Bearer "+access)
 	req.Header.Set("anthropic-version", ccAnthropicVersion)
@@ -1327,7 +1346,7 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 			DisplayName string `json:"display_name"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return fmt.Errorf("decode zai models: %w", err)
 	}
 

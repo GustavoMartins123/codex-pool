@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+	"context"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -59,7 +61,9 @@ func (h *proxyHandler) handleXiaomiAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	bodyBytes, _ := json.Marshal(body)
 
-	validReq, _ := http.NewRequest(http.MethodPost, validationURL, bytes.NewReader(bodyBytes))
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	validReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, validationURL, bytes.NewReader(bodyBytes))
 	validReq.Header.Set("Authorization", "Bearer "+apiKey)
 	validReq.Header.Set("Content-Type", "application/json")
 	validReq.Header.Set("anthropic-version", ccAnthropicVersion)
@@ -69,7 +73,7 @@ func (h *proxyHandler) handleXiaomiAdd(w http.ResponseWriter, r *http.Request) {
 		respondJSONError(w, http.StatusBadGateway, "failed to validate key: "+err.Error())
 		return
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {

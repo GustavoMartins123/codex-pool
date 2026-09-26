@@ -145,10 +145,10 @@ func filterHostedMCPNonStreamingResponse(resp *http.Response) error {
 		return nil
 	}
 	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
 	filtered, drop, changed := filterHostedMCPResponseJSON(body)
 	if drop {
 		filtered = []byte(`{}`)

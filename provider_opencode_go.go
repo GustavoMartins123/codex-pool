@@ -432,7 +432,9 @@ func (h *proxyHandler) fetchOpencodeGoUsage(now time.Time, a *Account) error {
 	a.mu.Unlock()
 
 	usageURL := strings.TrimRight(h.cfg.opencodeGoBase.String(), "/") + "/usage"
-	req, _ := http.NewRequest(http.MethodGet, usageURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 	req.Header.Set("Authorization", "Bearer "+access)
 
 	resp, err := h.transport.RoundTrip(req)

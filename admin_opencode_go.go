@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,7 +53,9 @@ func (h *proxyHandler) handleOpencodeGoAdd(w http.ResponseWriter, r *http.Reques
 	// Validate the key against the free /usage endpoint: 200 proves the key
 	// is live, 401/403 means bad key or no Go subscription. No spend.
 	validationURL := strings.TrimRight(h.cfg.opencodeGoBase.String(), "/") + "/usage"
-	validReq, _ := http.NewRequest(http.MethodGet, validationURL, nil)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	validReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, validationURL, nil)
 	validReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.transport.RoundTrip(validReq)
@@ -59,7 +63,7 @@ func (h *proxyHandler) handleOpencodeGoAdd(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusBadGateway, "failed to validate key: "+err.Error())
 		return
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
