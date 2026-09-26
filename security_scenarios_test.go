@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -372,3 +373,197 @@ func TestSecurityEffortCapBypassDefense(t *testing.T) {
 		t.Fatalf("effort = %v, want medium", reasoning2["effort"])
 	}
 }
+
+// TestSecurityClientIPHeaderSpoofing demonstrates how trusting untrusted proxy headers
+// (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) allows clients to bypass IP filters,
+// evade effort caps, circumvent brute-force tracking, and frame/DoS victim IPs.
+func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
+	// 1. IP extraction directly trusts headers over RemoteAddr
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req.RemoteAddr = "203.0.113.50:12345"
+
+	if ip := getClientIP(req); ip != "203.0.113.50" {
+		t.Fatalf("expected remote addr 203.0.113.50, got %s", ip)
+	}
+
+	req.Header.Set("CF-Connecting-IP", "199.45.144.95")
+	if ip := getClientIP(req); ip != "199.45.144.95" {
+		t.Fatalf("expected CF-Connecting-IP spoof to yield 199.45.144.95, got %s", ip)
+	}
+
+	req.Header.Del("CF-Connecting-IP")
+	req.Header.Set("X-Forwarded-For", "198.51.100.77, 10.0.0.1")
+	if ip := getClientIP(req); ip != "198.51.100.77" {
+		t.Fatalf("expected XFF spoof to yield 198.51.100.77, got %s", ip)
+	}
+
+	// 2. Spoofed IP bypasses Account.AllowedSourceIPs protection
+	restricted := &Account{
+		ID:               "restricted-corp-account",
+		Type:             AccountTypeCodex,
+		PlanType:         "pro",
+		AllowedSourceIPs: []string{"198.51.100.77"},
+		Usage:            UsageSnapshot{PrimaryUsedPercent: 0.1},
+	}
+	fallback := &Account{
+		ID:       "public-fallback-account",
+		Type:     AccountTypeCodex,
+		PlanType: "pro",
+		Usage:    UsageSnapshot{PrimaryUsedPercent: 0.2},
+	}
+	p := newPoolState([]*Account{restricted, fallback}, false)
+
+	// Legitimate client from 203.0.113.50 is denied restricted account
+	legitCand := p.candidate("", nil, AccountTypeCodex, "", "203.0.113.50")
+	if legitCand == nil || legitCand.ID != "public-fallback-account" {
+		t.Fatalf("legitimate non-whitelisted IP should get public account, got %+v", legitCand)
+	}
+
+	// Spoofing client supplying XFF: 198.51.100.77 accesses restricted account
+	spoofedIP := getClientIP(req)
+	spoofedCand := p.candidate("", nil, AccountTypeCodex, "", spoofedIP)
+	if spoofedCand == nil || spoofedCand.ID != "restricted-corp-account" {
+		t.Fatalf("spoofed client IP should have bypassed filter and accessed restricted account, got %+v", spoofedCand)
+	}
+
+	// 3. Spoofed IP evades origin-based reasoning effort caps
+	// Administrator configured an effort cap for the physical origin 203.0.113.50
+	cap := newEffortCap(nil, map[string]string{"203.0.113.50": "low"})
+	if limit := cap.limitFor("unrestricted-user", "203.0.113.50"); limit != "low" {
+		t.Fatalf("cap for 203.0.113.50 should be low, got %q", limit)
+	}
+	// By forging X-Forwarded-For, the client completely evades the cap
+	if limit := cap.limitFor("unrestricted-user", spoofedIP); limit != "" {
+		t.Fatalf("spoofed IP %s should have bypassed the origin cap, got %q", spoofedIP, limit)
+	}
+
+	// 4. Spoofed IP evades brute-force tracking & enables Denial-of-Service / IP framing
+	bf := newBruteForceTracker()
+	defer bf.stop()
+
+	// Attacker rotates X-Forwarded-For: attacker real IP is never tracked/banned
+	for i := 0; i < 10; i++ {
+		fakeIP := fmt.Sprintf("185.220.101.%d", i)
+		bf.recordFailure(fakeIP)
+	}
+	if bf.isBanned("203.0.113.50") {
+		t.Fatal("attacker real IP was unexpectedly banned despite rotating spoofed XFF headers")
+	}
+
+	// Attacker frames victim IP by sending 5 failures with victim's IP in XFF
+	victimIP := "192.0.2.100"
+	for i := 0; i < bruteForceMaxAttempts; i++ {
+		bf.recordFailure(victimIP)
+	}
+	if !bf.isBanned(victimIP) {
+		t.Fatalf("victim IP %s was not banned as expected in framing scenario", victimIP)
+	}
+}
+
+// TestSecurityInternalHeaderTampering demonstrates how untrusted incoming headers
+// (X-Pool-Canary-Bypass, X-Pool-Routing) manipulate internal routing behavior.
+func TestSecurityInternalHeaderTampering(t *testing.T) {
+	// 1. Canary bypass via X-Pool-Canary-Bypass
+	tracker, err := newExperimentTracker(nil, ExperimentsConfig{
+		Canary: map[string]CanaryConfig{
+			"gpt-5.5": {Candidate: "gpt-5.5-canary", Percent: 100},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Normal request without header gets assigned the canary model
+	assigned := tracker.Assign("gpt-5.5", "session-key")
+	if assigned == nil || assigned.Model != "gpt-5.5-canary" {
+		t.Fatalf("expected canary assignment gpt-5.5-canary, got %+v", assigned)
+	}
+
+	// Request with X-Pool-Canary-Bypass: 1 bypasses the experiment block in main.go:2290
+	reqBypass := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	reqBypass.Header.Set("X-Pool-Canary-Bypass", "1")
+	bypassActive := reqBypass.Header.Get("X-Pool-Canary-Bypass") != ""
+	if !bypassActive {
+		t.Fatal("expected X-Pool-Canary-Bypass to be active")
+	}
+
+	// 2. Client-specified X-Pool-Routing override
+	pool := newPoolState(nil, false)
+	reqProfile := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	reqProfile.Header.Set("X-Pool-Routing", "quota-saver")
+	profile, ok := pool.resolveRoutingProfile(reqProfile.Header.Get("X-Pool-Routing"))
+	if !ok || profile != RoutingQuotaSaver {
+		t.Fatalf("expected quota-saver profile resolution, got %v, ok=%v", profile, ok)
+	}
+}
+
+// TestSecurityConversationPinningCrossUserInterference demonstrates that conversation
+// pinning is keyed globally without user/principal scoping, allowing one client to
+// force their traffic onto another user's pinned upstream account.
+func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
+	acc1 := &Account{ID: "acc-pinned-1", Type: AccountTypeCodex, PlanType: "pro"}
+	acc2 := &Account{ID: "acc-pinned-2", Type: AccountTypeCodex, PlanType: "pro"}
+	pool := newPoolState([]*Account{acc1, acc2}, false)
+
+	sharedConvID := "shared-thread-uuid-12345"
+	// User A has a conversation pinned to acc-pinned-1
+	pool.pin(sharedConvID, acc1.ID)
+
+	// User B sends a request with session_id header matching User A's conversation
+	reqUserB := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	reqUserB.Header.Set("session_id", sharedConvID)
+	extractedB := extractConversationIDFromHeaders(reqUserB.Header)
+	if extractedB != sharedConvID {
+		t.Fatalf("expected extracted conversation ID %s, got %s", sharedConvID, extractedB)
+	}
+
+	// User B routes to the exact same account pinned by User A
+	candB := pool.candidate(extractedB, nil, AccountTypeCodex, "", "198.51.100.2")
+	if candB == nil || candB.ID != "acc-pinned-1" {
+		t.Fatalf("User B should have collided onto User A's pinned account acc-pinned-1, got %+v", candB)
+	}
+}
+
+// TestSecurityUnauthenticatedPassthroughOpenProxy demonstrates that arbitrary unauthenticated
+// clients sending real or fake provider credentials (sk-, sk-ant-, ya29.) are passed through
+// rather than rejected with HTTP 401 Unauthorized.
+func TestSecurityUnauthenticatedPassthroughOpenProxy(t *testing.T) {
+	testCases := []struct {
+		header       string
+		wantProvider AccountType
+	}{
+		{"Bearer sk-proj-external-openai-key-from-attacker", AccountTypeCodex},
+		{"Bearer sk-ant-api03-external-anthropic-key", AccountTypeClaude},
+		{"Bearer ya29.external-google-access-token", AccountTypeGemini},
+	}
+
+	for _, tc := range testCases {
+		isProvider, providerType := looksLikeProviderCredential(tc.header)
+		if !isProvider {
+			t.Fatalf("looksLikeProviderCredential(%q) returned false, want true", tc.header)
+		}
+		if providerType != tc.wantProvider {
+			t.Fatalf("provider type for %q = %s, want %s", tc.header, providerType, tc.wantProvider)
+		}
+	}
+}
+
+// TestSecurityUnboundedStainlessTimeout demonstrates that clients can supply an
+// arbitrarily large X-Stainless-Timeout to hold connections open indefinitely.
+func TestSecurityUnboundedStainlessTimeout(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	// Attacker requests 86400 seconds (24 hours) timeout
+	req.Header.Set("X-Stainless-Timeout", "86400")
+
+	configuredReqTimeout := 30 * time.Second
+	configuredStreamTimeout := 5 * time.Minute
+
+	timeout := timeoutForRequestIntent(req, configuredReqTimeout, configuredStreamTimeout, requestIntent{})
+	if timeout != 24*time.Hour {
+		t.Fatalf("expected X-Stainless-Timeout to grant 24 hours, got %v", timeout)
+	}
+	if timeout <= configuredReqTimeout {
+		t.Fatalf("timeout %v did not override configured timeout %v", timeout, configuredReqTimeout)
+	}
+}
+
