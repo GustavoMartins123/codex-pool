@@ -4500,6 +4500,9 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		// Replace body so client still gets the error
 		resp.Body = io.NopCloser(bytes.NewReader(errBody))
 
+		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
+			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
+		}
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
 		if markedDead {
 			if err := saveAccount(acc); err != nil {
@@ -5886,6 +5889,10 @@ func (h *proxyHandler) tryOnce(
 
 	// If we got a 401/403, try to refresh and retry on the *same* account once.
 	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !h.cfg.disableRefresh {
+		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
+			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
+			refreshFailed = true
+		}
 		// Log the error response body for debugging
 		if h.cfg.debug.Load() {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))

@@ -92,6 +92,9 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 	upstreamConn, upstreamResp, subprotocols, err := dialUpstreamWebSocket(ctx, opts.InitialOutURL, opts.InitialUpstreamHeaders, clientReq.Header, opts.ReadLimit, opts.CompressionEnabled)
 	if err != nil {
 		if upstreamResp != nil {
+			if upstreamTokenRevoked(upstreamResp) {
+				h.disableAccountPermanently(opts.InitialAccount, opts.ReqID, "upstream token revoked")
+			}
 			status := writeWebSocketRejection(w, upstreamResp)
 			return codexCyberSwapResult{statusCode: status, finalAccount: opts.InitialAccount}
 		}
