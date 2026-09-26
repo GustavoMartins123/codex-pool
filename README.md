@@ -12,14 +12,14 @@
 
 > [!NOTE]
 > **Fork Notice & Attribution**:
-> Este repositório é um **fork** mantido por [Gustavo Martins](https://github.com/GustavoMartins123) com modificações e melhorias personalizadas baseadas no projeto original criado por **[Darvell](https://github.com/darvell)** ([darvell/codex-pool](https://github.com/darvell/codex-pool)).
+> This repository is a **fork** maintained by [Gustavo Martins](https://github.com/GustavoMartins123) with custom modifications and enhancements based on the original project created by **[Darvell](https://github.com/darvell)** ([darvell/codex-pool](https://github.com/darvell/codex-pool)).
 >
-> **Principais adições e modificações implementadas neste fork:**
-> - **Suporte Nativo a Windows / MSYS2 UCRT64**: Scripts automatizados de compilação e instalação (`scripts/windows/build.ps1`, `install.ps1`, `dev_proxy.ps1`, `deploy.ps1`) com auto-detecção de toolchain local e um runtime shim C completo (`duckdb_windows_shim.go`) resolvendo o linkage de emutls e `std::call_once` do DuckDB no GCC moderno (GCC 15 e GCC 16+).
-> - **Integração Completa de Contas Z.ai**: Suporte aos modelos `glm-5.3`, `glm-5.3-flash` e `glm-5.3-flashx`, autenticação OAuth via navegador com polling de sessão (`/api/pool/accounts/zai/login/init`), importação em 1 clique das credenciais do ZCode Desktop (`~/.zcode/cli/config.json`) e persistência segura de contas no pool.
-> - **Gestão Avançada de Contas Google Antigravity**: Login OAuth dedicado, renovação de tokens (relogin flow), acompanhamento de reset windows e ritmo de cotas, e compactação automática de contexto.
-> - **Ecossistema Expandido de Provedores**: Suporte e mapeamento de cotas para OpenCode Go (`opencode_go`), Grok, Xiaomi (MiMo), Kimi, MiniMax e Adversarial (CyberKimi).
-> - **Handoff e Transições de Contexto Heterogêneas**: Conversação portátil com representação canônica (IR) entre diferentes provedores (Codex, Claude, Antigravity, Z.ai).
+> **Key additions and modifications implemented in this fork:**
+> - **Native Windows / MSYS2 UCRT64 Support**: Automated build and install scripts (`scripts/windows/build.ps1`, `install.ps1`, `dev_proxy.ps1`, `deploy.ps1`) with automatic local toolchain detection and a complete C runtime shim (`duckdb_windows_shim.go`) resolving emutls and `std::call_once` linkage for DuckDB on modern GCC (GCC 15 and GCC 16+).
+> - **Complete Z.ai Account Integration**: Support for `glm-5.3`, `glm-5.3-flash`, and `glm-5.3-flashx`, browser-based OAuth authentication with automated session polling (`/api/pool/accounts/zai/login/init`), 1-click credential import from ZCode Desktop (`~/.zcode/cli/config.json`), and secure multi-attribute account persistence.
+> - **Advanced Google Antigravity Management**: Dedicated OAuth login, token re-validation and relogin workflows, quota pacing and reset window tracking, and automatic context compaction.
+> - **Expanded Provider Ecosystem**: Integration and quota monitoring for OpenCode Go (`opencode_go`), Grok, Xiaomi (MiMo), Kimi, MiniMax, and Adversarial (CyberKimi).
+> - **Heterogeneous Context Handoff & Transitions**: Portable conversations using canonical intermediate representation (IR) across disparate providers (Codex, Claude, Antigravity, Z.ai).
 
 ---
 
