@@ -394,8 +394,8 @@ func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 				continue
 			}
-			path := filepath.Join(providerDir, e.Name())
-			data, err := os.ReadFile(path)
+		path := filepath.Join(providerDir, e.Name())
+		data, err := readAccountFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", path, err)
 			}
@@ -1662,7 +1662,7 @@ func saveCodexAccount(a *Account) error {
 	// Preserve ALL fields in the original auth.json by modifying only token fields that
 	// refresh updates. If we can't parse the existing file, fail closed to avoid
 	// clobbering user-provided auth.json content.
-	raw, err := os.ReadFile(a.File)
+	raw, err := readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1738,7 +1738,7 @@ func saveCodexAccount(a *Account) error {
 
 func saveGeminiAccount(a *Account) error {
 	// Preserve existing fields in the file
-	raw, err := os.ReadFile(a.File)
+	raw, err := readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1777,7 +1777,7 @@ func saveGeminiAccount(a *Account) error {
 
 // saveAPIKeyAccount saves an API-key-based account (kimi, minimax, etc.)
 func saveAPIKeyAccount(a *Account) error {
-	raw, err := os.ReadFile(a.File)
+	raw, err := readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1816,7 +1816,7 @@ func saveAPIKeyAccount(a *Account) error {
 }
 
 func saveGrokAccount(a *Account) error {
-	raw, err := os.ReadFile(a.File)
+	raw, err := readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1890,6 +1890,10 @@ func atomicWriteJSON(filePath string, data any) error {
 	if err != nil {
 		return err
 	}
+	payload, err := accountCredentialStore.Encode(updated)
+	if err != nil {
+		return fmt.Errorf("encode credential file %s: %w", filePath, err)
+	}
 
 	// Atomic write: write to temp file then rename.
 	dir := filepath.Dir(filePath)
@@ -1904,7 +1908,7 @@ func atomicWriteJSON(filePath string, data any) error {
 		tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(updated); err != nil {
+	if _, err := tmp.Write(payload); err != nil {
 		tmp.Close()
 		return err
 	}

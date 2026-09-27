@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -171,7 +170,7 @@ func (h *proxyHandler) handleClaudePlanProbe(w http.ResponseWriter, r *http.Requ
 			entry.TokenClaimsErr = claimErr
 		}
 
-		raw, err := os.ReadFile(filePath)
+		raw, err := readAccountFile(filePath)
 		if err != nil {
 			entry.LiveError = "failed reading account file: " + err.Error()
 			result = append(result, entry)

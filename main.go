@@ -73,8 +73,9 @@ type config struct {
 	retentionDays              int
 	legacyFriendCode           string
 	adminToken                 string
-	backupDir                  string
-	restoreManifest            string
+	backupDir          string
+	restoreManifest    string
+	decryptCredentials bool
 	duckPath                   string
 	requestTimeout             time.Duration // Timeout for non-streaming requests (0 = no timeout)
 	streamTimeout              time.Duration // Timeout for streaming/SSE requests (0 = no timeout)
@@ -340,6 +341,7 @@ func buildConfig() *config {
 	flag.StringVar(&cfg.listenAddr, "listen", cfg.listenAddr, "listen address")
 	flag.StringVar(&cfg.backupDir, "backup-dir", "", "create an offline paired Bolt/DuckDB backup in this directory, then exit")
 	flag.StringVar(&cfg.restoreManifest, "restore-manifest", "", "restore Bolt/DuckDB from a paired backup manifest, then exit")
+	flag.BoolVar(&cfg.decryptCredentials, "decrypt-credentials", false, "decrypt every encrypted credential file back to plaintext (requires POOL_CREDENTIAL_KEY), then exit")
 	flag.Parse()
 	return cfg
 }
@@ -372,6 +374,26 @@ func main() {
 		return
 	}
 	startCodexFingerprintUpdater(shutdownCtx)
+
+	// Credential vault: build the store, migrate plaintext files, and fail
+	// closed when encrypted files exist without a key. Must run before the
+	// pool is loaded and before any provider refresh touches the files.
+	if cfg.decryptCredentials {
+		store, err := buildCredentialStore()
+		if err != nil {
+			log.Fatalf("credential vault: %v", err)
+		}
+		accountCredentialStore = store
+		count, err := decryptCredentialFiles(cfg.poolDir)
+		if err != nil {
+			log.Fatalf("decrypt credentials: %v", err)
+		}
+		log.Printf("credential vault: decrypted %d file(s) back to plaintext in %s", count, cfg.poolDir)
+		return
+	}
+	if err := initCredentialVault(cfg.poolDir); err != nil {
+		log.Fatalf("credential vault: %v", err)
+	}
 
 	// Create provider registry
 	codexProvider := NewCodexProviderWithRealtime(cfg.responsesBase, cfg.realtimeBase, cfg.whamBase, cfg.refreshBase)

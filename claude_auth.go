@@ -423,7 +423,7 @@ func saveClaudeAccount(a *Account) error {
 	}
 
 	// Read existing file to preserve any extra fields
-	raw, err := os.ReadFile(file)
+	raw, err := readAccountFile(file)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}

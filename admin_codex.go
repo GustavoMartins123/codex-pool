@@ -367,7 +367,7 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	}
 
 	existing := make(map[string]any)
-	if raw, err := os.ReadFile(authFile); err == nil {
+	if raw, err := readAccountFile(authFile); err == nil {
 		if err := json.Unmarshal(raw, &existing); err != nil {
 			return fmt.Errorf("parse %s: %w", authFile, err)
 		}
@@ -532,6 +532,10 @@ func saveNewCodexAccount(poolDir, accountID string, tokens *CodexTokenResponse) 
 	data, err := json.MarshalIndent(authJSON, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
+	}
+	data, err = accountCredentialStore.Encode(data)
+	if err != nil {
+		return fmt.Errorf("encode credential file: %w", err)
 	}
 
 	if err := os.WriteFile(filePath, data, 0600); err != nil {

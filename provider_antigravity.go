@@ -237,7 +237,7 @@ func saveAntigravityAccount(acc *Account) error {
 	fileLock := lockValue.(*sync.Mutex)
 	fileLock.Lock()
 	defer fileLock.Unlock()
-	raw, err := os.ReadFile(acc.File)
+	raw, err := readAccountFile(acc.File)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
