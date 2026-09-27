@@ -44,12 +44,17 @@ codex-pool-linux-*
 codex-pool-proxy-linux
 codex-pool-proxy-linux-*
 codex-pool-proxy-test-linux-*
+codex-pool-dev.exe
+codex-pool.exe
 codexpool
 tmp/
 .toolchains/
 bin/
 dist/
 coverage.out
+
+# TypeScript incremental build caches
+*.tsbuildinfo
 
 # Python
 __pycache__/
