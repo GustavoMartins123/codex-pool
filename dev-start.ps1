@@ -8,12 +8,16 @@ $env:POOL_DIR = "$root\pool"
 $env:PROXY_DB_PATH = "$root\data\proxy.db"
 $env:PROXY_LISTEN_ADDR = "127.0.0.1:8989"
 
-# dev-preview secrets - replace before exposing this beyond localhost
-$env:POOL_JWT_SECRET = "<REDACTED_LOCAL_SECRET>"
-$env:POOL_AUTH_ENCRYPTION_KEY = "<REDACTED_LOCAL_SECRET>"
-# The setup screen sends X-Admin-Token: <REDACTED_LOCAL_SECRET>, so the configured admin
-# token has to be that value for the stock bootstrap path to authorize.
-$env:ADMIN_TOKEN = "<REDACTED_LOCAL_SECRET>"
+$secretsPath = Join-Path $root '.dev-secrets.ps1'
+if (-not (Test-Path -LiteralPath $secretsPath -PathType Leaf)) {
+    throw "Missing $secretsPath. Copy .dev-secrets.ps1.example and set fresh secrets."
+}
+. $secretsPath
+foreach ($name in @('POOL_JWT_SECRET', 'POOL_AUTH_ENCRYPTION_KEY', 'ADMIN_TOKEN')) {
+    if (-not [Environment]::GetEnvironmentVariable($name, 'Process')) {
+        throw "Missing $name in $secretsPath"
+    }
+}
 $env:DEBUG = "1"
 
 New-Item -ItemType Directory -Force -Path "$root\pool" | Out-Null
