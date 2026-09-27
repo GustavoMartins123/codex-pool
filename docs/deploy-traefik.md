@@ -33,9 +33,18 @@ another port. Do not open port 8989 in the VPS firewall.
 
 Stop the source instance before copying its files so the databases and account
 tokens form one consistent snapshot. Copy `pool/` and `data/` over SSH to the
-same paths beside the cloned repository. Copy the existing secret values used
-by that instance into the target `.env`, especially
-`POOL_AUTH_ENCRYPTION_KEY`, `POOL_JWT_SECRET`, and `POOL_CREDENTIAL_KEY` if set.
+same paths beside the cloned repository. An existing
+`POOL_AUTH_ENCRYPTION_KEY` must be kept unchanged if sealed client tokens are
+being copied. To rotate it, back up `data/` first, stop the service, set the
+old value in `POOL_AUTH_ENCRYPTION_KEY_OLD` and the new value in
+`POOL_AUTH_ENCRYPTION_KEY`, then run
+`docker compose run --rm --no-deps codex-pool -rotate-passport-key` once
+against the copied `proxy.db`. The command updates all client ciphertexts in
+one Bolt transaction and fails if any cannot be decrypted. Remove the old key
+from the target afterward. Replacing `POOL_JWT_SECRET` invalidates previously
+issued CLI credentials; sign in and download fresh client configurations.
+If `pool/` already contains encrypted credentials, preserve its
+`POOL_CREDENTIAL_KEY` or use the documented vault rotation procedure.
 Copy any relevant configuration from `config.toml` into the target's
 environment or mount that file explicitly. The default Compose file does not
 mount `config.toml`.

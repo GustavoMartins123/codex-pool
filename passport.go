@@ -94,12 +94,12 @@ type PassportStore struct {
 }
 
 func passportAEAD() (cipher.AEAD, error) {
-	secret := os.Getenv("POOL_AUTH_ENCRYPTION_KEY")
+	return passportAEADForSecret(os.Getenv("POOL_AUTH_ENCRYPTION_KEY"))
+}
+
+func passportAEADForSecret(secret string) (cipher.AEAD, error) {
 	if secret == "" {
-		secret = getPoolJWTSecret()
-	}
-	if secret == "" {
-		return nil, errors.New("POOL_AUTH_ENCRYPTION_KEY or POOL_JWT_SECRET required")
+		return nil, errors.New("POOL_AUTH_ENCRYPTION_KEY required")
 	}
 	key := sha256.Sum256([]byte("pool-passport-auth-v1|" + secret))
 	block, err := aes.NewCipher(key[:])

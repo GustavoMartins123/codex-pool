@@ -73,9 +73,10 @@ type config struct {
 	retentionDays              int
 	legacyFriendCode           string
 	adminToken                 string
-	backupDir          string
-	restoreManifest    string
-	decryptCredentials bool
+	backupDir                  string
+	restoreManifest            string
+	decryptCredentials         bool
+	rotatePassportKey          bool
 	duckPath                   string
 	requestTimeout             time.Duration // Timeout for non-streaming requests (0 = no timeout)
 	streamTimeout              time.Duration // Timeout for streaming/SSE requests (0 = no timeout)
@@ -363,6 +364,7 @@ func buildConfig() *config {
 	flag.StringVar(&cfg.backupDir, "backup-dir", "", "create an offline paired Bolt/DuckDB backup in this directory, then exit")
 	flag.StringVar(&cfg.restoreManifest, "restore-manifest", "", "restore Bolt/DuckDB from a paired backup manifest, then exit")
 	flag.BoolVar(&cfg.decryptCredentials, "decrypt-credentials", false, "decrypt every encrypted credential file back to plaintext (requires POOL_CREDENTIAL_KEY), then exit")
+	flag.BoolVar(&cfg.rotatePassportKey, "rotate-passport-key", false, "rotate sealed client tokens in the offline Bolt database using POOL_AUTH_ENCRYPTION_KEY_OLD and POOL_AUTH_ENCRYPTION_KEY, then exit")
 	flag.Parse()
 	return cfg
 }
@@ -375,6 +377,14 @@ func main() {
 	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopShutdownSignals()
 	cfg := buildConfig()
+	if cfg.rotatePassportKey {
+		count, err := rotatePassportKey(cfg.storePath, os.Getenv("POOL_AUTH_ENCRYPTION_KEY_OLD"), os.Getenv("POOL_AUTH_ENCRYPTION_KEY"))
+		if err != nil {
+			log.Fatalf("rotate Passport key: %v", err)
+		}
+		log.Printf("rotated %d sealed client token(s)", count)
+		return
+	}
 	if err := validateSecretStrength(cfg); err != nil {
 		log.Fatalf("insecure configuration: %v", err)
 	}
@@ -2977,33 +2987,33 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					if h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile) {
 						return
 					}
-				// handleAntigravityProxy declines before writing anything when the
-				// fallback model is not routable for antigravity. Mark the model
-				// as a dead end and keep looping so the request can still wait
-				// for the original provider's cooldown or usage window reset
-				// instead of failing fast with 503.
-				log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
-				h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
-				fallbackVisited[strings.ToLower(fallbackModel)] = true
-				fallbackTransitions++
-				if attempt == attempts {
-					attempts++
+					// handleAntigravityProxy declines before writing anything when the
+					// fallback model is not routable for antigravity. Mark the model
+					// as a dead end and keep looping so the request can still wait
+					// for the original provider's cooldown or usage window reset
+					// instead of failing fast with 503.
+					log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
+					h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
+					fallbackVisited[strings.ToLower(fallbackModel)] = true
+					fallbackTransitions++
+					if attempt == attempts {
+						attempts++
+					}
+					continue
 				}
-				continue
-			}
-			fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
-			if fallbackProvider == nil {
-				// Same treatment: a misconfigured fallback provider must not
-				// strand the request when the original provider could recover.
-				log.Printf("[%s] fallback provider %s is not configured", reqID, fallbackMeta.Provider)
-				h.recent.add(fmt.Sprintf("fallback provider %s is not configured", fallbackMeta.Provider))
-				fallbackVisited[strings.ToLower(fallbackModel)] = true
-				fallbackTransitions++
-				if attempt == attempts {
-					attempts++
+				fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
+				if fallbackProvider == nil {
+					// Same treatment: a misconfigured fallback provider must not
+					// strand the request when the original provider could recover.
+					log.Printf("[%s] fallback provider %s is not configured", reqID, fallbackMeta.Provider)
+					h.recent.add(fmt.Sprintf("fallback provider %s is not configured", fallbackMeta.Provider))
+					fallbackVisited[strings.ToLower(fallbackModel)] = true
+					fallbackTransitions++
+					if attempt == attempts {
+						attempts++
+					}
+					continue
 				}
-				continue
-			}
 				fallbackBody, fallbackPath, fallbackDir, translateErr := translateFallbackPayload(fallbackBody, transitionSourcePath, fallbackMeta.Provider)
 				if translateErr != nil {
 					http.Error(w, translateErr.Error(), http.StatusBadRequest)
