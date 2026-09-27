@@ -368,6 +368,10 @@ func buildConfig() *config {
 }
 
 func main() {
+	// Before anything can log: the pool has hundreds of log call sites and the
+	// stdlib logger offers no per-call redaction hook, so the output stream
+	// itself is wrapped. installRedactingLog is idempotent.
+	installRedactingLog()
 	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopShutdownSignals()
 	cfg := buildConfig()
