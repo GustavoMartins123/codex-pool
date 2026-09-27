@@ -2,6 +2,70 @@
 
 Formato por fase do roadmap (`codex-pool-roadmap.md`, local). Datas em UTC.
 
+## 2026-09-27 (revisão)
+
+Correções sobre a entrega de CP-00/CP-01/CP-02/CP-03.
+
+### CP-02 — Vault não era contornado em dois caminhos
+- `replaceCodexAccountCredentials` (re-login do Codex) e `saveZAIOAuthAccount`
+  (OAuth Z.ai) gravavam JSON **em texto claro** com `os.WriteFile`/`os.OpenFile`
+  mesmo com `POOL_CREDENTIAL_KEY` configurado. Ambos agora passam por
+  `writeAccountFile`.
+- Novo helper `writeAccountFile`/`writeFileAtomic` em `credential_vault.go`;
+  `atomicWriteJSON`, os writes admin de codex/grok/kimi e a migração/rollback
+  do vault foram unificados nele. A migração passou a escrever de forma
+  atômica (antes usava `os.WriteFile`, que pode truncar o arquivo de
+  credencial num crash).
+- Regressão: `credential_vault_coverage_test.go`
+  (`TestInvariantNoCredentialFileBypassesTheVault`,
+  `TestCredentialWritersGoThroughTheVault`) — falha se qualquer escritor
+  voltar a gravar sem `Encode`.
+
+### CP-01 —defaults e fail-closed
+- `ip_privacy` passou a ser `*bool`: ausente no TOML ou no ambiente significa
+  **ON**, e só `ip_privacy = false` / `PROXY_IP_PRIVACY=false` desliga. Antes o
+  zero-value do bool deixava o controle OFF por padrão, contrariando o
+  requisito de não persistir IP cru por padrão.
+- `verifySensitiveFilePermissions` deixou de ser warn-only: arquivo de
+  credencial group/world acessível agora **aborta o startup** com a lista dos
+  caminhos e o comando de correção. O diretório do pool, que em bind mount
+  host costuma chegar 0755, é corrigido para 0700 em vez de derrubar o
+  processo. Criação de diretório de pool passou a 0700 nos três handlers.
+- Cobertura POSIX: `TestVerifySensitiveFilePermissionsRemediatesDirectory`.
+
+### CP-00 — baseline e gate de benchmark
+- `TestBenchmarkRunnerAndBaselineComparison` era tautológico: salvava o report
+  freshly em `t.TempDir()` como baseline e comparava o report com ele mesmo,
+  então `HasRegression` nunca podia ser verdadeiro. Substituído por
+  `TestCommittedBaselineIsLoadableAndComplete`,
+  `TestCompareAgainstBaselineDetectsRegression` e
+  `TestComparisonWithoutUsableBaselineIsNotReportedAsSuccess`.
+- `MetricDelta.NoBaseline` marca métrica sem baseline utilizável. O baseline
+  commitado foi gravado em modo mock (`total_duration_ms`/`ttft_ms`/
+  `tokens_per_second` zerados) e, com o short-circuit em `base == 0`, ele
+  reportava "OK" para qualquer latência. Agora a saída mostra `NO BASELINE` e
+  um aviso explícito, em vez de sucesso silencioso.
+- `internal/accountstate`: corrigida a indentação do comentário perdida e
+  commitado o fix de paridade que estava pendente no working tree
+  (`expired` é routável; `CredentialsExpired` fica abaixo de
+  `HealthError`/`RateLimited` na precedência).
+
+### CI
+- `npm test` (vitest, 33 testes em 4 arquivos) nunca era executado; incluído.
+- Step de bench renomeado e documentado: valida a integridade do harness e do
+  baseline versionado, **não** é gate de performance enquanto o baseline não
+  for re-gravado contra um alvo real.
+- Verificado nesta revisão: `go vet`, `go test -race ./...` (44s) e
+  `npm test` verdes em Linux `golang:1.26-bookworm` + gcc, e
+  `go test -race ./...` verde no host Windows.
+
+### Documentação
+- `README.md` ganhou a seção "Security hardening" (atribuição de IP, política
+  de acesso, privacidade, headers, redaction, permissões, vault e rotação).
+- `config.toml.example` documenta `trusted_proxies`, `ip_access_allow`,
+  `ip_access_deny`, `ip_privacy`, `origin_hash_window_hours`,
+  `origin_retention_days` e o vault.
+
 ## 2026-09-27
 
 ### Fase 0 (CP-00-real) — Portões verdes e decomposição

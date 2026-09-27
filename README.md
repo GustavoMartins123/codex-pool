@@ -243,6 +243,62 @@ Set `POOL_AUTH_ENCRYPTION_KEY` to a stable 32-byte secret (hex or base64) before
 
 Environment variable `PROXY_MAX_INMEM_BODY_BYTES` controls how large a request body can be before the proxy streams it directly (no retries). Default is 16777216 (16 MiB).
 
+### Security hardening
+
+The pool ships fail-closed controls for network, credential and log hygiene.
+Everything below is documented in `config.toml.example` and `.env.example`.
+
+**Client IP attribution.** `CF-Connecting-IP`, `X-Forwarded-For` and
+`X-Real-IP` are only honored when the peer address matches `trusted_proxies`
+(env `PROXY_TRUSTED_PROXIES`, accepts CIDR). When unset, only loopback peers
+are trusted, so a direct client cannot spoof its origin.
+
+**Access policy.** `ip_access_allow` / `ip_access_deny` (env `PROXY_IP_ALLOW` /
+`PROXY_IP_DENY`) gate requests by IP or CIDR. Deny always wins over allow, and
+loopback is always permitted so container health checks keep working. An empty
+allow list leaves the pool unrestricted.
+
+**IP privacy.** Enabled by default. Raw client IPs are not persisted (values
+stored by earlier versions are wiped at startup) and route traces carry a
+salted hash instead, so per-origin analytics keep working without the PII.
+`origin_hash_window_hours` rotates the salt per window; `origin_retention_days`
+prunes old origin metadata. Opt out with `PROXY_IP_PRIVACY=false` or
+`ip_privacy = false`.
+
+**Response headers.** Every response carries `X-Content-Type-Options`,
+`Referrer-Policy`, `Permissions-Policy` and a `frame-ancestors 'none'` CSP.
+Authenticated, credential-bearing and probe surfaces (`/api/`, `/admin/`,
+`/setup/`, `/config/`, `/metrics`, `/oauth/token`) additionally get
+`Cache-Control: no-store`.
+
+**Secret redaction.** Log samples, route traces and error strings built from
+upstream bodies funnel through a central redactor that masks bearer/basic
+headers, `sk-` keys, JWTs and `secret: value` pairs.
+
+**File permissions.** On POSIX hosts the pool refuses to start when a
+credential file under `pool/` is group- or world-accessible; a permissive pool
+directory is tightened to `0700` automatically.
+
+**Credential vault.** Setting `POOL_CREDENTIAL_KEY` (64 hex characters, or a
+passphrase of at least 32 characters) encrypts every upstream credential file
+in `pool/` at rest with AES-256-GCM, using a fresh nonce per record and a
+versioned envelope (`{"cpvault":1,"kv":N,...}`).
+
+- Set it **before** the first start. Plaintext files are migrated to encrypted
+  at startup, and an encrypted pool with no key fails closed rather than
+  loading as empty.
+- **Rotate** by moving the current key to `POOL_CREDENTIAL_KEY_PREVIOUS`
+  (optionally `POOL_CREDENTIAL_KEY_PREVIOUS_VERSION`) and setting the new
+  `POOL_CREDENTIAL_KEY` with an incremented `POOL_CREDENTIAL_KEY_VERSION`.
+  The previous key stays valid for reads; the next startup re-encrypts
+  everything to the current version.
+- **Roll back** to plaintext with the `-decrypt-credentials` startup flag.
+- Every credential write path goes through the vault, including Codex
+  re-login and Z.ai OAuth; `pool/` files therefore never hold readable
+  upstream tokens once a key is configured.
+- Not covered: `data/pool_users.json` (pool-user download tokens) is
+  protected by Passport sealing and OS file permissions, not by this vault.
+
 ### Smart routing
 
 The default `balanced` policy scores quota headroom, reset timing, health,
