@@ -304,13 +304,21 @@ func debugHeaderSummary(h http.Header) []string {
 }
 
 func isSensitiveHeader(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch lower {
 	case "authorization", "proxy-authorization", "cookie", "set-cookie",
 		"x-api-key", "api-key", "x-goog-api-key", "x-oai-attestation":
 		return true
-	default:
-		return false
 	}
+	// Providers invent their own credential header names, so an exact list
+	// never stays complete. Treat any header that announces a secret by name
+	// as sensitive.
+	for _, marker := range []string{"token", "secret", "password", "session", "apikey", "api-key", "api_key"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return strings.HasSuffix(lower, "-key")
 }
 
 func copyHeader(dst, src http.Header) {

@@ -3198,7 +3198,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			if accountType == AccountTypeCodex && isCyberPolicyError(errBody) && !acc.CyberAccess {
 				cyberAccessRetry = true
-				lastErr = fmt.Errorf("upstream %s from non-cyber-access account %s: %s", resp.Status, acc.ID, errBodyStr)
+				lastErr = fmt.Errorf("upstream %s from non-cyber-access account %s: %s", resp.Status, acc.ID, safeText(errBody))
 				h.recent.add(lastErr.Error())
 				if h.metrics != nil {
 					h.metrics.incCyberPolicy(acc.ID, "retry_4xx")
@@ -3244,11 +3244,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				acc.Dead = true
 				acc.Penalty += 100.0
 				acc.mu.Unlock()
-				log.Printf("[%s] marking account %s as DEAD: %s", reqID, acc.ID, errBodyStr)
+				log.Printf("[%s] marking account %s as DEAD: %s", reqID, acc.ID, safeText(errBody))
 				if err := saveAccount(acc); err != nil {
 					log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 				}
-				lastErr = fmt.Errorf("account deactivated: %s", errBodyStr)
+				lastErr = fmt.Errorf("account deactivated: %s", safeText(errBody))
 				h.recent.add(lastErr.Error())
 				continue
 			}
@@ -3263,16 +3263,17 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			case ErrorClassAuth:
 				markedDead, penaltyNow := applyProxyAuthFailure(acc, refreshFailed)
 				if markedDead {
-					log.Printf("[%s] account %s DEAD: %d refresh failed, body=%s", reqID, acc.ID, resp.StatusCode, errBodyStr)
+					log.Printf("[%s] account %s DEAD: %d refresh failed, body=%s", reqID, acc.ID, resp.StatusCode, safeText(errBody))
 					if err := saveAccount(acc); err != nil {
 						log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 					}
 				} else {
-					var respHdrs []string
-					for k, v := range resp.Header {
-						respHdrs = append(respHdrs, fmt.Sprintf("%s=%s", k, v[0]))
-					}
-					log.Printf("[%s] account %s got %d, penalty now %.1f, body=%s, resp_headers=%v", reqID, acc.ID, resp.StatusCode, penaltyNow, errBodyStr, respHdrs)
+					// Upstream auth failures run on the hot path and can happen
+					// several times per request. Summarize the headers instead
+					// of dumping them: the response may carry Set-Cookie or
+					// provider token headers that must never reach the log.
+					log.Printf("[%s] account %s got %d, penalty now %.1f, body=%s, resp_headers=%v",
+						reqID, acc.ID, resp.StatusCode, penaltyNow, safeText(errBody), debugHeaderSummary(resp.Header))
 				}
 
 			case ErrorClassPayment:
@@ -3294,7 +3295,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			if errClass.Retryable() {
 				if len(errBody) > 0 {
-					lastErr = fmt.Errorf("upstream %s: %s", resp.Status, errBodyStr)
+					// lastErr reaches h.recent and the client-facing error, so
+					// the upstream body must be redacted here as well as in logs.
+					lastErr = fmt.Errorf("upstream %s: %s", resp.Status, safeText(errBody))
 				} else {
 					lastErr = fmt.Errorf("upstream %s", resp.Status)
 				}
