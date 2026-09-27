@@ -14,9 +14,10 @@ func TestDerivePrecedence(t *testing.T) {
 		{"healthy", Facts{}, StateHealthy},
 		{"disabled wins over dead", Facts{Disabled: true, Dead: true}, StateDisabled},
 		{"dead wins over verification", Facts{Dead: true, NeedsVerification: true}, StateDead},
-		{"verification wins over expiry", Facts{NeedsVerification: true, CredentialsExpired: true}, StateNeedsVerification},
-		{"expired wins over health error", Facts{CredentialsExpired: true, HealthError: true}, StateExpired},
+		{"verification wins over health error", Facts{NeedsVerification: true, HealthError: true}, StateNeedsVerification},
 		{"health error wins over cooldown", Facts{HealthError: true, RateLimited: true}, StateDegraded},
+		{"cooldown wins over expiry", Facts{CredentialsExpired: true, RateLimited: true}, StateCooldown},
+		{"expired but otherwise fine", Facts{CredentialsExpired: true}, StateExpired},
 		{"rate limited", Facts{RateLimited: true}, StateCooldown},
 		{"usage exhausted", Facts{UsageExhausted: true}, StateCooldown},
 		{"both cooldowns", Facts{RateLimited: true, UsageExhausted: true}, StateCooldown},
@@ -46,7 +47,10 @@ func TestRoutable(t *testing.T) {
 	if !Routable(StateHealthy) {
 		t.Fatal("healthy must be routable")
 	}
-	for _, s := range []State{StateCooldown, StateDegraded, StateDead, StateDisabled, StateNeedsVerification, StateExpired, StateMaintenance, StateDraining, StateNeedsLogin, StateVerifying, StateDiscovered} {
+	if !Routable(StateExpired) {
+		t.Fatal("expired must stay routable: credentials refresh on demand")
+	}
+	for _, s := range []State{StateCooldown, StateDegraded, StateDead, StateDisabled, StateNeedsVerification, StateMaintenance, StateDraining, StateNeedsLogin, StateVerifying, StateDiscovered} {
 		if Routable(s) {
 			t.Fatalf("%s must not be routable in v1", s)
 		}

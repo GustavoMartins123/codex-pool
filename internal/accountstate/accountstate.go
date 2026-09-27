@@ -43,9 +43,14 @@ const (
 	StateDisabled State = "disabled"
 )
 
-// routableStates are the states eligible for new traffic.
+// routableStates are the states eligible for new traffic. Expiry does NOT
+// block routing in this pool: credentials are refreshed on demand during the
+// request (only conversation pin revalidation avoids expired accounts to skip
+// the refresh latency), so StateExpired stays routable and degrades to dead
+// only when refresh actually fails.
 var routableStates = map[State]bool{
 	StateHealthy: true,
+	StateExpired: true,
 	// Draining keeps existing conversations but should not receive new pins;
 	// availability of drained accounts for pinned traffic is a CP-04 decision.
 }
@@ -65,7 +70,8 @@ type Facts struct {
 
 // Derive maps facts onto the unified state. Precedence follows removal
 // semantics: operator overrides first, then permanent failure, then
-// interaction-required, then temporal blocks, then health, then healthy.
+// interaction-required, then temporal blocks and health, then expiry
+// (routable — refresh happens on demand), then healthy.
 func Derive(f Facts) State {
 	switch {
 	case f.Disabled:
@@ -74,12 +80,12 @@ func Derive(f Facts) State {
 		return StateDead
 	case f.NeedsVerification:
 		return StateNeedsVerification
-	case f.CredentialsExpired:
-		return StateExpired
 	case f.HealthError:
 		return StateDegraded
 	case f.RateLimited, f.UsageExhausted:
 		return StateCooldown
+	case f.CredentialsExpired:
+		return StateExpired
 	default:
 		return StateHealthy
 	}
