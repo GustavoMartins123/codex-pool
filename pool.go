@@ -669,6 +669,19 @@ func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[strin
 	return nearest, known
 }
 
+// usageResetWithinBudget reports whether the type has no routable accounts
+// right now, every account is usage-exhausted with a known window reset, and
+// the nearest reset lands inside the given budget. Callers use this to hold
+// the request for the original provider instead of switching to a fallback
+// model mid-conversation.
+func (p *poolState) usageResetWithinBudget(accountType AccountType, budget time.Duration) bool {
+	if p.hasRoutableAccountOfType(accountType) {
+		return false
+	}
+	nearest, known := p.nearestUsageReset(accountType, nil)
+	return known && nearest > 0 && nearest <= budget
+}
+
 // candidate selects the best account using tiered selection, optionally filtering by type.
 // If accountType is empty, all account types are considered.
 //

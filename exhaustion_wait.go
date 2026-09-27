@@ -10,6 +10,19 @@ import (
 // routability while waiting for a usage window to reset.
 const exhaustionWaitPollInterval = 2 * time.Second
 
+// usageResetWithinRequestBudget reports whether the provider's usage window
+// resets within the effective hold budget: the configured exhaustion wait
+// clamped by the request deadline.
+func (h *proxyHandler) usageResetWithinRequestBudget(ctx context.Context, accountType AccountType) bool {
+	budget := h.cfg.exhaustionWait
+	if d, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(d); remaining < budget {
+			budget = remaining
+		}
+	}
+	return h.pool.usageResetWithinBudget(accountType, budget)
+}
+
 // waitForUsageReset holds a request while every account of the type is
 // usage-exhausted (5h/weekly window at the hard-exclude thresholds) and at
 // least one of them has a known future window reset. It returns true once an
