@@ -65,6 +65,7 @@ type config struct {
 	usageRefresh               time.Duration
 	maxAttempts                int
 	exhaustionWait             time.Duration // Hold requests while all accounts of a type are usage-exhausted (0 = fail fast)
+	exhaustionPreferWait       bool          // Prefer holding for the provider's window reset over switching to a fallback model
 	storePath                  string
 	retentionDays              int
 	legacyFriendCode           string
@@ -240,6 +241,10 @@ func buildConfig() *config {
 	} else if fileCfg.ExhaustionWaitSeconds > 0 {
 		cfg.exhaustionWait = time.Duration(fileCfg.ExhaustionWaitSeconds) * time.Second
 	}
+	// When the provider's usage window resets inside the exhaustion wait
+	// budget, hold the request for it instead of switching to a fallback
+	// model mid-conversation.
+	cfg.exhaustionPreferWait = parseBoolEnv("PROXY_EXHAUSTION_PREFER_WAIT", true)
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
 	cfg.legacyFriendCode = getConfigString("FRIEND_CODE", fileCfg.LegacyFriendCode, "")
 	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
@@ -2819,6 +2824,19 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTraceForUser(userID, candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
 		}
 		if acc == nil {
+			// Prefer holding the request for the original provider when its
+			// usage window resets within the exhaustion wait budget, instead
+			// of switching to a fallback model mid-conversation.
+			if h.cfg.exhaustionWait > 0 && h.cfg.exhaustionPreferWait && exhaustionRetries < 3 &&
+				h.usageResetWithinRequestBudget(ctx, accountType) &&
+				h.waitForUsageReset(ctx, accountType, reqID) {
+				exhaustionRetries++
+				exclude = map[string]bool{}
+				if attempt == attempts {
+					attempts++
+				}
+				continue
+			}
 			reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
 			trigger := TriggerUnavailable
 			if lastStatus == http.StatusTooManyRequests {
@@ -2861,20 +2879,33 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					if h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile) {
 						return
 					}
-					// handleAntigravityProxy declines before writing anything when the
-					// fallback model is not routable for antigravity. Returning here
-					// without a status would strand the client with an empty 200 and
-					// no error to back off from.
-					log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
-					h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
-					http.Error(w, fmt.Sprintf("no live %s accounts for fallback model %s", AccountTypeAntigravity, fallbackModel), http.StatusServiceUnavailable)
-					return
+				// handleAntigravityProxy declines before writing anything when the
+				// fallback model is not routable for antigravity. Mark the model
+				// as a dead end and keep looping so the request can still wait
+				// for the original provider's cooldown or usage window reset
+				// instead of failing fast with 503.
+				log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
+				h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
+				fallbackVisited[strings.ToLower(fallbackModel)] = true
+				fallbackTransitions++
+				if attempt == attempts {
+					attempts++
 				}
-				fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
-				if fallbackProvider == nil {
-					http.Error(w, "fallback provider is not configured", http.StatusServiceUnavailable)
-					return
+				continue
+			}
+			fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
+			if fallbackProvider == nil {
+				// Same treatment: a misconfigured fallback provider must not
+				// strand the request when the original provider could recover.
+				log.Printf("[%s] fallback provider %s is not configured", reqID, fallbackMeta.Provider)
+				h.recent.add(fmt.Sprintf("fallback provider %s is not configured", fallbackMeta.Provider))
+				fallbackVisited[strings.ToLower(fallbackModel)] = true
+				fallbackTransitions++
+				if attempt == attempts {
+					attempts++
 				}
+				continue
+			}
 				fallbackBody, fallbackPath, fallbackDir, translateErr := translateFallbackPayload(fallbackBody, transitionSourcePath, fallbackMeta.Provider)
 				if translateErr != nil {
 					http.Error(w, translateErr.Error(), http.StatusBadRequest)

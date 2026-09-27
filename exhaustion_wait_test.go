@@ -160,3 +160,130 @@ func TestProxyStillFailsFastWhenExhaustionWaitDisabled(t *testing.T) {
 		t.Fatalf("disabled hold waited %s; expected immediate 503", elapsed)
 	}
 }
+
+func TestUsageResetWithinBudget(t *testing.T) {
+	exhaustedSoon := exhaustedCodexAccount("soon", 0.96, 200*time.Millisecond)
+	p := newPoolState([]*Account{exhaustedSoon}, false)
+
+	if !p.usageResetWithinBudget(AccountTypeCodex, time.Second) {
+		t.Fatal("expected a reset within the 1s budget")
+	}
+	if p.usageResetWithinBudget(AccountTypeCodex, 50*time.Millisecond) {
+		t.Fatal("expected the reset to exceed the 50ms budget")
+	}
+
+	recovered := exhaustedCodexAccount("ok", 0.1, time.Hour)
+	p2 := newPoolState([]*Account{recovered}, false)
+	if p2.usageResetWithinBudget(AccountTypeCodex, time.Hour) {
+		t.Fatal("expected false while an account is routable")
+	}
+}
+
+// newExhaustedFallbackHandler builds a handler with usage-exhausted codex
+// accounts, one live antigravity account, and a fallback route to a model
+// that antigravity declines to serve. The transport distinguishes upstreams
+// so tests can prove which provider answered.
+func newExhaustedFallbackHandler(t *testing.T, preferWait bool, codexAccounts ...*Account) *proxyHandler {
+	t.Helper()
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	codexBase, _ := url.Parse("https://chatgpt.com/backend-api/codex")
+	claudeBase, _ := url.Parse("https://api.anthropic.com")
+	geminiBase, _ := url.Parse("https://generativelanguage.googleapis.com")
+	antiDaily, _ := url.Parse("https://daily.example")
+	antiProd, _ := url.Parse("https://prod.example")
+
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	accounts := append(append([]*Account{}, codexAccounts...), antiAcc)
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		payload := "data: {\"type\":\"response.completed\",\"servedBy\":\"anti\"}\n\n"
+		if strings.Contains(req.URL.Host, "chatgpt.com") {
+			payload = "data: {\"type\":\"response.completed\",\"servedBy\":\"codex\"}\n\n"
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(payload)),
+			Request:    req,
+		}, nil
+	})
+	return &proxyHandler{
+		cfg: &config{
+			requestTimeout:       5 * time.Second,
+			streamTimeout:        5 * time.Second,
+			maxInMemoryBodyBytes: 4 << 20,
+			maxAttempts:          1,
+			exhaustionWait:       2 * time.Second,
+			exhaustionPreferWait: preferWait,
+		},
+		transport: transport,
+		pool:      newPoolState(accounts, false),
+		registry: NewProviderRegistry(
+			NewCodexProvider(codexBase, codexBase, nil),
+			NewClaudeProvider(claudeBase),
+			NewGeminiProvider(geminiBase, geminiBase),
+			NewAntigravityProvider(antiDaily, antiProd),
+		),
+		metrics: newMetrics(),
+		recent:  newRecentErrors(5),
+	}
+}
+
+func recoverExhaustedAccountAfter(t *testing.T, acc *Account, delay time.Duration) {
+	t.Helper()
+	go func() {
+		time.Sleep(delay)
+		acc.mu.Lock()
+		acc.Usage.PrimaryUsedPercent = 0.1
+		acc.Usage.PrimaryResetAt = time.Now().Add(5 * time.Hour)
+		acc.mu.Unlock()
+	}()
+}
+
+// When the original provider's window resets inside the hold budget, the
+// request must stay on that provider instead of switching to a fallback
+// model mid-conversation.
+func TestProxyPrefersWaitingOverFallbackWhenResetIsClose(t *testing.T) {
+	account := exhaustedCodexAccount("acct_ex", 0.96, 400*time.Millisecond)
+	h := newExhaustedFallbackHandler(t, true, account)
+	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
+		OnUnavailable: []string{"gemini-custom-unknown"},
+	})
+	recoverExhaustedAccountAfter(t, account, 120*time.Millisecond)
+
+	start := time.Now()
+	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%q)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "\"servedBy\":\"codex\"") {
+		t.Fatalf("expected the original codex provider to answer, got %q", w.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("request was not held while the account was usage-exhausted (elapsed %s)", elapsed)
+	}
+}
+
+// A declined fallback provider must not strand the request: the loop keeps
+// going and waits for the original provider's usage window reset instead of
+// answering 503 immediately.
+func TestProxyWaitsForUsageResetAfterFallbackDecline(t *testing.T) {
+	account := exhaustedCodexAccount("acct_ex", 0.96, time.Hour)
+	h := newExhaustedFallbackHandler(t, false, account)
+	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
+		OnUnavailable: []string{"gemini-custom-unknown"},
+	})
+	recoverExhaustedAccountAfter(t, account, 120*time.Millisecond)
+
+	start := time.Now()
+	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%q)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "\"servedBy\":\"codex\"") {
+		t.Fatalf("expected the original codex provider to answer, got %q", w.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("request was not held after the fallback declined (elapsed %s)", elapsed)
+	}
+}
