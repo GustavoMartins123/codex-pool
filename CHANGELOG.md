@@ -6,6 +6,48 @@ Formato por fase do roadmap (`codex-pool-roadmap.md`, local). Datas em UTC.
 
 Correções sobre a entrega de CP-00/CP-01/CP-02/CP-03.
 
+### CP-01 — Redaction de secrets em logs, de global para sistemático
+A auditoria encontrou que o funil `safeText` cobria só ~30 de ~353 call sites
+de `log`, e o risco real era itemizável em ~20 linhas:
+
+- **Vazamentos incondicionais no retry loop do proxy** (`main.go`): o corpo do
+  upstream ia cru para o log quando a conta era marcada DEAD (branch de
+  pagamento/workspace desativado) e quando o auth falhava após refresh. Pior:
+  o branch de auth falho despejava **todo** `resp.Header` sem allowlist,
+  incluindo `Set-Cookie` e headers de token de provider. Agora o corpo passa
+  por `safeText` e os headers por `debugHeaderSummary`. Os mesmos corpos
+  entravam em `lastErr`, que chega a `h.recent` e ao erro visto pelo cliente —
+  redigido também.
+- **Assimetria entre providers**: Claude era o único provider cujo refresh/exchange
+  de OAuth não usava `safeText` (codex, gemini, grok e antigravity usavam).
+  Os construtores de erro de `claude_auth.go` (exchange, refresh, profile,
+  bootstrap) agora redigem — o que fecha **log e resposta HTTP** de uma vez,
+  já que o mesmo `err` era devolvido ao admin em `/admin/claude/`.
+- `codexExchangeCode` lia o corpo do endpoint de token **sem `LimitReader`** e
+  sem redigir. Agora limitado a 64 KiB e redigido, com seam
+  `codexExchangeCodeWithClient` para teste.
+- `isSensitiveHeader` era uma lista exata, que nunca fica completa porque
+  providers inventam nomes próprios. Agora cobre, além da lista, qualquer nome
+  que anuncie credencial (contém token/secret/password/session/api-key ou
+  termina em `-key`).
+- **Rede global**: `redactWriter` envolve o stream do logger padrão em `main()`,
+  já que a lib padrão não tem hook por chamada e o pool tem centenas de call
+  sites. Também escapa newlines embutidos pelo caller, para que valores
+  controlados pelo cliente não forjem linhas de log.
+- `redactSecrets` ganhou cobertura para lacunas reais: chaves Google
+  (`AIza…`, `ya29.…`, `1//…`), tokens de refresh do pool (`poolrt_…`), tokens
+  Claude (`sk-ant-…`), cookies de sessão/Cloudflare e credenciais embutidas em
+  URL.
+
+Regressão: `logredact_coverage_test.go`, com
+`TestInvariantNoCredentialsReachTheLog` e testes que exercitam o
+`proxyRequest` real contra upstream falso (401 e 402), o refresh Claude e o
+exchange Codex. Mutation-checked: reverter o dump de `resp.Header`, a
+redação de Claude, a do Codex ou o heuristic de header faz os testes falhar.
+**Limite honesto:** a redação do log é baseada em padrão, então as camadas
+(call site + writer) são equivalentes e os sites `main.go` redundantes não são
+discrimináveis por teste individual — foram verificados por inspeção.
+
 ### CP-02 — Vault não era contornado em dois caminhos
 - `replaceCodexAccountCredentials` (re-login do Codex) e `saveZAIOAuthAccount`
   (OAuth Z.ai) gravavam JSON **em texto claro** com `os.WriteFile`/`os.OpenFile`

@@ -273,7 +273,25 @@ Authenticated, credential-bearing and probe surfaces (`/api/`, `/admin/`,
 
 **Secret redaction.** Log samples, route traces and error strings built from
 upstream bodies funnel through a central redactor that masks bearer/basic
-headers, `sk-` keys, JWTs and `secret: value` pairs.
+headers, `sk-` keys, JWTs, Google keys (`AIza…`, `ya29.`, `1//`), pool refresh
+tokens, session cookies, `secret: value` pairs and credentials embedded in URLs.
+Two independent layers apply it:
+
+- call sites redact at the source — the OAuth token exchange, refresh, profile
+  and bootstrap errors from every provider, and the upstream failure paths in
+  the proxy retry loop, redact the body before building an error, so neither the
+  log nor the client-visible error carries it;
+- the process log stream itself is wrapped (`redactWriter`), because the pool
+  has hundreds of log call sites and the standard logger offers no per-call
+  hook. It also escapes newlines embedded by callers, so client-controlled
+  values cannot forge log lines.
+
+Response headers are summarized through an allowlist rather than dumped:
+`debugHeaderSummary` redacts anything whose name announces a credential
+(`authorization`, `cookie`, or any name containing token/secret/session/
+password/api-key) and truncates the rest. This is deliberately stricter than
+pattern matching, because an opaque token in a provider-specific header does
+not look like any known credential shape.
 
 **File permissions.** On POSIX hosts the pool refuses to start when a
 credential file under `pool/` is group- or world-accessible; a permissive pool
