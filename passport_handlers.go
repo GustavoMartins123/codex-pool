@@ -244,14 +244,20 @@ func (h *proxyHandler) passportCSRF(r *http.Request, s *passportSession) bool {
 	x := hashToken(got)
 	return x == s.CSRFHash
 }
-func configSetupURLs(baseURL, nonce string) map[string]string {
-	return map[string]string{
-		"codex":  baseURL + "/config/codex/" + nonce,
-		"gemini": baseURL + "/config/gemini/" + nonce,
-		"claude": baseURL + "/config/claude/" + nonce,
-		"pi":     baseURL + "/config/pi/" + nonce,
-		"grok":   baseURL + "/config/grok/" + nonce,
+func (h *proxyHandler) mintSetupURLs(r *http.Request, client *ClientCredential) (map[string]string, time.Time, error) {
+	base := h.getEffectivePublicURL(r)
+	paths := []string{"codex", "gemini", "claude", "pi", "grok", "cute-code"}
+	urls := make(map[string]string, len(paths))
+	var expires time.Time
+	for _, provider := range paths {
+		nonce, expiry, err := h.passport.mintConfigDownloadNonce(client)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		urls[provider] = base + "/config/" + provider + "/" + nonce
+		expires = expiry
 	}
+	return urls, expires, nil
 }
 
 func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Request) {
@@ -296,8 +302,8 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		response := map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt, "setup_token": c.DownloadToken}
-		if nonce, expires, err := h.passport.mintConfigDownloadNonce(c); err == nil {
-			response["setup_urls"] = configSetupURLs(h.getEffectivePublicURL(r), nonce)
+		if urls, expires, err := h.mintSetupURLs(r, c); err == nil {
+			response["setup_urls"] = urls
 			response["nonce_expires_at"] = expires
 		}
 		respondJSON(w, response)

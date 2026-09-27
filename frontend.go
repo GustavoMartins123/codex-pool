@@ -275,19 +275,29 @@ func (h *proxyHandler) handleFriendClaim(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Request) ([]byte, error) {
-	if h.poolUsers == nil {
-		return nil, fmt.Errorf("pool users not configured")
+	secret := getPoolJWTSecret()
+	if secret == "" {
+		return nil, fmt.Errorf("JWT secret not configured")
 	}
-	user := h.poolUsers.GetByToken(token)
+	var user *PoolUser
+	if h.passport != nil {
+		if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
+			user = passportClientAsPoolUser(h, client)
+		}
+	}
+	if user == nil && h.passport != nil {
+		if client := h.passport.clientByDownloadToken(token); client != nil {
+			user = passportClientAsPoolUser(h, client)
+		}
+	}
+	if user == nil && h.poolUsers != nil {
+		user = h.poolUsers.GetByToken(token)
+	}
 	if user == nil {
 		return nil, fmt.Errorf("invalid token")
 	}
 	if user.Disabled {
 		return nil, fmt.Errorf("user disabled")
-	}
-	secret := getPoolJWTSecret()
-	if secret == "" {
-		return nil, fmt.Errorf("JWT secret not configured")
 	}
 	claudeAuth, err := generateClaudeAuth(secret, user)
 	if err != nil {

@@ -145,6 +145,28 @@ func (h *proxyHandler) handlePoolUserDelete(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func passportClientAsPoolUser(h *proxyHandler, client *ClientCredential) *PoolUser {
+	if dl, err := h.passport.clientDownloadToken(client); err == nil {
+		client.DownloadToken = dl
+	}
+	if client.DownloadToken == "" {
+		return nil
+	}
+	principalID, clientID, ok := h.passport.authorizeCredential(client.PrincipalID + "-c-" + client.ID)
+	if !ok {
+		return nil
+	}
+	pr := h.passport.principal(principalID)
+	issuedAt := time.Now().UTC()
+	if pr.CredentialsValidAfter.After(issuedAt) {
+		issuedAt = pr.CredentialsValidAfter
+	}
+	if client.ValidAfter.After(issuedAt) {
+		issuedAt = client.ValidAfter
+	}
+	return &PoolUser{ID: principalID + "-c-" + clientID, Token: client.DownloadToken, Email: pr.Email, PlanType: pr.PlanType, CreatedAt: client.CreatedAt, credentialIssuedAt: issuedAt}
+}
+
 // Config download endpoints (no auth - token IS the auth)
 
 func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Request) {
@@ -187,22 +209,7 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 	var user *PoolUser
 	if h.passport != nil {
 		if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
-			if dl, err := h.passport.clientDownloadToken(client); err == nil {
-				client.DownloadToken = dl
-			}
-			if client.DownloadToken != "" {
-				if principalID, clientID, ok := h.passport.authorizeCredential(client.PrincipalID + "-c-" + client.ID); ok {
-					pr := h.passport.principal(principalID)
-					issuedAt := time.Now().UTC()
-					if pr.CredentialsValidAfter.After(issuedAt) {
-						issuedAt = pr.CredentialsValidAfter
-					}
-					if client.ValidAfter.After(issuedAt) {
-						issuedAt = client.ValidAfter
-					}
-					user = &PoolUser{ID: principalID + "-c-" + clientID, Token: client.DownloadToken, Email: pr.Email, PlanType: pr.PlanType, CreatedAt: client.CreatedAt, credentialIssuedAt: issuedAt}
-				}
-			}
+			user = passportClientAsPoolUser(h, client)
 		}
 	}
 	if user == nil && h.passport != nil {

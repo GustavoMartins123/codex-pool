@@ -48,6 +48,7 @@ import {
   createMyClient,
   rotateMyClient,
   revealMyClient,
+  setupLinkMyClient,
   revokeMyClient,
   loadPasses,
   createPass,
@@ -767,7 +768,7 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
   const [passkeyPassword, setPasskeyPassword] = useState("");
   const [passkeyLabel, setPasskeyLabel] = useState("");
   const [setupFor, setSetupFor] = useState<string | null>(null);
-  const [setupToken, setSetupToken] = useState("");
+  const [setupLinks, setSetupLinks] = useState<{ urls: Record<string, string>; expires: Date } | null>(null);
   const [setupPlatform, setSetupPlatform] = useState("codex");
   const [showMint, setShowMint] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -850,24 +851,25 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
     return hours;
   }, new Map<string, { hour: string; tokens: number }>()).values()).sort((a, b) => a.hour.localeCompare(b.hour));
   const base = window.location.origin;
-  const platforms: Record<string, string> = {
-    codex: `curl -sL "${base}/setup/codex/${setupToken}" | bash`,
-    claude: `source <(curl -sL "${base}/setup/claude/${setupToken}")`,
-    gemini: `curl -sL "${base}/setup/gemini/${setupToken}" | bash`,
-    grok: `curl -sL "${base}/setup/grok/${setupToken}" | bash`,
-    "cute-code": `curl -sL "${base}/setup/cute-code/${setupToken}" | bash`,
-    pi: `curl -sL "${base}/setup/pi/${setupToken}" | bash`,
-  };
+  const setupCommands = (urls: Record<string, string>): Record<string, string> => ({
+    codex: `curl -sL "${base}/setup/codex/${(urls.codex ?? "").split("/").pop()}" | bash`,
+    claude: `source <(curl -sL "${base}/setup/claude/${(urls.claude ?? "").split("/").pop()}")`,
+    gemini: `curl -sL "${base}/setup/gemini/${(urls.gemini ?? "").split("/").pop()}" | bash`,
+    grok: `curl -sL "${base}/setup/grok/${(urls.grok ?? "").split("/").pop()}" | bash`,
+    "cute-code": `curl -sL "${base}/setup/cute-code/${(urls["cute-code"] ?? "").split("/").pop()}" | bash`,
+    pi: `curl -sL "${base}/setup/pi/${(urls.pi ?? "").split("/").pop()}" | bash`,
+  });
+  const platforms = setupLinks ? setupCommands(setupLinks.urls) : {};
 
-  const reveal = async (clientID: string) => {
+  const openSetup = async (clientID: string) => {
     setBusy(`reveal:${clientID}`);
     try {
-      const result = await revealMyClient(clientID);
+      const result = await setupLinkMyClient(clientID);
       setSetupFor(clientID);
-      setSetupToken(result.setup_token);
+      setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
       setErrors((current) => ({ ...current, clients: "" }));
     } catch (cause) {
-      setErrors((current) => ({ ...current, clients: cause instanceof Error ? cause.message : "Unable to reveal setup" }));
+      setErrors((current) => ({ ...current, clients: cause instanceof Error ? cause.message : "Unable to generate setup links" }));
     } finally {
       setBusy("");
     }
@@ -879,7 +881,11 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
     try {
       const result = await createMyClient(label);
       setSetupFor(result.id ?? null);
-      setSetupToken(result.setup_token);
+      if (result.setup_urls && result.nonce_expires_at) {
+        setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
+      } else {
+        setSetupLinks(null);
+      }
       setLabel("");
       setShowMint(false);
       await loadClientsData();
@@ -898,7 +904,11 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
     try {
       const result = await rotateMyClient(client.id);
       setSetupFor(client.id);
-      setSetupToken(result.setup_token);
+      if (result.setup_urls && result.nonce_expires_at) {
+        setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
+      } else {
+        setSetupLinks(null);
+      }
       setNotice(`${client.label} has a new key. Run setup again on this device.`);
       await loadClientsData();
     } catch (cause) {
@@ -916,7 +926,7 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
       await revokeMyClient(client.id);
       if (setupFor === client.id) {
         setSetupFor(null);
-        setSetupToken("");
+        setSetupLinks(null);
       }
       await loadClientsData();
     } catch (cause) {
@@ -1030,12 +1040,13 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
         <div className="client-header">
           <span><strong>{client.label}</strong>{client.status !== "active" && <small>{client.status}</small>}</span>
           <div className="row-actions">
-            <button disabled={Boolean(busy) || client.status !== "active"} onClick={() => setupFor === client.id ? (setSetupFor(null), setSetupToken("")) : reveal(client.id)}>{busy === `reveal:${client.id}` ? "Loading…" : setupFor === client.id ? "Hide setup" : "Show setup"}</button>
+            <button disabled={Boolean(busy) || client.status !== "active"} onClick={() => setupFor === client.id ? (setSetupFor(null), setSetupLinks(null)) : openSetup(client.id)}>{busy === `reveal:${client.id}` ? "Loading…" : setupFor === client.id ? "Hide setup" : "Show setup"}</button>
             <button disabled={Boolean(busy)} onClick={() => rotate(client)}>{busy === `rotate:${client.id}` ? "Updating…" : client.status === "active" ? "Replace key" : "Restore"}</button>
             {client.status === "active" && <button className="danger-action" disabled={Boolean(busy)} onClick={() => revoke(client)}>{busy === `revoke:${client.id}` ? "Revoking…" : "Revoke"}</button>}
           </div>
         </div>
-        {setupFor === client.id && setupToken && <div className="setup-secret" role="status">
+        {setupFor === client.id && setupLinks && <div className="setup-secret" role="status">
+          <p className="setup-note">One-time links, expire {setupLinks.expires.toLocaleTimeString()}. Reopen "Show setup" for fresh ones.</p>
           <div className="tabs client-platform-tabs">
             {Object.keys(platforms).map((platform) => <button key={platform} className={classNames("tab", setupPlatform === platform && "active")} onClick={() => setSetupPlatform(platform)}>{platform}</button>)}
           </div>

@@ -479,12 +479,12 @@ func (h *proxyHandler) handlePassportClientItem(w http.ResponseWriter, r *http.R
 			respondJSONError(w, http.StatusNotFound, "client credential not found")
 			return
 		}
-		nonce, expires, err := h.passport.mintConfigDownloadNonce(client)
+		urls, expires, err := h.mintSetupURLs(r, client)
 		if err != nil {
 			respondJSONError(w, 500, "setup link unavailable")
 			return
 		}
-		respondJSON(w, map[string]any{"id": client.ID, "setup_urls": configSetupURLs(h.getEffectivePublicURL(r), nonce), "nonce_expires_at": expires})
+		respondJSON(w, map[string]any{"id": client.ID, "setup_urls": urls, "nonce_expires_at": expires})
 	case r.Method == http.MethodPost && action == "reveal":
 		h.passport.mu.RLock()
 		stored := h.passport.clients[clientID]

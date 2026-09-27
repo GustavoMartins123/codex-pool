@@ -83,14 +83,18 @@ export async function uploadMyAvatar(file: File): Promise<{ avatar_url: string }
 export async function loadMyClients(): Promise<ClientCredential[]> {
   return decode(await fetch("/api/me/clients", { cache: "no-store", credentials: "same-origin" }));
 }
-export async function createMyClient(label: string): Promise<ClientCredential & { setup_token: string }> {
+export type ClientSetupLinks = { setup_urls: Record<string, string>; nonce_expires_at: string };
+export async function createMyClient(label: string): Promise<ClientCredential & { setup_token: string } & Partial<ClientSetupLinks>> {
   return decode(await fetch("/api/me/clients", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ label }) }));
 }
-export async function rotateMyClient(id: string): Promise<ClientCredential & { setup_token: string }> {
+export async function rotateMyClient(id: string): Promise<ClientCredential & { setup_token: string } & Partial<ClientSetupLinks>> {
   return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/rotate`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 export async function revealMyClient(id: string): Promise<{ setup_token: string }> {
   return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/reveal`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
+}
+export async function setupLinkMyClient(id: string): Promise<{ id: string } & ClientSetupLinks> {
+  return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/setup-link`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 export async function revokeMyClient(id: string): Promise<void> {
   await decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
