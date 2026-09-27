@@ -55,11 +55,16 @@ type BenchmarkReport struct {
 
 // MetricDelta describes the change between current run and baseline.
 type MetricDelta struct {
-	Baseline float64 `json:"baseline"`
-	Current  float64 `json:"current"`
-	Delta    float64 `json:"delta"`
-	DeltaPct float64 `json:"delta_pct"`
-	Regressed bool   `json:"regressed"`
+	Baseline   float64 `json:"baseline"`
+	Current    float64 `json:"current"`
+	Delta      float64 `json:"delta"`
+	DeltaPct   float64 `json:"delta_pct"`
+	Regressed  bool    `json:"regressed"`
+	// NoBaseline marks a metric that cannot be judged: either the scenario is
+	// absent from the baseline or the recorded baseline is zero. Such metrics
+	// are never "OK"; they carry no signal, and a run in mock mode produces
+	// exactly that (no wall-clock timing at all).
+	NoBaseline bool `json:"no_baseline"`
 }
 
 // ScenarioComparison captures differences for a single scenario.

@@ -109,24 +109,118 @@ func TestBenchmarkRunnerAndBaselineComparison(t *testing.T) {
 			t.Errorf("scenario %s had errors: %d", name, sc.Errors)
 		}
 	}
+}
 
-	// Save baseline and reload
-	if err := runner.SaveBaseline(report); err != nil {
-		t.Fatalf("SaveBaseline failed: %v", err)
-	}
-
+// TestCommittedBaselineIsLoadableAndComplete guards the versioned baseline
+// itself. The previous version of this test saved the fresh report into a temp
+// dir and compared it against itself, which can never report a regression.
+func TestCommittedBaselineIsLoadableAndComplete(t *testing.T) {
+	runner := NewRunner(ExecutionContext{}, "../scenarios", "../baselines", t.TempDir())
 	baseline, err := runner.LoadBaseline()
 	if err != nil {
-		t.Fatalf("LoadBaseline failed: %v", err)
+		t.Fatalf("committed baseline must load: %v", err)
+	}
+	required := []string{
+		"simple_request", "large_request", "streaming", "non_streaming",
+		"tools", "web_search", "image_input", "model_switch",
+		"provider_switch", "long_conversation", "concurrency",
+	}
+	for _, name := range required {
+		if _, ok := baseline.Scenarios[name]; !ok {
+			t.Errorf("committed baseline is missing scenario %q", name)
+		}
 	}
 
+	// A fresh report must be comparable against the committed baseline and
+	// every scenario must produce the four compared metrics.
+	report := &BenchmarkReport{Target: "mock", Scenarios: map[string]ScenarioMetrics{}}
+	for _, name := range required {
+		report.Scenarios[name] = ScenarioMetrics{TotalDurationMs: 1, TTFTMs: 1, TokensPerSecond: 1}
+	}
 	comp := runner.CompareAgainstBaseline(report, baseline)
-	if comp.HasRegression {
-		t.Errorf("comparison against identical baseline reported regressions")
+	if len(comp.Scenarios) != len(required) {
+		t.Fatalf("comparison covered %d scenarios, want %d", len(comp.Scenarios), len(required))
+	}
+	for name, sc := range comp.Scenarios {
+		for _, metric := range []string{"total_duration_ms", "ttft_ms", "tokens_per_second", "errors"} {
+			if _, ok := sc.Metrics[metric]; !ok {
+				t.Errorf("%s: comparison missing metric %q", name, metric)
+			}
+		}
+	}
+}
+
+// TestCompareAgainstBaselineDetectsRegression is the actual gate: a slower
+// report than the baseline must be flagged.
+func TestCompareAgainstBaselineDetectsRegression(t *testing.T) {
+	baseline := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{
+		"simple_request": {TotalDurationMs: 100, TTFTMs: 50, TokensPerSecond: 80},
+	}}
+	slower := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{
+		"simple_request": {TotalDurationMs: 200, TTFTMs: 50, TokensPerSecond: 40},
+	}}
+	faster := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{
+		"simple_request": {TotalDurationMs: 50, TTFTMs: 25, TokensPerSecond: 160},
+	}}
+
+	runner := NewRunner(ExecutionContext{}, t.TempDir(), t.TempDir(), t.TempDir())
+
+	regressed := runner.CompareAgainstBaseline(slower, baseline)
+	if !regressed.HasRegression {
+		t.Fatal("doubling latency and halving throughput must be reported as a regression")
+	}
+	if !regressed.Scenarios["simple_request"].Metrics["total_duration_ms"].Regressed {
+		t.Error("total_duration_ms regression not flagged")
+	}
+	if !regressed.Scenarios["simple_request"].Metrics["tokens_per_second"].Regressed {
+		t.Error("tokens_per_second regression not flagged")
+	}
+	if regressed.Scenarios["simple_request"].Metrics["ttft_ms"].Regressed {
+		t.Error("unchanged ttft must not be flagged as a regression")
+	}
+
+	improved := runner.CompareAgainstBaseline(faster, baseline)
+	if improved.HasRegression {
+		t.Error("a faster report must not be reported as a regression")
+	}
+}
+
+// TestComparisonWithoutUsableBaselineIsNotReportedAsSuccess is the guard
+// against a zero-valued (mock) baseline silently passing everything.
+func TestComparisonWithoutUsableBaselineIsNotReportedAsSuccess(t *testing.T) {
+	zero := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{
+		"simple_request": {TotalDurationMs: 0, TTFTMs: 0, TokensPerSecond: 0},
+	}}
+	measured := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{
+		"simple_request": {TotalDurationMs: 900, TTFTMs: 400, TokensPerSecond: 10},
+	}}
+
+	runner := NewRunner(ExecutionContext{}, t.TempDir(), t.TempDir(), t.TempDir())
+	comp := runner.CompareAgainstBaseline(measured, zero)
+
+	delta := comp.Scenarios["simple_request"].Metrics["total_duration_ms"]
+	if !delta.NoBaseline {
+		t.Error("a zero baseline must be marked as unjudgeable, not as passing")
+	}
+	if delta.Regressed {
+		t.Error("an unjudgeable metric must not claim a regression verdict")
 	}
 
 	formatted := FormatComparison(comp)
-	if !strings.Contains(formatted, "BENCHMARK COMPARISON REPORT") {
-		t.Errorf("unexpected comparison format output: %s", formatted)
+	if strings.Contains(formatted, "SUCCESS: All scenarios within baseline") {
+		t.Errorf("a run with no usable baseline must not print SUCCESS:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "NO BASELINE") {
+		t.Errorf("comparison must flag the missing baseline:\n%s", formatted)
+	}
+
+	scenariosMissing := &BenchmarkReport{Scenarios: map[string]ScenarioMetrics{}}
+	comp = runner.CompareAgainstBaseline(measured, scenariosMissing)
+	if !hasUnjudgeable(comp) {
+		t.Error("a scenario absent from the baseline must be unjudgeable")
+	}
+	if !strings.Contains(FormatComparison(comp), "REGRESSION") &&
+		!strings.Contains(FormatComparison(comp), "NO BASELINE") {
+		t.Error("comparison output must never silently claim success")
 	}
 }

@@ -147,7 +147,11 @@ func (r *Runner) CompareAgainstBaseline(current, baseline *BenchmarkReport) Benc
 
 func computeDelta(base, cur float64, hasBase bool, lowerIsBetter bool) MetricDelta {
 	if !hasBase || base == 0 {
-		return MetricDelta{Baseline: base, Current: cur}
+		// No usable baseline: report the metric as unjudgeable instead of
+		// silently passing it. A zero baseline means the baseline was
+		// recorded without timing signal (mock mode), and treating that as
+		// "within threshold" is how a real regression slips through.
+		return MetricDelta{Baseline: base, Current: cur, NoBaseline: true}
 	}
 	delta := cur - base
 	pct := (delta / base) * 100.0
@@ -185,7 +189,10 @@ func FormatComparison(comp BenchmarkComparison) string {
 		sc := comp.Scenarios[k]
 		dur := sc.Metrics["total_duration_ms"]
 		status := "OK"
-		if dur.Regressed {
+		switch {
+		case dur.NoBaseline:
+			status = "NO BASELINE"
+		case dur.Regressed:
 			status = "REGRESSION"
 		}
 		sb.WriteString(fmt.Sprintf("%-20s | %12.1f | %12.1f | %+9.1f%% | %s\n",
@@ -194,8 +201,22 @@ func FormatComparison(comp BenchmarkComparison) string {
 	sb.WriteString(strings.Repeat("-", 70) + "\n")
 	if comp.HasRegression {
 		sb.WriteString("WARNING: Regressions detected (>20% difference) against baseline!\n")
+	} else if hasUnjudgeable(comp) {
+		sb.WriteString("WARNING: No usable baseline for at least one metric: those rows were NOT verified. Re-record the baseline against a real target.\n")
 	} else {
 		sb.WriteString("SUCCESS: All scenarios within baseline performance thresholds.\n")
 	}
 	return sb.String()
+}
+
+// hasUnjudgeable reports whether any compared metric lacked a usable baseline.
+func hasUnjudgeable(comp BenchmarkComparison) bool {
+	for _, sc := range comp.Scenarios {
+		for _, delta := range sc.Metrics {
+			if delta.NoBaseline {
+				return true
+			}
+		}
+	}
+	return false
 }
