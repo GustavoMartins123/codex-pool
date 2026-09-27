@@ -661,3 +661,100 @@ func TestCleanAntigravitySchemaDropsNullRequired(t *testing.T) {
 		t.Fatalf("nested null required survived: %#v", nested)
 	}
 }
+
+func antigravityRequestContents(t *testing.T, path string, body []byte, model string) []any {
+	t.Helper()
+	request, err := prepareAntigravityRequest(path, body, model, "project-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := decodeMap(t, request.Body)
+	return anySlice(envelope["request"].(map[string]any)["contents"])
+}
+
+// Gemini rejects any generateContent request whose final content has the model
+// role ("Requests ending with a model turn are not supported"). An aborted
+// turn replayed by the client ends with signed reasoning parts, so stripping
+// plain-text prefill alone is not enough: a trailing user turn must be added.
+func TestAntigravityAppendsUserTurnAfterTrailingAbortedReasoning(t *testing.T) {
+	body := []byte(`{"model":"gemini-3.5-flash","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+		{"type":"reasoning","encrypted_content":"gemini#sig-aborted","summary":[{"type":"summary_text","text":"partial thinking"}]}
+	]}`)
+	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
+	if len(contents) < 2 {
+		t.Fatalf("contents = %#v", contents)
+	}
+	last := mapValue(contents[len(contents)-1])
+	if stringValue(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	}
+}
+
+func TestAntigravityAppendsUserTurnAfterTrailingSignedText(t *testing.T) {
+	body := []byte(`{"model":"gemini-3.5-flash","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+		{"type":"reasoning","encrypted_content":"gemini#sig-1","summary":[{"type":"summary_text","text":"thinking"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}
+	]}`)
+	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
+	last := mapValue(contents[len(contents)-1])
+	if stringValue(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	}
+	// The signed partial answer must survive; only a continuation turn is added.
+	signed := false
+	for _, raw := range contents {
+		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
+			if part := mapValue(rawPart); part["text"] == "partial answer" && part["thoughtSignature"] == "sig-1" {
+				signed = true
+			}
+		}
+	}
+	if !signed {
+		t.Fatalf("signed partial answer lost: %#v", contents)
+	}
+}
+
+func TestAntigravitySynthesizesResponsesForTrailingFunctionCalls(t *testing.T) {
+	body := []byte(`{"model":"gemini-3.5-flash","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"run it"}]},
+		{"type":"function_call","call_id":"call-1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}
+	]}`)
+	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
+	last := mapValue(contents[len(contents)-1])
+	if stringValue(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	}
+	parts := anySlice(last["parts"])
+	if len(parts) != 1 {
+		t.Fatalf("synthesized turn parts = %#v", parts)
+	}
+	response := mapValue(mapValue(parts[0])["functionResponse"])
+	if response == nil || stringValue(response["id"]) != "call-1" || stringValue(response["name"]) == "" || response["response"] == nil {
+		t.Fatalf("synthesized function response = %#v", response)
+	}
+}
+
+func TestAntigravityPlainPrefillIsStillStrippedWithoutUserTurn(t *testing.T) {
+	body := []byte(`{"model":"gemini-3.5-flash","input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"trailing prefill"}]}
+	]}`)
+	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
+	if len(contents) != 1 || stringValue(mapValue(contents[0])["role"]) != "user" {
+		t.Fatalf("plain prefill was not stripped: %#v", contents)
+	}
+}
+
+func TestAntigravityNativeGeminiRequestGetsTrailingUserTurn(t *testing.T) {
+	body := []byte(`{"contents":[
+		{"role":"user","parts":[{"text":"hello"}]},
+		{"role":"model","parts":[{"text":"cut off mid sentence"}]}
+	]}`)
+	contents := antigravityRequestContents(t, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", body, "gemini-2.5-pro")
+	last := mapValue(contents[len(contents)-1])
+	if stringValue(last["role"]) != "user" {
+		t.Fatalf("native request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	}
+}

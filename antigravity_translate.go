@@ -159,7 +159,8 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 		return antigravityPreparedRequest{}, err
 	}
 	if contents := anySlice(gemini["contents"]); len(contents) > 0 {
-		gemini["contents"] = antigravityAlignFunctionResponses(contents)
+		contents = antigravityAlignFunctionResponses(contents)
+		gemini["contents"] = antigravityEnsureTrailingUserTurn(contents)
 	}
 	delete(gemini, "stream")
 	delete(gemini, "model")
@@ -673,6 +674,39 @@ func antigravityIsTrailingModelPrefill(content map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// antigravityEnsureTrailingUserTurn guarantees the request does not end with a
+// model content: Gemini rejects those with "Requests ending with a model turn
+// are not supported". Plain-text prefill is stripped by the translators, so
+// this covers the remaining cases — aborted turns with signed reasoning parts
+// and dangling function calls — by appending a continuation user turn.
+func antigravityEnsureTrailingUserTurn(contents []any) []any {
+	if len(contents) == 0 {
+		return contents
+	}
+	last := mapValue(contents[len(contents)-1])
+	if last == nil || stringValue(last["role"]) != "model" {
+		return contents
+	}
+	parts := make([]any, 0)
+	for _, raw := range anySlice(last["parts"]) {
+		call := mapValue(mapValue(raw)["functionCall"])
+		if call == nil {
+			continue
+		}
+		parts = append(parts, map[string]any{"functionResponse": map[string]any{
+			"id":   stringValue(call["id"]),
+			"name": stringValue(call["name"]),
+			"response": map[string]any{
+				"error": "tool call was not executed",
+			},
+		}})
+	}
+	if len(parts) == 0 {
+		parts = []any{map[string]any{"text": "Continue."}}
+	}
+	return append(contents, map[string]any{"role": "user", "parts": parts})
 }
 
 func antigravityNormalizeResponsesItems(items []any) []any {
