@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"testing"
 
@@ -12,7 +13,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// requireAuditFile skips audit tests when their backing database is absent.
+// These tests are ad-hoc audits over operator data (typically copied into
+// /tmp on the operations host); on dev machines and CI they must not fail.
+func requireAuditFile(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("audit database not present: %s", path)
+	}
+}
+
 func TestAntigravityTokenAudit(t *testing.T) {
+	requireAuditFile(t, "/tmp/codex-pool-usage-audit.duckdb")
 	db, err := sql.Open("duckdb", "/tmp/codex-pool-usage-audit.duckdb?access_mode=read_only")
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +87,7 @@ func TestAntigravityTokenAudit(t *testing.T) {
 }
 
 func TestLegacyAnalyticsAudit(t *testing.T) {
+	requireAuditFile(t, "/tmp/codex-pool-analytics-audit.db")
 	db, err := sql.Open("sqlite", "file:/tmp/codex-pool-analytics-audit.db?mode=ro")
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +105,7 @@ func TestLegacyAnalyticsAudit(t *testing.T) {
 }
 
 func TestBoltAntigravityAudit(t *testing.T) {
+	requireAuditFile(t, "/tmp/codex-pool-proxy-audit.db")
 	db, err := bbolt.Open("/tmp/codex-pool-proxy-audit.db", 0o600, &bbolt.Options{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +155,7 @@ func TestBoltAntigravityAudit(t *testing.T) {
 }
 
 func TestAgyConversationSchemaAudit(t *testing.T) {
+	requireAuditFile(t, "/tmp/agy-conversation-audit.db")
 	db, err := sql.Open("sqlite", "file:/tmp/agy-conversation-audit.db?mode=ro")
 	if err != nil {
 		t.Fatal(err)

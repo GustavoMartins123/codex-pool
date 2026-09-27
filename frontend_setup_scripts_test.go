@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,9 @@ func TestCodexSetupDefaultModel(t *testing.T) {
 }
 
 func TestCodexSetupPreservesModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
 	h := &proxyHandler{}
 	rr := httptest.NewRecorder()
 	h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token", nil))
@@ -205,6 +209,9 @@ func TestServeGrokSetupScript_PowerShell(t *testing.T) {
 }
 
 func TestServeGrokSetupScript_BashPreservesConfigAndIsIdempotent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
 	h := &proxyHandler{}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/grok/testtoken", nil)
 	rr := httptest.NewRecorder()
