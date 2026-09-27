@@ -159,6 +159,12 @@ func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, 503, "accounts unavailable")
 		return
 	}
+	ip := getClientIP(r)
+	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		h.metrics.incPassport("sign_in_outcomes", "banned")
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
 	var q struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -169,9 +175,15 @@ func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Reques
 	}
 	pr, token, csrf, err := h.passport.login(q.Email, q.Password)
 	if err != nil {
+		if h.bruteForce != nil {
+			h.bruteForce.recordFailure(ip)
+		}
 		h.metrics.incPassport("sign_in_outcomes", "failed")
 		respondJSONError(w, 401, "email or password is incorrect")
 		return
+	}
+	if h.bruteForce != nil {
+		h.bruteForce.recordSuccess(ip)
 	}
 	h.metrics.incPassport("sign_in_outcomes", "succeeded")
 	setSessionCookies(w, token, csrf)

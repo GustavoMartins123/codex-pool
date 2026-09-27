@@ -446,7 +446,7 @@ func (p *PassportStore) login(email, password string) (*Principal, string, strin
 		encoded = pr.PasswordHash
 	}
 	ok := verifyPassword(encoded, password)
-	if !ok || pr == nil || pr.Kind == PrincipalGuest {
+	if !ok || pr == nil || pr.Kind == PrincipalGuest || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
 		return nil, "", "", errors.New("invalid credentials")
 	}
 	t, c, e := p.createSession(pr.ID)

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -163,6 +165,106 @@ func TestPasswordRoundTrip(t *testing.T) {
 	}
 	if verifyPassword(h, "wrong") {
 		t.Fatal("wrong password accepted")
+	}
+}
+
+func TestLoginRejectsSuspendedPrincipal(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "suspended@example.com", "S", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := passport.setPrincipalStatus("operator", member.ID, PrincipalSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.login(member.Email, "correct horse battery"); err == nil {
+		t.Fatal("suspended principal signed in")
+	}
+	if _, _, _, err := passport.login(member.ID, "correct horse battery"); err == nil {
+		t.Fatal("suspended principal signed in by ID login")
+	}
+	if _, _, _, err := passport.login(member.Email, "wrong-password"); err == nil {
+		t.Fatal("wrong password accepted")
+	}
+}
+
+func newLoginBruteForceHandler(t *testing.T) *proxyHandler {
+	t.Helper()
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "brute@example.com", "B", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	tracker := newBruteForceTracker()
+	t.Cleanup(tracker.stop)
+	return &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker}
+}
+
+func loginRequest(body string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	return request
+}
+
+func TestLoginRateLimitsRepeatedFailures(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	wrong := `{"email":"brute@example.com","password":"wrong password"}`
+	for i := 0; i < bruteForceMaxAttempts; i++ {
+		recorder := httptest.NewRecorder()
+		h.handlePassportLogin(recorder, loginRequest(wrong))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d", i, recorder.Code)
+		}
+	}
+	banned := httptest.NewRecorder()
+	h.handlePassportLogin(banned, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	if banned.Code != http.StatusTooManyRequests {
+		t.Fatalf("valid login after repeated failures status = %d, want 429", banned.Code)
+	}
+}
+
+func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	for i := 0; i < bruteForceMaxAttempts-1; i++ {
+		recorder := httptest.NewRecorder()
+		h.handlePassportLogin(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d", i, recorder.Code)
+		}
+	}
+	ok := httptest.NewRecorder()
+	h.handlePassportLogin(ok, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("valid login status = %d body=%s", ok.Code, ok.Body.String())
+	}
+	for i := 0; i < bruteForceMaxAttempts-1; i++ {
+		recorder := httptest.NewRecorder()
+		h.handlePassportLogin(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("post-success attempt %d status = %d", i, recorder.Code)
+		}
+	}
+	final := httptest.NewRecorder()
+	h.handlePassportLogin(final, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	if final.Code != http.StatusOK {
+		t.Fatalf("login after counter reset status = %d", final.Code)
 	}
 }
 
