@@ -28,11 +28,22 @@ jobs:
           npm ci
           npm run build
 
+      - name: Test web (vitest)
+        run: |
+          cd web
+          npm test
+
       - name: Vet
         run: go vet ./...
 
       - name: Test (race)
         run: go test -race -count=1 ./...
 
-      - name: Bench smoke (mock)
-        run: go test -count=1 ./bench/runner/
+      # Structural check of the benchmark harness and the versioned baseline:
+      # the runner executes every scenario and the comparator is proven to flag
+      # a real regression. It does NOT gate performance -- the committed
+      # baseline was recorded in mock mode, so it carries no timing signal.
+      # Re-record it with `go run ./bench/runner -save-baseline` against a real
+      # target before treating a comparison as a perf gate.
+      - name: Bench harness and baseline integrity
+        run: go test -count=1 -v ./bench/runner/
