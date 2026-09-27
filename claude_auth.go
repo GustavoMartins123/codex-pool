@@ -157,7 +157,7 @@ func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) 
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("exchange failed: %s: %s", resp.Status, string(respBody))
+		return nil, fmt.Errorf("exchange failed: %s: %s", resp.Status, safeText(respBody))
 	}
 
 	var result ClaudeTokenResponse
@@ -207,7 +207,7 @@ func ClaudeRefreshWithContext(ctx context.Context, refreshToken string, transpor
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("refresh failed: %s: %s", resp.Status, string(respBody))
+		return nil, fmt.Errorf("refresh failed: %s: %s", resp.Status, safeText(respBody))
 	}
 
 	var result ClaudeTokenResponse
@@ -262,7 +262,7 @@ func FetchClaudeProfileWithContext(ctx context.Context, accessToken string, tran
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("profile status=%s body=%s", resp.Status, string(body))
+		return nil, fmt.Errorf("profile status=%s body=%s", resp.Status, safeText(body))
 	}
 
 	var payload map[string]any
@@ -337,7 +337,7 @@ func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, 
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("bootstrap status=%s body=%s", resp.Status, string(body))
+		return "", fmt.Errorf("bootstrap status=%s body=%s", resp.Status, safeText(body))
 	}
 
 	var payload map[string]any

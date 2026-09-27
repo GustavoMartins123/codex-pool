@@ -393,7 +393,16 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 }
 
 // codexExchangeCode exchanges an authorization code for tokens
-func codexExchangeCode(code, verifier string) (*CodexTokenResponse, error) {	data := url.Values{}
+func codexExchangeCode(code, verifier string) (*CodexTokenResponse, error) {
+	return codexExchangeCodeWithClient(code, verifier, &http.Client{Timeout: 30 * time.Second})
+}
+
+// codexExchangeCodeWithClient is the testable seam of the OAuth token
+// exchange: it owns the request shape and, critically, the redaction and size
+// limit applied to the upstream error body, which is otherwise both logged and
+// returned to the admin browser.
+func codexExchangeCodeWithClient(code, verifier string, client *http.Client) (*CodexTokenResponse, error) {
+	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("client_id", CodexOAuthClientID)
 	data.Set("code", code)
@@ -409,17 +418,16 @@ func codexExchangeCode(code, verifier string) (*CodexTokenResponse, error) {	dat
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token exchange failed: %s: %s", resp.Status, string(body))
+		return nil, fmt.Errorf("token exchange failed: %s: %s", resp.Status, safeText(body))
 	}
 
 	var tokens CodexTokenResponse
