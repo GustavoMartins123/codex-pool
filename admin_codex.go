@@ -497,7 +497,7 @@ func generateCodexAccountID(idToken string) string {
 // saveNewCodexAccount saves a new Codex account to the pool directory
 func saveNewCodexAccount(poolDir, accountID string, tokens *CodexTokenResponse) error {
 	// Ensure pool directory exists
-	if err := os.MkdirAll(poolDir, 0755); err != nil {
+	if err := os.MkdirAll(poolDir, 0o700); err != nil {
 		return fmt.Errorf("create pool dir: %w", err)
 	}
 

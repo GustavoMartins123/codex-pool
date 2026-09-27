@@ -133,6 +133,25 @@ func parseBoolEnv(key string, def bool) bool {
 	}
 }
 
+// parseBoolEnvPtr resolves a tri-state boolean setting: the environment wins,
+// then an explicit config-file value, then def. A nil config value means the
+// operator did not express a preference, so def applies.
+func parseBoolEnvPtr(key string, cfg *bool, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v != "" {
+		switch v {
+		case "1", "true", "yes", "on", "enabled":
+			return true
+		case "0", "false", "no", "off", "disabled":
+			return false
+		}
+	}
+	if cfg != nil {
+		return *cfg
+	}
+	return def
+}
+
 // Global config file reference for pool users config
 var globalConfigFile *ConfigFile
 
@@ -251,7 +270,9 @@ func buildConfig() *config {
 	cfg.exhaustionPreferWait = parseBoolEnv("PROXY_EXHAUSTION_PREFER_WAIT", true)
 	// IP privacy: stop persisting raw client IPs (and wipe previously stored
 	// ones at startup). Origin analytics keep working on salted hashes.
-	cfg.ipPrivacy = parseBoolEnv("PROXY_IP_PRIVACY", fileCfg.IPPrivacy)
+	// Enabled unless the operator explicitly opts out, because the roadmap
+	// requires raw IP persistence to be off by default.
+	cfg.ipPrivacy = parseBoolEnvPtr("PROXY_IP_PRIVACY", fileCfg.IPPrivacy, true)
 	cfg.originHashWindow = time.Duration(getConfigInt("PROXY_ORIGIN_HASH_WINDOW_HOURS", fileCfg.OriginHashWindowHours, 0)) * time.Hour
 	cfg.originRetention = time.Duration(getConfigInt("PROXY_ORIGIN_RETENTION_DAYS", fileCfg.OriginRetentionDays, 0)) * 24 * time.Hour
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
@@ -394,7 +415,10 @@ func main() {
 	if err := initCredentialVault(cfg.poolDir); err != nil {
 		log.Fatalf("credential vault: %v", err)
 	}
-	verifySensitiveFilePermissions(cfg.poolDir)
+	if problems := verifySensitiveFilePermissions(cfg.poolDir); len(problems) > 0 {
+		log.Fatalf("credential vault: %d path(s) holding upstream credentials are group/world accessible, refusing to start:\n  %s\nFix with: chmod 0600 <file> (or chown to the pool user), then restart.",
+			len(problems), strings.Join(problems, "\n  "))
+	}
 
 	// Create provider registry
 	codexProvider := NewCodexProviderWithRealtime(cfg.responsesBase, cfg.realtimeBase, cfg.whamBase, cfg.refreshBase)

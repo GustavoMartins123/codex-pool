@@ -107,7 +107,7 @@ func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := os.MkdirAll(poolDir, 0o755); err != nil {
+	if err := os.MkdirAll(poolDir, 0o700); err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "failed to create pool dir: "+err.Error())
 		return
 	}

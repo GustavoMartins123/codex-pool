@@ -161,7 +161,7 @@ func (h *proxyHandler) saveAPIKeyAccountFile(w http.ResponseWriter, r *http.Requ
 	accountID := subdir + "_" + randomHex(4)
 
 	poolDir := filepath.Join(h.cfg.poolDir, subdir)
-	if err := os.MkdirAll(poolDir, 0755); err != nil {
+	if err := os.MkdirAll(poolDir, 0o700); err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "failed to create pool dir: "+err.Error())
 		return
 	}

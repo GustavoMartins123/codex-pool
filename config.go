@@ -45,12 +45,14 @@ type ConfigFile struct {
 	IPAccessDeny  []string `toml:"ip_access_deny"`
 
 	// IP privacy: stop persisting raw client IPs (wipes stored ones at
-	// startup) and use salted hashes in traces. The hash salt rotates per
-	// window when origin_hash_window_hours > 0. Origin metadata older than
-	// origin_retention_days is pruned (0 keeps everything).
-	IPPrivacy             bool `toml:"ip_privacy"`
-	OriginHashWindowHours int  `toml:"origin_hash_window_hours"`
-	OriginRetentionDays   int  `toml:"origin_retention_days"`
+	// startup) and use salted hashes in traces. Defaults to enabled; set
+	// ip_privacy = false (or PROXY_IP_PRIVACY=false) to keep raw IPs. The
+	// hash salt rotates per window when origin_hash_window_hours > 0. Origin
+	// metadata older than origin_retention_days is pruned (0 keeps
+	// everything).
+	IPPrivacy             *bool `toml:"ip_privacy"`
+	OriginHashWindowHours int   `toml:"origin_hash_window_hours"`
+	OriginRetentionDays   int   `toml:"origin_retention_days"`
 
 	PoolUsers PoolUsersConfig   `toml:"pool_users"`
 	Routing   RoutingConfigFile `toml:"routing"`
