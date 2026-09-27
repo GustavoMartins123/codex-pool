@@ -2,6 +2,10 @@ services:
   codex-pool:
     environment:
       PUBLIC_URL: https://${POOL_DOMAIN:?Set POOL_DOMAIN in .env}
+      # Trust reverse-proxy headers from peers sharing our container network
+      # (the Traefik container), so client IPs — and per-IP brute-force
+      # bans — survive the proxy hop regardless of the network's subnet.
+      PROXY_TRUST_SAME_SUBNET: "true"
     networks:
       - traefik
     labels:

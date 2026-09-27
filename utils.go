@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 func randomID() string {
@@ -32,9 +33,10 @@ func safeText(b []byte) string {
 }
 
 var (
-	trustedProxiesMu     sync.RWMutex
-	trustedProxyNets     []*net.IPNet
-	trustedProxyTrustAll bool
+	trustedProxiesMu       sync.RWMutex
+	trustedProxyNets       []*net.IPNet
+	trustedProxyTrustAll   bool
+	trustedProxySameSubnet bool
 )
 
 func init() {
@@ -70,6 +72,91 @@ func initTrustedProxiesFromEnv() {
 		// By default, only loopback addresses are trusted proxies.
 		setTrustedProxies(nil)
 	}
+	setTrustSameSubnet(parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
+}
+
+func setTrustSameSubnet(enabled bool) {
+	trustedProxiesMu.Lock()
+	defer trustedProxiesMu.Unlock()
+	trustedProxySameSubnet = enabled
+}
+
+// localSubnetCache caches the subnets of this process's own network
+// interfaces so same-subnet trust checks stay cheap. Container networks do
+// not change while the process runs; a short TTL covers interface changes.
+var localSubnetCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	nets []*net.IPNet
+}
+
+const localSubnetCacheTTL = 30 * time.Second
+
+func localInterfaceSubnets() []*net.IPNet {
+	localSubnetCache.mu.Lock()
+	defer localSubnetCache.mu.Unlock()
+	if time.Since(localSubnetCache.at) < localSubnetCacheTTL && localSubnetCache.nets != nil {
+		return localSubnetCache.nets
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return localSubnetCache.nets
+	}
+	nets := make([]*net.IPNet, 0, len(interfaces))
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.IsLoopback() || ipNet.IP.IsLinkLocalUnicast() || ipNet.IP.IsLinkLocalMulticast() {
+				continue
+			}
+			nets = append(nets, ipNet)
+		}
+	}
+	localSubnetCache.nets = nets
+	localSubnetCache.at = time.Now()
+	return nets
+}
+
+// ipSharesSubnetWithAny reports whether ip belongs to one of the given
+// interface subnets. Interface IPNets carry the live subnet mask, so the
+// comparison is family-aware through IPNet.Contains.
+func ipSharesSubnetWithAny(ip net.IP, nets []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, subnet := range nets {
+		if subnet == nil {
+			continue
+		}
+		localIP := subnet.IP.To4()
+		candidate := ip.To4()
+		if (localIP == nil) != (candidate == nil) {
+			continue
+		}
+		if localIP != nil {
+			masked := &net.IPNet{IP: localIP, Mask: subnet.Mask}
+			if masked.Contains(candidate) {
+				return true
+			}
+			continue
+		}
+		if subnet.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameSubnetAsSelf reports whether the peer IP shares a subnet with one of
+// this process's own non-loopback interfaces. This is what makes reverse
+// proxy containers (Traefik, nginx, Caddy) on the same Docker network trusted
+// without hardcoding their dynamic container IPs.
+func sameSubnetAsSelf(ip net.IP) bool {
+	return ipSharesSubnetWithAny(ip, localInterfaceSubnets())
 }
 
 // setTrustedProxies configures the list of trusted proxy CIDRs/IPs.
@@ -121,18 +208,24 @@ func isTrustedProxy(ip net.IP) bool {
 		return false
 	}
 	trustedProxiesMu.RLock()
-	defer trustedProxiesMu.RUnlock()
+	trustAll := trustedProxyTrustAll
+	trustSameSubnet := trustedProxySameSubnet
+	nets := trustedProxyNets
+	trustedProxiesMu.RUnlock()
 
-	if trustedProxyTrustAll {
+	if trustAll {
 		return true
 	}
 	if ip.IsLoopback() {
 		return true
 	}
-	for _, n := range trustedProxyNets {
+	for _, n := range nets {
 		if n.Contains(ip) {
 			return true
 		}
+	}
+	if trustSameSubnet && sameSubnetAsSelf(ip) {
+		return true
 	}
 	return false
 }
