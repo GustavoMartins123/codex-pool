@@ -377,7 +377,7 @@ func (h *proxyHandler) handleConsoleMembers(w http.ResponseWriter, r *http.Reque
 		DisplayName string `json:"display_name"`
 		Purpose     string `json:"purpose"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&input) != nil {
 		respondJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}

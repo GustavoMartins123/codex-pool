@@ -259,7 +259,7 @@ func (h *proxyHandler) handlePasses(w http.ResponseWriter, r *http.Request) {
 			DisplayName string     `json:"display_name"`
 			ExpiresAt   *time.Time `json:"expires_at"`
 		}
-		if json.NewDecoder(r.Body).Decode(&q) != nil {
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 			respondJSONError(w, 400, "invalid json")
 			return
 		}
@@ -283,7 +283,7 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 		Token  string `json:"token"`
 		Switch bool   `json:"switch"`
 	}
-	if json.NewDecoder(r.Body).Decode(&q) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&q) != nil {
 		respondJSONError(w, 400, "invalid json")
 		return
 	}

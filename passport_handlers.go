@@ -126,7 +126,7 @@ func (h *proxyHandler) handlePassportLegacyExchange(w http.ResponseWriter, r *ht
 	var input struct {
 		DownloadToken string `json:"download_token"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil || strings.TrimSpace(input.DownloadToken) == "" {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&input) != nil || strings.TrimSpace(input.DownloadToken) == "" {
 		respondJSONError(w, http.StatusBadRequest, "download token required")
 		return
 	}
@@ -169,7 +169,7 @@ func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Reques
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if json.NewDecoder(r.Body).Decode(&q) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		respondJSONError(w, 400, "invalid json")
 		return
 	}
@@ -276,7 +276,7 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 			Label     string     `json:"label"`
 			ExpiresAt *time.Time `json:"expires_at"`
 		}
-		if json.NewDecoder(r.Body).Decode(&q) != nil {
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 			respondJSONError(w, 400, "invalid json")
 			return
 		}
@@ -334,7 +334,7 @@ func (h *proxyHandler) handleOperatorBootstrap(w http.ResponseWriter, r *http.Re
 		DisplayName      string `json:"display_name"`
 		LegacyCredential string `json:"legacy_credential"`
 	}
-	if json.NewDecoder(r.Body).Decode(&q) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		respondJSONError(w, http.StatusBadRequest, "invalid operator bootstrap request")
 		return
 	}
