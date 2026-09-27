@@ -573,13 +573,19 @@ func (p *PassportStore) createClient(principalID, label string, expires *time.Ti
 
 func encodeSequence(n uint64) []byte { var b [8]byte; binary.BigEndian.PutUint64(b[:], n); return b[:] }
 func (h *proxyHandler) originHashSalt() string {
+	salt := ""
 	if h != nil && h.passport != nil && h.passport.analyticsSalt != "" {
-		return h.passport.analyticsSalt
+		salt = h.passport.analyticsSalt
+	} else if h != nil && h.cfg != nil {
+		salt = poolHashSalt(h.cfg.legacyFriendCode)
+	} else {
+		salt = poolHashSalt("")
 	}
+	var window time.Duration
 	if h != nil && h.cfg != nil {
-		return poolHashSalt(h.cfg.legacyFriendCode)
+		window = h.cfg.originHashWindow
 	}
-	return poolHashSalt("")
+	return withHashWindow(salt, window, time.Now())
 }
 
 func tokenFingerprint(s string) string {

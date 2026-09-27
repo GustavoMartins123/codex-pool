@@ -66,6 +66,9 @@ type config struct {
 	maxAttempts                int
 	exhaustionWait             time.Duration // Hold requests while all accounts of a type are usage-exhausted (0 = fail fast)
 	exhaustionPreferWait       bool          // Prefer holding for the provider's window reset over switching to a fallback model
+	ipPrivacy                  bool          // Drop raw client IPs from persistence and traces (hash only)
+	originHashWindow           time.Duration // Rotate the origin hash salt per window (0 = stable forever)
+	originRetention            time.Duration // Retain origin metadata at most this long (0 = unlimited)
 	storePath                  string
 	retentionDays              int
 	legacyFriendCode           string
@@ -245,6 +248,11 @@ func buildConfig() *config {
 	// budget, hold the request for it instead of switching to a fallback
 	// model mid-conversation.
 	cfg.exhaustionPreferWait = parseBoolEnv("PROXY_EXHAUSTION_PREFER_WAIT", true)
+	// IP privacy: stop persisting raw client IPs (and wipe previously stored
+	// ones at startup). Origin analytics keep working on salted hashes.
+	cfg.ipPrivacy = parseBoolEnv("PROXY_IP_PRIVACY", fileCfg.IPPrivacy)
+	cfg.originHashWindow = time.Duration(getConfigInt("PROXY_ORIGIN_HASH_WINDOW_HOURS", fileCfg.OriginHashWindowHours, 0)) * time.Hour
+	cfg.originRetention = time.Duration(getConfigInt("PROXY_ORIGIN_RETENTION_DAYS", fileCfg.OriginRetentionDays, 0)) * 24 * time.Hour
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
 	cfg.legacyFriendCode = getConfigString("FRIEND_CODE", fileCfg.LegacyFriendCode, "")
 	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
@@ -433,6 +441,27 @@ func main() {
 		log.Fatalf("open usage store: %v", err)
 	}
 	defer store.Close()
+	if cfg.ipPrivacy {
+		if err := store.wipeOriginRawIPs(); err != nil {
+			log.Printf("privacy: failed to wipe stored raw IPs: %v", err)
+		} else {
+			log.Printf("privacy: raw client IP persistence disabled and stored values wiped")
+		}
+	}
+	if cfg.originRetention > 0 {
+		if err := store.pruneOriginMetadata(cfg.originRetention); err != nil {
+			log.Printf("privacy: origin metadata prune failed: %v", err)
+		}
+		go func() {
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := store.pruneOriginMetadata(cfg.originRetention); err != nil {
+					log.Printf("privacy: origin metadata prune failed: %v", err)
+				}
+			}
+		}()
+	}
 	reserveBytes := int64(64 << 20)
 	if value := os.Getenv("ANALYTICS_EMERGENCY_RESERVE_BYTES"); value != "" {
 		if parsed, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil && parsed > 0 {
@@ -2161,7 +2190,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	originID := hashRequestOrigin(r, h.originHashSalt())
 	originIP := getClientIP(r)
 	if h.store != nil && originID != "" && originIP != "" {
-		h.store.enqueueOriginMetadata(originID, originIP, userID, r.UserAgent(), r.URL.Path, time.Now())
+		storedIP := originIP
+		if h.cfg.ipPrivacy {
+			storedIP = ""
+		}
+		h.store.enqueueOriginMetadata(originID, storedIP, userID, r.UserAgent(), r.URL.Path, time.Now())
 	}
 
 	provider, targetBase := h.pickUpstream(r.URL.Path, r.Header)
@@ -3018,7 +3051,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			CircuitState:   circuitState,
 			AccountID:      acc.ID,
 			ScoreBreakdown: breakdownView,
-			ClientIP:       originIP,
+			ClientIP:       h.traceClientIP(originIP),
 			UserID:         userID,
 			Attempts:       attempt,
 		}
@@ -4035,7 +4068,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 			ConversationID:              conversationID,
 			RoutingProfile:              routingProfile,
 			RequiredPlan:                requiredPlan,
-			ClientIP:                    clientIP,
+			ClientIP:                    h.traceClientIP(clientIP),
 			UserID:                      userID,
 			OriginID:                    originID,
 			IdleTimeout:                 h.cfg.websocketIdleTimeout,

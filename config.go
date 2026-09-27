@@ -26,7 +26,7 @@ type ConfigFile struct {
 	// usage-exhausted, instead of failing fast with 503. 0 keeps the default.
 	ExhaustionWaitSeconds int64 `toml:"exhaustion_wait_seconds"`
 
-	ModelAliases   map[string]string                `toml:"model_aliases"`
+	ModelAliases map[string]string `toml:"model_aliases"`
 
 	// Caps on Codex reasoning effort, keyed by pool user ID and by raw client
 	// IP. Values are effort names ("medium", "high", ...).
@@ -37,12 +37,20 @@ type ConfigFile struct {
 	Providers      map[string]GenericProviderConfig `toml:"providers"`
 	Experiments    ExperimentsConfig                `toml:"experiments"`
 	Federation     FederationConfig                 `toml:"federation"`
-	TrustedProxies []string `toml:"trusted_proxies"`
+	TrustedProxies []string                         `toml:"trusted_proxies"`
 
 	// IP access policy: deny always wins over allow, loopback is always
 	// permitted, and empty lists leave the pool unrestricted.
 	IPAccessAllow []string `toml:"ip_access_allow"`
 	IPAccessDeny  []string `toml:"ip_access_deny"`
+
+	// IP privacy: stop persisting raw client IPs (wipes stored ones at
+	// startup) and use salted hashes in traces. The hash salt rotates per
+	// window when origin_hash_window_hours > 0. Origin metadata older than
+	// origin_retention_days is pruned (0 keeps everything).
+	IPPrivacy             bool `toml:"ip_privacy"`
+	OriginHashWindowHours int  `toml:"origin_hash_window_hours"`
+	OriginRetentionDays   int  `toml:"origin_retention_days"`
 
 	PoolUsers PoolUsersConfig   `toml:"pool_users"`
 	Routing   RoutingConfigFile `toml:"routing"`

@@ -2467,7 +2467,7 @@ func (h *proxyHandler) handleAdminOrigins(w http.ResponseWriter, r *http.Request
 		}
 		stats = append(stats, AdminOriginStats{
 			OriginID:            origin.OriginID,
-			RawIP:               meta.RawIP,
+			RawIP:               h.rawIPForAdmin(meta.RawIP),
 			LastUserID:          meta.LastUserID,
 			LastUserAgent:       meta.LastUserAgent,
 			LastPath:            meta.LastPath,

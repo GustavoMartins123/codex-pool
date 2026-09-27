@@ -731,7 +731,9 @@ func startOfUTCWeek(value time.Time) time.Time {
 }
 
 func (s *usageStore) enqueueOriginMetadata(originID, rawIP, userID, userAgent, path string, seenAt time.Time) {
-	if s == nil || originID == "" || rawIP == "" {
+	// rawIP may be empty in privacy mode; the metadata (agent, path,
+	// timestamps) is still worth recording, only the PII is dropped.
+	if s == nil || originID == "" {
 		return
 	}
 	s.originMetadataMu.RLock()
@@ -807,7 +809,7 @@ func (s *usageStore) runOriginMetadataWriter() {
 }
 
 func (s *usageStore) recordOriginMetadata(originID, rawIP, userID, userAgent, path string, seenAt time.Time) error {
-	if s == nil || s.db == nil || originID == "" || rawIP == "" {
+	if s == nil || s.db == nil || originID == "" {
 		return nil
 	}
 	if seenAt.IsZero() {
@@ -861,6 +863,78 @@ func (s *usageStore) getAllOriginMetadata() ([]OriginMetadata, error) {
 		return metas[i].LastSeen.After(metas[j].LastSeen)
 	})
 	return metas, nil
+}
+
+// wipeOriginRawIPs clears the stored raw IP of every origin metadata entry.
+// Called at startup when privacy mode is enabled so previously persisted
+// PII is removed, not merely stopped.
+func (s *usageStore) wipeOriginRawIPs() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketOriginMetadata))
+		if b == nil {
+			return nil
+		}
+		var stale []string
+		if err := b.ForEach(func(k, v []byte) error {
+			var meta OriginMetadata
+			if json.Unmarshal(v, &meta) == nil && meta.RawIP != "" {
+				stale = append(stale, string(k))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, id := range stale {
+			raw := b.Get([]byte(id))
+			var meta OriginMetadata
+			if json.Unmarshal(raw, &meta) != nil {
+				continue
+			}
+			meta.RawIP = ""
+			enc, err := json.Marshal(&meta)
+			if err != nil {
+				continue
+			}
+			if err := b.Put([]byte(id), enc); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// pruneOriginMetadata removes origin metadata entries whose LastSeen is
+// older than the retention cutoff. retention <= 0 keeps everything.
+func (s *usageStore) pruneOriginMetadata(retention time.Duration) error {
+	if s == nil || s.db == nil || retention <= 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-retention)
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketOriginMetadata))
+		if b == nil {
+			return nil
+		}
+		var stale []string
+		if err := b.ForEach(func(k, v []byte) error {
+			var meta OriginMetadata
+			if json.Unmarshal(v, &meta) == nil && !meta.LastSeen.IsZero() && meta.LastSeen.Before(cutoff) {
+				stale = append(stale, string(k))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, id := range stale {
+			if err := b.Delete([]byte(id)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *usageStore) updatePlanCapacity(tx *bbolt.Tx, sample CapacitySample) {
