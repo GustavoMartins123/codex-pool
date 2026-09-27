@@ -11,10 +11,12 @@ import (
 func TestStatusJSONCountsGrokAccounts(t *testing.T) {
 	h := &proxyHandler{
 		pool:      newPoolState([]*Account{{ID: "grok", Type: AccountTypeGrok, AccessToken: "token"}}, false),
+		cfg:       &config{adminToken: "admin"},
 		startTime: time.Now(),
 	}
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Admin-Token", "admin")
 	rr := httptest.NewRecorder()
 
 	h.serveStatusPage(rr, req)

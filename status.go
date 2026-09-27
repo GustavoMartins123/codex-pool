@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -26,6 +27,7 @@ type StatusData struct {
 	Accounts        []AccountStatus
 	TokenAnalytics  *TokenAnalytics
 	PoolUtilization []PoolUtilization `json:"pool_utilization,omitempty"`
+	Operator bool `json:"operator"`
 }
 
 // TokenAnalytics contains capacity estimation data for the status page.
@@ -77,7 +79,89 @@ type AccountStatus struct {
 	TotalTokens        int64
 }
 
+func (h *proxyHandler) statusProviderVisibility(viewer *Principal) map[AccountType]bool {
+	if h.passport == nil || viewer == nil || viewer.Kind == PrincipalOperator {
+		return nil
+	}
+	var configured map[string]ClientPolicy
+	if h.cfg != nil {
+		configured = h.cfg.hotClientPolicies()
+	}
+	h.passport.mu.RLock()
+	clients := make([]*ClientCredential, 0, 4)
+	for _, client := range h.passport.clients {
+		if client.PrincipalID == viewer.ID && client.Status == "active" {
+			cp := *client
+			clients = append(clients, &cp)
+		}
+	}
+	h.passport.mu.RUnlock()
+
+	allowed := map[AccountType]bool{}
+	sawCredential := false
+	for _, client := range clients {
+		policy := client.Policy
+		if !policy.configured() && configured != nil {
+			if candidate, ok := configured[client.ID]; ok {
+				policy = candidate
+			} else {
+				label := strings.ToLower(strings.TrimSpace(client.Label))
+				for key, candidate := range configured {
+					if strings.ToLower(strings.TrimSpace(key)) == label {
+						policy = candidate
+						break
+					}
+				}
+			}
+			if !policy.configured() {
+				policy = configured["*"]
+			}
+		}
+		sawCredential = true
+		if len(policy.Providers.Allow)+len(policy.Providers.Deny) == 0 {
+			return nil // unrestricted credential
+		}
+		for provider := range allProviderTypes() {
+			if policyAllows(policy.Providers, string(provider)) {
+				allowed[provider] = true
+			}
+		}
+	}
+	if !sawCredential {
+		if star, ok := configured["*"]; ok && len(star.Providers.Allow)+len(star.Providers.Deny) > 0 {
+			for provider := range allProviderTypes() {
+				if policyAllows(star.Providers, string(provider)) {
+					allowed[provider] = true
+				}
+			}
+			return allowed
+		}
+		// No credentials and no default policy: nothing has been granted.
+		return map[AccountType]bool{}
+	}
+	return allowed
+}
+
+func allProviderTypes() map[AccountType]struct{} {
+	return map[AccountType]struct{}{
+		AccountTypeCodex: {}, AccountTypeGemini: {}, AccountTypeClaude: {},
+		AccountTypeKimi: {}, AccountTypeMinimax: {}, AccountTypeZAI: {},
+		AccountTypeGrok: {}, AccountTypeAntigravity: {}, AccountTypeAdverserial: {},
+		AccountTypeOpencodeGo: {},
+	}
+}
+
 func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
+	if !h.checkMemberOrAdminAuth(w, r) {
+		return
+	}
+	var viewer *Principal
+	if h.passport != nil {
+		viewer, _ = h.passport.authenticate(r)
+	}
+	operator := viewer == nil || viewer.Kind == PrincipalOperator
+	visibleProviders := h.statusProviderVisibility(viewer)
+
 	// Snapshot the accounts and drop the pool lock before rendering: holding
 	// p.mu.RLock across getPoolUtilization (which takes its own RLock)
 	// deadlocks whenever a writer queues between the two acquisitions.
@@ -87,14 +171,17 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 	data := StatusData{
 		GeneratedAt: now,
 		Uptime:      now.Sub(h.startTime),
-		TotalCount:  len(accounts),
+		Operator:    operator,
 	}
 
-	if h.poolUsers != nil {
+	if operator && h.poolUsers != nil {
 		data.PoolUsers = len(h.poolUsers.List())
 	}
 
 	for _, a := range accounts {
+		if visibleProviders != nil && !visibleProviders[a.Type] {
+			continue
+		}
 		a.mu.Lock()
 
 		switch a.Type {
@@ -186,14 +273,23 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(data.Accounts, func(i, j int) bool {
 		return data.Accounts[i].Score > data.Accounts[j].Score
 	})
+	data.TotalCount = len(data.Accounts)
 
-	// Load token analytics
-	if h.store != nil {
+	if operator && h.store != nil {
 		data.TokenAnalytics = h.loadTokenAnalytics()
 	}
 
 	// Compute per-provider time-weighted utilization
 	data.PoolUtilization = h.pool.getPoolUtilization()
+	if visibleProviders != nil {
+		kept := data.PoolUtilization[:0]
+		for _, entry := range data.PoolUtilization {
+			if visibleProviders[AccountType(normalizePolicyValue(entry.Provider))] {
+				kept = append(kept, entry)
+			}
+		}
+		data.PoolUtilization = kept
+	}
 
 	// Check Accept header for JSON
 	if r.Header.Get("Accept") == "application/json" {
@@ -591,9 +687,9 @@ const statusHTML = `<!DOCTYPE html>
         <strong>Note:</strong> Plus accounts have ~10x less capacity than Pro.
         "Effective" usage shows the weighted value used for load balancing.
         <br>
-        <a href="/admin/accounts">Raw account data</a> ·
+        {{if .Operator}}<a href="/admin/accounts">Raw account data</a> ·
         <a href="/admin/tokens">Token analytics API</a> ·
-        <a href="/healthz">Health check</a> ·
+        {{end}}<a href="/healthz">Health check</a> ·
         <a href="/livez">Liveness</a> ·
         <a href="/readyz">Readiness</a> ·
         <a href="/metrics">Prometheus metrics</a>
