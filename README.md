@@ -180,6 +180,8 @@ For development, use `scripts/dev_proxy.sh` on Linux or
 Docker deployment, use `scripts/deploy.sh` or
 `scripts/windows/deploy.ps1`, respectively.
 
+For a VPS behind Traefik, see [Traefik deployment and migration](docs/deploy-traefik.md).
+
 ### 3. Point your CLI
 
 **Codex** - `~/.codex/config.toml`:

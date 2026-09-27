@@ -4,7 +4,7 @@ services:
     image: codex-pool:latest
     container_name: codex-pool
     ports:
-      - "8989:8989"
+      - "127.0.0.1:8989:8989"
     volumes:
       - ./pool:/app/pool
       - ./data:/app/data
