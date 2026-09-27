@@ -7,6 +7,15 @@
 .env.*
 !.env.example
 .dev-secrets.ps1
+*.secrets.ps1
+auth.json
+oauth_creds.json
+credentials.json
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
 .air.toml
 .conductor/
 .claude/
