@@ -468,7 +468,9 @@ func TestProxyWebSocketForwardsTurnStateBothWays(t *testing.T) {
 }
 
 func TestProxyWebSocketRelaysFrameLargerThanOld64MiBLimit(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 65MiB through the race detector can exceed 10s on a loaded CI host;
+	// the deadline guards against hangs, not latency.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	const payloadSize = 65 * 1024 * 1024

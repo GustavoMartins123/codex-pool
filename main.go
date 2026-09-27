@@ -394,6 +394,7 @@ func main() {
 	if err := initCredentialVault(cfg.poolDir); err != nil {
 		log.Fatalf("credential vault: %v", err)
 	}
+	verifySensitiveFilePermissions(cfg.poolDir)
 
 	// Create provider registry
 	codexProvider := NewCodexProviderWithRealtime(cfg.responsesBase, cfg.realtimeBase, cfg.whamBase, cfg.refreshBase)
