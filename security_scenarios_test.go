@@ -294,9 +294,9 @@ func TestSecurityClientCredentialIsolation(t *testing.T) {
 		metrics:  newMetrics(),
 	}
 
-	// Attacker tries to reveal victim's credential download token
+	// Attacker tries to mint setup links for victim's client
 	{
-		req := httptest.NewRequest(http.MethodPost, "/api/me/clients/"+clientVictim.ID+"/reveal", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/me/clients/"+clientVictim.ID+"/setup-link", nil)
 		req.AddCookie(&http.Cookie{Name: "pool_session", Value: attackerToken})
 		req.AddCookie(&http.Cookie{Name: "pool_csrf", Value: attackerCsrf})
 		req.Header.Set("X-CSRF-Token", attackerCsrf)
@@ -304,7 +304,7 @@ func TestSecurityClientCredentialIsolation(t *testing.T) {
 		h.handlePassportClientItem(rr, req)
 
 		if rr.Code != http.StatusNotFound && rr.Code != http.StatusForbidden {
-			t.Fatalf("revealing another member's client should fail (404/403), got %d: %s", rr.Code, rr.Body.String())
+			t.Fatalf("minting setup links for another member's client should fail (404/403), got %d: %s", rr.Code, rr.Body.String())
 		}
 	}
 

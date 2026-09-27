@@ -465,7 +465,12 @@ func (h *proxyHandler) handlePassportClientItem(w http.ResponseWriter, r *http.R
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		respondJSON(w, map[string]any{"id": client.ID, "label": client.Label, "expires_at": client.ExpiresAt, "setup_token": client.DownloadToken})
+		response := map[string]any{"id": client.ID, "label": client.Label, "expires_at": client.ExpiresAt}
+		if urls, expires, err := h.mintSetupURLs(r, client); err == nil {
+			response["setup_urls"] = urls
+			response["nonce_expires_at"] = expires
+		}
+		respondJSON(w, response)
 	case r.Method == http.MethodPost && action == "setup-link":
 		h.passport.mu.RLock()
 		stored := h.passport.clients[clientID]
@@ -485,25 +490,6 @@ func (h *proxyHandler) handlePassportClientItem(w http.ResponseWriter, r *http.R
 			return
 		}
 		respondJSON(w, map[string]any{"id": client.ID, "setup_urls": urls, "nonce_expires_at": expires})
-	case r.Method == http.MethodPost && action == "reveal":
-		h.passport.mu.RLock()
-		stored := h.passport.clients[clientID]
-		var client *ClientCredential
-		if stored != nil {
-			copy := *stored
-			client = &copy
-		}
-		h.passport.mu.RUnlock()
-		if client == nil || client.PrincipalID != principal.ID || client.Status != "active" {
-			respondJSONError(w, http.StatusNotFound, "client credential not found")
-			return
-		}
-		token, err := h.passport.clientDownloadToken(client)
-		if err != nil {
-			respondJSONError(w, 500, "setup token unavailable")
-			return
-		}
-		respondJSON(w, map[string]any{"setup_token": token})
 	case r.Method == http.MethodDelete && action == "":
 		if err := h.passport.revokeClient(principal.ID, principal.ID, clientID); err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())

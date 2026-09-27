@@ -84,14 +84,11 @@ export async function loadMyClients(): Promise<ClientCredential[]> {
   return decode(await fetch("/api/me/clients", { cache: "no-store", credentials: "same-origin" }));
 }
 export type ClientSetupLinks = { setup_urls: Record<string, string>; nonce_expires_at: string };
-export async function createMyClient(label: string): Promise<ClientCredential & { setup_token: string } & Partial<ClientSetupLinks>> {
+export async function createMyClient(label: string): Promise<ClientCredential & ClientSetupLinks> {
   return decode(await fetch("/api/me/clients", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ label }) }));
 }
-export async function rotateMyClient(id: string): Promise<ClientCredential & { setup_token: string } & Partial<ClientSetupLinks>> {
+export async function rotateMyClient(id: string): Promise<ClientCredential & ClientSetupLinks> {
   return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/rotate`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
-}
-export async function revealMyClient(id: string): Promise<{ setup_token: string }> {
-  return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/reveal`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 export async function setupLinkMyClient(id: string): Promise<{ id: string } & ClientSetupLinks> {
   return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/setup-link`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
@@ -102,7 +99,7 @@ export async function revokeMyClient(id: string): Promise<void> {
 export async function loadPasses(): Promise<GuestPass[]> {
   return decode(await fetch("/api/passes", { cache: "no-store", credentials: "same-origin" }));
 }
-export async function createPass(note: string, displayName: string, expiresAt: string | null): Promise<{ principal: PassportPrincipal; link: string; setup_token: string }> {
+export async function createPass(note: string, displayName: string, expiresAt: string | null): Promise<{ principal: PassportPrincipal; link: string }> {
   return decode(await fetch("/api/passes", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ note, display_name: displayName, expires_at: expiresAt }) }));
 }
 export async function updatePass(id: string, note: string, displayName: string, expiresAt: string | null): Promise<PassportPrincipal> {
@@ -152,10 +149,6 @@ async function decode<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export async function exchangeLegacySession(downloadToken: string): Promise<PassportPrincipal> {
-  const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/auth/legacy", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ download_token: downloadToken }) }));
-  return result.principal;
-}
 
 export function clearFriendSession() {
   localStorage.removeItem("friendCode");

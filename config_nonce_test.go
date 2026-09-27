@@ -137,7 +137,7 @@ func TestConfigDownloadNonceHTTPFlow(t *testing.T) {
 	}
 }
 
-func TestConfigDownloadLegacyTokenStillWorks(t *testing.T) {
+func TestConfigDownloadLegacyTokenIsRejected(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-config-nonce")
 	passport, client := newNonceTestPassport(t)
 	handler := &proxyHandler{cfg: &config{}, passport: passport}
@@ -145,14 +145,9 @@ func TestConfigDownloadLegacyTokenStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := httptest.NewRecorder()
-	handler.serveConfigDownload(first, httptest.NewRequest(http.MethodGet, "/config/codex/"+token, nil))
-	if first.Code != http.StatusOK {
-		t.Fatalf("legacy download = %d", first.Code)
-	}
-	second := httptest.NewRecorder()
-	handler.serveConfigDownload(second, httptest.NewRequest(http.MethodGet, "/config/codex/"+token, nil))
-	if second.Code != http.StatusOK {
-		t.Fatalf("legacy re-download = %d (token must stay multi-use)", second.Code)
+	recorder := httptest.NewRecorder()
+	handler.serveConfigDownload(recorder, httptest.NewRequest(http.MethodGet, "/config/codex/"+token, nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("legacy download token status = %d, want 404 (nonce-only)", recorder.Code)
 	}
 }

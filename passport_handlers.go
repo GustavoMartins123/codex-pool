@@ -117,38 +117,6 @@ func (h *proxyHandler) handleAuthConfig(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (h *proxyHandler) handlePassportLegacyExchange(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var input struct {
-		DownloadToken string `json:"download_token"`
-	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&input) != nil || strings.TrimSpace(input.DownloadToken) == "" {
-		respondJSONError(w, http.StatusBadRequest, "download token required")
-		return
-	}
-	client := h.passport.clientByDownloadToken(strings.TrimSpace(input.DownloadToken))
-	if client == nil {
-		respondJSONError(w, http.StatusUnauthorized, "legacy session unavailable")
-		return
-	}
-	principalID, _, ok := h.passport.authorizeCredential(client.PrincipalID + "-c-" + client.ID)
-	if !ok {
-		respondJSONError(w, http.StatusUnauthorized, "legacy session unavailable")
-		return
-	}
-	token, csrf, err := h.passport.createSession(principalID)
-	if err != nil {
-		respondJSONError(w, 500, "session unavailable")
-		return
-	}
-	setSessionCookies(w, token, csrf)
-	respondJSON(w, map[string]any{"principal": publicPrincipal(h.passport.principal(principalID)), "csrf": csrf})
-}
-
 func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if r.Method != http.MethodPost {
@@ -301,7 +269,7 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 			respondJSONError(w, 400, err.Error())
 			return
 		}
-		response := map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt, "setup_token": c.DownloadToken}
+		response := map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt}
 		if urls, expires, err := h.mintSetupURLs(r, c); err == nil {
 			response["setup_urls"] = urls
 			response["nonce_expires_at"] = expires

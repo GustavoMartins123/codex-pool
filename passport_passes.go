@@ -268,7 +268,12 @@ func (h *proxyHandler) handlePasses(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, 400, err.Error())
 			return
 		}
-		respondJSON(w, map[string]any{"principal": publicPrincipal(pr), "link": "/join#" + token, "setup_token": client.DownloadToken})
+		response := map[string]any{"principal": publicPrincipal(pr), "link": "/join#" + token}
+		if urls, expires, err := h.mintSetupURLs(r, client); err == nil {
+			response["setup_urls"] = urls
+			response["nonce_expires_at"] = expires
+		}
+		respondJSON(w, response)
 	default:
 		http.Error(w, "method not allowed", 405)
 	}

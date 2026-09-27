@@ -285,11 +285,6 @@ func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Re
 			user = passportClientAsPoolUser(h, client)
 		}
 	}
-	if user == nil && h.passport != nil {
-		if client := h.passport.clientByDownloadToken(token); client != nil {
-			user = passportClientAsPoolUser(h, client)
-		}
-	}
 	if user == nil && h.poolUsers != nil {
 		user = h.poolUsers.GetByToken(token)
 	}

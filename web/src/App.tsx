@@ -30,7 +30,6 @@ import {
   loadPoolStats,
   loadSignalAnalytics,
   loadPassportMe,
-  exchangeLegacySession,
   passportJoin,
   passportLogin,
   passportLogout,
@@ -47,7 +46,6 @@ import {
   loadMyClients,
   createMyClient,
   rotateMyClient,
-  revealMyClient,
   setupLinkMyClient,
   revokeMyClient,
   loadPasses,
@@ -400,18 +398,7 @@ export function App() {
         if (principal.kind === "guest") setView("mine");
         else await refresh();
       } catch {
-        const legacy = storedFriendSession();
-        if (legacy?.download_token) {
-          try {
-            const principal = await exchangeLegacySession(legacy.download_token);
-            clearFriendSession();
-            setPassport(principal);
-            setView("mine");
-            return;
-          } catch {
-            clearFriendSession();
-          }
-        }
+        clearFriendSession();
       }
     };
     boot().finally(() => setBooting(false));
@@ -1090,7 +1077,7 @@ function CopyButton({ text, label = "Copy", className }: { text: string; label?:
 function SetupPage() {
   const [clients, setClients] = useState<ClientCredential[]>([]);
   const [selected, setSelected] = useState("");
-  const [setupToken, setSetupToken] = useState("");
+  const [setupLinks, setSetupLinks] = useState<{ urls: Record<string, string>; expires: Date } | null>(null);
   const [tool, setTool] = useState("codex");
   const [label, setLabel] = useState("");
   const [showMint, setShowMint] = useState(false);
@@ -1104,12 +1091,12 @@ function SetupPage() {
   const reveal = useCallback(async (id: string) => {
     const version = ++revealVersion.current;
     setSelected(id);
-    setSetupToken("");
+    setSetupLinks(null);
     setRevealing(true);
     setError("");
     try {
-      const result = await revealMyClient(id);
-      if (version === revealVersion.current) setSetupToken(result.setup_token);
+      const result = await setupLinkMyClient(id);
+      if (version === revealVersion.current) setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
     } catch (cause) {
       if (version === revealVersion.current) setError(cause instanceof Error ? cause.message : "Unable to load setup. Select the client to retry.");
     } finally {
@@ -1143,7 +1130,7 @@ function SetupPage() {
       revealVersion.current++;
       setClients(current => [...current, result]);
       setSelected(result.id);
-      setSetupToken(result.setup_token);
+      setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
       setRevealing(false);
       setLabel("");
       setShowMint(false);
@@ -1154,67 +1141,67 @@ function SetupPage() {
     }
   };
 
-  const token = setupToken || "…";
+  const nonce = (provider: string) => setupLinks ? (setupLinks.urls[provider] || "").split("/").pop() || "." : ".";
   const cliTools: Record<string, { name: string; install: string; oneliner: string; powershell: string; manual: { file: string; url: string }[] }> = {
     codex: {
       name: "Codex",
       install: "npm install -g @openai/codex    # or: brew install codex",
-      oneliner: `curl -sL "${base}/setup/codex/${token}" | bash`,
-      powershell: `irm "${base}/setup/codex/${token}?shell=powershell" | iex`,
-      manual: [{ file: "~/.codex/auth.json", url: `${base}/config/codex/${token}` }],
+      oneliner: `curl -sL "${base}/setup/codex/${nonce("codex")}" | bash`,
+      powershell: `irm "${base}/setup/codex/${nonce("codex")}?shell=powershell" | iex`,
+      manual: [{ file: "~/.codex/auth.json", url: `${base}/config/codex/${nonce("codex")}` }],
     },
     claude: {
       name: "Claude Code",
       install: "npm install -g @anthropic-ai/claude-code",
-      oneliner: `source <(curl -sL "${base}/setup/claude/${token}")`,
-      powershell: `irm "${base}/setup/claude/${token}?shell=powershell" | iex`,
-      manual: [{ file: "~/.claude/settings.json", url: `${base}/config/claude/${token}` }],
+      oneliner: `source <(curl -sL "${base}/setup/claude/${nonce("claude")}")`,
+      powershell: `irm "${base}/setup/claude/${nonce("claude")}?shell=powershell" | iex`,
+      manual: [{ file: "~/.claude/settings.json", url: `${base}/config/claude/${nonce("claude")}` }],
     },
     gemini: {
       name: "Gemini",
       install: "npm install -g @google/gemini-cli    # or: brew install gemini-cli",
-      oneliner: `curl -sL "${base}/setup/gemini/${token}" | bash`,
-      powershell: `irm "${base}/setup/gemini/${token}?shell=powershell" | iex`,
-      manual: [{ file: "~/.gemini/oauth_creds.json", url: `${base}/config/gemini/${token}` }],
+      oneliner: `curl -sL "${base}/setup/gemini/${nonce("gemini")}" | bash`,
+      powershell: `irm "${base}/setup/gemini/${nonce("gemini")}?shell=powershell" | iex`,
+      manual: [{ file: "~/.gemini/oauth_creds.json", url: `${base}/config/gemini/${nonce("gemini")}` }],
     },
     grok: {
       name: "Grok",
       install: "npm install -g @xai/grok-cli",
-      oneliner: `curl -sL "${base}/setup/grok/${token}" | bash`,
-      powershell: `irm "${base}/setup/grok/${token}?shell=powershell" | iex`,
-      manual: [{ file: "grok auth", url: `${base}/config/grok/${token}` }],
+      oneliner: `curl -sL "${base}/setup/grok/${nonce("grok")}" | bash`,
+      powershell: `irm "${base}/setup/grok/${nonce("grok")}?shell=powershell" | iex`,
+      manual: [{ file: "grok auth", url: `${base}/config/grok/${nonce("grok")}` }],
     },
     "cute-code": {
       name: "Cute Code",
       install: "curl -fsSL https://git.irrigate.cc/pp/cute-code/raw/branch/main/install.sh | bash",
-      oneliner: `curl -sL "${base}/setup/cute-code/${token}" | bash`,
-      powershell: `irm "${base}/setup/cute-code/${token}?shell=powershell" | iex`,
-      manual: [{ file: "~/.claude/settings.json", url: `${base}/config/cute-code/${token}` }],
+      oneliner: `curl -sL "${base}/setup/cute-code/${nonce("cute-code")}" | bash`,
+      powershell: `irm "${base}/setup/cute-code/${nonce("cute-code")}?shell=powershell" | iex`,
+      manual: [{ file: "~/.claude/settings.json", url: `${base}/config/cute-code/${nonce("cute-code")}` }],
     },
     pi: {
       name: "Pi",
       install: "npm install -g pi-cli",
-      oneliner: `curl -sL "${base}/setup/pi/${token}" | bash`,
-      powershell: `irm "${base}/setup/pi/${token}?shell=powershell" | iex`,
-      manual: [{ file: "pi models.json", url: `${base}/config/pi/${token}` }],
+      oneliner: `curl -sL "${base}/setup/pi/${nonce("pi")}" | bash`,
+      powershell: `irm "${base}/setup/pi/${nonce("pi")}?shell=powershell" | iex`,
+      manual: [{ file: "pi models.json", url: `${base}/config/pi/${nonce("pi")}` }],
     },
   };
   const sdkTools: Record<string, { name: string; summary: string; examples: { label: string; code: string }[] }> = {
     anthropic: {
       name: "Anthropic API",
-      summary: "Use the pool token as an Anthropic API key. Claude models route natively; GPT/Kimi/MiniMax/GLM/Xiaomi are translated through /v1/messages.",
+      summary: "Use the pool credential as an Anthropic API key. Claude models route natively; GPT/Kimi/MiniMax/GLM/Xiaomi are translated through /v1/messages. Get the key from the Claude Code config fetch above (access_token).",
       examples: [
-        { label: "Python SDK", code: `pip install anthropic\n\nfrom anthropic import Anthropic\nclient = Anthropic(base_url="${base}", api_key="${token}")\nmsg = client.messages.create(model="claude-sonnet-5", max_tokens=1024, messages=[{"role": "user", "content": "hello"}])` },
-        { label: "Env + curl", code: `export ANTHROPIC_BASE_URL="${base}"\nexport ANTHROPIC_API_KEY="${token}"\n\ncurl "$ANTHROPIC_BASE_URL/v1/messages" \\\n  -H "x-api-key: $ANTHROPIC_API_KEY" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"claude-sonnet-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}'` },
+        { label: "Python SDK", code: `pip install anthropic\n\nfrom anthropic import Anthropic\nclient = Anthropic(base_url="${base}", api_key="${"<access_token>"}")\nmsg = client.messages.create(model="claude-sonnet-5", max_tokens=1024, messages=[{"role": "user", "content": "hello"}])` },
+        { label: "Env + curl", code: `export ANTHROPIC_BASE_URL="${base}"\nexport ANTHROPIC_API_KEY="<access_token>"\n\ncurl "$ANTHROPIC_BASE_URL/v1/messages" \\\n  -H "x-api-key: $ANTHROPIC_API_KEY" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"claude-sonnet-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}'` },
       ],
     },
     openai: {
       name: "OpenAI SDK",
-      summary: "Works with the official OpenAI SDK, Cursor, Continue, Aider, LiteLLM, and any OpenAI-compatible client. Chat Completions and Responses both work; model names route automatically.",
+      summary: "Works with the official OpenAI SDK, Cursor, Continue, Aider, LiteLLM, and any OpenAI-compatible client. Chat Completions and Responses both work; model names route automatically. Get the key from the Codex config fetch above (access_token).",
       examples: [
-        { label: "Python SDK", code: `pip install openai\n\nfrom openai import OpenAI\nclient = OpenAI(base_url="${base}/v1", api_key="${token}")\nresp = client.responses.create(model="gpt-6-astra", input="hello")` },
-        { label: "TypeScript SDK", code: `npm install openai\n\nimport OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${base}/v1", apiKey: "${token}" });\nconst resp = await client.responses.create({ model: "gpt-6-astra", input: "hello" });` },
-        { label: "curl", code: `curl "${base}/v1/responses" \\\n  -H "Authorization: Bearer ${token}" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"gpt-6-astra","input":"hello"}'` },
+        { label: "Python SDK", code: `pip install openai\n\nfrom openai import OpenAI\nclient = OpenAI(base_url="${base}/v1", api_key="<access_token>")\nresp = client.responses.create(model="gpt-6-astra", input="hello")` },
+        { label: "TypeScript SDK", code: `npm install openai\n\nimport OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${base}/v1", apiKey: "<access_token>" });\nconst resp = await client.responses.create({ model: "gpt-6-astra", input: "hello" });` },
+        { label: "curl", code: `curl "${base}/v1/responses" \\\n  -H "Authorization: Bearer <access_token>" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"gpt-6-astra","input":"hello"}'` },
       ],
     },
   };
@@ -1239,8 +1226,9 @@ function SetupPage() {
       </div>
     </section>
     {!loading && !error && !clients.some(client => client.status === "active") && !showMint && <div className="empty-state setup-empty"><p>No active clients. Create one to connect a tool.</p><button className="gold-button" onClick={() => setShowMint(true)}>Create a client</button></div>}
-    {loading || revealing ? <div className="empty-state setup-loading" role="status">Loading setup…</div> : error && !setupToken && <button className="quiet-button" onClick={() => selected ? reveal(selected) : refresh()}>Retry setup</button>}
-    {setupToken && <>
+    {loading || revealing ? <div className="empty-state setup-loading" role="status">Loading setup…</div> : error && !setupLinks && <button className="quiet-button" onClick={() => selected ? reveal(selected) : refresh()}>Retry setup</button>}
+    {setupLinks && <>
+      <p className="step-note">One-time links, expire {setupLinks.expires.toLocaleTimeString()}. Select the client again for fresh ones.</p>
       <nav className="tool-tabs" aria-label="Tool to configure">
         {Object.keys(cliTools).map((key) => <button key={key} className={classNames("tab", tool === key && "active")} onClick={() => setTool(key)}>{cliTools[key].name}</button>)}
         <span className="tool-tab-divider" aria-hidden="true" />
@@ -1282,7 +1270,7 @@ export function Passes() {
   const [displayName, setDisplayName] = useState("");
   const [expiry, setExpiry] = useState("");
   const [editing, setEditing] = useState<GuestPass | null>(null);
-  const [fresh, setFresh] = useState<{ link: string; setupToken?: string } | null>(null);
+  const [fresh, setFresh] = useState<{ link: string } | null>(null);
   const [showForm, setShowForm] = useState(false);
   const initialLoad = useRef(true);
   const [loading, setLoading] = useState(true);
@@ -1321,7 +1309,7 @@ export function Passes() {
         await updatePass(editing.id, note, displayName, expiresAt);
       } else {
         const result = await createPass(note, displayName, expiresAt);
-        setFresh({ link: result.link, setupToken: result.setup_token });
+        setFresh({ link: result.link });
       }
       setEditing(null); setNote(""); setDisplayName(""); setExpiry(""); setShowForm(false); await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to save pass. Try again."); }
@@ -1343,7 +1331,7 @@ export function Passes() {
       <p>Share access with an optional expiry.</p>
       {!showForm && <button className="gold-button" onClick={() => { setEditing(null); setNote(""); setDisplayName(""); setExpiry(""); setShowForm(true); }}>Create a pass</button>}
     </div>
-    {fresh && <div className="setup-secret"><code>{window.location.origin + fresh.link}</code><CopyButton text={window.location.origin + fresh.link} label="Copy link" />{fresh.setupToken && <details><summary>Setup token</summary><code>{fresh.setupToken}</code><CopyButton text={fresh.setupToken} label="Copy token" /></details>}</div>}
+    {fresh && <div className="setup-secret"><code>{window.location.origin + fresh.link}</code><CopyButton text={window.location.origin + fresh.link} label="Copy link" /></div>}
     {showForm && <form className="pass-form" onSubmit={submit}>
       <label><span>Who is this for?</span><textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="Dave from climbing" required /></label>
       <label><span>Name (optional)</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={48} placeholder="Dave" /></label>

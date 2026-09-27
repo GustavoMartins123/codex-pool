@@ -406,9 +406,6 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/auth/signup":
 		h.handleLegacySignup(w, r)
 		return
-	case "/api/auth/legacy":
-		h.handlePassportLegacyExchange(w, r)
-		return
 	case "/api/auth/join":
 		h.handleJoin(w, r)
 		return

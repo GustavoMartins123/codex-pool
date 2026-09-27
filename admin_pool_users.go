@@ -212,21 +212,6 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 			user = passportClientAsPoolUser(h, client)
 		}
 	}
-	if user == nil && h.passport != nil {
-		if client := h.passport.clientByDownloadToken(token); client != nil {
-			if principalID, clientID, ok := h.passport.authorizeCredential(client.PrincipalID + "-c-" + client.ID); ok {
-				pr := h.passport.principal(principalID)
-				issuedAt := time.Now().UTC()
-				if pr.CredentialsValidAfter.After(issuedAt) {
-					issuedAt = pr.CredentialsValidAfter
-				}
-				if client.ValidAfter.After(issuedAt) {
-					issuedAt = client.ValidAfter
-				}
-				user = &PoolUser{ID: principalID + "-c-" + clientID, Token: client.DownloadToken, Email: pr.Email, PlanType: pr.PlanType, CreatedAt: client.CreatedAt, credentialIssuedAt: issuedAt}
-			}
-		}
-	}
 	if user == nil && h.poolUsers != nil {
 		user = h.poolUsers.GetByToken(token)
 	}
