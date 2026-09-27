@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"codex-pool-proxy/internal/accountstate"
 )
 
 // AccountType distinguishes between different API backends.
@@ -96,6 +98,12 @@ type Account struct {
 
 	// Aggregated token counters (in-memory for now; persist later)
 	Totals AccountUsage
+
+	// Unified lifecycle state (CP-03). Derived from the flags above by
+	// observeAccountStates — a projection, not authoritative storage.
+	LifecycleState    accountstate.State        `json:"lifecycle_state,omitempty"`
+	LifecycleReason   string                     `json:"lifecycle_reason,omitempty"`
+	LifecycleHistory  []accountstate.Transition  `json:"lifecycle_history,omitempty"`
 }
 
 type RateLimitResetCredit struct {

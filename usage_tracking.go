@@ -55,6 +55,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 	defer h.usagePollMu.Unlock()
 
 	now := time.Now()
+	defer h.pool.observeAccountStates(time.Now())
 	h.pool.mu.RLock()
 	accs := append([]*Account{}, h.pool.accounts...)
 	h.pool.mu.RUnlock()

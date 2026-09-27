@@ -429,6 +429,7 @@ func main() {
 	accounts = append(accounts, federatedAccounts...)
 	pool := newPoolState(accounts, cfg.debug.Load())
 	pool.tierThreshold = cfg.tierThreshold
+	pool.observeAccountStates(time.Now())
 	pool.configureRouting(cfg.routing)
 	for name, providerConfig := range cfg.genericProviders {
 		for _, model := range providerConfig.Models {

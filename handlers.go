@@ -67,6 +67,10 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		Score                   float64     `json:"score"`
 		ScoreTooltip            string      `json:"score_tooltip,omitempty"`
 		IsPrimary               bool        `json:"is_primary"`
+		State                   string      `json:"state"`
+		StateReason             string      `json:"state_reason,omitempty"`
+		StateRoutable           bool        `json:"state_routable"`
+		StateTransitions        any         `json:"state_transitions,omitempty"`
 		Usage                   any         `json:"usage"`
 		Totals                  any         `json:"totals"`
 	}
@@ -98,6 +102,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 		scoreTooltip := scoreTooltipFromBreakdownLocked(a, now, breakdown)
 		usage := a.Usage
 		totals := a.Totals
+		stateSnap := accountStateSnapshotLocked(a, now)
 		a.mu.Unlock()
 
 		out = append(out, row{
@@ -122,6 +127,10 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 			Penalty:                 penalty,
 			Score:                   score,
 			ScoreTooltip:            scoreTooltip,
+			State:                   string(stateSnap.State),
+			StateReason:             stateSnap.Reason,
+			StateRoutable:           stateSnap.Routable,
+			StateTransitions:        stateSnap.Transitions,
 			Usage:                   usage,
 			Totals:                  totals,
 		})
