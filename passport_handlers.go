@@ -244,6 +244,16 @@ func (h *proxyHandler) passportCSRF(r *http.Request, s *passportSession) bool {
 	x := hashToken(got)
 	return x == s.CSRFHash
 }
+func configSetupURLs(baseURL, nonce string) map[string]string {
+	return map[string]string{
+		"codex":  baseURL + "/config/codex/" + nonce,
+		"gemini": baseURL + "/config/gemini/" + nonce,
+		"claude": baseURL + "/config/claude/" + nonce,
+		"pi":     baseURL + "/config/pi/" + nonce,
+		"grok":   baseURL + "/config/grok/" + nonce,
+	}
+}
+
 func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	pr, s := h.passport.authenticate(r)
@@ -285,7 +295,12 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 			respondJSONError(w, 400, err.Error())
 			return
 		}
-		respondJSON(w, map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt, "setup_token": c.DownloadToken})
+		response := map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt, "setup_token": c.DownloadToken}
+		if nonce, expires, err := h.passport.mintConfigDownloadNonce(c); err == nil {
+			response["setup_urls"] = configSetupURLs(h.getEffectivePublicURL(r), nonce)
+			response["nonce_expires_at"] = expires
+		}
+		respondJSON(w, response)
 	default:
 		http.Error(w, "method not allowed", 405)
 	}

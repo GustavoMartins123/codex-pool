@@ -466,6 +466,25 @@ func (h *proxyHandler) handlePassportClientItem(w http.ResponseWriter, r *http.R
 			return
 		}
 		respondJSON(w, map[string]any{"id": client.ID, "label": client.Label, "expires_at": client.ExpiresAt, "setup_token": client.DownloadToken})
+	case r.Method == http.MethodPost && action == "setup-link":
+		h.passport.mu.RLock()
+		stored := h.passport.clients[clientID]
+		var client *ClientCredential
+		if stored != nil {
+			copy := *stored
+			client = &copy
+		}
+		h.passport.mu.RUnlock()
+		if client == nil || client.PrincipalID != principal.ID || client.Status != "active" {
+			respondJSONError(w, http.StatusNotFound, "client credential not found")
+			return
+		}
+		nonce, expires, err := h.passport.mintConfigDownloadNonce(client)
+		if err != nil {
+			respondJSONError(w, 500, "setup link unavailable")
+			return
+		}
+		respondJSON(w, map[string]any{"id": client.ID, "setup_urls": configSetupURLs(h.getEffectivePublicURL(r), nonce), "nonce_expires_at": expires})
 	case r.Method == http.MethodPost && action == "reveal":
 		h.passport.mu.RLock()
 		stored := h.passport.clients[clientID]

@@ -26,7 +26,88 @@ const (
 	bucketPrincipals        = "principals"
 	bucketPassportSessions  = "passport_sessions"
 	bucketClientCredentials = "client_credentials"
+	bucketConfigNonces      = "config_download_nonces"
 )
+
+const configDownloadNonceTTL = 10 * time.Minute
+
+type configDownloadNonce struct {
+	ClientID    string    `json:"client_id"`
+	PrincipalID string    `json:"principal_id"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+func (p *PassportStore) mintConfigDownloadNonce(client *ClientCredential) (string, time.Time, error) {
+	nonce, err := secureToken(24)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	expires := time.Now().UTC().Add(configDownloadNonceTTL)
+	record := configDownloadNonce{ClientID: client.ID, PrincipalID: client.PrincipalID, ExpiresAt: expires}
+	value, err := json.Marshal(record)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	nonceDigest := hashToken(nonce)
+	digest := hex.EncodeToString(nonceDigest[:])
+	err = p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketConfigNonces))
+		now := time.Now().UTC()
+		cursor := bucket.Cursor()
+		for k, raw := cursor.First(); k != nil; k, raw = cursor.Next() {
+			var stale configDownloadNonce
+			if json.Unmarshal(raw, &stale) != nil || now.After(stale.ExpiresAt) {
+				_ = cursor.Delete()
+			}
+		}
+		return bucket.Put([]byte(digest), value)
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return nonce, expires, nil
+}
+
+func (p *PassportStore) redeemConfigDownloadNonce(nonce string) *ClientCredential {
+	nonce = strings.TrimSpace(nonce)
+	if nonce == "" {
+		return nil
+	}
+	nonceDigest := hashToken(nonce)
+	digest := hex.EncodeToString(nonceDigest[:])
+	var clientID, principalID string
+	if p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketConfigNonces))
+		raw := bucket.Get([]byte(digest))
+		if raw == nil {
+			return nil
+		}
+		var record configDownloadNonce
+		if json.Unmarshal(raw, &record) != nil || time.Now().UTC().After(record.ExpiresAt) {
+			_ = bucket.Delete([]byte(digest))
+			return nil
+		}
+		if err := bucket.Delete([]byte(digest)); err != nil {
+			return err
+		}
+		clientID, principalID = record.ClientID, record.PrincipalID
+		return nil
+	}) != nil {
+		return nil
+	}
+	if clientID == "" {
+		return nil
+	}
+	p.mu.RLock()
+	stored := p.clients[clientID]
+	var client *ClientCredential
+	if stored != nil && stored.Status == "active" && stored.PrincipalID == principalID {
+		cp := *stored
+		client = &cp
+	}
+	p.mu.RUnlock()
+	return client
+}
 
 type PrincipalKind string
 type PrincipalStatus string
@@ -119,7 +200,7 @@ func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt .
 	}
 	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
-		for _, n := range []string{bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketPassportAvatars, bucketJoinLinks, bucketMemberRecoveryLinks, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
+		for _, n := range []string{bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketMemberRecoveryLinks, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
