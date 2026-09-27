@@ -293,6 +293,11 @@ func providerContributionActor(r *http.Request) string {
 
 // ServeHTTP routes incoming requests to the appropriate handler.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	applySecurityHeaders(w, r.URL.Path)
+	if globalIPAccess.restricted() && !globalIPAccess.permitted(getClientIP(r)) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	reqID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	if reqID == "" {
 		reqID = strings.TrimSpace(r.Header.Get("x-request-id"))

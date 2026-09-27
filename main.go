@@ -258,6 +258,19 @@ func buildConfig() *config {
 		setTrustedProxies(fileCfg.TrustedProxies)
 	}
 
+	// IP allow/deny policy (env wins over config file; comma-separated).
+	ipAllow, ipDeny := fileCfg.IPAccessAllow, fileCfg.IPAccessDeny
+	if v := os.Getenv("PROXY_IP_ALLOW"); v != "" {
+		ipAllow = splitCommaEntries(v)
+	}
+	if v := os.Getenv("PROXY_IP_DENY"); v != "" {
+		ipDeny = splitCommaEntries(v)
+	}
+	globalIPAccess.configure(ipAllow, ipDeny)
+	if globalIPAccess.restricted() {
+		log.Printf("ip access policy active: allow=%v deny=%v (loopback always permitted)", ipAllow, ipDeny)
+	}
+
 	// Request and stream timeouts default to disabled so long-running jobs can finish.
 	// Set a positive value to enable a hard timeout.
 	cfg.requestTimeout = 0

@@ -37,7 +37,12 @@ type ConfigFile struct {
 	Providers      map[string]GenericProviderConfig `toml:"providers"`
 	Experiments    ExperimentsConfig                `toml:"experiments"`
 	Federation     FederationConfig                 `toml:"federation"`
-	TrustedProxies []string                         `toml:"trusted_proxies"`
+	TrustedProxies []string `toml:"trusted_proxies"`
+
+	// IP access policy: deny always wins over allow, loopback is always
+	// permitted, and empty lists leave the pool unrestricted.
+	IPAccessAllow []string `toml:"ip_access_allow"`
+	IPAccessDeny  []string `toml:"ip_access_deny"`
 
 	PoolUsers PoolUsersConfig   `toml:"pool_users"`
 	Routing   RoutingConfigFile `toml:"routing"`

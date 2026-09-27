@@ -41,6 +41,17 @@ func init() {
 	initTrustedProxiesFromEnv()
 }
 
+// splitCommaEntries splits a comma-separated env value into trimmed entries.
+func splitCommaEntries(raw string) []string {
+	var list []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			list = append(list, part)
+		}
+	}
+	return list
+}
+
 func initTrustedProxiesFromEnv() {
 	raw := os.Getenv("PROXY_TRUSTED_PROXIES")
 	if raw == "" {
