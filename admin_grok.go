@@ -122,10 +122,7 @@ func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	if data, err := accountCredentialStore.Encode(data); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to encode credential file: "+err.Error())
-		return
-	} else if err := os.WriteFile(filePath, data, 0o600); err != nil {
+	if err := writeAccountFile(filePath, data); err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "failed to write account: "+err.Error())
 		return
 	}

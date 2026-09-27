@@ -384,12 +384,8 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
 	}
-	tmp := authFile + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return fmt.Errorf("write file: %w", err)
-	}
-	if err := os.Rename(tmp, authFile); err != nil {
-		return fmt.Errorf("replace %s: %w", authFile, err)
+	if err := writeAccountFile(authFile, data); err != nil {
+		return err
 	}
 
 	log.Printf("codex relogin: replaced credentials for account %s (%s)", accountID, authFile)
@@ -533,13 +529,8 @@ func saveNewCodexAccount(poolDir, accountID string, tokens *CodexTokenResponse) 
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
 	}
-	data, err = accountCredentialStore.Encode(data)
-	if err != nil {
-		return fmt.Errorf("encode credential file: %w", err)
-	}
-
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	if err := writeAccountFile(filePath, data); err != nil {
+		return err
 	}
 
 	log.Printf("Saved new Codex account: %s -> %s", accountID, filePath)

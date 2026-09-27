@@ -1898,32 +1898,7 @@ func atomicWriteJSON(filePath string, data any) error {
 	if err != nil {
 		return err
 	}
-	payload, err := accountCredentialStore.Encode(updated)
-	if err != nil {
-		return fmt.Errorf("encode credential file %s: %w", filePath, err)
-	}
-
-	// Atomic write: write to temp file then rename.
-	dir := filepath.Dir(filePath)
-	tmp, err := os.CreateTemp(dir, "*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(payload); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, filePath)
+	return writeAccountFile(filePath, updated)
 }
 
 // mergeUsage blends a newer usage snapshot with prior data, preserving meaningful

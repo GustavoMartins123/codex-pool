@@ -189,13 +189,7 @@ func (h *proxyHandler) saveAPIKeyAccountFile(w http.ResponseWriter, r *http.Requ
 		respondJSONError(w, http.StatusInternalServerError, "failed to marshal json: "+err.Error())
 		return
 	}
-	data, err = accountCredentialStore.Encode(data)
-	if err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to encode credential file: "+err.Error())
-		return
-	}
-
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
+	if err := writeAccountFile(filePath, data); err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "failed to write file: "+err.Error())
 		return
 	}

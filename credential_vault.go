@@ -61,6 +61,44 @@ func readAccountFile(path string) ([]byte, error) {
 	return credstore.ReadFile(accountCredentialStore, path)
 }
 
+// writeFileAtomic replaces path with payload via a temp file in the same
+// directory plus rename, so a crash mid-write can never truncate an existing
+// credential file. The payload is written verbatim (already at-rest form).
+func writeFileAtomic(path string, payload []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(payload); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+// writeAccountFile encodes plaintext JSON into its at-rest form and writes it
+// atomically with owner-only permissions. Every path that persists an account
+// credential file must go through this (or atomicWriteJSON) so the vault
+// cannot be bypassed by a handler that forgets to encode.
+func writeAccountFile(path string, plaintext []byte) error {
+	payload, err := accountCredentialStore.Encode(plaintext)
+	if err != nil {
+		return fmt.Errorf("encode credential file %s: %w", path, err)
+	}
+	return writeFileAtomic(path, payload)
+}
+
 // migrateCredentialFiles brings every account file in the pool directory to
 // the current key state: plaintext files get encrypted and envelopes under
 // the previous key get re-encrypted. Returns files encrypted and rotated.
@@ -86,7 +124,7 @@ func migrateCredentialFiles(poolDir string) (int, int, error) {
 			if err != nil {
 				return fmt.Errorf("encrypt %s: %w", path, err)
 			}
-			if err := os.WriteFile(path, atRest, 0o600); err != nil {
+			if err := writeFileAtomic(path, atRest); err != nil {
 				return fmt.Errorf("write %s: %w", path, err)
 			}
 			encrypted++
@@ -106,7 +144,7 @@ func migrateCredentialFiles(poolDir string) (int, int, error) {
 		if err != nil {
 			return fmt.Errorf("re-encrypt %s: %w", path, err)
 		}
-		if err := os.WriteFile(path, atRest, 0o600); err != nil {
+		if err := writeFileAtomic(path, atRest); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		rotated++
@@ -141,7 +179,7 @@ func decryptCredentialFiles(poolDir string) (int, error) {
 		if err != nil {
 			return fmt.Errorf("decrypt %s: %w", path, err)
 		}
-		if err := os.WriteFile(path, plain, 0o600); err != nil {
+		if err := writeFileAtomic(path, plain); err != nil {
 			return err
 		}
 		count++

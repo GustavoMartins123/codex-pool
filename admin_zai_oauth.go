@@ -419,17 +419,7 @@ func (h *proxyHandler) saveZAIOAuthAccount(account ZAIAuthJSON) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
-	}
-	if _, err = file.Write(data); err == nil {
-		err = file.Close()
-	} else {
-		file.Close()
-	}
-	if err != nil {
-		os.Remove(path)
+	if err := writeAccountFile(path, data); err != nil {
 		return "", err
 	}
 	h.reloadAccounts()
