@@ -28,7 +28,7 @@ func safeText(b []byte) string {
 	s := string(b)
 	s = strings.ReplaceAll(s, "\n", "\\n")
 	s = strings.ReplaceAll(s, "\r", "\\r")
-	return s
+	return redactSecrets(s)
 }
 
 var (
