@@ -47,3 +47,29 @@ func TestOperatorBootstrapSetsSession(t *testing.T) {
 		t.Fatal("bootstrap returned no csrf token")
 	}
 }
+
+func TestOperatorBootstrapRequiresAdminToken(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	p, err := newPassportStore(testUsageStore(t).db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &proxyHandler{cfg: &config{adminToken: "configured-test-admin-token"}, passport: p, metrics: newMetrics()}
+	body := `{"username":"root","email":"root@local","password":"correct-horse-battery","display_name":"Root"}`
+
+	for _, token := range []string{"", "incorrect-admin-token"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/setup/operator", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			req.Header.Set("X-Admin-Token", token)
+		}
+		rr := httptest.NewRecorder()
+		h.handleOperatorBootstrap(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("bootstrap with token %q = %d, want 401", token, rr.Code)
+		}
+		if p.hasOperator() {
+			t.Fatal("unauthorized bootstrap created an operator")
+		}
+	}
+}

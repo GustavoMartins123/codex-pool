@@ -308,21 +308,9 @@ func (h *proxyHandler) handleOperatorBootstrap(w http.ResponseWriter, r *http.Re
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	// Accept: (1) valid admin token, (2) existing operator session, or
-	// (3) no operator exists yet (fresh deployment — allow unauthenticated
-	// bootstrap so the first operator can be created from the UI).
-	hasAdminToken := strings.TrimSpace(r.Header.Get("X-Admin-Token")) != ""
-	hasOperator := h.passport != nil && h.passport.hasOperator()
-	if hasAdminToken {
-		if !h.checkAdminAuth(w, r) {
-			return
-		}
-	} else if hasOperator {
-		if _, _, ok := h.requireOperator(w, r); !ok {
-			return
-		}
+	if !h.checkAdminAuth(w, r) {
+		return
 	}
-	// else: no operator exists, no admin token — allow through for fresh bootstrap
 	if h.passport == nil {
 		respondJSONError(w, 503, "accounts unavailable")
 		return

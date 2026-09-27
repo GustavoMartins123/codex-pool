@@ -129,17 +129,17 @@ describe("operator bootstrap", () => {
     vi.unstubAllGlobals();
   });
 
-  it("never sends a fabricated admin token header", async () => {
+  it("sends the configured admin token in the bootstrap header", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ principal: { id: "p1", kind: "operator", status: "active" } }), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await operatorBootstrap("root", "root@local", "correct-horse-battery");
+    await operatorBootstrap("root", "root@local", "correct-horse-battery", "configured-admin-token");
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = init.headers as Record<string, string>;
-    expect(headers["X-Admin-Token"]).toBeUndefined();
+    expect(headers["X-Admin-Token"]).toBe("configured-admin-token");
     expect((init.credentials as string) || "").not.toBe("");
   });
 });

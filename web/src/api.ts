@@ -21,12 +21,9 @@ function csrfToken() {
 export async function loadAuthConfig(): Promise<{ legacy_signup: boolean; operator_exists: boolean }> {
   return decode(await fetch("/api/auth/config", { credentials: "same-origin" }));
 }
-export async function operatorBootstrap(username: string, email: string, password: string, displayName = ""): Promise<PassportPrincipal> {
-  // No admin token here: the server allows unauthenticated bootstrap only
-  // while no operator exists. Sending a fabricated token would invite
-  // operators to configure that guessed value as the real ADMIN_TOKEN.
+export async function operatorBootstrap(username: string, email: string, password: string, adminToken: string, displayName = ""): Promise<PassportPrincipal> {
   const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/setup/operator", {
-    method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+    method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken }, credentials: "same-origin",
     body: JSON.stringify({ username, email, password, display_name: displayName }),
   }));
   return result.principal;

@@ -637,6 +637,7 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -653,7 +654,7 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
     setError("");
     try {
       if (mode === "bootstrap") {
-        const principal = await operatorBootstrap(username, email, password, displayName);
+        const principal = await operatorBootstrap(username, email, password, bootstrapToken, displayName);
         onAccess(principal);
       } else if (mode === "signup") {
         const legacy = storedFriendSession();
@@ -702,6 +703,10 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
           <label className="threshold-field">
             <span>Password<i>12 characters minimum</i></span>
             <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={12} required autoComplete="new-password" />
+          </label>
+          <label className="threshold-field">
+            <span>Admin token<i>from your server configuration</i></span>
+            <input value={bootstrapToken} onChange={(event) => setBootstrapToken(event.target.value)} type="password" required autoComplete="off" />
           </label>
           {error && <p className="threshold-error" role="alert">{error}</p>}
           <button className="threshold-submit" disabled={busy}>{busy ? "Creating…" : "Create operator account"}</button>
