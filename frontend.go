@@ -1218,6 +1218,202 @@ echo "Run 'source ~/.zshrc' or start a new terminal, then run 'gemini'."
 	w.Write([]byte(script))
 }
 
+// serveAntigravitySetupScript configures the Antigravity CLI (agy) to use the
+// pool. The CLI has a Gemini API key mode selected by modelProvider=gemini in
+// ~/.gemini/antigravity-cli/settings.json; requests then go to
+// GOOGLE_GEMINI_BASE_URL/v1beta/... with the GEMINI_API_KEY, which the pool
+// authenticates through its gemini_api_key credential parsing.
+func (h *proxyHandler) serveAntigravitySetupScript(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimPrefix(r.URL.Path, "/setup/antigravity/")
+	if token == "" || strings.Contains(token, "/") {
+		http.Error(w, "invalid token", http.StatusBadRequest)
+		return
+	}
+
+	if h.passport == nil {
+		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
+		return
+	}
+	// The script embeds the pool API key, so this is the single redemption of
+	// the nonce.
+	user := passportClientAsPoolUser(h, h.passport.redeemConfigDownloadNonce(token))
+	if user == nil {
+		http.Error(w, "invalid token", http.StatusNotFound)
+		return
+	}
+
+	secret := getPoolJWTSecret()
+	if secret == "" {
+		http.Error(w, "JWT secret not configured", http.StatusServiceUnavailable)
+		return
+	}
+	apiKey := generateGeminiAPIKey(secret, user)
+
+	publicURL := h.getEffectivePublicURL(r)
+
+	if wantsPowerShell(r) {
+		script := fmt.Sprintf(`#requires -Version 5.1
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$BaseUrl = '%s'
+$ApiKey = '%s'
+
+# PS 5.1 writes UTF-8 with BOM which breaks parsers. Write without BOM.
+function Set-Utf8NoBom {
+  param([string]$Path, [string]$Value)
+  $utf8 = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Value, $utf8)
+}
+
+Write-Host 'Configuring Antigravity CLI for pool access...'
+Write-Host ''
+
+# Point the CLI at the pool using Gemini API key mode
+$env:GEMINI_API_KEY = $ApiKey
+$env:GOOGLE_GEMINI_BASE_URL = $BaseUrl
+
+# Persist env vars for future PowerShell sessions
+$profilePath = $PROFILE.CurrentUserAllHosts
+New-Item -ItemType Directory -Force -Path (Split-Path $profilePath) | Out-Null
+if (-not (Test-Path $profilePath)) { New-Item -ItemType File -Force -Path $profilePath | Out-Null }
+
+$start = '# >>> Antigravity Pool Configuration >>>'
+$end = '# <<< Antigravity Pool Configuration <<<'
+$nl = [Environment]::NewLine
+$blockLines = @(
+  $start,
+  ('$env:GEMINI_API_KEY = "' + $ApiKey + '"'),
+  ('$env:GOOGLE_GEMINI_BASE_URL = "' + $BaseUrl + '"'),
+  $end
+)
+$block = $blockLines -join $nl
+
+$existing = ''
+try { $existing = Get-Content -Path $profilePath -Raw } catch {}
+if ($null -eq $existing) { $existing = '' }
+
+$pattern = [regex]::Escape($start) + '.*?' + [regex]::Escape($end)
+if ([regex]::IsMatch($existing, $pattern, [Text.RegularExpressions.RegexOptions]::Singleline)) {
+  $updated = [regex]::Replace($existing, $pattern, $block, [Text.RegularExpressions.RegexOptions]::Singleline)
+} else {
+  $sep = ''; if ($existing -and -not ($existing.EndsWith($nl))) { $sep = $nl }
+  $updated = $existing + $sep + $nl + $block + $nl
+}
+
+Set-Utf8NoBom -Path $profilePath -Value $updated
+Write-Host ("Added Antigravity pool config to " + $profilePath)
+
+# Select the Gemini API key provider in ~/.gemini/antigravity-cli/settings.json
+$settingsDir = Join-Path $HOME '.gemini\antigravity-cli'
+New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
+$settingsPath = Join-Path $settingsDir 'settings.json'
+$json = '{"modelProvider": "gemini"}'
+if (Test-Path $settingsPath) {
+  try {
+    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+    if ($null -ne $settings.PSObject.Properties['modelProvider']) {
+      $settings.modelProvider = 'gemini'
+    } else {
+      $settings | Add-Member -NotePropertyName modelProvider -NotePropertyValue 'gemini'
+    }
+    $json = $settings | ConvertTo-Json -Depth 10
+  } catch {
+    $json = '{"modelProvider": "gemini"}'
+  }
+}
+Set-Utf8NoBom -Path $settingsPath -Value $json
+Write-Host ("Set modelProvider to gemini in " + $settingsPath)
+
+Write-Host ''
+Write-Host 'Setup complete!'
+Write-Host ''
+Write-Host ("Antigravity CLI will use the pool proxy at: " + $BaseUrl)
+Write-Host 'No Google login required - the pool key authenticates requests.'
+Write-Host ''
+Write-Host 'Start a new terminal, or run: . $PROFILE'
+`, publicURL, apiKey)
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(script))
+		return
+	}
+
+	script := fmt.Sprintf(`#!/bin/bash
+set -e
+BASE_URL="%s"
+API_KEY="%s"
+
+echo "Configuring Antigravity CLI for pool access..."
+echo ""
+
+# Point the CLI at the pool using Gemini API key mode
+export GEMINI_API_KEY="$API_KEY"
+export GOOGLE_GEMINI_BASE_URL="$BASE_URL"
+
+SETTINGS_DIR="$HOME/.gemini/antigravity-cli"
+SETTINGS_FILE="$SETTINGS_DIR/settings.json"
+mkdir -p "$SETTINGS_DIR"
+if [ ! -f "$SETTINGS_FILE" ]; then
+    printf '{\n  "modelProvider": "gemini"\n}\n' > "$SETTINGS_FILE"
+elif grep -q '"modelProvider"' "$SETTINGS_FILE" 2>/dev/null; then
+    sed -i.bak 's/"modelProvider"[[:space:]]*:[[:space:]]*"[^"]*"/"modelProvider": "gemini"/' "$SETTINGS_FILE"
+    rm -f "$SETTINGS_FILE.bak"
+elif head -c 4096 "$SETTINGS_FILE" | grep -q '{'; then
+    sed -i.bak '0,/{/s//{\n  "modelProvider": "gemini",/' "$SETTINGS_FILE" 2>/dev/null || sed -i.bak 's/{/{\n  "modelProvider": "gemini",/' "$SETTINGS_FILE"
+    rm -f "$SETTINGS_FILE.bak"
+else
+    printf '{\n  "modelProvider": "gemini"\n}\n' > "$SETTINGS_FILE"
+fi
+echo "✓ Set modelProvider to gemini in $SETTINGS_FILE"
+
+# Persist env vars in shell profiles between pool markers
+add_to_profile() {
+    for profile in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if [ -f "$profile" ]; then
+            # Remove a previous pool block so re-runs stay idempotent
+            sed -i.bak '/# >>> Antigravity Pool Configuration >>>/,/# <<< Antigravity Pool Configuration <<</d' "$profile"
+            rm -f "$profile.bak"
+            cat >> "$profile" << 'ENVEOF'
+
+# >>> Antigravity Pool Configuration >>>
+export GEMINI_API_KEY="%s"
+export GOOGLE_GEMINI_BASE_URL="%s"
+# <<< Antigravity Pool Configuration <<<
+ENVEOF
+            echo "✓ Added Antigravity pool config to $(basename "$profile")"
+            return
+        fi
+    done
+
+    # Fallback: create .zshrc
+    cat >> "$HOME/.zshrc" << 'ENVEOF'
+
+# >>> Antigravity Pool Configuration >>>
+export GEMINI_API_KEY="%s"
+export GOOGLE_GEMINI_BASE_URL="%s"
+# <<< Antigravity Pool Configuration <<<
+ENVEOF
+    echo "✓ Created ~/.zshrc with Antigravity pool config"
+}
+
+add_to_profile
+
+echo ""
+echo "Setup complete!"
+echo ""
+echo "Antigravity CLI will use the pool proxy at: $BASE_URL"
+echo "No Google login required - the pool key authenticates requests."
+echo ""
+echo "Run 'source ~/.zshrc' or start a new terminal, then run 'agy'."
+`, publicURL, apiKey,
+		apiKey, publicURL,
+		apiKey, publicURL)
+
+	w.Header().Set("Content-Type", "text/x-shellscript")
+	w.Write([]byte(script))
+}
+
 func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimPrefix(r.URL.Path, "/setup/claude/")
 	if token == "" || strings.Contains(token, "/") {

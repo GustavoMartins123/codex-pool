@@ -51,6 +51,9 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 	case strings.HasPrefix(path, "/config/gemini/"):
 		configType = "gemini"
 		token = strings.TrimPrefix(path, "/config/gemini/")
+	case strings.HasPrefix(path, "/config/antigravity/"):
+		configType = "antigravity"
+		token = strings.TrimPrefix(path, "/config/antigravity/")
 	case strings.HasPrefix(path, "/config/claude/"):
 		configType = "claude"
 		token = strings.TrimPrefix(path, "/config/claude/")
@@ -107,6 +110,19 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		json.NewEncoder(w).Encode(auth)
+	case "antigravity":
+		apiKey := generateGeminiAPIKey(secret, user)
+		baseURL := strings.TrimRight(h.getEffectivePublicURL(r), "/")
+		respondJSON(w, map[string]any{
+			"api_key":       apiKey,
+			"base_url":      baseURL,
+			"settings_file": "~/.gemini/antigravity-cli/settings.json",
+			"settings":      map[string]any{"modelProvider": "gemini"},
+			"env": map[string]string{
+				"GEMINI_API_KEY":         apiKey,
+				"GOOGLE_GEMINI_BASE_URL": baseURL,
+			},
+		})
 	case "claude":
 		auth, err := generateClaudeAuth(secret, user)
 		if err != nil {

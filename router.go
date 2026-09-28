@@ -725,6 +725,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveGeminiSetupScript(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/setup/antigravity/") {
+		h.serveAntigravitySetupScript(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/setup/claude/") {
 		h.serveClaudeSetupScript(w, r)
 		return
@@ -926,7 +930,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Config download routes (no auth - token is the auth)
-	if strings.HasPrefix(r.URL.Path, "/config/codex/") || strings.HasPrefix(r.URL.Path, "/config/gemini/") || strings.HasPrefix(r.URL.Path, "/config/claude/") || strings.HasPrefix(r.URL.Path, "/config/pi/") || strings.HasPrefix(r.URL.Path, "/config/grok/") {
+	if strings.HasPrefix(r.URL.Path, "/config/codex/") || strings.HasPrefix(r.URL.Path, "/config/gemini/") || strings.HasPrefix(r.URL.Path, "/config/antigravity/") || strings.HasPrefix(r.URL.Path, "/config/claude/") || strings.HasPrefix(r.URL.Path, "/config/pi/") || strings.HasPrefix(r.URL.Path, "/config/grok/") {
 		h.serveConfigDownload(w, r)
 		return
 	}

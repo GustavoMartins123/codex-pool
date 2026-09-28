@@ -207,7 +207,7 @@ func (h *proxyHandler) mintSetupURLs(r *http.Request, client *ClientCredential) 
 		return nil, time.Time{}, err
 	}
 	base := h.getEffectivePublicURL(r)
-	paths := []string{"codex", "gemini", "claude", "pi", "grok", "cute-code"}
+	paths := []string{"codex", "gemini", "antigravity", "claude", "pi", "grok", "cute-code"}
 	urls := make(map[string]string, len(paths))
 	var expires time.Time
 	for _, provider := range paths {
