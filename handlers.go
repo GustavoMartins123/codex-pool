@@ -599,6 +599,35 @@ func isClaudeUsageRequest(r *http.Request) bool {
 	return r.URL.Path == "/api/oauth/usage"
 }
 
+// CLI compatibility responses contain only stable protocol fields. Pool
+// capacity and account usage are available through operator telemetry.
+func (h *proxyHandler) serveClientCodexUsage(w http.ResponseWriter) {
+	respondJSON(w, map[string]any{
+		"plan_type":                "pool",
+		"rate_limit_reset_credits": map[string]any{"available_count": 0},
+		"rate_limit": map[string]any{
+			"allowed": true, "limit_reached": false,
+			"primary_window": nil, "secondary_window": nil,
+		},
+	})
+}
+
+func (h *proxyHandler) serveClientClaudeProfile(w http.ResponseWriter) {
+	respondJSON(w, map[string]any{
+		"email": "pool@codex-pool.local", "email_verified": true,
+		"name": "Codex Pool", "subscription_type": "max", "plan_type": "max", "is_pooled": true,
+	})
+}
+
+func (h *proxyHandler) serveClientClaudeUsage(w http.ResponseWriter) {
+	respondJSON(w, map[string]any{
+		"five_hour":   map[string]any{"utilization": 0, "resets_at": nil},
+		"seven_day":   map[string]any{"utilization": 0, "resets_at": nil},
+		"extra_usage": map[string]any{"is_enabled": false},
+		"is_pooled":   true,
+	})
+}
+
 // handleClaudeProfile returns pool info for Claude CLI profile requests
 func (h *proxyHandler) handleClaudeProfile(w http.ResponseWriter, r *http.Request) {
 	stats := h.pool.getPoolStats()

@@ -279,6 +279,17 @@ func servePoolModels(w http.ResponseWriter, pools ...*poolState) {
 	})
 }
 
+func serveClientPoolModels(w http.ResponseWriter, pool *poolState) {
+	models := poolModelsForClients(pool)
+	for i := range models {
+		models[i].SupportingAccounts = 0
+		models[i].AvailableAccounts = 0
+		models[i].QuotaRemaining = nil
+		models[i].NextResetAt = nil
+	}
+	respondJSON(w, map[string]any{"schema_version": poolModelsSchemaVersion, "models": models})
+}
+
 func serveUnifiedOpenAIModels(w http.ResponseWriter, pools ...*poolState) {
 	descriptors := poolModelDescriptors(pools...)
 	data := make([]map[string]any, 0, len(descriptors))

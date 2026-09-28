@@ -197,3 +197,20 @@ func TestStatusPageOperatorSeesEverything(t *testing.T) {
 		t.Fatalf("break-glass view = operator %v total %d", data.Operator, data.TotalCount)
 	}
 }
+
+func TestStatusBreakGlassOverridesMemberCookie(t *testing.T) {
+	handler, session := newStatusMemberHandler(t, PolicySelector{Allow: []string{"codex"}})
+	request := httptest.NewRequest(http.MethodGet, "/status", nil)
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-Admin-Token", "admin")
+	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
+	response := httptest.NewRecorder()
+	handler.serveStatusPage(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d", response.Code)
+	}
+	data := decodeStatusJSON(t, response)
+	if !data.Operator || data.TotalCount != 3 {
+		t.Fatalf("break-glass status filtered: operator=%v accounts=%d", data.Operator, data.TotalCount)
+	}
+}

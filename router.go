@@ -195,6 +195,14 @@ func serveNoopCodexAppsMCP(w http.ResponseWriter, r *http.Request) {
 // checkAdminAuth accepts an operator session or the break-glass admin token.
 // Session requests that change state must also pass the Passport CSRF check.
 func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	// The explicit break-glass credential takes precedence over any browser
+	// cookie, including a stale or lower-role Passport session.
+	if h.cfg != nil && h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
+		if h.bruteForce != nil {
+			h.bruteForce.recordSuccess(getClientIP(r))
+		}
+		return true
+	}
 	if h.passport != nil {
 		if principal, session := h.passport.authenticate(r); principal != nil {
 			if principal.Kind != PrincipalOperator {
@@ -228,17 +236,11 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 		log.Printf("admin auth: credential_present=%v", token != "")
 	}
 
-	if !secureSecretEquals(token, h.cfg.adminToken) {
-		if h.bruteForce != nil {
-			h.bruteForce.recordFailure(ip)
-		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
-	}
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(ip)
+		h.bruteForce.recordFailure(ip)
 	}
-	return true
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+	return false
 }
 
 // checkMemberOrAdminAuth permits a live member/operator session or the
@@ -274,6 +276,13 @@ func (h *proxyHandler) checkMemberOrAdminAuth(w http.ResponseWriter, r *http.Req
 type providerContributionActorKey struct{}
 
 func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *http.Request) bool {
+	if h.cfg != nil && h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
+		if !h.checkAdminAuth(w, r) {
+			return false
+		}
+		*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
+		return true
+	}
 	if h.passport != nil {
 		if principal, session := h.passport.authenticate(r); principal != nil {
 			if principal.Kind != PrincipalOperator {
@@ -537,16 +546,18 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if h.isOperatorRequest(r) {
 			servePoolModels(w, h.pool)
 		} else {
-			// Clients need model capabilities and availability, not pool capacity.
-			models := poolModelsForClients(h.pool)
-			for i := range models {
-				models[i].SupportingAccounts = 0
-				models[i].AvailableAccounts = 0
-				models[i].QuotaRemaining = nil
-				models[i].NextResetAt = nil
-			}
-			respondJSON(w, map[string]any{"schema_version": poolModelsSchemaVersion, "models": models})
+			serveClientPoolModels(w, h.pool)
 		}
+		return
+	case "/api/pool/experiments":
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.serveExperimentMetrics(w)
 		return
 	case "/favicon.ico":
 		http.NotFound(w, r)
@@ -782,7 +793,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider mutations require an explicit operator unlock. The Claude OAuth
+	// Provider mutations require operator authority. The Claude OAuth
 	// callback remains public because it is invoked by the upstream redirect;
 	// exchanging that callback for credentials still requires admin auth.
 	if strings.HasPrefix(r.URL.Path, "/admin/claude") {
@@ -938,8 +949,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !h.requirePoolCredential(w, r) {
 			return
 		}
-		h.pollUpstreamUsage()
-		h.handleAggregatedUsage(w, reqID)
+		h.serveClientCodexUsage(w)
 		return
 	}
 
@@ -947,14 +957,14 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !h.requirePoolCredential(w, r) {
 			return
 		}
-		h.handleClaudeProfile(w, r)
+		h.serveClientClaudeProfile(w)
 		return
 	}
 	if isClaudeUsageRequest(r) {
 		if !h.requirePoolCredential(w, r) {
 			return
 		}
-		h.handleClaudeUsage(w, r)
+		h.serveClientClaudeUsage(w)
 		return
 	}
 

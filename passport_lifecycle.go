@@ -152,7 +152,7 @@ func (p *PassportStore) setPrincipalKind(actorID, principalID string, kind Princ
 			}
 		}
 		if operators == 0 {
-			return nil, errors.New("cannot demote the last usable operator")
+			return nil, errors.New("cannot demote the last operator")
 		}
 	}
 

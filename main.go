@@ -2213,7 +2213,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/api/pool/models" {
-		servePoolModels(w, h.pool)
+		serveClientPoolModels(w, h.pool)
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1/models" {
@@ -2222,10 +2222,6 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1beta/models" {
 		serveUnifiedGeminiModels(w, h.pool)
-		return
-	}
-	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/api/pool/experiments" {
-		h.serveExperimentMetrics(w)
 		return
 	}
 	var admission *policyAdmission

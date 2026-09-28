@@ -171,7 +171,7 @@ func (h *proxyHandler) handlePassportAvatar(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/avatars/")
-	if viewer.Kind == PrincipalGuest && viewer.ID != id {
+	if viewer.Kind != PrincipalOperator && viewer.ID != id {
 		http.Error(w, "forbidden", 403)
 		return
 	}

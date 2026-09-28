@@ -158,7 +158,10 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 	if h.passport != nil {
 		viewer, _ = h.passport.authenticate(r)
 	}
-	operator := viewer == nil || viewer.Kind == PrincipalOperator
+	operator := h.isOperatorRequest(r)
+	if operator {
+		viewer = nil
+	}
 	visibleProviders := h.statusProviderVisibility(viewer)
 
 	// Snapshot the accounts and drop the pool lock before rendering: holding

@@ -50,7 +50,7 @@ func TestFakeOAuthTokenBodyLimit(t *testing.T) {
 		want int
 	}{
 		{`{"grant_type":"refresh_token","refresh_token":"other"}`, http.StatusOK},
-		{strings.Repeat("x", 64<<10+1), http.StatusRequestEntityTooLarge},
+		{strings.Repeat("x", (64<<10)+1), http.StatusRequestEntityTooLarge},
 	} {
 		response := httptest.NewRecorder()
 		h.serveFakeOAuthToken(response, httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(test.body)))

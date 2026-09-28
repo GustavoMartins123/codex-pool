@@ -32,7 +32,7 @@ func TestAdminRoutesRequireOperatorSessionOrBreakGlassToken(t *testing.T) {
 		name    string
 		request *http.Request
 		want    int
-	}{"member cannot use break-glass token", memberWithToken, http.StatusForbidden})
+	}{"break-glass token overrides member cookie", memberWithToken, http.StatusOK})
 	breakGlass := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
 	breakGlass.Header.Set("X-Admin-Token", "break-glass-admin-token")
 	tests = append(tests, struct {
@@ -87,6 +87,15 @@ func TestAdminRoutesRequireOperatorSessionOrBreakGlassToken(t *testing.T) {
 	breakGlassPost.Header.Set("X-Admin-Token", "break-glass-admin-token")
 	if !h.checkAdminAuth(httptest.NewRecorder(), breakGlassPost) {
 		t.Fatal("break-glass mutation without CSRF was rejected")
+	}
+	memberWithBreakGlass := authorityRequest(http.MethodPost, "/admin/reload", member, "")
+	memberWithBreakGlass.Header.Del("X-CSRF-Token")
+	memberWithBreakGlass.Header.Set("X-Admin-Token", "break-glass-admin-token")
+	if !h.checkAdminAuth(httptest.NewRecorder(), memberWithBreakGlass) {
+		t.Fatal("break-glass header was blocked by a member cookie")
+	}
+	if !h.checkProviderContributionAuth(httptest.NewRecorder(), memberWithBreakGlass) || providerContributionActor(memberWithBreakGlass) != "break-glass" {
+		t.Fatal("provider contribution did not honor explicit break-glass authority")
 	}
 	getWithoutCSRF := authorityRequest(http.MethodGet, "/admin/accounts", operator, "")
 	getWithoutCSRF.Header.Del("X-CSRF-Token")
