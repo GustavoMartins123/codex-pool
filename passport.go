@@ -177,6 +177,7 @@ type Principal struct {
 	Username              string          `json:"username,omitempty"`
 	Email                 string          `json:"email,omitempty"`
 	PasswordHash          string          `json:"password_hash,omitempty"`
+	PasswordChangedAt     time.Time       `json:"password_changed_at,omitempty"`
 	CredentialsValidAfter time.Time       `json:"credentials_valid_after,omitempty"`
 	PlanType              string          `json:"plan_type,omitempty"`
 	ExpiresAt             *time.Time      `json:"expires_at,omitempty"`

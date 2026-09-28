@@ -190,7 +190,8 @@ func memberLinkExpired(link memberRecoveryLink, now time.Time) bool {
 
 // memberLinkUsable is the single validity predicate shared by the status
 // preflight and the redeem path: the link must be live and its principal an
-// active, unexpired member.
+// active, unexpired member. Defense in depth: a link minted before the last
+// password change stays dead even if its physical record survived a bug.
 func memberLinkUsable(link memberRecoveryLink, principal *Principal, now time.Time) bool {
 	if link.PrincipalID == "" || link.TokenDigest == "" {
 		return false
@@ -202,6 +203,9 @@ func memberLinkUsable(link memberRecoveryLink, principal *Principal, now time.Ti
 		return false
 	}
 	if principal.ExpiresAt != nil && !now.Before(*principal.ExpiresAt) {
+		return false
+	}
+	if !principal.PasswordChangedAt.IsZero() && principal.PasswordChangedAt.After(link.CreatedAt) {
 		return false
 	}
 	return true
@@ -240,6 +244,63 @@ func (p *PassportStore) cleanupExpiredMemberLinks(now time.Time) {
 		}
 		return nil
 	})
+}
+
+// setMemberPasswordLocked is the only in-transaction way a member password is
+// set: hash rotation, PasswordChangedAt stamp, outstanding recovery-link
+// invalidation, session invalidation, and audit all commit atomically.
+func (p *PassportStore) setMemberPasswordLocked(tx *bbolt.Tx, principal *Principal, passwordHash, actorID, action, detail string, now time.Time) error {
+	principal.PasswordHash = passwordHash
+	principal.PasswordChangedAt = now
+	if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), principal.ID, principal); err != nil {
+		return err
+	}
+	if err := deletePrincipalSessions(tx, principal.ID); err != nil {
+		return err
+	}
+	if err := deleteMemberLinksForPrincipal(tx.Bucket([]byte(bucketMemberRecoveryLinks)), principal.ID); err != nil {
+		return err
+	}
+	return p.audit(tx, actorID, action, principal.ID, detail)
+}
+
+// ChangePrincipalPassword is the centralized password-change operation. Every
+// path that rotates a member password must go through it so recovery links and
+// sessions are always retired together with the hash.
+func (p *PassportStore) ChangePrincipalPassword(actorID, principalID, password string) (*Principal, error) {
+	if len(password) < 12 {
+		return nil, errors.New("password must be at least 12 characters")
+	}
+	principal := p.principal(principalID)
+	if principal == nil || principal.Kind != PrincipalMember || principal.Status != PrincipalActive ||
+		(principal.ExpiresAt != nil && !time.Now().UTC().Before(*principal.ExpiresAt)) {
+		return nil, errors.New("member not found")
+	}
+	select {
+	case p.passwordWork <- struct{}{}:
+		defer func() { <-p.passwordWork }()
+	default:
+		return nil, errors.New("password verification busy")
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return nil, err
+	}
+	var updated Principal
+	err = p.db.Update(func(tx *bbolt.Tx) error {
+		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(principalID))
+		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Kind != PrincipalMember || updated.Status != PrincipalActive {
+			return errors.New("member not found")
+		}
+		return p.setMemberPasswordLocked(tx, &updated, passwordHash, actorID, "member.password_changed", "", time.Now().UTC())
+	})
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	p.principals[updated.ID] = &updated
+	p.mu.Unlock()
+	return copyPrincipal(&updated), nil
 }
 
 func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, string, string, error) {
@@ -294,20 +355,14 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			return errors.New("member link unavailable")
 		}
 		updated = txPrincipal
-		updated.PasswordHash = passwordHash
-		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated); err != nil {
-			return err
-		}
-		if err := deletePrincipalSessions(tx, updated.ID); err != nil {
-			return err
-		}
-		// Consuming a link retires every other pending link of this principal.
-		return deleteMemberLinksForPrincipal(bucket, updated.ID)
+		// Single redemption: consuming the link, rotating the hash, killing
+		// sessions, retiring every pending link, and the audit all commit (or
+		// roll back) as one transaction.
+		return p.setMemberPasswordLocked(tx, &updated, passwordHash, txPrincipal.ID, "member.password_set", live.Purpose, applyNow)
 	})
 	if err != nil {
 		return nil, "", "", err
 	}
-	_ = p.recordAudit(updated.ID, "member.password_set", updated.ID, link.Purpose)
 	p.mu.Lock()
 	p.principals[updated.ID] = &updated
 	p.mu.Unlock()
@@ -386,6 +441,7 @@ func (p *PassportStore) bootstrapOperator(username, email, displayName, password
 	updated.Email = strings.ToLower(strings.TrimSpace(email))
 	updated.DisplayName = strings.TrimSpace(displayName)
 	updated.PasswordHash = passwordHash
+	updated.PasswordChangedAt = time.Now().UTC()
 	if updated.DisplayName == "" {
 		updated.DisplayName = username
 	}
