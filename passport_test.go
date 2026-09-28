@@ -531,6 +531,68 @@ func TestWebAuthnLoginBeginPostOnlyAndCapped(t *testing.T) {
 	}
 }
 
+func TestPasskeyRegistrationChallengeBudget(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	password := "correct horse battery"
+	hash, err := hashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := map[PrincipalKind]authoritySession{}
+	for _, kind := range []PrincipalKind{PrincipalMember, PrincipalOperator, PrincipalGuest} {
+		id := string(kind) + "-registration"
+		sessions[kind] = addAuthorityPrincipal(t, passport, id, kind)
+		passport.mu.Lock()
+		passport.principals[id].Email = id + "@example.com"
+		passport.principals[id].PasswordHash = hash
+		passport.mu.Unlock()
+	}
+	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics()}
+	begin := func(kind PrincipalKind, body string) int {
+		t.Helper()
+		r := authorityRequest(http.MethodPost, "/api/me/passkeys/register/begin", sessions[kind], body)
+		w := httptest.NewRecorder()
+		h.handleWebAuthnRegisterBegin(w, r)
+		return w.Code
+	}
+	get := httptest.NewRecorder()
+	h.handleWebAuthnRegisterBegin(get, authorityRequest(http.MethodGet, "/api/me/passkeys/register/begin", sessions[PrincipalMember], ""))
+	if get.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET registration begin = %d", get.Code)
+	}
+	if status := begin(PrincipalGuest, `{"password":"correct horse battery"}`); status != http.StatusForbidden {
+		t.Fatalf("guest registration begin = %d", status)
+	}
+	for i := 0; i < passkeyRegisterIssueLimit; i++ {
+		if status := begin(PrincipalMember, `{"password":"correct horse battery"}`); status != http.StatusOK {
+			t.Fatalf("member challenge %d = %d", i, status)
+		}
+	}
+	if status := begin(PrincipalMember, `{"password":"correct horse battery"}`); status != http.StatusTooManyRequests {
+		t.Fatalf("member over budget = %d", status)
+	}
+	if status := begin(PrincipalOperator, `{"password":"correct horse battery"}`); status != http.StatusOK {
+		t.Fatalf("operator inherited member budget: %d", status)
+	}
+	h.passkeyIssueMu.Lock()
+	window := h.passkeyIssues["register:member-registration"]
+	window.until = time.Now().Add(-time.Second)
+	h.passkeyIssues["register:member-registration"] = window
+	h.passkeyIssueMu.Unlock()
+	if status := begin(PrincipalMember, `{"password":"correct horse battery"}`); status != http.StatusOK {
+		t.Fatalf("member challenge after window expiry = %d", status)
+	}
+	oversized := `{"password":"` + strings.Repeat("x", 64<<10) + `"}`
+	if status := begin(PrincipalOperator, oversized); status == http.StatusOK {
+		t.Fatal("oversized registration body accepted")
+	}
+}
+
 func TestBootstrapOperatorCreatesFreshPrincipal(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-for-bootstrap")

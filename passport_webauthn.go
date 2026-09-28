@@ -35,6 +35,7 @@ type passkeyView struct {
 }
 
 const passkeyIssueLimit = 15
+const passkeyRegisterIssueLimit = 10
 const passkeyIssueWindowDuration = 5 * time.Minute
 
 type passkeyIssueWindow struct {
@@ -43,13 +44,21 @@ type passkeyIssueWindow struct {
 }
 
 func (h *proxyHandler) allowPasskeyChallenge(ip string) bool {
+	return h.allowPasskeyIssue("login:"+ip, passkeyIssueLimit)
+}
+
+func (h *proxyHandler) allowPasskeyRegistration(principalID string) bool {
+	return h.allowPasskeyIssue("register:"+principalID, passkeyRegisterIssueLimit)
+}
+
+func (h *proxyHandler) allowPasskeyIssue(key string, limit int) bool {
 	h.passkeyIssueMu.Lock()
 	defer h.passkeyIssueMu.Unlock()
 	now := time.Now()
 	if h.passkeyIssues == nil {
 		h.passkeyIssues = make(map[string]passkeyIssueWindow)
 	}
-	if _, exists := h.passkeyIssues[ip]; !exists && len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
+	if _, exists := h.passkeyIssues[key]; !exists && len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
 		for key, window := range h.passkeyIssues {
 			if !now.Before(window.until) {
 				delete(h.passkeyIssues, key)
@@ -59,15 +68,15 @@ func (h *proxyHandler) allowPasskeyChallenge(ip string) bool {
 			return false
 		}
 	}
-	window := h.passkeyIssues[ip]
+	window := h.passkeyIssues[key]
 	if !now.Before(window.until) {
 		window = passkeyIssueWindow{until: now.Add(passkeyIssueWindowDuration)}
 	}
-	if window.count >= passkeyIssueLimit {
+	if window.count >= limit {
 		return false
 	}
 	window.count++
-	h.passkeyIssues[ip] = window
+	h.passkeyIssues[key] = window
 	return true
 }
 
@@ -373,6 +382,10 @@ func (h *proxyHandler) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *htt
 	}
 	if !h.passportCSRF(r, session) {
 		respondJSONError(w, http.StatusForbidden, "csrf validation failed")
+		return
+	}
+	if !h.allowPasskeyRegistration(principal.ID) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many passkey challenges, try again later")
 		return
 	}
 	var input struct {
