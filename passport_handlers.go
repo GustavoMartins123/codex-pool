@@ -73,19 +73,18 @@ func (h *proxyHandler) authorizePoolCredentialRequest(r *http.Request) (identity
 		h.metrics.incPassport("authorization_outcomes", "unrecognized")
 		return "", "", "", "", false
 	}
-	if h.passport != nil {
-		principalID, clientID, allowed = h.passport.authorizeIssuedCredential(identity, issuedAt)
-		if allowed {
-			h.metrics.incPassport("authorization_outcomes", "allowed")
-			h.passport.markCredentialSeen(principalID, clientID, time.Now())
-		} else {
-			h.metrics.incPassport("authorization_outcomes", "denied")
-		}
-		return identity, principalID, clientID, kind, allowed
+	if h.passport == nil {
+		h.metrics.incPassport("authorization_outcomes", "denied")
+		return identity, "", "", kind, false
 	}
-	// Production startup requires Passport. Preserve the former signed-token
-	// behavior only for directly constructed handlers used by embedders and tests.
-	return identity, identity, "legacy-" + identity, kind, true
+	principalID, clientID, allowed = h.passport.authorizeIssuedCredential(identity, issuedAt)
+	if allowed {
+		h.metrics.incPassport("authorization_outcomes", "allowed")
+		h.passport.markCredentialSeen(principalID, clientID, time.Now())
+	} else {
+		h.metrics.incPassport("authorization_outcomes", "denied")
+	}
+	return identity, principalID, clientID, kind, allowed
 }
 
 func (h *proxyHandler) requirePoolCredential(w http.ResponseWriter, r *http.Request) bool {

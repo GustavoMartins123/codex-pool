@@ -2186,7 +2186,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				userID = principal.ID
 			}
 		}
-		if h.passport != nil && !isAuthorized {
+		if !isAuthorized {
 			http.Error(w, "unauthorized: passthrough requests require a valid pool credential", http.StatusUnauthorized)
 			return
 		}
@@ -2225,7 +2225,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	var admission *policyAdmission
-	if h.passport != nil {
+	if h.passport == nil {
+		http.Error(w, "passport unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	{
 		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.hotClientPolicies(), time.Now())
 		if policyErr != nil {
 			h.auditPolicyDecision(&policyAdmission{principalID: principalID, clientID: clientID}, "policy.request_blocked", policyErr)

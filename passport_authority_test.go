@@ -101,6 +101,63 @@ func TestPoolCredentialModelDiscoveryOmitsCapacity(t *testing.T) {
 	}
 }
 
+func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	t.Setenv("POOL_JWT_SECRET", "test-live-passport-secret")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _, client, _, err := passport.createGuest("operator", "Guest", "Guest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := principal.ID + "-c-" + client.ID
+	request := func(id string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/api/pool/models", nil)
+		r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(getPoolJWTSecret(), id))
+		return r
+	}
+	without := &proxyHandler{metrics: newMetrics()}
+	if _, _, _, _, allowed := without.authorizePoolCredentialRequest(request(identity)); allowed {
+		t.Fatal("signed credential was accepted without Passport")
+	}
+	denied := httptest.NewRecorder()
+	without.requirePoolCredential(denied, request(identity))
+	if denied.Code != http.StatusUnauthorized {
+		t.Fatalf("missing Passport status = %d, want 401", denied.Code)
+	}
+	h := &proxyHandler{passport: passport, metrics: newMetrics()}
+	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); !allowed {
+		t.Fatal("active principal and client were rejected")
+	}
+	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(principal.ID + "-c-missing")); allowed {
+		t.Fatal("missing client was accepted")
+	}
+	passport.mu.Lock()
+	passport.clients[client.ID].Status = "revoked"
+	passport.mu.Unlock()
+	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); allowed {
+		t.Fatal("revoked client was accepted")
+	}
+	passport.mu.Lock()
+	passport.clients[client.ID].Status = "active"
+	passport.principals[principal.ID].Status = PrincipalSuspended
+	passport.mu.Unlock()
+	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); allowed {
+		t.Fatal("suspended principal was accepted")
+	}
+	past := time.Now().Add(-time.Minute)
+	passport.mu.Lock()
+	passport.principals[principal.ID].Status = PrincipalActive
+	passport.principals[principal.ID].ExpiresAt = &past
+	passport.mu.Unlock()
+	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); allowed {
+		t.Fatal("expired principal was accepted")
+	}
+}
+
 func TestPoolCredentialCLIUsageDoesNotExposeGlobalTelemetry(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-secret-for-cli-usage")

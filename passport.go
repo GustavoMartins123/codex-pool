@@ -638,7 +638,7 @@ func splitClientIdentity(identity string) (string, string) {
 	if principal, client, ok := strings.Cut(identity, "-c-"); ok && principal != "" && client != "" {
 		return principal, client
 	}
-	return identity, "legacy-" + identity
+	return identity, ""
 }
 
 func (p *PassportStore) credentialState(identity string) (*Principal, *ClientCredential, bool) {
