@@ -578,6 +578,10 @@ export function RecoveryUnavailable() {
 
 export function MemberRecovery({ token, onAccess }: { token: string; onAccess: (principal: PassportPrincipal) => void }) {
   const [state, setState] = useState<RecoveryLinkState>({ phase: "checking" });
+  // Focus and visibility rechecks can overlap the initial validation; only
+  // the most recently started answer may apply, so a slow "valid" response
+  // can never resurrect a form after a newer "invalid" one.
+  const [validationGuard] = useState(() => new ResponseVersion());
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
@@ -585,27 +589,24 @@ export function MemberRecovery({ token, onAccess }: { token: string; onAccess: (
   const [confirmationTouched, setConfirmationTouched] = useState(false);
   const mismatch = confirmationTouched && password !== confirmation;
 
-  // The form only exists after the backend confirms the token is live.
-  const validate = useCallback(async () => {
+  const applyStatus = useCallback(async (type: RecoveryEvent["type"]) => {
+    const version = validationGuard.begin();
     let event: RecoveryEvent;
     try {
       const status = await recoverMemberStatus(token);
-      event = { type: "recheck", valid: status.valid, expiresAt: status.expiresAt };
+      event = { type, valid: status.valid, expiresAt: status.expiresAt };
     } catch {
-      event = { type: "recheck", valid: false };
+      event = { type, valid: false };
     }
+    if (!validationGuard.isCurrent(version)) return;
     setState((current) => recoveryReducer(current, event));
-  }, [token]);
-  useEffect(() => { void (async () => {
-    let event: RecoveryEvent;
-    try {
-      const status = await recoverMemberStatus(token);
-      event = { type: "status", valid: status.valid, expiresAt: status.expiresAt };
-    } catch {
-      event = { type: "status", valid: false };
-    }
-    setState((current) => recoveryReducer(current, event));
-  })(); }, [token]);
+  }, [token, validationGuard]);
+  const validate = useCallback(() => applyStatus("recheck"), [applyStatus]);
+  useEffect(() => {
+    void applyStatus("status");
+    // In-flight answers die with the component or a token change.
+    return () => validationGuard.invalidate();
+  }, [applyStatus, validationGuard]);
 
   // Server-provided deadline: once reached locally the form disappears even
   // without a recheck. The countdown is a convenience, never the authority.

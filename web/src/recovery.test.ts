@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recoveryDeadlineMs, recoveryReducer, type RecoveryLinkState } from "./recovery";
+import { ResponseVersion } from "./response-version";
 
 const ready: RecoveryLinkState = { phase: "ready", expiresAt: new Date("2030-01-01T00:00:00Z") };
 
@@ -38,5 +39,26 @@ describe("recovery link gating", () => {
     expect(recoveryDeadlineMs(new Date(deadline), deadline)).toBe(0);
     expect(recoveryDeadlineMs(new Date(deadline), deadline - 1)).toBe(1);
     expect(recoveryDeadlineMs(new Date(deadline), deadline + 5000)).toBe(0);
+  });
+
+  it("drops a slow valid answer that lands after a newer invalid one", () => {
+    // The exact UI race: initial status (valid=true) is slow, a focus
+    // recheck sees the token consumed and hides the form, then the slow
+    // answer finally returns. The version guard must keep it dropped.
+    const guard = new ResponseVersion();
+    const slowStatus = guard.begin();
+    const fastRecheck = guard.begin();
+
+    expect(guard.isCurrent(fastRecheck)).toBe(true);
+    const afterRecheck = recoveryReducer({ phase: "checking" }, { type: "recheck", valid: false });
+    expect(afterRecheck.phase).toBe("unavailable");
+
+    expect(guard.isCurrent(slowStatus)).toBe(false);
+    const resurrected = recoveryReducer(afterRecheck, { type: "status", valid: true, expiresAt: "2030-01-01T00:00:00.000Z" });
+    expect(guard.isCurrent(slowStatus) ? resurrected.phase : "unavailable").toBe("unavailable");
+
+    // Invalidation on unmount or token change kills every in-flight answer.
+    guard.invalidate();
+    expect(guard.isCurrent(fastRecheck)).toBe(false);
   });
 });
