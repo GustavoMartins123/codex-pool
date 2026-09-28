@@ -325,6 +325,12 @@ func (p *PassportStore) ChangePrincipalPassword(actorID, principalID, password s
 		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Kind != PrincipalMember || updated.Status != PrincipalActive {
 			return errors.New("member not found")
 		}
+		// Revalidate expiry inside the transaction, after the Argon2 work:
+		// the in-memory pre-check can race with an operator suspension or
+		// expiry change.
+		if updated.ExpiresAt != nil && !time.Now().UTC().Before(*updated.ExpiresAt) {
+			return errors.New("member not found")
+		}
 		return p.setMemberPasswordLocked(tx, &updated, passwordHash, actorID, "member.password_changed", "", time.Now().UTC())
 	})
 	if err != nil {

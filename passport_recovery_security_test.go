@@ -218,6 +218,31 @@ func TestMemberRecoveryIndexBackfillCoversLegacyLinks(t *testing.T) {
 	}
 }
 
+func TestChangePrincipalPasswordRevalidatesExpiryInTransaction(t *testing.T) {
+	passport := newRecoveryTestPassport(t)
+	link := onboardMemberLink(t, passport, "txexpiry@example.com")
+	if _, _, _, err := passport.redeemMemberLink(link.Token, "original password 1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The in-memory cache still shows an active member, but the durable
+	// record expired: the transaction, not the pre-check, must refuse.
+	past := time.Now().Add(-time.Minute).UTC()
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		principal := *passport.principal(link.Principal.ID)
+		principal.ExpiresAt = &past
+		return putJSON(tx.Bucket([]byte(bucketPrincipals)), principal.ID, &principal)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := passport.ChangePrincipalPassword("operator", link.Principal.ID, "rotated password 2"); err == nil {
+		t.Fatal("password change ignored the expired member record")
+	}
+	if _, _, _, err := passport.login("txexpiry@example.com", "original password 1"); err != nil {
+		t.Fatalf("refused change must leave the original password intact: %v", err)
+	}
+}
+
 func TestMemberRecoveryStatusMatrix(t *testing.T) {
 	passport := newRecoveryTestPassport(t)
 	h := &proxyHandler{cfg: &config{}, passport: passport}
