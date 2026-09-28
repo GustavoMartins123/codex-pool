@@ -59,11 +59,8 @@ import {
   loadAnalyticsHealth,
   setPrincipalStatus,
   setPrincipalReasoningEffort,
-  lockOperator,
   mutateAccount,
   reloadAccounts,
-  storedAdminToken,
-  clearAdminToken,
   startAccountOAuth,
   startZAILogin,
   startCodexRelogin,
@@ -71,7 +68,6 @@ import {
 	  startAntigravityOAuth,
 	  startAntigravityRelogin,
 	  exchangeAntigravityRelogin,
-  unlockOperator,
   loadAuthConfig,
   operatorBootstrap,
 } from "./api";
@@ -329,7 +325,6 @@ export function App() {
 	const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [operatorToken, setOperatorToken] = useState(storedAdminToken());
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
   const adminLoadVersion = useRef(0);
   // Drops dashboard responses superseded by a newer refresh (poll vs manual
@@ -364,6 +359,7 @@ export function App() {
 
   useEffect(() => {
     const boot = async () => {
+      sessionStorage.removeItem("operatorToken");
       const memberToken = window.location.pathname === "/recover" ? decodeURIComponent(window.location.hash.replace(/^#/, "")) : "";
       if (memberToken) {
         window.history.replaceState(null, "", "/recover");
@@ -396,7 +392,7 @@ export function App() {
         if (principal.kind === "guest") setView("mine");
         else await refresh();
       } catch {
-        clearAdminToken();
+        setPassport(null);
       }
     };
     boot().finally(() => setBooting(false));
@@ -430,22 +426,21 @@ export function App() {
 
   useEffect(() => {
     const version = ++adminLoadVersion.current;
-    if (!operatorToken) {
+    if (passport?.kind !== "operator") {
       setAdminAccounts([]);
       return;
     }
     loadAdminAccounts()
       .then((accounts) => {
-        if (version === adminLoadVersion.current && storedAdminToken() === operatorToken) setAdminAccounts(accounts);
+        if (version === adminLoadVersion.current) setAdminAccounts(accounts);
       })
-      .catch(() => {
+      .catch((cause) => {
         if (version !== adminLoadVersion.current) return;
-        lockOperator();
-        setOperatorToken("");
         setAdminAccounts([]);
+        setError(cause instanceof Error ? cause.message : "Unable to load operator accounts");
       });
     return () => { adminLoadVersion.current++; };
-  }, [operatorToken]);
+  }, [passport]);
 
   if (booting) return <BootScreen />;
   if (recoveryToken && !passport) return <MemberRecovery token={recoveryToken} onAccess={(next) => { setRecoveryToken(""); setPassport(next); setView("mine"); refresh(); }} />;
@@ -476,9 +471,6 @@ export function App() {
     if (passport) await passportLogout().catch(() => undefined);
     adminLoadVersion.current++;
     refreshGuard.invalidate();
-    clearAdminToken();
-    lockOperator();
-    setOperatorToken("");
     setAdminAccounts([]);
     setPassport(null);
     setStats(null);
@@ -492,9 +484,8 @@ export function App() {
       <Header
         stats={stats}
         loading={loading}
-        operator={Boolean(operatorToken)}
+        operator={passport?.kind === "operator"}
         onRefresh={passport?.kind === "guest" ? undefined : refresh}
-        onLock={() => { adminLoadVersion.current++; lockOperator(); setOperatorToken(""); setAdminAccounts([]); }}
       />
       <div className="app-grid">
         <Navigation view={view} principal={passport} onChange={goToView} onSignOut={signOut} />
@@ -505,21 +496,14 @@ export function App() {
           {view === "mine" && <PassportMine principal={passport} onPrincipal={setPassport} />}
           {view === "passes" && passport && passport.kind !== "guest" && <Passes />}
           {view === "console" && passport && passport.kind === "operator" && <PassportConsole principal={passport} />}
-          {view === "accounts" && (
+          {view === "accounts" && passport?.kind === "operator" && (
             <Accounts
               stats={stats}
               adminAccounts={adminAccounts}
-              operatorToken={operatorToken}
-              onUnlocked={(token, accounts) => { setOperatorToken(token); setAdminAccounts(accounts); }}
               onAccountsChanged={async () => {
                 const version = ++adminLoadVersion.current;
-                const token = operatorToken;
-                if (!token) {
-                  await refresh();
-                  return;
-                }
                 const [accounts] = await Promise.all([loadAdminAccounts(), refresh()]);
-                if (version === adminLoadVersion.current && storedAdminToken() === token) setAdminAccounts(accounts);
+                if (version === adminLoadVersion.current) setAdminAccounts(accounts);
               }}
             />
           )}
@@ -1561,12 +1545,11 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
   </section>;
 }
 
-function Header({ stats, loading, operator, onRefresh, onLock }: {
+function Header({ stats, loading, operator, onRefresh }: {
   stats: PoolStats | null;
   loading: boolean;
   operator: boolean;
   onRefresh?: () => void;
-  onLock: () => void;
 }) {
   const generated = stats ? new Date(stats.generated_at) : null;
   return (
@@ -1584,7 +1567,7 @@ function Header({ stats, loading, operator, onRefresh, onLock }: {
         {stats && <span>{formatTokens(stats.last_24h_tokens ?? 0)} tokens today</span>}
         {generated && <span>Updated {generated.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}
         {onRefresh && <button onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>}
-        {operator && <button className="operator-live" onClick={onLock}><span className="desktop-label">Lock operator</span><span className="mobile-label">Lock</span></button>}
+        {operator && <span className="operator-live">Operator</span>}
       </div>
     </header>
   );
@@ -2509,18 +2492,15 @@ export function isArmedAccountAction(action: ArmedAccountAction, accountID: stri
   return action?.accountID === accountID && action.kind === kind;
 }
 
-function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsChanged }: {
+function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   stats: PoolStats | null;
   adminAccounts: AdminAccount[];
-  operatorToken: string;
-  onUnlocked: (token: string, accounts: AdminAccount[]) => void;
   onAccountsChanged: () => Promise<void>;
 }) {
   const [selected, setSelected] = useState<string | null>(() => queryValue("account"));
   const [query, setQuery] = useState("");
   const [attentionOnly, setAttentionOnly] = useState(() => queryValue("accounts") === "attention");
   const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 760px)").matches);
-  const [unlocking, setUnlocking] = useState(false);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
   const [reloginProvider, setReloginProvider] = useState<"codex" | "antigravity">("codex");
@@ -2530,7 +2510,6 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
   const inspectorRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const previousOperatorToken = useRef(operatorToken);
 
   const closeInspector = useCallback(() => {
     updateURL({ account: null }, "replace");
@@ -2539,10 +2518,6 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
   }, []);
 
   useEffect(() => { setAction(null); setMessage(null); }, [selected]);
-  useEffect(() => {
-    if (previousOperatorToken.current !== operatorToken) setSelected(null);
-    previousOperatorToken.current = operatorToken;
-  }, [operatorToken]);
   useEffect(() => updateURL({ account: selected }, "replace"), [selected]);
   useEffect(() => updateURL({ accounts: attentionOnly ? "attention" : null }, "replace"), [attentionOnly]);
   useEffect(() => {
@@ -2605,9 +2580,9 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
     return [provider.label, account.type, account.plan_type, account.id].some((value) => value?.toLowerCase().includes(normalizedQuery));
   });
   const attentionCount = stats.accounts.filter(needsAttention).length;
-  const selectedAdmin = operatorToken ? adminAccounts.find((account) => account.id === selected) ?? null : null;
+  const selectedAdmin = adminAccounts.find((account) => account.id === selected) ?? null;
   const selectedAccount = stats.accounts.find((account) => {
-    const adminMatch = operatorToken ? adminAccounts.find((candidate) => candidate.public_id === account.id) : null;
+    const adminMatch = adminAccounts.find((candidate) => candidate.public_id === account.id);
     return (adminMatch?.id ?? account.id) === selected;
   }) ?? null;
   const selectedVerificationURL = selectedAdmin
@@ -2654,8 +2629,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
         <h1>Accounts</h1>
         <div className="account-title-actions">
           <button className="contribute-button" onClick={() => { setReloginAccountID(null); setReloginProvider("codex"); setContributing(true); }}>Add pool account</button>
-          {!operatorToken && <button className="unlock-button" onClick={() => setUnlocking(true)}>Unlock controls</button>}
-          {operatorToken && <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>}
+          <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>
         </div>
       </div>
       {message && <div className={classNames("account-message", message.tone)} role="status" aria-live="polite">{message.text}</div>}
@@ -2673,7 +2647,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
           </div>
           {filteredAccounts.length === 0 && <div className="empty-state">{stats.accounts.length === 0 ? "No provider accounts are connected." : "No accounts match this filter."}</div>}
           {filteredAccounts.map((account) => {
-            const adminMatch = operatorToken ? adminAccounts.find((candidate) => candidate.public_id === account.id) : undefined;
+            const adminMatch = adminAccounts.find((candidate) => candidate.public_id === account.id);
             const rowID = adminMatch?.id ?? account.id;
             const provider = providerDisplay(account.type);
             return (
@@ -2684,7 +2658,7 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                 style={{ "--provider": provider.color } as CSSProperties}
                 aria-label={`Open ${provider.label} ${account.plan_type || "account"} details`}
               >
-                <span className="account-identity"><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small><em>{account.plan_type || "unknown plan"}</em><span>{operatorToken && adminMatch ? adminMatch.id : account.id}</span></small></span>
+                <span className="account-identity"><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small><em>{account.plan_type || "unknown plan"}</em><span>{adminMatch?.id ?? account.id}</span></small></span>
                 <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.status}</span>
                 <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
                 <span className="account-windows" data-label="Reset windows">
@@ -2748,16 +2722,13 @@ function Accounts({ stats, adminAccounts, operatorToken, onUnlocked, onAccountsC
                     </div>
 
                   </>
-                ) : (
-                  <div className="locked-inspector"><b>Operator controls are locked</b><p>Usage windows and account economics remain visible. Unlock only when you need to change pool state.</p><button onClick={() => setUnlocking(true)}>Unlock controls</button></div>
-                )}
+                ) : null}
               </>
             ) : null}
           </aside>
         )}
       </div>
       {contributing && <AccountContribution reloginAccountID={reloginAccountID ?? undefined} reloginProvider={reloginProvider} onClose={() => setContributing(false)} onAdded={async () => { await onAccountsChanged(); setContributing(false); }} />}
-      {unlocking && <OperatorUnlock onClose={() => setUnlocking(false)} onUnlocked={(token, accounts) => { onUnlocked(token, accounts); setUnlocking(false); }} />}
     </div>
   );
 }
@@ -2972,35 +2943,6 @@ function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvid
         )}
         {error && <div className="access-error" role="alert">{error}</div>}
         <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? "Adding…" : "Add to pool"}</button>}</div>
-      </form>
-    </div>
-  );
-}
-
-function OperatorUnlock({ onClose, onUnlocked }: { onClose: () => void; onUnlocked: (token: string, accounts: AdminAccount[]) => void }) {
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      onUnlocked(token, await unlockOperator(token));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unlock failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="operator-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <form className="operator-dialog" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="operator-title">
-        <h2 id="operator-title">Unlock operator controls</h2>
-        <p>The admin token stays in this tab and is cleared when you lock operator controls or sign out.</p>
-        <input type="password" value={token} onChange={(event) => setToken(event.target.value)} autoFocus aria-label="Admin token" required />
-        {error && <div className="access-error" role="alert">{error}</div>}
-        <div><button type="button" onClick={onClose}>Cancel</button><button className="gold-button" disabled={busy}>{busy ? "Verifying…" : "Unlock controls"}</button></div>
       </form>
     </div>
   );

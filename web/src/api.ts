@@ -1,10 +1,6 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
 import type { AdminAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
 
-const ADMIN_TOKEN_KEY = "operatorToken";
-
-export const storedAdminToken = () => sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
-
 function csrfToken() {
   return document.cookie.split("; ").find((part) => part.startsWith("pool_csrf="))?.split("=").slice(1).join("=") ?? "";
 }
@@ -134,10 +130,6 @@ async function decode<T>(response: Response): Promise<T> {
 }
 
 
-export function clearAdminToken() {
-  sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-}
-
 export async function loadPoolStats(): Promise<PoolStats> {
   return decode(await fetch("/api/pool/stats", { credentials: "same-origin", cache: "no-store" }));
 }
@@ -172,31 +164,14 @@ export async function loadLiveCuteCodeSettings(downloadToken: string): Promise<s
   return JSON.stringify(config, null, 2);
 }
 
-export async function unlockOperator(token: string): Promise<AdminAccount[]> {
-  const accounts = await decode<AdminAccount[]>(await fetch("/admin/accounts", {
-    headers: { "X-Admin-Token": token },
-    cache: "no-store",
-  }));
-  sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
-  return accounts;
-}
-
-export function lockOperator() {
-  sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-}
-
 export async function loadAdminAccounts(): Promise<AdminAccount[]> {
-  const token = storedAdminToken();
-  if (!token) throw new Error("Operator controls are locked");
-  return decode(await fetch("/admin/accounts", { headers: { "X-Admin-Token": token }, cache: "no-store" }));
+  return decode(await fetch("/admin/accounts", { credentials: "same-origin", cache: "no-store" }));
 }
 
 export async function mutateAccount(accountID: string, action: "enable" | "disable" | "resurrect" | "refresh") {
-  const token = storedAdminToken();
-  if (!token) throw new Error("Operator controls are locked");
   return decode<Record<string, unknown>>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/${action}`, {
     method: "POST",
-    headers: { "X-Admin-Token": token },
+    credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
   }));
 }
 
@@ -258,7 +233,7 @@ export async function zaiLoginStatus(sessionID: string) {
 export async function startCodexRelogin(accountID: string) {
   return decode<AccountContributionResult>(await fetch("/admin/codex/relogin", {
     method: "POST",
-    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify({ account_id: accountID }),
   }));
 }
@@ -266,7 +241,7 @@ export async function startCodexRelogin(accountID: string) {
 export async function exchangeCodexRelogin(code: string, verifier: string) {
   return decode<AccountContributionResult>(await fetch("/admin/codex/exchange", {
     method: "POST",
-    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify({ code, verifier }),
   }));
 }
@@ -290,7 +265,7 @@ export async function startAntigravityOAuth() {
 export async function startAntigravityRelogin(accountID: string) {
   return decode<AccountContributionResult>(await fetch("/admin/antigravity/relogin", {
     method: "POST",
-    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify({ account_id: accountID }),
   }));
 }
@@ -300,7 +275,7 @@ export async function exchangeAntigravityRelogin(sessionID: string, value: strin
   const isCallback = /^https?:\/\//i.test(trimmed);
   return decode<AccountContributionResult>(await fetch("/admin/antigravity/exchange", {
     method: "POST",
-    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken(), "X-Admin-Token": storedAdminToken() },
+    credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify({ session_id: sessionID, ...(isCallback ? { callback_url: trimmed } : { code: trimmed, state }) }),
   }));
 }
@@ -324,8 +299,6 @@ export async function exchangeAntigravityOAuth(sessionID: string, value: string,
 }
 
 export async function reloadAccounts() {
-  const token = storedAdminToken();
-  if (!token) throw new Error("Operator controls are locked");
-  const response = await fetch("/admin/reload", { method: "POST", headers: { "X-Admin-Token": token } });
+  const response = await fetch("/admin/reload", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
 }

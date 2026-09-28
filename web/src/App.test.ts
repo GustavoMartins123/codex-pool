@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { operatorBootstrap } from "./api";
+import { loadAdminAccounts, mutateAccount, operatorBootstrap, reloadAccounts } from "./api";
 import { AccountResetWindows, formatAPIValue, isArmedAccountAction, Models, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
@@ -141,6 +141,37 @@ describe("operator bootstrap", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["X-Admin-Token"]).toBe("configured-admin-token");
     expect((init.credentials as string) || "").not.toBe("");
+  });
+});
+
+describe("operator account requests", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uses the operator session and sends CSRF for mutations", async () => {
+    vi.stubGlobal("document", { cookie: "pool_csrf=operator-csrf" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("[]", { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await loadAdminAccounts();
+    await mutateAccount("account-1", "disable");
+    await reloadAccounts();
+
+    const calls = fetchMock.mock.calls as Array<[string, RequestInit]>;
+    expect(calls.map(([url]) => url)).toEqual([
+      "/admin/accounts", "/admin/accounts/account-1/disable", "/admin/reload",
+    ]);
+    for (const [, init] of calls) {
+      expect(init.credentials).toBe("same-origin");
+      expect(init.headers ?? {}).not.toHaveProperty("X-Admin-Token");
+    }
+    for (const [, init] of calls.slice(1)) {
+      expect((init.headers as Record<string, string>)["X-CSRF-Token"]).toBe("operator-csrf");
+    }
   });
 });
 
