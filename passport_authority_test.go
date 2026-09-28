@@ -119,7 +119,7 @@ func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(getPoolJWTSecret(), id))
 		return r
 	}
-	without := &proxyHandler{metrics: newMetrics()}
+	without := &proxyHandler{cfg: &config{}, metrics: newMetrics(), pool: newPoolState(nil, false)}
 	if _, _, _, _, allowed := without.authorizePoolCredentialRequest(request(identity)); allowed {
 		t.Fatal("signed credential was accepted without Passport")
 	}
@@ -127,6 +127,18 @@ func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
 	without.requirePoolCredential(denied, request(identity))
 	if denied.Code != http.StatusUnauthorized {
 		t.Fatalf("missing Passport status = %d, want 401", denied.Code)
+	}
+	proxyDenied := httptest.NewRecorder()
+	without.ServeHTTP(proxyDenied, request(identity))
+	if proxyDenied.Code != http.StatusForbidden && proxyDenied.Code != http.StatusUnauthorized {
+		t.Fatalf("proxy without Passport status = %d, want 401/403", proxyDenied.Code)
+	}
+	passthrough := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-5"}`))
+	passthrough.Header.Set("Authorization", "Bearer sk-proj-untrusted-provider")
+	passthroughDenied := httptest.NewRecorder()
+	without.ServeHTTP(passthroughDenied, passthrough)
+	if passthroughDenied.Code != http.StatusUnauthorized {
+		t.Fatalf("passthrough without Passport status = %d, want 401", passthroughDenied.Code)
 	}
 	h := &proxyHandler{passport: passport, metrics: newMetrics()}
 	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); !allowed {
