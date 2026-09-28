@@ -182,6 +182,66 @@ func (p *PassportStore) memberLinkByDigest(digest [32]byte) (memberRecoveryLink,
 	return link, found
 }
 
+// memberLinkExpired applies the strict recovery deadline: a link is dead once
+// now >= ExpiresAt. A missing expiry is treated as expired, never as open.
+func memberLinkExpired(link memberRecoveryLink, now time.Time) bool {
+	return link.ExpiresAt.IsZero() || !now.Before(link.ExpiresAt)
+}
+
+// memberLinkUsable is the single validity predicate shared by the status
+// preflight and the redeem path: the link must be live and its principal an
+// active, unexpired member.
+func memberLinkUsable(link memberRecoveryLink, principal *Principal, now time.Time) bool {
+	if link.PrincipalID == "" || link.TokenDigest == "" {
+		return false
+	}
+	if memberLinkExpired(link, now) {
+		return false
+	}
+	if principal == nil || principal.Kind != PrincipalMember || principal.Status != PrincipalActive {
+		return false
+	}
+	if principal.ExpiresAt != nil && !now.Before(*principal.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+// memberLinkStatus answers whether a recovery token may still be redeemed.
+// It never hashes passwords: unknown tokens only cost a digest comparison.
+func (p *PassportStore) memberLinkStatus(token string) (memberRecoveryLink, bool) {
+	link, found := p.memberLinkByDigest(hashToken(strings.TrimSpace(token)))
+	if !found {
+		return link, false
+	}
+	return link, memberLinkUsable(link, p.principal(link.PrincipalID), time.Now().UTC())
+}
+
+// cleanupExpiredMemberLinks lazily reclaims dead links. Keys are collected as
+// copies and deleted after the iteration, never inside ForEach. Expiry
+// validation stays mandatory regardless of cleanup.
+func (p *PassportStore) cleanupExpiredMemberLinks(now time.Time) {
+	_ = p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+		var keys [][]byte
+		if err := bucket.ForEach(func(key, value []byte) error {
+			var candidate memberRecoveryLink
+			if json.Unmarshal(value, &candidate) == nil && memberLinkExpired(candidate, now) {
+				keys = append(keys, append([]byte(nil), key...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if err := bucket.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, string, string, error) {
 	if len(password) < 12 {
 		return nil, "", "", errors.New("password must be at least 12 characters")
@@ -190,11 +250,7 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 	digest := hashToken(strings.TrimSpace(token))
 	link, found := p.memberLinkByDigest(digest)
 	now := time.Now().UTC()
-	if !found || now.After(link.ExpiresAt) {
-		return nil, "", "", errors.New("member link unavailable")
-	}
-	principal := p.principal(link.PrincipalID)
-	if principal == nil || principal.Kind != PrincipalMember || principal.Status != PrincipalActive || (principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
+	if !found || !memberLinkUsable(link, p.principal(link.PrincipalID), now) {
 		return nil, "", "", errors.New("member link unavailable")
 	}
 	select {
@@ -229,14 +285,15 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			return err
 		}
 		applyNow := time.Now().UTC()
-		if !matched || applyNow.After(live.ExpiresAt) {
+		if !matched {
 			return errors.New("member link unavailable")
 		}
+		var txPrincipal Principal
 		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(live.PrincipalID))
-		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Kind != PrincipalMember || updated.Status != PrincipalActive ||
-			(updated.ExpiresAt != nil && applyNow.After(*updated.ExpiresAt)) {
+		if value == nil || json.Unmarshal(value, &txPrincipal) != nil || !memberLinkUsable(live, &txPrincipal, applyNow) {
 			return errors.New("member link unavailable")
 		}
+		updated = txPrincipal
 		updated.PasswordHash = passwordHash
 		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated); err != nil {
 			return err
@@ -381,6 +438,39 @@ func (h *proxyHandler) handleConsoleMembers(w http.ResponseWriter, r *http.Reque
 		"principal":  publicPrincipal(result.Principal),
 		"link":       memberLinkURL(h, r, result.Token),
 		"expires_at": result.ExpiresAt,
+	})
+}
+
+func (h *proxyHandler) handleMemberRecoveryStatus(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		Token string `json:"token"`
+	}
+	// Malformed bodies collapse into the same invalid answer as unknown,
+	// expired, consumed, or replaced tokens: no informational difference.
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input) != nil {
+		respondJSON(w, map[string]any{"valid": false})
+		return
+	}
+	h.passport.cleanupExpiredMemberLinks(time.Now().UTC())
+	link, ok := h.passport.memberLinkStatus(input.Token)
+	if !ok {
+		respondJSON(w, map[string]any{"valid": false})
+		return
+	}
+	now := time.Now().UTC()
+	remaining := link.ExpiresAt.Sub(now)
+	if remaining < 0 {
+		remaining = 0
+	}
+	respondJSON(w, map[string]any{
+		"valid":              true,
+		"expires_at":         link.ExpiresAt,
+		"expires_in_seconds": int64(remaining.Seconds()),
 	})
 }
 

@@ -421,6 +421,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/auth/join":
 		h.handleJoin(w, r)
 		return
+	case "/api/auth/recover/status":
+		h.handleMemberRecoveryStatus(w, r)
+		return
 	case "/api/auth/recover":
 		h.handleMemberRecovery(w, r)
 		return
