@@ -1367,19 +1367,34 @@ echo ""
 export GEMINI_API_KEY="$API_KEY"
 export GOOGLE_GEMINI_BASE_URL="$BASE_URL"
 
-# Select modelProvider=gemini in ~/.gemini/antigravity-cli/settings.json
+# Select modelProvider=gemini in ~/.gemini/antigravity-cli/settings.json.
+# The edit always goes through a real JSON parser so values like
+# modelProvider=null or keys nested in other objects cannot fool a text match.
 SETTINGS_DIR="$HOME/.gemini/antigravity-cli"
 SETTINGS_FILE="$SETTINGS_DIR/settings.json"
 mkdir -p "$SETTINGS_DIR"
 
-# Best-effort JSON validation with the tools users already have
-json_ok() {
+set_provider() {
     if command -v python3 >/dev/null 2>&1; then
-        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1" >/dev/null 2>&1
+        python3 - "$SETTINGS_FILE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+if not isinstance(data, dict):
+    raise SystemExit("settings.json root must be an object")
+data["modelProvider"] = "gemini"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+PY
     elif command -v node >/dev/null 2>&1; then
-        node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$1" >/dev/null 2>&1
+        node -e 'const fs=require("fs");const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,"utf8"));if(data===null||typeof data!=="object"||Array.isArray(data)){console.error("settings.json root must be an object");process.exit(1);}data.modelProvider="gemini";fs.writeFileSync(p,JSON.stringify(data,null,2)+"\n");' "$SETTINGS_FILE"
     else
-        head -c 65536 "$1" | grep -q '{'
+        echo "✗ python3 or node is required to edit $SETTINGS_FILE safely."
+        return 2
     fi
 }
 
@@ -1389,28 +1404,9 @@ else
     STAMP="$(date +%%Y%%m%%d%%H%%M%%S)"
     rm -f "$SETTINGS_FILE".bak.* 2>/dev/null || true
     cp "$SETTINGS_FILE" "$SETTINGS_FILE.bak.$STAMP"
-    if ! json_ok "$SETTINGS_FILE"; then
-        echo "✗ $SETTINGS_FILE is not valid JSON."
+    if ! set_provider; then
         echo "  A copy was saved as $SETTINGS_FILE.bak.$STAMP."
-        echo "  Fix or remove it, then re-run this setup."
-        exit 1
-    fi
-    if grep -q '"modelProvider"' "$SETTINGS_FILE" 2>/dev/null; then
-        sed -i.bak 's/"modelProvider"[[:space:]]*:[[:space:]]*"[^"]*"/"modelProvider": "gemini"/' "$SETTINGS_FILE"
-        rm -f "$SETTINGS_FILE.bak"
-    elif head -c 65536 "$SETTINGS_FILE" | grep -q '{'; then
-        sed -i.bak '0,/{/s//{\n  "modelProvider": "gemini",/' "$SETTINGS_FILE" 2>/dev/null || sed -i.bak 's/{/{\n  "modelProvider": "gemini",/' "$SETTINGS_FILE"
-        rm -f "$SETTINGS_FILE.bak"
-    else
-        echo "✗ $SETTINGS_FILE does not look like a JSON object."
-        echo "  A copy was saved as $SETTINGS_FILE.bak.$STAMP."
-        echo "  Fix or remove it, then re-run this setup."
-        exit 1
-    fi
-    if ! json_ok "$SETTINGS_FILE"; then
-        cp "$SETTINGS_FILE.bak.$STAMP" "$SETTINGS_FILE"
-        echo "✗ Editing $SETTINGS_FILE would break its JSON; restored the backup."
-        echo '  Merge {"modelProvider": "gemini"} into it manually, then re-run this setup.'
+        echo '  Merge {"modelProvider": "gemini"} into the file manually, then re-run this setup.'
         exit 1
     fi
 fi

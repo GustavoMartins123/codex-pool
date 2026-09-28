@@ -20,8 +20,12 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "agy-e2e-secret")
 
+	// The same account ID is used for the model snapshot and the pool account
+	// so the scheduler resolves models through the real registry association
+	// (Supports/DiscoveryAvailability), not the cold-start fallback.
+	const accountID = "agy-e2e-account"
 	antigravityModels.Reset()
-	antigravityModels.ReplaceAccount("agy-e2e-account", AntigravityAccountSnapshot{
+	antigravityModels.ReplaceAccount(accountID, AntigravityAccountSnapshot{
 		FetchedAt: time.Now(),
 		Models: map[string]AntigravityModelInfo{
 			"gemini-3.8-flash-high": {ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash (High)"},
@@ -75,7 +79,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		NewGeminiProvider(upstreamBase, upstreamBase),
 		NewAntigravityProvider(upstreamBase, upstreamBase),
 	)
-	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: accountID, AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
 	h := &proxyHandler{
 		cfg: &config{
 			requestTimeout:       5 * time.Second,

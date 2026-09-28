@@ -491,7 +491,8 @@ func TestServeAntigravitySetupScript_Bash(t *testing.T) {
 		"# <<< Antigravity Pool Configuration <<<",
 		"command -v agy",
 		"https://antigravity.google/cli/install.sh",
-		"json_ok",
+		"python3",
+		"node",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected Antigravity bash setup to contain %q, got:\n%s", want, body)
@@ -635,8 +636,8 @@ func TestServeAntigravitySetupScript_BashInvalidSettingsAborts(t *testing.T) {
 	if err == nil {
 		t.Fatalf("installer must abort on invalid settings.json:\n%s", output)
 	}
-	if !strings.Contains(string(output), "not valid JSON") && !strings.Contains(string(output), "would break its JSON") {
-		t.Fatalf("installer must explain the settings.json failure:\n%s", output)
+	if !strings.Contains(string(output), "A copy was saved as") {
+		t.Fatalf("installer must point at the settings.json backup:\n%s", output)
 	}
 
 	// The original file survives via backup, and profiles are left untouched.
@@ -664,6 +665,58 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestServeAntigravitySetupScript_BashNullProvider(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		if _, nodeErr := exec.LookPath("node"); nodeErr != nil {
+			t.Skip("no JSON parser (python3/node) available for the merge path")
+		}
+	}
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce, nil)
+	rr := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export EDITOR=vim\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settingsDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+	// A text-match edit reports success on modelProvider=null without fixing
+	// it; the parser-based edit must set the string value.
+	if err := os.WriteFile(settingsFile, []byte("{\n  \"modelProvider\": null,\n  \"theme\": \"dark\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash")
+	cmd.Stdin = strings.NewReader(rr.Body.String())
+	cmd.Env = append(os.Environ(), "HOME="+home, "SHELL=/bin/bash")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run installer: %v\n%s", err, output)
+	}
+
+	settingsText := string(mustReadFile(t, settingsFile))
+	if !strings.Contains(settingsText, `"modelProvider": "gemini"`) {
+		t.Fatalf("modelProvider=null was not replaced by the parser edit:\n%s", settingsText)
+	}
+	if strings.Contains(settingsText, "modelProvider\": null") || !strings.Contains(settingsText, `"theme": "dark"`) {
+		t.Fatalf("parser edit lost or kept the wrong value:\n%s", settingsText)
+	}
 }
 
 func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
