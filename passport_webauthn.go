@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,6 +32,43 @@ type passkeyView struct {
 	Label      string     `json:"label"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+const passkeyIssueLimit = 15
+const passkeyIssueWindowDuration = 5 * time.Minute
+
+type passkeyIssueWindow struct {
+	count int
+	until time.Time
+}
+
+func (h *proxyHandler) allowPasskeyChallenge(ip string) bool {
+	h.passkeyIssueMu.Lock()
+	defer h.passkeyIssueMu.Unlock()
+	now := time.Now()
+	if h.passkeyIssues == nil {
+		h.passkeyIssues = make(map[string]passkeyIssueWindow)
+	}
+	if _, exists := h.passkeyIssues[ip]; !exists && len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
+		for key, window := range h.passkeyIssues {
+			if !now.Before(window.until) {
+				delete(h.passkeyIssues, key)
+			}
+		}
+		if len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
+			return false
+		}
+	}
+	window := h.passkeyIssues[ip]
+	if !now.Before(window.until) {
+		window = passkeyIssueWindow{until: now.Add(passkeyIssueWindowDuration)}
+	}
+	if window.count >= passkeyIssueLimit {
+		return false
+	}
+	window.count++
+	h.passkeyIssues[ip] = window
+	return true
 }
 
 type storedWebAuthnChallenge struct {
@@ -324,12 +362,16 @@ func (h *proxyHandler) handlePasskeys(w http.ResponseWriter, r *http.Request) {
 
 func (h *proxyHandler) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	principal, session := h.passport.authenticate(r)
 	if principal == nil || principal.Kind == PrincipalGuest {
 		respondJSONError(w, http.StatusForbidden, "member access required")
 		return
 	}
-	if r.Method != http.MethodPost || !h.passportCSRF(r, session) {
+	if !h.passportCSRF(r, session) {
 		respondJSONError(w, http.StatusForbidden, "csrf validation failed")
 		return
 	}
@@ -337,7 +379,7 @@ func (h *proxyHandler) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *htt
 		Password string `json:"password"`
 		Label    string `json:"label"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil || !h.passport.verifyPasswordGuarded(principal.PasswordHash, input.Password) {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil || !h.passport.verifyPasswordGuarded(principal.PasswordHash, input.Password) {
 		respondJSONError(w, http.StatusUnauthorized, "fresh password verification required")
 		return
 	}
@@ -366,6 +408,10 @@ func (h *proxyHandler) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *htt
 
 func (h *proxyHandler) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	principal, session := h.passport.authenticate(r)
 	if principal == nil || principal.Kind == PrincipalGuest || !h.passportCSRF(r, session) {
 		respondJSONError(w, http.StatusForbidden, "member access required")
@@ -386,6 +432,7 @@ func (h *proxyHandler) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *ht
 		respondJSONError(w, 500, "passkey unavailable")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	credential, err := web.FinishRegistration(user, challenge.Session, r)
 	if err != nil {
 		respondJSONError(w, http.StatusBadRequest, "passkey registration failed")
@@ -410,6 +457,14 @@ func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.R
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
+	if !h.allowPasskeyChallenge(ip) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many passkey challenges, try again later")
+		return
+	}
+	if _, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 64<<10)); err != nil {
+		respondJSONError(w, http.StatusRequestEntityTooLarge, "passkey request too large")
+		return
+	}
 	web, err := h.webAuthnForRequest(r)
 	if err != nil {
 		respondJSONError(w, 500, "passkey unavailable")
@@ -430,6 +485,10 @@ func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.R
 
 func (h *proxyHandler) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	challenge, err := h.passport.takeWebAuthnChallenge(r.Header.Get("X-WebAuthn-Challenge"), "login")
 	if err != nil {
 		respondJSONError(w, http.StatusBadRequest, "passkey challenge unavailable")
@@ -440,6 +499,7 @@ func (h *proxyHandler) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.
 		respondJSONError(w, 500, "passkey unavailable")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	user, credential, err := web.FinishPasskeyLogin(h.passport.discoverableWebAuthnUser, challenge.Session, r)
 	if err != nil {
 		respondJSONError(w, http.StatusUnauthorized, "passkey sign-in failed")

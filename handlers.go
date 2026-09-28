@@ -492,7 +492,11 @@ func (h *proxyHandler) serveTokenCapacity(w http.ResponseWriter) {
 func (h *proxyHandler) serveFakeOAuthToken(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a pool credential refresh request.
 	if r.Method == http.MethodPost && h.passport != nil {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err != nil {
+			respondJSONError(w, http.StatusRequestEntityTooLarge, "token request too large")
+			return
+		}
 		var req struct {
 			RefreshToken string `json:"refresh_token"`
 		}

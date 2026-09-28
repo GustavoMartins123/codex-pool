@@ -874,6 +874,8 @@ type proxyHandler struct {
 	aliases              *modelAliases
 	effortCap            *effortCap
 	bruteForce           *bruteForceTracker
+	passkeyIssueMu       sync.Mutex
+	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics
 	routeTraces          *routeTraceStore
 	experiments          *experimentTracker

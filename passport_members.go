@@ -396,6 +396,10 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 	}
 	principal, sessionToken, csrf, err := h.passport.redeemMemberLink(input.Token, input.Password)
 	if err != nil {
+		if err.Error() == "password verification busy" {
+			respondJSONError(w, http.StatusServiceUnavailable, "password verification busy")
+			return
+		}
 		if strings.Contains(err.Error(), "at least 12") {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
