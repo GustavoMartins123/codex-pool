@@ -160,6 +160,116 @@ func TestCodexSetupPreservesModel(t *testing.T) {
 	}
 }
 
+func TestCodexSetupInstallsRestoreHelper(t *testing.T) {
+	h := &proxyHandler{}
+	for _, tc := range []struct{ shell, helper, backup string }{
+		{"bash", "restore-config.sh", "config.toml.bak.$STAMP"},
+		{"powershell", "restore-config.ps1", "config.toml.bak.$Stamp"},
+	} {
+		rr := httptest.NewRecorder()
+		h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token?shell="+tc.shell, nil))
+		body := rr.Body.String()
+		if !strings.Contains(body, tc.helper) {
+			t.Fatalf("%s setup does not install %s", tc.shell, tc.helper)
+		}
+		if !strings.Contains(body, tc.backup) {
+			t.Fatalf("%s setup does not reference the versioned backup %q", tc.shell, tc.backup)
+		}
+	}
+}
+
+func TestCodexSetupRefreshesExistingPoolConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	h := &proxyHandler{}
+	rr := httptest.NewRecorder()
+	h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token", nil))
+	body := rr.Body.String()
+	start := strings.Index(body, `echo "4. Updating configuration..."`)
+	end := strings.Index(body, "if command -v codex >/dev/null")
+	if start < 0 || end <= start {
+		t.Fatal("configuration section missing")
+	}
+
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config.toml")
+	syncScript := filepath.Join(dir, "sync.sh")
+	initial := `model = "gpt-5.6-luna"
+model_provider = "codex-pool"
+chatgpt_base_url = "http://old.example/backend-api"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://old.example"
+wire_api = "responses"
+
+[mcp_servers.model_sync]
+command = "bash"
+args = ["/old/sync.sh", "http://old.example"]
+
+[projects."/home/user/demo"]
+trust_level = "trusted"
+`
+	if err := os.WriteFile(configFile, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func() {
+		cmd := exec.Command("bash", "-eu")
+		cmd.Stdin = strings.NewReader(body[start:end])
+		cmd.Env = append(os.Environ(), "CONFIG_FILE="+configFile, "BASE_URL=http://new.example", "MODEL_CATALOG="+filepath.Join(dir, "models.json"), "MCP_SCRIPT="+syncScript)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("configure: %v\n%s", err, output)
+		}
+	}
+	run()
+
+	updated, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	for _, want := range []string{
+		`base_url = "http://new.example"`,
+		`chatgpt_base_url = "http://new.example/backend-api"`,
+		`args = ["` + syncScript + `", "http://new.example"]`,
+		`[projects."/home/user/demo"]`,
+		`model = "gpt-5.6-luna"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q after refresh:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "old.example") {
+		t.Fatalf("stale pool URL survived refresh:\n%s", text)
+	}
+	if got := strings.Count(text, "[model_providers.codex-pool]"); got != 1 {
+		t.Fatalf("expected one provider block after refresh, got %d:\n%s", got, text)
+	}
+
+	backups, err := filepath.Glob(configFile + ".bak.*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("expected exactly one versioned backup, got %v (err=%v)", backups, err)
+	}
+	backupData, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(backupData), "http://old.example") {
+		t.Fatalf("backup does not hold the previous configuration:\n%s", backupData)
+	}
+
+	run()
+	rerun, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(rerun), "[model_providers.codex-pool]"); got != 1 {
+		t.Fatalf("expected refresh to stay idempotent, got %d provider blocks:\n%s", got, rerun)
+	}
+}
+
 func TestSetupExamplesUseAstra(t *testing.T) {
 	for _, path := range []string{"web/src/App.tsx"} {
 		data, err := os.ReadFile(path)

@@ -289,6 +289,8 @@ $configFile = Join-Path $authDir 'config.toml'
 $authFile = Join-Path $authDir 'auth.json'
 $modelCatalog = Join-Path $authDir 'model_catalog.json'
 $mcpScript = Join-Path $authDir 'model_sync.ps1'
+$restoreScript = Join-Path $authDir 'restore-config.ps1'
+$Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $nl = [Environment]::NewLine
 
 # PS 5.1 compat wrapper: ConvertFrom-Json -Depth was added in PS 6
@@ -323,6 +325,9 @@ New-Item -ItemType Directory -Path $authDir -Force | Out-Null
 
 Write-Host '1. Fetching credentials...'
 $authUrl = "$BaseUrl/config/codex/$Token"
+if (Test-Path $authFile) {
+  Copy-Item -LiteralPath $authFile -Destination "$authFile.bak.$Stamp" -Force | Out-Null
+}
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
   $authContent = (Invoke-WebRequest -UseBasicParsing -Uri $authUrl).Content
 } else {
@@ -547,6 +552,32 @@ while ($true) {
 '@
 Set-Content -Path $mcpScript -Value $mcpContent -Encoding UTF8
 
+$restoreContent = @'
+param([string]$BackupId = '')
+$authDir = Join-Path $HOME '.codex'
+$configFile = Join-Path $authDir 'config.toml'
+$authFile = Join-Path $authDir 'auth.json'
+if (-not $BackupId) {
+  Write-Host 'Available backups:'
+  Get-ChildItem -Path $authDir -Filter 'config.toml.bak.*' -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.Name -replace '^config\.toml\.bak\.', '' }
+  Write-Host 'Usage: restore-config.ps1 -BackupId <backup-id>'
+  exit 0
+}
+$configBackup = Join-Path $authDir "config.toml.bak.$BackupId"
+if (-not (Test-Path $configBackup)) {
+  Write-Error "No backup found for id: $BackupId"
+  exit 1
+}
+Copy-Item -LiteralPath $configBackup -Destination $configFile -Force
+$authBackup = Join-Path $authDir "auth.json.bak.$BackupId"
+if (Test-Path $authBackup) {
+  Copy-Item -LiteralPath $authBackup -Destination $authFile -Force
+}
+Write-Host "Restored backup $BackupId"
+'@
+Set-Utf8NoBom -Path $restoreScript -Value $restoreContent
+
 # Find PowerShell executable path robustly
 $mcpCommand = $null
 try { $mcpCommand = (Get-Process -Id $PID).Path } catch {}
@@ -565,6 +596,9 @@ $mcpScriptToml = $mcpScript -replace '\\', '\\\\'
 $mcpCommandToml = $mcpCommand -replace '\\', '\\\\'
 
 Write-Host '4. Updating configuration...'
+if (Test-Path $configFile) {
+  Copy-Item -LiteralPath $configFile -Destination "$configFile.bak.$Stamp" -Force | Out-Null
+}
 if (-not (Test-Path $configFile)) {
   New-Item -ItemType File -Path $configFile -Force | Out-Null
 }
@@ -611,48 +645,53 @@ args = ["-NoLogo", "-NoProfile", "-File", "$mcpScriptToml", "$BaseUrl"]
   Set-Utf8NoBom -Path $configFile -Value $new
   Write-Host "Configuration updated in $configFile"
 } else {
-  $updated = $false
+  # Existing codex-pool setup: refresh the pool-managed entries in place so
+  # they point at the current base URL. Unrelated user configuration is
+  # preserved; the prior file was backed up as config.toml.bak.$Stamp.
+  $existing = $existing -replace '(?ms)^[ \t]*\[model_providers\.codex-pool(\.features)?\].*?(?=^[ \t]*\[|\z)', ''
+  $existing = $existing -replace '(?ms)^[ \t]*\[mcp_servers\.(model_sync|codex_pool_model_sync)\].*?(?=^[ \t]*\[|\z)', ''
+  $existing = $existing -replace '(?m)^[ \t]*chatgpt_base_url[ \t]*=.*', ('chatgpt_base_url = "' + $BaseUrl + '/backend-api"')
+  $existing = $existing -replace '(?m)^[ \t]*experimental_realtime_webrtc_call_base_url[ \t]*=.*', ('experimental_realtime_webrtc_call_base_url = "' + $BaseUrl + '/v1"')
+  $existing = $existing -replace '(?m)^[ \t]*experimental_realtime_ws_base_url[ \t]*=.*', ('experimental_realtime_ws_base_url = "' + $BaseUrl + '/v1"')
 
   if ($existing -notmatch '(?m)^[ \t]*model_catalog_json[ \t]*=') {
     $existing = 'model_catalog_json = "' + $modelCatalogToml + '"' + $nl + $existing
-    $updated = $true
   }
 
   if ($existing -notmatch '(?m)^[ \t]*experimental_realtime_webrtc_call_base_url[ \t]*=') {
     $existing = 'experimental_realtime_webrtc_call_base_url = "' + $BaseUrl + '/v1"' + $nl + $existing
-    $updated = $true
   }
 
   if ($existing -notmatch '(?m)^[ \t]*experimental_realtime_ws_base_url[ \t]*=') {
     $existing = 'experimental_realtime_ws_base_url = "' + $BaseUrl + '/v1"' + $nl + $existing
-    $updated = $true
   }
 
   if ($existing -notmatch '(?m)^[ \t]*realtime\.version[ \t]*=' -and $existing -notmatch '(?m)^\[realtime\]') {
     $existing = 'realtime.version = "v3"' + $nl + 'realtime.transport = "webrtc"' + $nl + $existing
-    $updated = $true
   }
 
-  if ($existing -match '(?m)^\[mcp_servers\.codex_pool_model_sync\]') {
-    $existing = $existing -replace '(?m)^\[mcp_servers\.codex_pool_model_sync\]', '[mcp_servers.model_sync]'
-    $updated = $true
-  }
+  $existing = $existing.TrimEnd() +
+    $nl + $nl +
+    '[model_providers.codex-pool]' + $nl +
+    'name = "OpenAI via codex-pool proxy"' + $nl +
+    'base_url = "' + $BaseUrl + '"' + $nl +
+    'wire_api = "responses"' + $nl +
+    'requires_openai_auth = true' + $nl +
+    'supports_websockets = true' + $nl +
+    $nl +
+    '[model_providers.codex-pool.features]' + $nl +
+    'responses_websockets_v2 = true' + $nl +
+    $nl +
+    '[mcp_servers.model_sync]' + $nl +
+    'command = "' + $mcpCommandToml + '"' + $nl +
+    'args = ["-NoLogo", "-NoProfile", "-File", "' + $mcpScriptToml + '", "' + $BaseUrl + '"]' + $nl
 
-  if ($existing -notmatch '(?m)^\[mcp_servers\.model_sync\]') {
-    $existing = $existing.TrimEnd() +
-      $nl + $nl +
-      '[mcp_servers.model_sync]' + $nl +
-      'command = "' + $mcpCommandToml + '"' + $nl +
-      'args = ["-NoLogo", "-NoProfile", "-File", "' + $mcpScriptToml + '", "' + $BaseUrl + '"]' + $nl
-    $updated = $true
-  }
+  Set-Utf8NoBom -Path $configFile -Value $existing
+  Write-Host "Configuration updated in $configFile"
+}
 
-  if ($updated) {
-    Set-Utf8NoBom -Path $configFile -Value $existing
-    Write-Host "Configuration updated in $configFile"
-  } else {
-    Write-Host "Configuration already present in $configFile. Skipping."
-  }
+if (Test-Path ("$configFile.bak.$Stamp")) {
+  Write-Host "Previous configuration backed up as config.toml.bak.$Stamp (restore with: restore-config.ps1 -BackupId $Stamp)"
 }
 
 try {
@@ -681,8 +720,13 @@ MCP_SCRIPT="$AUTH_DIR/model_sync.sh"
 
 echo "Initializing Codex Pool setup..."
 mkdir -p "$AUTH_DIR"
+STAMP=$(date +%%Y%%m%%d-%%H%%M%%S)
 
 echo "1. Fetching credentials..."
+if [ -f "$AUTH_FILE" ]; then
+    cp "$AUTH_FILE" "$AUTH_FILE.bak.$STAMP"
+    chmod 600 "$AUTH_FILE.bak.$STAMP" 2>/dev/null || true
+fi
 curl -sL "$BASE_URL/config/codex/$TOKEN" -o "$AUTH_FILE"
 chmod 600 "$AUTH_FILE"
 
@@ -833,7 +877,46 @@ done
 EOF
 chmod 700 "$MCP_SCRIPT"
 
+cat <<'EOF' > "$AUTH_DIR/restore-config.sh"
+#!/bin/bash
+# Restore a codex-pool configuration backup created by the setup script.
+# Usage: restore-config.sh [backup-id]    (run without arguments to list backups)
+set -euo pipefail
+AUTH_DIR="${HOME}/.codex"
+CONFIG_FILE="$AUTH_DIR/config.toml"
+AUTH_FILE="$AUTH_DIR/auth.json"
+
+if [ $# -eq 0 ]; then
+    echo "Available backups:"
+    ls -1 "$AUTH_DIR"/config.toml.bak.* 2>/dev/null | sed 's/.*\.bak\.//' || true
+    echo "Usage: $0 <backup-id>"
+    exit 0
+fi
+
+STAMP="$1"
+CONFIG_BACKUP="$AUTH_DIR/config.toml.bak.$STAMP"
+AUTH_BACKUP="$AUTH_DIR/auth.json.bak.$STAMP"
+if [ ! -f "$CONFIG_BACKUP" ]; then
+    echo "No backup found for id: $STAMP" >&2
+    exit 1
+fi
+cp "$CONFIG_BACKUP" "$CONFIG_FILE"
+if [ -f "$AUTH_BACKUP" ]; then
+    cp "$AUTH_BACKUP" "$AUTH_FILE"
+fi
+chmod 600 "$CONFIG_FILE" "$AUTH_FILE" 2>/dev/null || true
+echo "Restored backup $STAMP"
+EOF
+chmod 700 "$AUTH_DIR/restore-config.sh"
+
 echo "4. Updating configuration..."
+AUTH_DIR="${AUTH_DIR:-$HOME/.codex}"
+AUTH_FILE="${AUTH_FILE:-$AUTH_DIR/auth.json}"
+STAMP="${STAMP:-$(date +%%Y%%m%%d-%%H%%M%%S)}"
+if [ -f "$CONFIG_FILE" ]; then
+    cp "$CONFIG_FILE" "$CONFIG_FILE.bak.$STAMP"
+    chmod 600 "$CONFIG_FILE.bak.$STAMP" 2>/dev/null || true
+fi
 if [ ! -f "$CONFIG_FILE" ]; then
     touch "$CONFIG_FILE"
 fi
@@ -887,72 +970,76 @@ EOF
     chmod 600 "$CONFIG_FILE"
     echo "Configuration updated in $CONFIG_FILE"
 else
-    UPDATED=0
+    # Existing codex-pool setup: refresh the pool-managed entries in place so
+    # they point at the current base URL. Unrelated user configuration is
+    # preserved; the prior file was backed up as config.toml.bak.$STAMP.
+    TEMP_FILE=$(mktemp)
+    awk '
+        /^[[:space:]]*\[model_providers\.codex-pool\.features\]/ { skip = 1; next }
+        /^[[:space:]]*\[model_providers\.codex-pool\]/ { skip = 1; next }
+        /^[[:space:]]*\[mcp_servers\.model_sync\]/ { skip = 1; next }
+        /^[[:space:]]*\[mcp_servers\.codex_pool_model_sync\]/ { skip = 1; next }
+        /^[[:space:]]*\[/ { skip = 0 }
+        !skip { print }
+    ' "$CONFIG_FILE" | sed \
+        -e "s|^[[:space:]]*chatgpt_base_url[[:space:]]*=.*|chatgpt_base_url = \"$BASE_URL/backend-api\"|" \
+        -e "s|^[[:space:]]*experimental_realtime_webrtc_call_base_url[[:space:]]*=.*|experimental_realtime_webrtc_call_base_url = \"$BASE_URL/v1\"|" \
+        -e "s|^[[:space:]]*experimental_realtime_ws_base_url[[:space:]]*=.*|experimental_realtime_ws_base_url = \"$BASE_URL/v1\"|" \
+        > "$TEMP_FILE"
 
-    if ! grep -Eq '^[[:space:]]*model_catalog_json[[:space:]]*=' "$CONFIG_FILE"; then
-        TEMP_FILE=$(mktemp)
-        cat <<EOF > "$TEMP_FILE"
-model_catalog_json = "$MODEL_CATALOG"
-EOF
-        cat "$CONFIG_FILE" >> "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CONFIG_FILE"
-        UPDATED=1
+    if ! grep -Eq '^[[:space:]]*model_catalog_json[[:space:]]*=' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        echo "model_catalog_json = \"$MODEL_CATALOG\"" > "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
     fi
 
-    if ! grep -Eq '^[[:space:]]*experimental_realtime_webrtc_call_base_url[[:space:]]*=' "$CONFIG_FILE"; then
-        TEMP_FILE=$(mktemp)
-        cat <<EOF > "$TEMP_FILE"
-experimental_realtime_webrtc_call_base_url = "$BASE_URL/v1"
-EOF
-        cat "$CONFIG_FILE" >> "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CONFIG_FILE"
-        UPDATED=1
+    if ! grep -Eq '^[[:space:]]*experimental_realtime_webrtc_call_base_url[[:space:]]*=' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        echo "experimental_realtime_webrtc_call_base_url = \"$BASE_URL/v1\"" > "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
     fi
 
-    if ! grep -Eq '^[[:space:]]*experimental_realtime_ws_base_url[[:space:]]*=' "$CONFIG_FILE"; then
-        TEMP_FILE=$(mktemp)
-        cat <<EOF > "$TEMP_FILE"
-experimental_realtime_ws_base_url = "$BASE_URL/v1"
-EOF
-        cat "$CONFIG_FILE" >> "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CONFIG_FILE"
-        UPDATED=1
+    if ! grep -Eq '^[[:space:]]*experimental_realtime_ws_base_url[[:space:]]*=' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        echo "experimental_realtime_ws_base_url = \"$BASE_URL/v1\"" > "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
     fi
 
-    if ! grep -Eq '^[[:space:]]*realtime\.version[[:space:]]*=' "$CONFIG_FILE" && ! grep -q '^\[realtime\]' "$CONFIG_FILE"; then
-        TEMP_FILE=$(mktemp)
-        cat <<EOF > "$TEMP_FILE"
-realtime.version = "v3"
-realtime.transport = "webrtc"
-EOF
-        cat "$CONFIG_FILE" >> "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CONFIG_FILE"
-        UPDATED=1
+    if ! grep -Eq '^[[:space:]]*realtime\.version[[:space:]]*=' "$TEMP_FILE" && ! grep -q '^\[realtime\]' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        echo 'realtime.version = "v3"' > "$TEMP_KEY"
+        echo 'realtime.transport = "webrtc"' >> "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
     fi
 
-    if grep -q '^\[mcp_servers\.codex_pool_model_sync\]' "$CONFIG_FILE"; then
-        TEMP_FILE=$(mktemp)
-        sed 's/^\[mcp_servers\.codex_pool_model_sync\]/[mcp_servers.model_sync]/' "$CONFIG_FILE" > "$TEMP_FILE"
-        mv "$TEMP_FILE" "$CONFIG_FILE"
-        UPDATED=1
-    fi
+    cat <<EOF >> "$TEMP_FILE"
 
-    if ! grep -q '^\[mcp_servers\.model_sync\]' "$CONFIG_FILE"; then
-        cat <<EOF >> "$CONFIG_FILE"
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "$BASE_URL"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true
+
+[model_providers.codex-pool.features]
+responses_websockets_v2 = true
 
 [mcp_servers.model_sync]
 command = "bash"
 args = ["$MCP_SCRIPT", "$BASE_URL"]
 EOF
-        UPDATED=1
-    fi
 
+    mv "$TEMP_FILE" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
-    if [ "$UPDATED" -eq 1 ]; then
-        echo "Configuration updated in $CONFIG_FILE"
-    else
-        echo "Configuration already present in $CONFIG_FILE. Skipping."
-    fi
+    echo "Configuration updated in $CONFIG_FILE"
+fi
+
+if [ -f "$CONFIG_FILE.bak.$STAMP" ]; then
+    echo "Previous configuration backed up as config.toml.bak.$STAMP (restore with: bash \"$AUTH_DIR/restore-config.sh\" $STAMP)"
 fi
 
 if command -v codex >/dev/null 2>&1; then
