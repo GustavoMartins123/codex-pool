@@ -1047,10 +1047,11 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
   </section>;
 }
 
-function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
+function CopyButton({ text, label = "Copy", className, disabled = false }: { text: string; label?: string; className?: string; disabled?: boolean }) {
   const [copiedText, setCopiedText] = useState("");
   const [failedText, setFailedText] = useState("");
   const copy = async () => {
+    if (disabled) return;
     setCopiedText("");
     setFailedText("");
     try {
@@ -1061,7 +1062,7 @@ function CopyButton({ text, label = "Copy", className }: { text: string; label?:
     }
   };
   return <>
-    <button type="button" className={className} onClick={copy} onBlur={() => setCopiedText("")}>{copiedText === text ? "Copied" : label}</button>
+    <button type="button" className={className} onClick={copy} onBlur={() => setCopiedText("")} disabled={disabled} title={disabled ? "Generate a link first" : undefined}>{copiedText === text ? "Copied" : label}</button>
     {failedText === text && <span className="access-error" role="alert">Copy failed. Select the text and copy it manually.</span>}
   </>;
 }
@@ -1130,7 +1131,10 @@ function SetupPage() {
     }
   };
 
-  const nonce = (provider: string) => setupLinks ? (setupLinks.urls[provider] || "").split("/").pop() || "." : ".";
+  const nonce = (provider: string) => {
+    if (!setupLinks) return "························";
+    return (setupLinks.urls[provider] || "").split("/").pop() || ".";
+  };
   const cliTools: Record<string, { name: string; install: string; oneliner: string; powershell: string; manual: { file: string; url: string }[] }> = {
     codex: {
       name: "Codex",
@@ -1215,13 +1219,7 @@ function SetupPage() {
       </div>
     </section>
     {!loading && !error && !clients.some(client => client.status === "active") && !showMint && <div className="empty-state setup-empty"><p>No active clients. Create one to connect a tool.</p><button className="gold-button" onClick={() => setShowMint(true)}>Create a client</button></div>}
-    {!loading && !error && selected && <div className="setup-generate">
-      <button className="gold-button" disabled={revealing} onClick={() => reveal(selected)}>{revealing ? "Generating…" : "Generate setup links"}</button>
-      {setupLinks && <span className="step-note">Generating again revokes the current links.</span>}
-    </div>}
-    {revealing ? <div className="empty-state setup-loading" role="status">Generating setup…</div> : error && !setupLinks && selected && <button className="quiet-button" onClick={() => reveal(selected)}>Retry setup</button>}
-    {setupLinks && <>
-      <p className="step-note">One-time links, expire {setupLinks.expires.toLocaleTimeString()}. Generate again to revoke and replace.</p>
+    {!loading && (clients.some(client => client.status === "active") || showMint) && <>
       <nav className="tool-tabs" aria-label="Tool to configure">
         {Object.keys(cliTools).map((key) => <button key={key} className={classNames("tab", tool === key && "active")} onClick={() => setTool(key)}>{cliTools[key].name}</button>)}
         <span className="tool-tab-divider" aria-hidden="true" />
@@ -1230,8 +1228,18 @@ function SetupPage() {
       {activeTool && <div className="tool-detail">
         <header className="tool-heading"><h2>{activeTool.name}</h2></header>
         <section className="setup-step"><span>1</span><div><h3>Install {activeTool.name}</h3><div className="code-wrapper"><div className="code-block"><pre>{activeTool.install}</pre></div><CopyButton className="copy-btn" text={activeTool.install} /></div></div></section>
-        <section className="setup-step"><span>2</span><div><h3>Connect it to Codex Pool</h3><p className="step-note">macOS or Linux</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.oneliner}</pre></div><CopyButton className="copy-btn" text={activeTool.oneliner} /></div><p className="step-note">Windows PowerShell</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.powershell}</pre></div><CopyButton className="copy-btn" text={activeTool.powershell} /></div></div></section>
-        <details className="manual-setup"><summary>Configure files manually</summary><p>Fetch the config file directly and place it yourself.</p>{activeTool.manual.map((item) => <div key={item.file} className="code-wrapper"><div className="code-block"><pre>{`curl -sL "${item.url}"\n# → ${item.file}`}</pre></div><CopyButton className="copy-btn" text={`curl -sL "${item.url}"`} /></div>)}</details>
+        <section className="setup-step"><span>2</span><div><h3>Connect it to Codex Pool</h3>
+          {setupLinks
+            ? <p className="step-note">One-time link, expires {setupLinks.expires.toLocaleTimeString()}.</p>
+            : <div className="setup-generate">
+                <button className="gold-button" disabled={!selected || revealing} onClick={() => selected && reveal(selected)}>{revealing ? "Generating…" : "Generate link"}</button>
+                {error && selected && <button className="quiet-button" disabled={revealing} onClick={() => reveal(selected)}>Retry</button>}
+              </div>}
+          {setupLinks && <button className="quiet-button" disabled={!selected || revealing} onClick={() => selected && reveal(selected)}>{revealing ? "Generating…" : "Revoke and generate new"}</button>}
+          <p className="step-note">macOS or Linux</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.oneliner}</pre></div><CopyButton className="copy-btn" text={activeTool.oneliner} disabled={!setupLinks} /></div>
+          <p className="step-note">Windows PowerShell</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.powershell}</pre></div><CopyButton className="copy-btn" text={activeTool.powershell} disabled={!setupLinks} /></div>
+          <details className="manual-setup"><summary>Configure files manually</summary><p>Fetch the config file directly and place it yourself.</p>{activeTool.manual.map((item) => <div key={item.file} className="code-wrapper"><div className="code-block"><pre>{`curl -sL "${item.url}"\n# → ${item.file}`}</pre></div><CopyButton className="copy-btn" text={`curl -sL "${item.url}"`} disabled={!setupLinks} /></div>)}</details>
+        </div></section>
       </div>}
       {activeSdk && <div className="tool-detail">
         <header className="tool-heading"><h2>{activeSdk.name}</h2><p>{activeSdk.summary}</p></header>
