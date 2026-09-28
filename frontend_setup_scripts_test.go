@@ -458,6 +458,183 @@ func TestServeGeminiSetupScript_PowerShell(t *testing.T) {
 	}
 }
 
+func TestServeAntigravitySetupScript_Bash(t *testing.T) {
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce, nil)
+	rr := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/x-shellscript") {
+		t.Fatalf("Content-Type = %q, want text/x-shellscript*", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"AIzaSy-pool-",
+		`export GEMINI_API_KEY="AIzaSy-pool-`,
+		`export GOOGLE_GEMINI_BASE_URL="http://example.com"`,
+		`"modelProvider": "gemini"`,
+		".gemini/antigravity-cli",
+		"# >>> Antigravity Pool Configuration >>>",
+		"# <<< Antigravity Pool Configuration <<<",
+		"agy",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Antigravity bash setup to contain %q, got:\n%s", want, body)
+		}
+	}
+
+	legacy := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/old-legacy-token", nil)
+	legacyRR := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(legacyRR, legacy)
+	if legacyRR.Code != http.StatusNotFound {
+		t.Fatalf("legacy token status = %d, want 404", legacyRR.Code)
+	}
+
+	// The Antigravity script embeds the credential, so its redemption is single-use.
+	replay := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce, nil)
+	replayRR := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(replayRR, replay)
+	if replayRR.Code != http.StatusNotFound {
+		t.Fatalf("nonce replay status = %d, want 404", replayRR.Code)
+	}
+}
+
+func TestServeAntigravitySetupScript_BashIdempotent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce, nil)
+	rr := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export EDITOR=vim\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settingsDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+	if err := os.WriteFile(settingsFile, []byte("{\n  \"theme\": \"dark\"\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		cmd := exec.Command("bash")
+		cmd.Stdin = strings.NewReader(rr.Body.String())
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("run installer: %v\n%s", err, output)
+		}
+	}
+
+	settings, err := os.ReadFile(settingsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsText := string(settings)
+	if !strings.Contains(settingsText, `"modelProvider": "gemini"`) || !strings.Contains(settingsText, `"theme": "dark"`) {
+		t.Fatalf("settings.json must keep existing keys and select gemini:\n%s", settingsText)
+	}
+	if count := strings.Count(settingsText, "modelProvider"); count != 1 {
+		t.Fatalf("modelProvider count = %d, want 1:\n%s", count, settingsText)
+	}
+
+	bashrc, err := os.ReadFile(filepath.Join(home, ".bashrc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileText := string(bashrc)
+	if !strings.Contains(profileText, "export EDITOR=vim") {
+		t.Fatalf("existing profile content dropped:\n%s", profileText)
+	}
+	if !strings.Contains(profileText, `export GEMINI_API_KEY="AIzaSy-pool-`) || !strings.Contains(profileText, `export GOOGLE_GEMINI_BASE_URL="http://example.com"`) {
+		t.Fatalf("pool env exports missing:\n%s", profileText)
+	}
+	if count := strings.Count(profileText, "# >>> Antigravity Pool Configuration >>>"); count != 1 {
+		t.Fatalf("pool block count = %d, want 1:\n%s", count, profileText)
+	}
+}
+
+func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce+"?shell=powershell", nil)
+	rr := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("Content-Type = %q, want text/plain*", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"$env:GEMINI_API_KEY",
+		"$env:GOOGLE_GEMINI_BASE_URL",
+		"AIzaSy-pool-",
+		".gemini\\antigravity-cli",
+		"ConvertFrom-Json",
+		"Add-Member -NotePropertyName modelProvider",
+		"# >>> Antigravity Pool Configuration >>>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected PowerShell script to contain %q, got:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "`") {
+		t.Fatalf("PowerShell script should not contain backticks (Go raw string safety), got:\n%s", body)
+	}
+}
+
+func TestServeAntigravitySettingsConfig(t *testing.T) {
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/config/antigravity/"+nonce, nil)
+	rr := httptest.NewRecorder()
+	h.serveConfigDownload(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`"api_key":"AIzaSy-pool-`,
+		`"base_url":"http://example.com"`,
+		`"modelProvider":"gemini"`,
+		`"GEMINI_API_KEY":"AIzaSy-pool-`,
+		`"GOOGLE_GEMINI_BASE_URL":"http://example.com"`,
+		`"settings_file":"~/.gemini/antigravity-cli/settings.json"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Antigravity config to contain %q, got:\n%s", want, body)
+		}
+	}
+}
+
 func TestPassportSPAServesReactSignalRoom(t *testing.T) {
 	h := &proxyHandler{cfg: &config{}}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/app", nil)
