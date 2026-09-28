@@ -15,11 +15,22 @@ import (
 	"time"
 )
 
-//go:embed templates/cute_code_landing.html templates/og-image.png templates/og-image-transparent.webp
+//go:embed templates/cute_code_landing.html templates/og-image.png templates/og-image-transparent.webp templates/favicon.png
 var friendContent embed.FS
 
 //go:embed web/dist/index.html web/dist/assets/*
 var signalRoomContent embed.FS
+
+func (h *proxyHandler) serveFavicon(w http.ResponseWriter, r *http.Request) {
+	data, err := friendContent.ReadFile("templates/favicon.png")
+	if err != nil {
+		http.Error(w, "favicon not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
+}
 
 func (h *proxyHandler) servePassportSPA(w http.ResponseWriter, r *http.Request) {
 	data, err := signalRoomContent.ReadFile("web/dist/index.html")

@@ -562,8 +562,8 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.serveExperimentMetrics(w)
 		return
-	case "/favicon.ico":
-		http.NotFound(w, r)
+	case "/favicon.ico", "/favicon.png":
+		h.serveFavicon(w, r)
 		return
 	case "/healthz", "/healthz/":
 		h.serveHealth(w)

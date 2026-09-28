@@ -856,6 +856,25 @@ func TestServeSignalRoomAsset(t *testing.T) {
 	}
 }
 
+func TestServeFaviconPNG(t *testing.T) {
+	h := &proxyHandler{}
+	for _, path := range []string{"/favicon.ico", "/favicon.png"} {
+		rr := httptest.NewRecorder()
+		h.serveFavicon(rr, httptest.NewRequest(http.MethodGet, path, nil))
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d", path, rr.Code, http.StatusOK)
+		}
+		if got := rr.Header().Get("Content-Type"); got != "image/png" {
+			t.Fatalf("%s Content-Type = %q, want image/png", path, got)
+		}
+		body := rr.Body.Bytes()
+		if len(body) < 8 || string(body[:4]) != "\x89PNG" {
+			t.Fatalf("%s response is not PNG: %q", path, body[:min(len(body), 8)])
+		}
+	}
+}
+
 func TestServeHeroImageWebP(t *testing.T) {
 	h := &proxyHandler{}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/hero.webp", nil)
