@@ -192,11 +192,19 @@ func serveNoopCodexAppsMCP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// checkAdminAuth verifies the admin token from its request header.
-// Returns true if authorized, false if not (and sends 401 response).
+// checkAdminAuth accepts an operator session or the break-glass admin token.
+// Session requests that change state must also pass the Passport CSRF check.
 func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	if h.passport != nil {
-		if principal, _ := h.passport.authenticate(r); principal != nil && principal.Kind == PrincipalOperator {
+		if principal, session := h.passport.authenticate(r); principal != nil {
+			if principal.Kind != PrincipalOperator {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return false
+			}
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !h.passportCSRF(r, session) {
+				http.Error(w, "invalid CSRF token", http.StatusForbidden)
+				return false
+			}
 			return true
 		}
 	}
