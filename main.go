@@ -635,8 +635,8 @@ func main() {
 	if passportErr != nil {
 		log.Fatalf("failed to initialize Pool Passport: %v", passportErr)
 	}
-	if err := passport.migrateLegacyPoolUsers(legacyPoolUsers); err != nil {
-		log.Printf("warning: legacy pool users migration failed: %v", err)
+	if err := passport.retireLegacyCredentials(legacyPoolUsers); err != nil {
+		log.Fatalf("legacy credential retirement failed: %v", err)
 	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
 	experiments, err := newExperimentTracker(store.db, cfg.experiments)

@@ -32,25 +32,23 @@ func legacyStoreWithUsers(users ...*PoolUser) *PoolUserStore {
 	return legacy
 }
 
-func TestPassportFinalLegacyMigrationIsIdempotentAndSealsCredentials(t *testing.T) {
+func TestPassportRetirementIsIdempotentAndSealsCredentials(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
 	u := &PoolUser{ID: "0123456789abcdef", Token: "download-old", Email: "friend@pool.local", PlanType: "pro", CreatedAt: time.Now()}
 	u2 := &PoolUser{ID: "disabled-user", Token: "download-disabled", Email: "off@pool.local", PlanType: "pro", CreatedAt: time.Now(), Disabled: true}
 	legacy := legacyStoreWithUsers(u, u2)
 
-	// Pre-existing operator proves migration no longer requires an empty store.
-	onboarding, err := createOperatorForTest(t, s)
-	if err != nil {
+	// Pre-existing operator proves retirement no longer requires an empty store.
+	if _, err := createOperatorForTest(t, s); err != nil {
 		t.Fatal(err)
 	}
-	_ = onboarding
 
 	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.migrateLegacyPoolUsers(legacy); err != nil {
+	if err := p.retireLegacyCredentials(legacy); err != nil {
 		t.Fatal(err)
 	}
 	got := p.principal(u.ID)
@@ -69,15 +67,75 @@ func TestPassportFinalLegacyMigrationIsIdempotentAndSealsCredentials(t *testing.
 	}
 	p.mu.RUnlock()
 	if clients != 0 {
-		t.Fatalf("migration minted %d client credentials for a legacy user", clients)
+		t.Fatalf("retirement minted %d client credentials for a legacy user", clients)
 	}
 
 	// Re-running (or a re-added pool_users.json) must not duplicate anything.
-	if err := p.migrateLegacyPoolUsers(legacyStoreWithUsers(u, u2)); err != nil {
+	if err := p.retireLegacyCredentials(legacyStoreWithUsers(u, u2)); err != nil {
 		t.Fatal(err)
 	}
 	if count := len(p.principals); count != 3 { // operator + two legacy users
 		t.Fatalf("principals after re-migration = %d", count)
+	}
+}
+
+func TestRetirementRevokesOrphanLegacyClientsAndMarksWithoutFile(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-retirement")
+	s := testUsageStore(t)
+	p, err := newPassportStore(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An active legacy-* client with no matching pool_users.json entry.
+	principal, _, client, _, err := p.createGuest("operator", "orphan owner", "O", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphan := &ClientCredential{ID: "legacy-" + principal.ID, PrincipalID: principal.ID, Label: "LEGACY DEFAULT", Status: "active", CreatedAt: time.Now().UTC()}
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketClientCredentials)), orphan.ID, orphan)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.clients[orphan.ID] = orphan
+	p.mu.Unlock()
+	_ = client
+
+	identity := principal.ID + "-c-" + orphan.ID
+	oldUser := &PoolUser{ID: identity, Email: "orphan@pool.local", PlanType: "pro", CreatedAt: time.Now()}
+	oldClaude, err := generateClaudeAuth(getPoolJWTSecret(), oldUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedIdentity, issuedAt, ok := parseClaudePoolCredential(getPoolJWTSecret(), oldClaude.AccessToken)
+	if !ok {
+		t.Fatal("pre-retirement credential did not parse")
+	}
+	if _, _, allowed := p.authorizeIssuedCredential(parsedIdentity, issuedAt); !allowed {
+		t.Fatal("pre-retirement credential was already denied")
+	}
+
+	// No pool_users.json at all (nil store): revocation must still run and
+	// the completion marker must be set.
+	if err := p.retireLegacyCredentials(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, allowed := p.authorizeIssuedCredential(parsedIdentity, issuedAt); allowed {
+		t.Fatal("retired legacy credential still authenticates")
+	}
+	if _, _, active := p.credentialState(identity); active {
+		t.Fatal("retired legacy client is still in active state")
+	}
+
+	// Marker present: a later pool_users.json re-introduction is a no-op.
+	if err := p.retireLegacyCredentials(legacyStoreWithUsers(&PoolUser{ID: "late-user", Token: "late-token", Email: "late@pool.local", PlanType: "pro", CreatedAt: time.Now()})); err != nil {
+		t.Fatal(err)
+	}
+	if late := p.principal("late-user"); late != nil {
+		t.Fatal("re-added pool_users.json imported after retirement completed")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -291,29 +292,56 @@ func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
 	return p, nil
 }
 
-const legacyPoolUsersMigratedKey = "legacy_pool_users_migrated"
+const legacyRetirementKey = "legacy_credentials_retired"
 
-// migrateLegacyPoolUsers performs the final one-shot import of the retired
-// pool_users.json store. It preserves identity metadata only: no client
-// credential is created and pre-existing legacy- clients get a validity
-// cutoff so envelopes issued before the retirement stop authenticating.
-// A state marker makes the import idempotent and immune to a re-added file.
-func (p *PassportStore) migrateLegacyPoolUsers(legacy *PoolUserStore) error {
-	if legacy == nil || len(legacy.List()) == 0 {
-		return nil
-	}
-	migrated := false
+// retireLegacyCredentials performs the one-shot retirement of the legacy
+// pool-user system. Every client whose ID starts with "legacy-" is revoked
+// outright by scanning the client bucket — regardless of whether a matching
+// pool_users.json entry exists. The file, when present, only imports identity
+// metadata for users that do not exist yet. Completion is marked inside the
+// same transaction as the revocation, so a failure never leaves the system
+// marked as retired, and a later re-added pool_users.json is a no-op.
+func (p *PassportStore) retireLegacyCredentials(legacy *PoolUserStore) error {
+	alreadyDone := false
 	err := p.db.Update(func(tx *bbolt.Tx) error {
 		state := tx.Bucket([]byte(bucketAnalyticsState))
-		if state == nil || state.Get([]byte(legacyPoolUsersMigratedKey)) != nil {
+		if state == nil {
+			return errors.New("analytics state bucket missing")
+		}
+		if state.Get([]byte(legacyRetirementKey)) != nil {
+			alreadyDone = true
 			return nil
 		}
-		migrated = true
 		cutoff := nextCredentialCutoff(time.Now())
-		principals := tx.Bucket([]byte(bucketPrincipals))
 		clients := tx.Bucket([]byte(bucketClientCredentials))
-		for _, u := range legacy.List() {
-			if principals.Get([]byte(u.ID)) == nil {
+		var legacyIDs []string
+		if err := clients.ForEach(func(k, _ []byte) error {
+			if strings.HasPrefix(string(k), "legacy-") {
+				legacyIDs = append(legacyIDs, string(k))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, id := range legacyIDs {
+			var client ClientCredential
+			raw := clients.Get([]byte(id))
+			if raw == nil || json.Unmarshal(raw, &client) != nil {
+				_ = clients.Delete([]byte(id))
+				continue
+			}
+			client.Status = "revoked"
+			client.ValidAfter = cutoff
+			if err := putJSON(clients, id, &client); err != nil {
+				return err
+			}
+		}
+		if legacy != nil {
+			principals := tx.Bucket([]byte(bucketPrincipals))
+			for _, u := range legacy.List() {
+				if principals.Get([]byte(u.ID)) != nil {
+					continue
+				}
 				status := PrincipalActive
 				if u.Disabled {
 					status = PrincipalSuspended
@@ -323,20 +351,13 @@ func (p *PassportStore) migrateLegacyPoolUsers(legacy *PoolUserStore) error {
 					return err
 				}
 			}
-			var client ClientCredential
-			if raw := clients.Get([]byte("legacy-" + u.ID)); raw != nil && json.Unmarshal(raw, &client) == nil {
-				client.ValidAfter = cutoff
-				if err := putJSON(clients, client.ID, &client); err != nil {
-					return err
-				}
-			}
 		}
-		if err := state.Put([]byte(legacyPoolUsersMigratedKey), []byte(time.Now().UTC().Format(time.RFC3339))); err != nil {
+		if err := state.Put([]byte(legacyRetirementKey), []byte(time.Now().UTC().Format(time.RFC3339))); err != nil {
 			return err
 		}
-		return p.audit(tx, "system", "legacy.pool_users_migrated", "legacy", "")
+		return p.audit(tx, "system", "legacy.credentials_retired", "legacy", strconv.Itoa(len(legacyIDs)))
 	})
-	if err != nil || !migrated {
+	if err != nil || alreadyDone {
 		return err
 	}
 	return p.load()

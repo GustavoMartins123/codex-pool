@@ -157,8 +157,13 @@ func (h *proxyHandler) serveCuteCodeSetupScript(w http.ResponseWriter, r *http.R
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.generateCuteCodeSettingsForToken(token, r); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if h.passport == nil {
+		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
+		return
+	}
+	// Peek only: the nonce stays valid for the config fetch inside the script.
+	if h.passport.peekConfigDownloadNonce(token) == nil {
+		http.Error(w, "invalid token", http.StatusNotFound)
 		return
 	}
 	publicURL := h.getEffectivePublicURL(r)
@@ -972,9 +977,9 @@ func (h *proxyHandler) serveGeminiSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
 		return
 	}
-	// The token is a single-use config nonce: peek (without consuming) so the
-	// generated script can still redeem it when fetching the config file.
-	user := passportClientAsPoolUser(h, h.passport.peekConfigDownloadNonce(token))
+	// The Gemini script embeds the credentials itself, so this is the single
+	// redemption of the nonce.
+	user := passportClientAsPoolUser(h, h.passport.redeemConfigDownloadNonce(token))
 	if user == nil {
 		http.Error(w, "invalid token", http.StatusNotFound)
 		return
@@ -1138,7 +1143,9 @@ func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
 		return
 	}
-	user := passportClientAsPoolUser(h, h.passport.peekConfigDownloadNonce(token))
+	// The Claude script embeds the credentials itself, so this is the single
+	// redemption of the nonce.
+	user := passportClientAsPoolUser(h, h.passport.redeemConfigDownloadNonce(token))
 	if user == nil {
 		http.Error(w, "invalid token", http.StatusNotFound)
 		return

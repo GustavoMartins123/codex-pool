@@ -338,6 +338,14 @@ func TestServeGeminiSetupScript_PowerShell(t *testing.T) {
 	if legacyRR.Code != http.StatusNotFound {
 		t.Fatalf("legacy token status = %d, want 404", legacyRR.Code)
 	}
+
+	// The Gemini script embeds the credential, so its redemption is single-use.
+	replay := httptest.NewRequest(http.MethodGet, "http://example.com/setup/gemini/"+nonce, nil)
+	replayRR := httptest.NewRecorder()
+	h.serveGeminiSetupScript(replayRR, replay)
+	if replayRR.Code != http.StatusNotFound {
+		t.Fatalf("nonce replay status = %d, want 404", replayRR.Code)
+	}
 }
 
 func TestPassportSPAServesReactSignalRoom(t *testing.T) {
@@ -434,6 +442,24 @@ func TestServeCuteCodeSetupScript_Bash(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected cute-code bash setup to contain %q, got:\n%s", want, body)
 		}
+	}
+
+	// Setup only peeked: the config fetch is the single redemption.
+	first := httptest.NewRecorder()
+	h.serveCuteCodeSettingsConfig(first, httptest.NewRequest(http.MethodGet, "http://example.com/config/cute-code/"+nonce, nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("config fetch after setup = %d, want 200", first.Code)
+	}
+	second := httptest.NewRecorder()
+	h.serveCuteCodeSettingsConfig(second, httptest.NewRequest(http.MethodGet, "http://example.com/config/cute-code/"+nonce, nil))
+	if second.Code != http.StatusNotFound {
+		t.Fatalf("config replay = %d, want 404", second.Code)
+	}
+
+	legacy := httptest.NewRecorder()
+	h.serveCuteCodeSetupScript(legacy, httptest.NewRequest(http.MethodGet, "http://example.com/setup/cute-code/old-legacy-token", nil))
+	if legacy.Code != http.StatusNotFound {
+		t.Fatalf("legacy token status = %d, want 404", legacy.Code)
 	}
 }
 
@@ -536,6 +562,14 @@ func TestServeClaudeSetupScript_BashClearsConflictingClaudeAuth(t *testing.T) {
 	h.serveClaudeSetupScript(legacyRR, legacy)
 	if legacyRR.Code != http.StatusNotFound {
 		t.Fatalf("legacy token status = %d, want 404", legacyRR.Code)
+	}
+
+	// The Claude script embeds the credential, so its redemption is single-use.
+	replay := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/"+nonce, nil)
+	replayRR := httptest.NewRecorder()
+	h.serveClaudeSetupScript(replayRR, replay)
+	if replayRR.Code != http.StatusNotFound {
+		t.Fatalf("nonce replay status = %d, want 404", replayRR.Code)
 	}
 }
 

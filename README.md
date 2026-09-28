@@ -59,11 +59,11 @@ Or maybe you want to pool accounts with friends - everyone throws their accounts
   <img src="screenshots/local-mode.png" alt="Local Mode" width="700">
 </p>
 
-### Friends Mode
-Share your pool with others using a friend code.
+### Shared Mode
+Share your pool with others using guest passes and member invites.
 
 <p align="center">
-  <img src="screenshots/friends-mode-login.png" alt="Friends Mode" width="500">
+  <img src="screenshots/friends-mode-login.png" alt="Shared Mode" width="500">
 </p>
 
 ---
@@ -221,7 +221,7 @@ The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `h
 
 Members sign in with a username or email and may add a passkey. Members and operators can create revocable guest passes whose magic links open the pool directly. Each principal can keep separately labelled client credentials and inspect token usage over time; operators can manage principals, provider accounts, passes, audit events, and analytics health from the Signal Room.
 
-Existing pool-user IDs and credentials migrate into guest principals. During the migration window, the former `friend_code` lets an existing holder choose a username and password; when the browser still has its old setup token, Passport claims the same principal ID and preserves its history. The code never authorizes ordinary API or provider requests. Clear it after migration to disable further account claims while the independently persisted analytics salt keeps historical origin hashes stable.
+The retired pool-user system is gone as an authority: setup downloads use single-use nonces minted on demand, and a one-shot retirement at boot imports any remaining `data/pool_users.json` identities as guest principals (metadata only — their old tokens never authenticate) and revokes every `legacy-*` client credential. Re-adding the file later has no effect.
 
 ---
 
@@ -233,11 +233,9 @@ pool_dir = "pool"
 db_path = "./data/proxy.db"
 public_url = "https://pool.example.com"
 
-# Migration-only salt seed. Remove only after Passport has persisted analytics_salt.
-friend_code = "former-secret"
-
 [pool_users]
-jwt_secret = "32-char-secret-for-existing-tokens"
+# Final metadata-only import of the retired pool-user store; ignored after
+# the one-shot retirement has completed.
 storage_path = "./data/pool_users.json"
 ```
 
