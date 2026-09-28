@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.etcd.io/bbolt"
 )
 
 func testUsageStore(t *testing.T) *usageStore {
@@ -385,6 +387,93 @@ func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
 	h.handleJoin(banned, body(token))
 	if banned.Code != http.StatusTooManyRequests {
 		t.Fatalf("valid join after failures status = %d, want 429", banned.Code)
+	}
+}
+
+func TestRedeemJoinRejectsExpiredPrincipal(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-10 * time.Minute)
+	guest, link, _, token, err := passport.createGuest("operator", "expired guest", "Exp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest.ExpiresAt = &past
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketPrincipals)), guest.ID, guest)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	passport.mu.Lock()
+	passport.principals[guest.ID] = guest
+	passport.mu.Unlock()
+
+	if _, _, _, err := passport.redeemJoin(token); err == nil {
+		t.Fatal("redeemJoin should fail when principal is expired")
+	}
+	_ = link
+}
+
+func TestJoinSwitchDoesNotPromptForRevokedOrExpiredLink(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-join-switch")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	operator := insertTestPrincipal(t, passport, "operator-1", PrincipalOperator, "operator", "operator@pool.local")
+	memberSession, memberCsrf, err := passport.createSession(operator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	guestRevoked, _, _, tokenRevoked, err := passport.createGuest(operator.ID, "Revoked Guest", "Rev", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := passport.setGuestPassStatus(operator, guestRevoked.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	past := time.Now().Add(-time.Hour)
+	_, _, _, tokenExpired, err := passport.createGuest(operator.ID, "Expired Guest", "Exp", &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics()}
+
+	body := func(token string) *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/api/auth/join", strings.NewReader(`{"token":"` + token + `"}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(&http.Cookie{Name: "pool_session", Value: memberSession})
+		request.AddCookie(&http.Cookie{Name: "pool_csrf", Value: memberCsrf})
+		request.Header.Set("X-CSRF-Token", memberCsrf)
+		return request
+	}
+
+	recRevoked := httptest.NewRecorder()
+	h.handleJoin(recRevoked, body(tokenRevoked))
+	if recRevoked.Code != http.StatusNotFound {
+		t.Fatalf("revoked pass join status = %d, want 404: %s", recRevoked.Code, recRevoked.Body.String())
+	}
+	if strings.Contains(recRevoked.Body.String(), "switch_required") {
+		t.Fatalf("revoked pass should not prompt switch_required, body=%s", recRevoked.Body.String())
+	}
+
+	recExpired := httptest.NewRecorder()
+	h.handleJoin(recExpired, body(tokenExpired))
+	if recExpired.Code != http.StatusNotFound {
+		t.Fatalf("expired pass join status = %d, want 404: %s", recExpired.Code, recExpired.Body.String())
+	}
+	if strings.Contains(recExpired.Body.String(), "switch_required") {
+		t.Fatalf("expired pass should not prompt switch_required, body=%s", recExpired.Body.String())
 	}
 }
 

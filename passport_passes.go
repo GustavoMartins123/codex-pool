@@ -179,7 +179,7 @@ func (p *PassportStore) redeemJoin(token string) (*Principal, string, string, er
 		return nil, "", "", errors.New("link unavailable")
 	}
 	pr := p.principal(link.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
 		return nil, "", "", errors.New("link unavailable")
 	}
 	now := time.Now().UTC()
@@ -298,9 +298,14 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	if current, _ := h.passport.authenticate(r); current != nil && !q.Switch {
 		link, err := h.passport.linkByToken(q.Token)
-		if err == nil && link.PrincipalID != current.ID {
-			respondJSON(w, map[string]any{"switch_required": true, "current": publicPrincipal(current)})
-			return
+		if err == nil && !link.Revoked && (link.ExpiresAt == nil || time.Now().Before(*link.ExpiresAt)) {
+			pr := h.passport.principal(link.PrincipalID)
+			if pr != nil && pr.Status == PrincipalActive && (pr.ExpiresAt == nil || time.Now().Before(*pr.ExpiresAt)) {
+				if link.PrincipalID != current.ID {
+					respondJSON(w, map[string]any{"switch_required": true, "current": publicPrincipal(current)})
+					return
+				}
+			}
 		}
 	}
 	pr, session, csrf, err := h.passport.redeemJoin(q.Token)
