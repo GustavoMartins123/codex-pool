@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -285,6 +286,105 @@ func TestClientCredentialLimitAndLabel(t *testing.T) {
 	}
 	if _, err = p.createClient("p1", "too many", nil); err == nil {
 		t.Fatal("limit not enforced")
+	}
+}
+
+func newPassportWithTwoMembers(t *testing.T) (*PassportStore, *Principal, *Principal) {
+	t.Helper()
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var members []*Principal
+	for _, name := range []string{"alpha@example.com", "beta@example.com"} {
+		onboarding, err := passport.createMemberLink("operator", name, name, "onboard")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
+			t.Fatal(err)
+		}
+		members = append(members, passport.byEmail(name))
+	}
+	return passport, members[0], members[1]
+}
+
+func TestGuestPassesAreScopedToOwner(t *testing.T) {
+	passport, alpha, beta := newPassportWithTwoMembers(t)
+	guest, _, _, _, err := passport.createGuest(alpha.ID, "Alpha friend", "Al", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	betaPasses, err := passport.listPasses(beta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range betaPasses {
+		if view.ID == guest.ID {
+			t.Fatal("member saw another member's pass link")
+		}
+	}
+	alphaPasses, err := passport.listPasses(alpha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alphaPasses) != 1 || alphaPasses[0].ID != guest.ID {
+		t.Fatalf("owner pass view = %+v", alphaPasses)
+	}
+	if alphaPasses[0].Link == "" || alphaPasses[0].Link == "/join#" {
+		t.Fatalf("owner link missing: %+v", alphaPasses[0])
+	}
+
+	future := time.Now().Add(time.Hour)
+	if _, err := passport.updateGuestPass(beta, guest.ID, "hijacked", "H", &future); err == nil {
+		t.Fatal("another member updated the pass")
+	}
+	if _, err := passport.setGuestPassStatus(beta, guest.ID, false); err == nil {
+		t.Fatal("another member revoked the pass")
+	}
+	if _, err := passport.rotateGuestLink(beta, guest.ID); err == nil {
+		t.Fatal("another member rotated the pass link")
+	}
+	if _, err := passport.updateGuestPass(alpha, guest.ID, "renamed", "Al", &future); err != nil {
+		t.Fatalf("owner update failed: %v", err)
+	}
+}
+
+func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-join")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, token, err := passport.createGuest("operator", "join guest", "J", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := newBruteForceTracker()
+	t.Cleanup(tracker.stop)
+	h := &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker, metrics: newMetrics()}
+
+	body := func(token string) *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/api/auth/join", strings.NewReader(`{"token":"`+token+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		return request
+	}
+	for i := 0; i < bruteForceMaxAttempts; i++ {
+		recorder := httptest.NewRecorder()
+		h.handleJoin(recorder, body(fmt.Sprintf("wrong-token-%d", i)))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("attempt %d status = %d", i, recorder.Code)
+		}
+	}
+	banned := httptest.NewRecorder()
+	h.handleJoin(banned, body(token))
+	if banned.Code != http.StatusTooManyRequests {
+		t.Fatalf("valid join after failures status = %d, want 429", banned.Code)
 	}
 }
 

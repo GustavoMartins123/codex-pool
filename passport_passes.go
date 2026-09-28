@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -158,7 +159,7 @@ func (p *PassportStore) linkByToken(token string) (*JoinLink, error) {
 	err := p.db.View(func(tx *bbolt.Tx) error {
 		return tx.Bucket([]byte(bucketJoinLinks)).ForEach(func(_, v []byte) error {
 			var x JoinLink
-			if json.Unmarshal(v, &x) == nil && x.TokenDigest == want {
+			if json.Unmarshal(v, &x) == nil && subtle.ConstantTimeCompare([]byte(x.TokenDigest), []byte(want)) == 1 {
 				found = &x
 			}
 			return nil
@@ -189,7 +190,7 @@ func (p *PassportStore) redeemJoin(token string) (*Principal, string, string, er
 	session, csrf, err := p.createSession(pr.ID)
 	return pr, session, csrf, err
 }
-func (p *PassportStore) listPasses() ([]PassView, error) {
+func (p *PassportStore) listPasses(actor *Principal) ([]PassView, error) {
 	var links []JoinLink
 	if err := p.db.View(func(tx *bbolt.Tx) error {
 		return tx.Bucket([]byte(bucketJoinLinks)).ForEach(func(_, v []byte) error {
@@ -205,7 +206,10 @@ func (p *PassportStore) listPasses() ([]PassView, error) {
 	out := make([]PassView, 0, len(links))
 	for _, l := range links {
 		pr := p.principal(l.PrincipalID)
-		if pr == nil {
+		if pr == nil || pr.Kind != PrincipalGuest {
+			continue
+		}
+		if actor.Kind != PrincipalOperator && pr.CreatedBy != actor.ID {
 			continue
 		}
 		token, _ := p.linkToken(&l)
@@ -243,7 +247,7 @@ func (h *proxyHandler) handlePasses(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		passes, err := h.passport.listPasses()
+		passes, err := h.passport.listPasses(actor)
 		if err != nil {
 			respondJSONError(w, 500, "passes unavailable")
 			return
@@ -279,6 +283,11 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
+	ip := getClientIP(r)
+	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
 	var q struct {
 		Token  string `json:"token"`
 		Switch bool   `json:"switch"`
@@ -296,9 +305,15 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	pr, session, csrf, err := h.passport.redeemJoin(q.Token)
 	if err != nil {
+		if h.bruteForce != nil {
+			h.bruteForce.recordFailure(ip)
+		}
 		h.metrics.incPassport("join_redemptions", "failed")
 		respondJSONError(w, 404, "this pass is unavailable")
 		return
+	}
+	if h.bruteForce != nil {
+		h.bruteForce.recordSuccess(ip)
 	}
 	h.metrics.incPassport("join_redemptions", "succeeded")
 	setSessionCookies(w, session, csrf)

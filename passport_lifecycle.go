@@ -282,7 +282,18 @@ func (p *PassportStore) joinLinkForPrincipal(principalID string) (*JoinLink, err
 	return found, nil
 }
 
-func (p *PassportStore) updateGuestPass(actorID, principalID, note, displayName string, expiresAt *time.Time) (*Principal, error) {
+func (p *PassportStore) guestPassOwned(actor *Principal, principalID string) (*Principal, error) {
+	current := p.principal(principalID)
+	if current == nil || current.Kind != PrincipalGuest {
+		return nil, errors.New("guest pass not found")
+	}
+	if actor.Kind != PrincipalOperator && current.CreatedBy != actor.ID {
+		return nil, errors.New("guest pass not found")
+	}
+	return current, nil
+}
+
+func (p *PassportStore) updateGuestPass(actor *Principal, principalID, note, displayName string, expiresAt *time.Time) (*Principal, error) {
 	note = strings.TrimSpace(note)
 	if note == "" || len([]rune(note)) > 300 {
 		return nil, errors.New("note required (max 300 characters)")
@@ -300,6 +311,10 @@ func (p *PassportStore) updateGuestPass(actorID, principalID, note, displayName 
 	if current == nil || current.Kind != PrincipalGuest {
 		return nil, errors.New("guest pass not found")
 	}
+	if actor.Kind != PrincipalOperator && current.CreatedBy != actor.ID {
+		return nil, errors.New("guest pass not found")
+	}
+	actorID := actor.ID
 	updated := *current
 	updated.Note = note
 	updated.DisplayName = strings.TrimSpace(displayName)
@@ -338,7 +353,7 @@ func (p *PassportStore) updateGuestPass(actorID, principalID, note, displayName 
 	return &cp, nil
 }
 
-func (p *PassportStore) setGuestPassStatus(actorID, principalID string, active bool) (*Principal, error) {
+func (p *PassportStore) setGuestPassStatus(actor *Principal, principalID string, active bool) (*Principal, error) {
 	link, err := p.joinLinkForPrincipal(principalID)
 	if err != nil {
 		return nil, err
@@ -349,6 +364,10 @@ func (p *PassportStore) setGuestPassStatus(actorID, principalID string, active b
 	if current == nil || current.Kind != PrincipalGuest {
 		return nil, errors.New("guest pass not found")
 	}
+	if actor.Kind != PrincipalOperator && current.CreatedBy != actor.ID {
+		return nil, errors.New("guest pass not found")
+	}
+	actorID := actor.ID
 	updated := *current
 	clientUpdates := make(map[string]*ClientCredential)
 	action := "guest.restored"
@@ -406,11 +425,15 @@ func (p *PassportStore) setGuestPassStatus(actorID, principalID string, active b
 	return &cp, nil
 }
 
-func (p *PassportStore) rotateGuestLink(actorID, principalID string) (string, error) {
+func (p *PassportStore) rotateGuestLink(actor *Principal, principalID string) (string, error) {
+	if _, err := p.guestPassOwned(actor, principalID); err != nil {
+		return "", err
+	}
 	link, err := p.joinLinkForPrincipal(principalID)
 	if err != nil {
 		return "", err
 	}
+	actorID := actor.ID
 	token, err := secureToken(32)
 	if err != nil {
 		return "", err
@@ -524,27 +547,27 @@ func (h *proxyHandler) handlePassItem(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
-		principal, err := h.passport.updateGuestPass(actor.ID, principalID, input.Note, input.DisplayName, input.ExpiresAt)
+		principal, err := h.passport.updateGuestPass(actor, principalID, input.Note, input.DisplayName, input.ExpiresAt)
 		if err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		respondJSON(w, publicPrincipal(principal))
 	case r.Method == http.MethodDelete && action == "":
-		if _, err := h.passport.setGuestPassStatus(actor.ID, principalID, false); err != nil {
+		if _, err := h.passport.setGuestPassStatus(actor, principalID, false); err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		respondJSON(w, map[string]any{"success": true})
 	case r.Method == http.MethodPost && action == "restore":
-		principal, err := h.passport.setGuestPassStatus(actor.ID, principalID, true)
+		principal, err := h.passport.setGuestPassStatus(actor, principalID, true)
 		if err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		respondJSON(w, publicPrincipal(principal))
 	case r.Method == http.MethodPost && action == "rotate":
-		token, err := h.passport.rotateGuestLink(actor.ID, principalID)
+		token, err := h.passport.rotateGuestLink(actor, principalID)
 		if err != nil {
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
