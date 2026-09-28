@@ -213,6 +213,14 @@ export GEMINI_API_KEY="AIzaSy-pool-..."
 export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:8989"
 ```
 
+Smoke-test the full chain with the real CLI:
+```bash
+agy models
+agy -p "Reply with exactly: pool-ok" --model gemini-3.8-flash-high --output-format json
+```
+
+To disconnect a client and restore the default Google sign-in, delete the `Antigravity Pool Configuration` block from `~/.zshrc`/`~/.bashrc` (Windows: clear the user-scope variables with `[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $null, 'User')` and the same for `GOOGLE_GEMINI_BASE_URL`), then remove `modelProvider` from `~/.gemini/antigravity-cli/settings.json`.
+
 **Google Antigravity account**: open the dashboard, choose "Contribute an account", then press "Google Antigravity". The popup completes the callback automatically. Pasting the callback URL remains available when popups are blocked.
 
 The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `http://localhost:51121/oauth-callback` redirect, matching CLIProxyAPI and VibeProxy. When the pool runs on the same machine as the browser, the popup completes on its own. For a remote pool, paste the failed localhost callback URL into the contribution dialog; the state and PKCE verifier are still checked before exchange.
