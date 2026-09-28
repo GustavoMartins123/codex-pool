@@ -5,7 +5,7 @@
 <h1 align="center">codex-pool</h1>
 
 <p align="center">
-  <strong>Pool your accounts. Share with friends. Never swap credentials again.</strong>
+  <strong>Pool provider accounts. Give members their own access. Never swap credentials again.</strong>
 </p>
 
 ---
@@ -39,7 +39,7 @@ For browser, mobile, or CLI speech-to-speech agents, see [Realtime voice agents 
 
 You hit rate limits. You have multiple accounts. Swapping credentials is annoying.
 
-Or maybe you want to pool accounts with friends - everyone throws their accounts into the pot, everyone benefits from the combined capacity.
+An operator manages provider accounts and grants members access to the pooled capacity. Members can issue guest passes for their own guests.
 
 **codex-pool** handles it:
 - Distributes sessions across all your accounts for each service
@@ -219,7 +219,7 @@ The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `h
 
 ## Pool Passport
 
-Members sign in with a username or email and may add a passkey. Members and operators can create revocable guest passes whose magic links open the pool directly. Each principal can keep separately labelled client credentials and inspect token usage over time; operators can manage principals, provider accounts, passes, audit events, and analytics health from the Signal Room.
+Members sign in with a username or email and may add a passkey. They can manage their own profile, client credentials, usage, and revocable guest passes. Guests can manage their own profile and clients and inspect their own usage. Operators additionally manage global pool analytics, principals, provider accounts, route diagnostics, audit events, and operational administration from the Signal Room. `ADMIN_TOKEN` remains a break-glass administrative credential.
 
 The retired pool-user system is gone as an authority: setup downloads use single-use nonces minted on demand, and a one-shot retirement at boot imports any remaining `data/pool_users.json` identities as guest principals (metadata only — their old tokens never authenticate) and revokes every `legacy-*` client credential. Re-adding the file later has no effect.
 
