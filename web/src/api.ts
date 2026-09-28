@@ -47,9 +47,12 @@ export async function loadPassportMe(): Promise<PassportPrincipal> {
 export async function passportJoin(token: string, switchAccount = false): Promise<{ principal?: PassportPrincipal; switch_required?: boolean; current?: PassportPrincipal }> {
   return decode(await fetch("/api/auth/join", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, switch: switchAccount }) }));
 }
-export type RecoveryStatus = { valid: boolean; expires_at?: string | null; expires_in_seconds?: number };
+export type RecoveryStatus = { valid: boolean; expiresAt?: string | null };
 export async function recoverMemberStatus(token: string): Promise<RecoveryStatus> {
-  return decode(await fetch("/api/auth/recover/status", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }));
+  const raw = await decode<{ valid: boolean; expires_at?: string | null }>(await fetch("/api/auth/recover/status", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }));
+  // Normalize snake_case once at the boundary so consumers can never mix
+  // expires_at with expiresAt.
+  return { valid: Boolean(raw?.valid), expiresAt: raw?.expires_at ?? null };
 }
 export async function redeemMemberRecovery(token: string, password: string): Promise<PassportPrincipal> {
   const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/auth/recover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password }) }));

@@ -589,7 +589,8 @@ export function MemberRecovery({ token, onAccess }: { token: string; onAccess: (
   const validate = useCallback(async () => {
     let event: RecoveryEvent;
     try {
-      event = { type: "recheck", ...(await recoverMemberStatus(token)) };
+      const status = await recoverMemberStatus(token);
+      event = { type: "recheck", valid: status.valid, expiresAt: status.expiresAt };
     } catch {
       event = { type: "recheck", valid: false };
     }
@@ -598,7 +599,8 @@ export function MemberRecovery({ token, onAccess }: { token: string; onAccess: (
   useEffect(() => { void (async () => {
     let event: RecoveryEvent;
     try {
-      event = { type: "status", ...(await recoverMemberStatus(token)) };
+      const status = await recoverMemberStatus(token);
+      event = { type: "status", valid: status.valid, expiresAt: status.expiresAt };
     } catch {
       event = { type: "status", valid: false };
     }

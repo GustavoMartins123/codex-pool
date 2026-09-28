@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadAdminAccounts, mutateAccount, operatorBootstrap, reloadAccounts, recoverMemberStatus } from "./api";
 import { AccountResetWindows, formatAPIValue, isArmedAccountAction, MemberRecovery, Models, poolSurplus, providerDisplay, RecoveryUnavailable, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
+import { recoveryReducer } from "./recovery";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
 function renderWindows(resetWindows: ResetWindowPolicy, overrides: Partial<AccountStats> = {}) {
@@ -176,8 +177,21 @@ describe("member recovery gating", () => {
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("same-origin");
     expect(JSON.parse(init.body as string)).toEqual({ token: "tok-1" });
+    // snake_case is normalized at the boundary: a real backend payload must
+    // gate the form as ready, never collapse to unavailable.
     expect(status.valid).toBe(true);
-    expect(status.expires_in_seconds).toBe(900);
+    expect(status.expiresAt).toBe("2030-01-01T00:00:00Z");
+    expect(recoveryReducer({ phase: "checking" }, { type: "status", ...status }).phase).toBe("ready");
+  });
+
+  it("maps an invalid backend answer to unavailable end to end", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ valid: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const status = await recoverMemberStatus("stale");
+
+    expect(status.valid).toBe(false);
+    expect(recoveryReducer({ phase: "checking" }, { type: "status", ...status }).phase).toBe("unavailable");
   });
 });
 
