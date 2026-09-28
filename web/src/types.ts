@@ -85,17 +85,6 @@ export interface PassportUsagePoint {
   api_equivalent_cost_usd: number;
 }
 
-export interface FriendSession {
-  public_url: string;
-  origin_id: string;
-  download_token: string;
-  auth_json: string;
-  gemini_auth_json: string;
-  gemini_api_key: string;
-  claude_api_key: string;
-  pi_models_json: string;
-  cute_code_settings_json: string;
-}
 
 export interface AccountStats {
   id: string;

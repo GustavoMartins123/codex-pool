@@ -109,10 +109,8 @@ func (h *proxyHandler) handleAuthConfig(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	legacyAvailable := h.cfg != nil && strings.TrimSpace(h.cfg.legacyFriendCode) != ""
 	operatorExists := h.passport != nil && h.passport.hasOperator()
 	respondJSON(w, map[string]any{
-		"legacy_signup":   legacyAvailable,
 		"operator_exists": operatorExists,
 	})
 }

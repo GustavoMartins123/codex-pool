@@ -376,17 +376,11 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/":
 		h.servePassportSPA(w, r)
 		return
-	case "/friend":
-		h.serveFriendLanding(w, r)
-		return
 	case "/join", "/recover":
 		h.servePassportSPA(w, r)
 		return
 	case "/cute-code":
 		h.serveCuteCodeLanding(w, r)
-		return
-	case "/api/friend/claim":
-		h.handleFriendClaim(w, r)
 		return
 	case "/status":
 		h.serveStatusPage(w, r)
@@ -402,9 +396,6 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/auth/config":
 		h.handleAuthConfig(w, r)
-		return
-	case "/api/auth/signup":
-		h.handleLegacySignup(w, r)
 		return
 	case "/api/auth/join":
 		h.handleJoin(w, r)
@@ -660,12 +651,6 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
 		accountID := strings.TrimSuffix(path, "/refresh")
 		h.forceRefreshAccount(w, accountID)
-		return
-	}
-
-	// Friend landing page with code
-	if strings.HasPrefix(r.URL.Path, "/friend/") {
-		h.serveFriendLanding(w, r)
 		return
 	}
 

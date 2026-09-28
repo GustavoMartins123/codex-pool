@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+﻿import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import {
   Area,
@@ -19,13 +19,11 @@ import {
 import {
 	  antigravityOAuthStatus,
 	  zaiLoginStatus,
-  clearFriendSession,
   contributeAPIKey,
   contributeGrok,
   exchangeAccountOAuth,
 	  exchangeAntigravityOAuth,
   loadAdminAccounts,
-  legacySignup,
 	loadModelCatalog,
   loadPoolStats,
   loadSignalAnalytics,
@@ -65,7 +63,7 @@ import {
   mutateAccount,
   reloadAccounts,
   storedAdminToken,
-  storedFriendSession,
+  clearAdminToken,
   startAccountOAuth,
   startZAILogin,
   startCodexRelogin,
@@ -398,7 +396,7 @@ export function App() {
         if (principal.kind === "guest") setView("mine");
         else await refresh();
       } catch {
-        clearFriendSession();
+        clearAdminToken();
       }
     };
     boot().finally(() => setBooting(false));
@@ -478,7 +476,7 @@ export function App() {
     if (passport) await passportLogout().catch(() => undefined);
     adminLoadVersion.current++;
     refreshGuard.invalidate();
-    clearFriendSession();
+    clearAdminToken();
     lockOperator();
     setOperatorToken("");
     setAdminAccounts([]);
@@ -618,10 +616,8 @@ function MemberRecovery({ token, onAccess }: { token: string; onAccess: (princip
 }
 
 function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => void }) {
-  const [mode, setMode] = useState<"login" | "signup" | "bootstrap">("login");
-  const [authConfig, setAuthConfig] = useState<{ legacy_signup: boolean; operator_exists: boolean } | null>(null);
+  const [mode, setMode] = useState<"login" | "bootstrap">("login");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -631,7 +627,6 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
 
   useEffect(() => {
     loadAuthConfig().then((config) => {
-      setAuthConfig(config);
       if (!config.operator_exists) setMode("bootstrap");
     }).catch(() => {});
   }, []);
@@ -643,11 +638,6 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
     try {
       if (mode === "bootstrap") {
         const principal = await operatorBootstrap(username, email, password, bootstrapToken, displayName);
-        onAccess(principal);
-      } else if (mode === "signup") {
-        const legacy = storedFriendSession();
-        const principal = await legacySignup(code, username, password, legacy?.download_token || "");
-        clearFriendSession();
         onAccess(principal);
       } else {
         onAccess(await passportLogin(email.trim(), password));
@@ -669,7 +659,6 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
     } finally { setBusy(false); }
   };
 
-  const showLegacy = authConfig?.legacy_signup && mode !== "bootstrap";
   const passkeyAvailable = mode === "login" && browserSupportsWebAuthn();
 
   if (mode === "bootstrap") {
@@ -704,39 +693,21 @@ function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincipal) => 
   }
 
   return (
-    <Threshold title={mode === "signup" ? "Claim your account" : "Sign in"} lede={mode === "signup" ? "Exchange the pool code you were given for a permanent account." : undefined}>
+    <Threshold title="Sign in">
       <form onSubmit={submit} className="threshold-form">
-        {mode === "signup" ? (
-          <>
-            <label className="threshold-field">
-              <span>Pool code</span>
-              <input value={code} onChange={(event) => setCode(event.target.value)} type="password" required autoFocus autoComplete="off" />
-            </label>
-            <label className="threshold-field">
-              <span>Choose a username<i>letters, numbers, . _ -</i></span>
-              <input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" required autoComplete="username" />
-            </label>
-          </>
-        ) : (
-          <label className="threshold-field">
-            <span>Username or email</span>
-            <input value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus autoComplete="username" />
-          </label>
-        )}
         <label className="threshold-field">
-          <span>Password{mode === "signup" && <i>12 characters minimum</i>}</span>
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" minLength={mode === "signup" ? 12 : undefined} required autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+          <span>Username or email</span>
+          <input value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus autoComplete="username" />
+        </label>
+        <label className="threshold-field">
+          <span>Password</span>
+          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required autoComplete="current-password" />
         </label>
         {error && <p className="threshold-error" role="alert">{error}</p>}
-        <button className="threshold-submit" disabled={busy}>{busy ? (mode === "signup" ? "Creating…" : "Signing in…") : mode === "signup" ? "Create account" : "Sign in"}</button>
+        <button className="threshold-submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
         {passkeyAvailable && <button type="button" className="threshold-alt" disabled={busy} onClick={passkey}>Use a passkey instead</button>}
       </form>
       <div className="threshold-aside">
-        {showLegacy && (
-          <button type="button" className="threshold-link" disabled={busy} onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setPassword(""); }}>
-            {mode === "login" ? "Have an old pool code?" : "Back to sign in"}
-          </button>
-        )}
         {mode === "login" && <p>Locked out? Ask the operator for a recovery link.</p>}
       </div>
     </Threshold>

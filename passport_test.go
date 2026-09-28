@@ -103,27 +103,9 @@ func TestLegacySignupClaimsExistingPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, _, _, err := passport.claimLegacyAccount("nicole", "NicoleLong2803!", user.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// A legacy code must not create an operator on a fresh deployment.
-	if principal.ID != user.ID || principal.Kind != PrincipalMember || principal.Username != "nicole" {
-		t.Fatalf("claimed principal=%+v", principal)
-	}
 	if passport.hasOperator() {
 		t.Fatal("legacy signup created an operator")
-	}
-	// Later claims remain members.
-	user2 := &PoolUser{ID: "legacy-person-2", Token: "legacy-download-token-2", Email: "legacy2@pool.local", PlanType: "pro", CreatedAt: time.Now()}
-	legacy.users[user2.ID] = user2
-	legacy.byTok[user2.Token] = user2
-	principal2, _, _, err := passport.claimLegacyAccount("bob", "BobLong2803!!", user2.Token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if principal2.Kind != PrincipalMember {
-		t.Fatalf("second signup should be member, got %s", principal2.Kind)
 	}
 }
 
@@ -149,9 +131,6 @@ func TestBootstrapOperatorClaimsLegacyCredential(t *testing.T) {
 	}
 	if principal.ID != user.ID || principal.Kind != PrincipalOperator || principal.Username != "operator" {
 		t.Fatalf("operator=%+v", principal)
-	}
-	if _, _, _, err := passport.claimLegacyAccount("another", "another-long-password", user.Token); err == nil {
-		t.Fatal("legacy signup reclaimed an operator account")
 	}
 	if _, err := passport.bootstrapOperator("another", "", "", "another-long-password", ""); err == nil {
 		t.Fatal("second operator bootstrap succeeded")
@@ -450,7 +429,7 @@ func TestJoinSwitchDoesNotPromptForRevokedOrExpiredLink(t *testing.T) {
 	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics()}
 
 	body := func(token string) *http.Request {
-		request := httptest.NewRequest(http.MethodPost, "/api/auth/join", strings.NewReader(`{"token":"` + token + `"}`))
+		request := httptest.NewRequest(http.MethodPost, "/api/auth/join", strings.NewReader(`{"token":"`+token+`"}`))
 		request.Header.Set("Content-Type", "application/json")
 		request.AddCookie(&http.Cookie{Name: "pool_session", Value: memberSession})
 		request.AddCookie(&http.Cookie{Name: "pool_csrf", Value: memberCsrf})

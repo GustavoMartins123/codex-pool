@@ -1,24 +1,15 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
-import type { AdminAccount, ClientCredential, ConsolePrincipal, FriendSession, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
+import type { AdminAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
 
-const FRIEND_SESSION_KEY = "friendSession";
 const ADMIN_TOKEN_KEY = "operatorToken";
 
-export const storedFriendSession = (): FriendSession | null => {
-  try {
-    const raw = localStorage.getItem(FRIEND_SESSION_KEY);
-    return raw ? (JSON.parse(raw) as FriendSession) : null;
-  } catch {
-    return null;
-  }
-};
 export const storedAdminToken = () => sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? "";
 
 function csrfToken() {
   return document.cookie.split("; ").find((part) => part.startsWith("pool_csrf="))?.split("=").slice(1).join("=") ?? "";
 }
 
-export async function loadAuthConfig(): Promise<{ legacy_signup: boolean; operator_exists: boolean }> {
+export async function loadAuthConfig(): Promise<{ operator_exists: boolean }> {
   return decode(await fetch("/api/auth/config", { credentials: "same-origin" }));
 }
 export async function operatorBootstrap(username: string, email: string, password: string, adminToken: string, displayName = ""): Promise<PassportPrincipal> {
@@ -32,13 +23,6 @@ export async function passportLogin(email: string, password: string): Promise<Pa
   const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/auth/login", {
     method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
     body: JSON.stringify({ email, password }),
-  }));
-  return result.principal;
-}
-export async function legacySignup(code: string, username: string, password: string, downloadToken = ""): Promise<PassportPrincipal> {
-  const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/auth/signup", {
-    method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify({ code, username, password, download_token: downloadToken }),
   }));
   return result.principal;
 }
@@ -150,10 +134,7 @@ async function decode<T>(response: Response): Promise<T> {
 }
 
 
-export function clearFriendSession() {
-  localStorage.removeItem("friendCode");
-  localStorage.removeItem("friendEmail");
-  localStorage.removeItem(FRIEND_SESSION_KEY);
+export function clearAdminToken() {
   sessionStorage.removeItem(ADMIN_TOKEN_KEY);
 }
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,7 +162,7 @@ func TestCodexSetupPreservesModel(t *testing.T) {
 }
 
 func TestSetupExamplesUseAstra(t *testing.T) {
-	for _, path := range []string{"templates/friend_landing.html", "web/src/App.tsx"} {
+	for _, path := range []string{"web/src/App.tsx"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -350,27 +349,6 @@ func newTestPoolUserStoreWithUser(t *testing.T, token string) *PoolUserStore {
 	return store
 }
 
-func TestFriendLandingServesOldTemplate(t *testing.T) {
-	h := &proxyHandler{cfg: &config{legacyFriendCode: "peepee"}}
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/friend", nil)
-	rr := httptest.NewRecorder()
-
-	h.serveFriendLanding(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
-	}
-	body := rr.Body.String()
-	for _, want := range []string{
-		`Friends of`,
-		`friend_code`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected friend landing to contain %q", want)
-		}
-	}
-}
-
 func TestPassportSPAServesReactSignalRoom(t *testing.T) {
 	h := &proxyHandler{cfg: &config{legacyFriendCode: "peepee"}}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/app", nil)
@@ -391,31 +369,6 @@ func TestPassportSPAServesReactSignalRoom(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected Passport SPA to contain %q", want)
 		}
-	}
-}
-
-func TestFriendCodeIsNotEmbeddedInPublicSignalRoom(t *testing.T) {
-	const secret = "friend-secret-that-must-never-ship"
-	h := &proxyHandler{cfg: &config{legacyFriendCode: secret}}
-	page := httptest.NewRecorder()
-	h.serveFriendLanding(page, httptest.NewRequest(http.MethodGet, "http://example.com/", nil))
-	if strings.Contains(page.Body.String(), secret) {
-		t.Fatal("friend code leaked into public HTML")
-	}
-	if err := fs.WalkDir(signalRoomContent, "web/dist", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := signalRoomContent.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(data), secret) {
-			t.Fatalf("friend code leaked into embedded asset %s", path)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 
