@@ -166,6 +166,28 @@ func TestAntigravityCanonicalModelUsesForcedPrefixAndDeprecatedAlias(t *testing.
 	}
 }
 
+func TestAntigravityCanonicalStaticAliasSurvivesColdStart(t *testing.T) {
+	// No snapshots: discovery is down and the registry only has the static
+	// catalog, so the official deprecated slug must still resolve.
+	registry := &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot)}
+	if got, ok := registry.Canonical("gemini-3.1-pro-high"); !ok || got != "gemini-pro-agent" {
+		t.Fatalf("cold-start alias resolved to %q, %v, want gemini-pro-agent", got, ok)
+	}
+	if got, ok := registry.Canonical("antigravity/gemini-3.1-pro-high"); !ok || got != "gemini-pro-agent" {
+		t.Fatalf("forced cold-start alias resolved to %q, %v", got, ok)
+	}
+
+	// Live snapshot deprecations keep priority over the static alias.
+	registry.ReplaceAccount("account", AntigravityAccountSnapshot{
+		FetchedAt:  time.Now(),
+		Models:     map[string]AntigravityModelInfo{"gemini-new": {ID: "gemini-new"}},
+		Deprecated: map[string]string{"gemini-3.1-pro-high": "gemini-new"},
+	})
+	if got, ok := registry.Canonical("gemini-3.1-pro-high"); !ok || got != "gemini-new" {
+		t.Fatalf("snapshot deprecation must win, got %q, %v", got, ok)
+	}
+}
+
 func TestAntigravityModelSelectionSkipsVerificationBlockedAccount(t *testing.T) {
 	model := "gemini-verification-test"
 	blocked := &Account{Type: AccountTypeAntigravity, ID: "blocked-verification", NeedsVerification: true}

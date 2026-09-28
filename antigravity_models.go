@@ -163,6 +163,13 @@ func (r *antigravityModelRegistry) DiscoveryAvailability(accountID, model string
 	return true, time.Time{}
 }
 
+// antigravityStaticAliases resolves official deprecated slugs even when
+// discovery is unavailable and the registry falls back to the static catalog.
+// Live snapshot deprecations always win over these entries.
+var antigravityStaticAliases = map[string]string{
+	"gemini-3.1-pro-high": "gemini-pro-agent",
+}
+
 func (r *antigravityModelRegistry) Canonical(model string) (string, bool) {
 	model = strings.TrimSpace(strings.TrimPrefix(model, "antigravity/"))
 	if model == "" {
@@ -181,6 +188,9 @@ func (r *antigravityModelRegistry) Canonical(model string) (string, bool) {
 	}
 	if found {
 		return model, true
+	}
+	if replacement, ok := antigravityStaticAliases[model]; ok {
+		return replacement, true
 	}
 	for _, fallback := range antigravityFallbackModels {
 		if fallback.ID == model {
