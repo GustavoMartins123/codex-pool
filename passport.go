@@ -272,19 +272,24 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 			})
 		}
 		// Backfill the recovery digest index for links written before it
-		// existed, so index lookups never miss a live token.
+		// existed, so index lookups never miss a live token. The index
+		// participates in authentication: backfill errors must fail startup
+		// instead of silently breaking redemption for pre-existing links.
 		memberLinks := tx.Bucket([]byte(bucketMemberRecoveryLinks))
 		memberLinksByToken := tx.Bucket([]byte(bucketMemberRecoveryLinksByToken))
 		if memberLinks != nil && memberLinksByToken != nil {
-			_ = memberLinks.ForEach(func(k, v []byte) error {
+			if err := memberLinks.ForEach(func(k, v []byte) error {
 				var l memberRecoveryLink
-				if json.Unmarshal(v, &l) == nil && l.TokenDigest != "" {
-					if memberLinksByToken.Get([]byte(l.TokenDigest)) == nil {
-						_ = memberLinksByToken.Put([]byte(l.TokenDigest), []byte(l.ID))
-					}
+				if json.Unmarshal(v, &l) != nil || l.TokenDigest == "" {
+					return nil
+				}
+				if memberLinksByToken.Get([]byte(l.TokenDigest)) == nil {
+					return memberLinksByToken.Put([]byte(l.TokenDigest), []byte(l.ID))
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		state := tx.Bucket([]byte(bucketAnalyticsState))
 		if state == nil {
