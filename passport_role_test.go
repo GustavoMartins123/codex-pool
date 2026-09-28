@@ -73,6 +73,12 @@ func TestUsableOperatorInvariant(t *testing.T) {
 	}
 	second.Status = PrincipalActive
 	second.ExpiresAt = &past
+	if _, err := p.setPrincipalStatus(first.ID, second.ID, PrincipalActive); err == nil {
+		t.Fatal("expiring operator was reactivated")
+	}
+	if _, err := p.setPrincipalKind(first.ID, second.ID, PrincipalOperator); err == nil {
+		t.Fatal("expiring operator kind was accepted")
+	}
 	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err == nil {
 		t.Fatal("demoted last active operator with expired fallback")
 	}

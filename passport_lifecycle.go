@@ -62,6 +62,9 @@ func (p *PassportStore) setPrincipalStatus(actorID, principalID string, status P
 	if current == nil {
 		return nil, errors.New("principal not found")
 	}
+	if current.Kind == PrincipalOperator && current.ExpiresAt != nil && status == PrincipalActive {
+		return nil, errors.New("operator must be active and non-expiring")
+	}
 	if principalIsUsableOperator(current) && status != PrincipalActive {
 		remaining := 0
 		for id, other := range p.principals {
@@ -136,6 +139,9 @@ func (p *PassportStore) setPrincipalKind(actorID, principalID string, kind Princ
 	current := p.principals[principalID]
 	if current == nil {
 		return nil, errors.New("principal not found")
+	}
+	if kind == PrincipalOperator && current.ExpiresAt != nil {
+		return nil, errors.New("operator must be active and non-expiring")
 	}
 	if current.Kind == kind {
 		cp := *current
