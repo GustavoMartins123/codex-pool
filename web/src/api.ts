@@ -47,6 +47,10 @@ export async function loadPassportMe(): Promise<PassportPrincipal> {
 export async function passportJoin(token: string, switchAccount = false): Promise<{ principal?: PassportPrincipal; switch_required?: boolean; current?: PassportPrincipal }> {
   return decode(await fetch("/api/auth/join", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, switch: switchAccount }) }));
 }
+export type RecoveryStatus = { valid: boolean; expires_at?: string | null; expires_in_seconds?: number };
+export async function recoverMemberStatus(token: string): Promise<RecoveryStatus> {
+  return decode(await fetch("/api/auth/recover/status", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }));
+}
 export async function redeemMemberRecovery(token: string, password: string): Promise<PassportPrincipal> {
   const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/auth/recover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, password }) }));
   return result.principal;

@@ -38,6 +38,7 @@ import {
   loadPasskeys,
   removePasskey,
   redeemMemberRecovery,
+  recoverMemberStatus,
   createMemberLink,
   updateMyProfile,
   uploadMyAvatar,
@@ -85,6 +86,7 @@ import {
   type CapacityForecast,
 } from "./insights";
 import { ResponseVersion } from "./response-version";
+import { recoveryDeadlineMs, recoveryReducer, type RecoveryEvent, type RecoveryLinkState } from "./recovery";
 import type {
   AccountStats,
   AdminAccount,
@@ -564,22 +566,85 @@ function JoinSwitch({ current, busy, onConfirm, onCancel }: { current: PassportP
   );
 }
 
-function MemberRecovery({ token, onAccess }: { token: string; onAccess: (principal: PassportPrincipal) => void }) {
+export function RecoveryUnavailable() {
+  return (
+    <Threshold title="Recovery link unavailable" lede="This link has expired, was already used, or has been replaced.">
+      <div className="threshold-actions">
+        <button className="threshold-submit" onClick={() => { window.history.replaceState(null, "", "/"); window.location.reload(); }}>Go to sign in</button>
+      </div>
+    </Threshold>
+  );
+}
+
+export function MemberRecovery({ token, onAccess }: { token: string; onAccess: (principal: PassportPrincipal) => void }) {
+  const [state, setState] = useState<RecoveryLinkState>({ phase: "checking" });
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmationTouched, setConfirmationTouched] = useState(false);
   const mismatch = confirmationTouched && password !== confirmation;
+
+  // The form only exists after the backend confirms the token is live.
+  const validate = useCallback(async () => {
+    let event: RecoveryEvent;
+    try {
+      event = { type: "recheck", ...(await recoverMemberStatus(token)) };
+    } catch {
+      event = { type: "recheck", valid: false };
+    }
+    setState((current) => recoveryReducer(current, event));
+  }, [token]);
+  useEffect(() => { void (async () => {
+    let event: RecoveryEvent;
+    try {
+      event = { type: "status", ...(await recoverMemberStatus(token)) };
+    } catch {
+      event = { type: "status", valid: false };
+    }
+    setState((current) => recoveryReducer(current, event));
+  })(); }, [token]);
+
+  // Server-provided deadline: once reached locally the form disappears even
+  // without a recheck. The countdown is a convenience, never the authority.
+  useEffect(() => {
+    if (state.phase !== "ready") return;
+    const timer = window.setTimeout(() => setState({ phase: "unavailable" }), recoveryDeadlineMs(state.expiresAt));
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  // Tokens can be consumed in another tab: revalidate whenever this tab
+  // regains focus or becomes visible again.
+  useEffect(() => {
+    if (state.phase !== "ready") return;
+    const onVisibility = () => { if (document.visibilityState === "visible") void validate(); };
+    window.addEventListener("focus", validate);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { window.removeEventListener("focus", validate); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [state.phase, validate]);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setConfirmationTouched(true);
     if (password !== confirmation) { setError("Passwords must match."); return; }
     setBusy(true); setError("");
     try { onAccess(await redeemMemberRecovery(token, password)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "This recovery link is unavailable."); }
+    catch (cause) {
+      const message = cause instanceof Error ? cause.message : "This recovery link is unavailable.";
+      setError(message);
+      if (/unavailable/i.test(message)) void validate();
+    }
     finally { setBusy(false); }
   };
+
+  if (state.phase === "checking") {
+    return (
+      <Threshold title="Checking your recovery link…" lede="Verifying that this link is still valid.">
+        <div className="threshold-actions"><button className="threshold-submit" disabled>Checking…</button></div>
+      </Threshold>
+    );
+  }
+  if (state.phase === "unavailable") return <RecoveryUnavailable />;
   return (
     <Threshold title="Set your password" lede="This link works once and expires 30 minutes after it was issued.">
       <form className="threshold-form" onSubmit={submit}>

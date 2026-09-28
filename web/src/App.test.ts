@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { loadAdminAccounts, mutateAccount, operatorBootstrap, reloadAccounts } from "./api";
-import { AccountResetWindows, formatAPIValue, isArmedAccountAction, Models, poolSurplus, providerDisplay, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
+import { loadAdminAccounts, mutateAccount, operatorBootstrap, reloadAccounts, recoverMemberStatus } from "./api";
+import { AccountResetWindows, formatAPIValue, isArmedAccountAction, MemberRecovery, Models, poolSurplus, providerDisplay, RecoveryUnavailable, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
 function renderWindows(resetWindows: ResetWindowPolicy, overrides: Partial<AccountStats> = {}) {
@@ -141,6 +141,43 @@ describe("operator bootstrap", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["X-Admin-Token"]).toBe("configured-admin-token");
     expect((init.credentials as string) || "").not.toBe("");
+  });
+});
+
+describe("member recovery gating", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("asks the backend for link status before any form renders", () => {
+    const markup = renderToStaticMarkup(createElement(MemberRecovery, { token: "tok", onAccess: () => undefined }));
+    expect(markup).toContain("Checking your recovery link");
+    expect(markup).not.toContain("Set password");
+    expect(markup).not.toContain('type="password"');
+  });
+
+  it("renders the unavailable screen without any password field", () => {
+    const markup = renderToStaticMarkup(createElement(RecoveryUnavailable));
+    expect(markup).toContain("Recovery link unavailable");
+    expect(markup).toContain("expired, was already used, or has been replaced");
+    expect(markup).not.toContain('type="password"');
+  });
+
+  it("posts the token to the live status endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ valid: true, expires_at: "2030-01-01T00:00:00Z", expires_in_seconds: 900 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const status = await recoverMemberStatus("tok-1");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/auth/recover/status");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("same-origin");
+    expect(JSON.parse(init.body as string)).toEqual({ token: "tok-1" });
+    expect(status.valid).toBe(true);
+    expect(status.expires_in_seconds).toBe(900);
   });
 });
 
