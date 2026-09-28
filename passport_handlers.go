@@ -83,13 +83,6 @@ func (h *proxyHandler) authorizePoolCredentialRequest(r *http.Request) (identity
 		}
 		return identity, principalID, clientID, kind, allowed
 	}
-	if h.poolUsers != nil {
-		user := h.poolUsers.Get(identity)
-		if user != nil && !user.Disabled {
-			return identity, identity, "legacy-" + identity, kind, true
-		}
-		return identity, "", "", kind, false
-	}
 	// Production startup requires Passport. Preserve the former signed-token
 	// behavior only for directly constructed handlers used by embedders and tests.
 	return identity, identity, "legacy-" + identity, kind, true
@@ -313,17 +306,16 @@ func (h *proxyHandler) handleOperatorBootstrap(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var q struct {
-		Username         string `json:"username"`
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		DisplayName      string `json:"display_name"`
-		LegacyCredential string `json:"legacy_credential"`
+		Username    string `json:"username"`
+		Email       string `json:"email"`
+		Password    string `json:"password"`
+		DisplayName string `json:"display_name"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		respondJSONError(w, http.StatusBadRequest, "invalid operator bootstrap request")
 		return
 	}
-	principal, err := h.passport.bootstrapOperator(q.Username, q.Email, q.DisplayName, q.Password, q.LegacyCredential)
+	principal, err := h.passport.bootstrapOperator(q.Username, q.Email, q.DisplayName, q.Password)
 	if err != nil {
 		status := http.StatusBadRequest
 		if err.Error() == "operator already exists" {

@@ -9,18 +9,17 @@ import (
 
 // ConfigFile represents the config.toml structure.
 type ConfigFile struct {
-	ListenAddr       string  `toml:"listen_addr"`
-	PoolDir          string  `toml:"pool_dir"`
-	DBPath           string  `toml:"db_path"`
-	MaxAttempts      int     `toml:"max_attempts"`
-	DisableRefresh   bool    `toml:"disable_refresh"`
-	RefreshProxyURL  string  `toml:"refresh_proxy_url"` // HTTP proxy for refresh operations
-	Debug            bool    `toml:"debug"`
-	PublicURL        string  `toml:"public_url"`
-	GrokBase         string  `toml:"grok_base"`
-	LegacyFriendCode string  `toml:"friend_code"` // transitional account-claim code and first-boot analytics salt seed
-	AdminToken       string  `toml:"admin_token"`
-	TierThreshold    float64 `toml:"tier_threshold"` // Secondary usage % threshold for tier preference (default 0.15)
+	ListenAddr      string  `toml:"listen_addr"`
+	PoolDir         string  `toml:"pool_dir"`
+	DBPath          string  `toml:"db_path"`
+	MaxAttempts     int     `toml:"max_attempts"`
+	DisableRefresh  bool    `toml:"disable_refresh"`
+	RefreshProxyURL string  `toml:"refresh_proxy_url"` // HTTP proxy for refresh operations
+	Debug           bool    `toml:"debug"`
+	PublicURL       string  `toml:"public_url"`
+	GrokBase        string  `toml:"grok_base"`
+	AdminToken      string  `toml:"admin_token"`
+	TierThreshold   float64 `toml:"tier_threshold"` // Secondary usage % threshold for tier preference (default 0.15)
 
 	// ExhaustionWaitSeconds holds requests while all accounts of a type are
 	// usage-exhausted, instead of failing fast with 503. 0 keeps the default.

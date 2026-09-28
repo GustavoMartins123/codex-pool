@@ -43,7 +43,7 @@ func authorityRequest(method, path string, session authoritySession, body string
 func TestAuthorityMatrix(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}

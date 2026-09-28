@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/subtle"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,14 +33,14 @@ func TestReleaseCredentialReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = db.Close() })
-		passport, err = newPassportStore(db, nil)
+		passport, err = newPassportStore(db)
 		if err != nil {
 			t.Fatal(err)
 		}
 	} else {
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "release-fixture-key")
 		var err error
-		passport, err = newPassportStore(testUsageStore(t).db, nil)
+		passport, err = newPassportStore(testUsageStore(t).db)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,8 +57,9 @@ func TestReleaseCredentialReplay(t *testing.T) {
 		if err != nil {
 			t.Fatal("stored client credential cannot be decrypted")
 		}
-		matched := passport.clientByDownloadToken(token)
-		if matched == nil || matched.ID != client.ID || matched.PrincipalID != client.PrincipalID {
+		digest := hashToken(token)
+		wantDigest := hex.EncodeToString(digest[:])
+		if subtle.ConstantTimeCompare([]byte(client.DownloadDigest), []byte(wantDigest)) != 1 {
 			t.Fatal("stored client credential no longer matches its digest")
 		}
 		principal := passport.principal(client.PrincipalID)

@@ -23,39 +23,77 @@ func testUsageStore(t *testing.T) *usageStore {
 	return s
 }
 
-func TestPassportMigratesLegacyUserAndClient(t *testing.T) {
+func legacyStoreWithUsers(users ...*PoolUser) *PoolUserStore {
+	legacy := &PoolUserStore{users: map[string]*PoolUser{}, byTok: map[string]*PoolUser{}}
+	for _, u := range users {
+		legacy.users[u.ID] = u
+		legacy.byTok[u.Token] = u
+	}
+	return legacy
+}
+
+func TestPassportFinalLegacyMigrationIsIdempotentAndSealsCredentials(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	legacy := &PoolUserStore{users: map[string]*PoolUser{}, byTok: map[string]*PoolUser{}}
 	u := &PoolUser{ID: "0123456789abcdef", Token: "download-old", Email: "friend@pool.local", PlanType: "pro", CreatedAt: time.Now()}
-	legacy.users[u.ID] = u
-	legacy.byTok[u.Token] = u
-	p, err := newPassportStore(s.db, legacy)
+	u2 := &PoolUser{ID: "disabled-user", Token: "download-disabled", Email: "off@pool.local", PlanType: "pro", CreatedAt: time.Now(), Disabled: true}
+	legacy := legacyStoreWithUsers(u, u2)
+
+	// Pre-existing operator proves migration no longer requires an empty store.
+	onboarding, err := createOperatorForTest(t, s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.principal(u.ID); got == nil || got.Note != "legacy: friend@pool.local" {
+	_ = onboarding
+
+	p, err := newPassportStore(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.migrateLegacyPoolUsers(legacy); err != nil {
+		t.Fatal(err)
+	}
+	got := p.principal(u.ID)
+	if got == nil || got.Kind != PrincipalGuest || got.Note != "legacy: friend@pool.local" || got.Status != PrincipalActive {
 		t.Fatalf("principal=%+v", got)
 	}
-	p.mu.RLock()
-	c := p.clients["legacy-"+u.ID]
-	p.mu.RUnlock()
-	if c == nil || c.Label != "LEGACY DEFAULT" {
-		t.Fatalf("client=%+v", c)
+	if off := p.principal(u2.ID); off == nil || off.Status != PrincipalSuspended {
+		t.Fatalf("disabled principal=%+v", off)
 	}
-	token, err := p.clientDownloadToken(c)
-	if err != nil {
+	p.mu.RLock()
+	clients := 0
+	for _, c := range p.clients {
+		if c.PrincipalID == u.ID {
+			clients++
+		}
+	}
+	p.mu.RUnlock()
+	if clients != 0 {
+		t.Fatalf("migration minted %d client credentials for a legacy user", clients)
+	}
+
+	// Re-running (or a re-added pool_users.json) must not duplicate anything.
+	if err := p.migrateLegacyPoolUsers(legacyStoreWithUsers(u, u2)); err != nil {
 		t.Fatal(err)
 	}
-	if token != u.Token {
-		t.Fatalf("download token = %q, want %q", token, u.Token)
+	if count := len(p.principals); count != 3 { // operator + two legacy users
+		t.Fatalf("principals after re-migration = %d", count)
 	}
+}
+
+func createOperatorForTest(t *testing.T, s *usageStore) (*Principal, error) {
+	t.Helper()
+	p, err := newPassportStore(s.db)
+	if err != nil {
+		return nil, err
+	}
+	return p.bootstrapOperator("operator", "op@pool.local", "Op", "OperatorLong2803!x")
 }
 
 func TestMemberOnboardingAndRecoveryLinksAreSingleUse(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,47 +130,22 @@ func TestMemberOnboardingAndRecoveryLinksAreSingleUse(t *testing.T) {
 	}
 }
 
-func TestLegacySignupClaimsExistingPrincipal(t *testing.T) {
-	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	store := testUsageStore(t)
-	legacy := &PoolUserStore{users: map[string]*PoolUser{}, byTok: map[string]*PoolUser{}}
-	user := &PoolUser{ID: "legacy-person", Token: "legacy-download-token", Email: "legacy@pool.local", PlanType: "pro", CreatedAt: time.Now()}
-	legacy.users[user.ID] = user
-	legacy.byTok[user.Token] = user
-	passport, err := newPassportStore(store.db, legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A legacy code must not create an operator on a fresh deployment.
-	if passport.hasOperator() {
-		t.Fatal("legacy signup created an operator")
-	}
-}
-
-func TestBootstrapOperatorClaimsLegacyCredential(t *testing.T) {
+func TestBootstrapOperatorCreatesFreshPrincipal(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-for-bootstrap")
 	store := testUsageStore(t)
-	legacy := &PoolUserStore{users: map[string]*PoolUser{}, byTok: map[string]*PoolUser{}}
-	user := &PoolUser{ID: "operator-person", Token: "operator-download-token", Email: "operator@pool.local", PlanType: "pro", CreatedAt: time.Now()}
-	legacy.users[user.ID] = user
-	legacy.byTok[user.Token] = user
-	passport, err := newPassportStore(store.db, legacy)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := generateClaudeAuth(getPoolJWTSecret(), user)
+	principal, err := passport.bootstrapOperator("operator", "op@pool.local", "Nicole", "NicoleLong2803!")
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := passport.bootstrapOperator("operator", "", "Nicole", "NicoleLong2803!", credential.AccessToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if principal.ID != user.ID || principal.Kind != PrincipalOperator || principal.Username != "operator" {
+	if principal.Kind != PrincipalOperator || principal.Username != "operator" || principal.Note != "operator" {
 		t.Fatalf("operator=%+v", principal)
 	}
-	if _, err := passport.bootstrapOperator("another", "", "", "another-long-password", ""); err == nil {
+	if _, err := passport.bootstrapOperator("another", "", "", "another-long-password"); err == nil {
 		t.Fatal("second operator bootstrap succeeded")
 	}
 }
@@ -153,7 +166,7 @@ func TestPasswordRoundTrip(t *testing.T) {
 func TestLoginRejectsSuspendedPrincipal(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +196,7 @@ func newLoginBruteForceHandler(t *testing.T) *proxyHandler {
 	t.Helper()
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +266,7 @@ func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 func TestClientCredentialLimitAndLabel(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +287,7 @@ func newPassportWithTwoMembers(t *testing.T) (*PassportStore, *Principal, *Princ
 	t.Helper()
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +351,7 @@ func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-join")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +385,7 @@ func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
 func TestRedeemJoinRejectsExpiredPrincipal(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +414,7 @@ func TestJoinSwitchDoesNotPromptForRevokedOrExpiredLink(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-join-switch")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +472,7 @@ func TestJoinSwitchDoesNotPromptForRevokedOrExpiredLink(t *testing.T) {
 func TestCredentialCutoffInvalidatesEveryEnvelope(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +495,6 @@ func TestCredentialCutoffInvalidatesEveryEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldDownload := client.DownloadToken
 
 	if _, err = p.setPrincipalStatus("operator", principal.ID, PrincipalSuspended); err != nil {
 		t.Fatal(err)
@@ -508,9 +520,6 @@ func TestCredentialCutoffInvalidatesEveryEnvelope(t *testing.T) {
 	assertDenied("gemini api key", id, at, ok)
 	id, at, ok = parseClaudePoolCredential("test-jwt-secret", oldClaude.AccessToken)
 	assertDenied("claude", id, at, ok)
-	if p.clientByDownloadToken(oldDownload) != nil {
-		t.Fatal("old setup token survived principal suspension")
-	}
 
 	pr, activeClient, ok := p.credentialState(identity)
 	if !ok {
@@ -533,10 +542,10 @@ func TestCredentialCutoffInvalidatesEveryEnvelope(t *testing.T) {
 	}
 }
 
-func TestSignedAndLegacyRefreshCutoffs(t *testing.T) {
+func TestSignedRefreshCutoffsAndLegacyRefreshRejected(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,12 +555,8 @@ func TestSignedAndLegacyRefreshCutoffs(t *testing.T) {
 	}
 	identity := principal.ID + "-c-" + client.ID
 	legacy := "poolrt_" + identity + "_legacy"
-	parsedIdentity, _, signed, ok := parsePoolRefreshToken("test-jwt-secret", legacy)
-	if !ok || signed || parsedIdentity != identity {
-		t.Fatal("legacy refresh token did not parse")
-	}
-	if _, _, allowed := p.authorizeLegacyRefresh(identity); !allowed {
-		t.Fatal("legacy refresh rejected before first cutoff")
+	if _, _, _, ok := parsePoolRefreshToken("test-jwt-secret", legacy); ok {
+		t.Fatal("legacy unsigned refresh token was accepted")
 	}
 	old := generatePoolRefreshToken("test-jwt-secret", identity, time.Now().UTC())
 	if _, err = p.setPrincipalStatus("operator", principal.ID, PrincipalSuspended); err != nil {
@@ -559,9 +564,6 @@ func TestSignedAndLegacyRefreshCutoffs(t *testing.T) {
 	}
 	if _, err = p.setPrincipalStatus("operator", principal.ID, PrincipalActive); err != nil {
 		t.Fatal(err)
-	}
-	if _, _, allowed := p.authorizeLegacyRefresh(identity); allowed {
-		t.Fatal("legacy refresh survived first cutoff")
 	}
 	parsedIdentity, issuedAt, signed, ok := parsePoolRefreshToken("test-jwt-secret", old)
 	if !ok || !signed {

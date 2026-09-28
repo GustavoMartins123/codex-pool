@@ -297,12 +297,15 @@ func TestClaudePoolToken_FormatAndBackwardCompatibility(t *testing.T) {
 		t.Fatalf("isClaudePoolToken failed: ok=%v uid=%q want=%q", ok, uid, userID)
 	}
 
-	// Legacy prefix should continue to work for already-issued tokens.
-	legacy := ClaudePoolTokenLegacyPrefix + strings.TrimPrefix(tok, ClaudePoolTokenPrefix)
-	if uid, ok := parseClaudePoolToken(secret, legacy); !ok || uid != userID {
-		t.Fatalf("legacy parseClaudePoolToken failed: ok=%v uid=%q want=%q", ok, uid, userID)
+	// The retired legacy prefix must be rejected outright.
+	legacy := "sk-ant-api-pool-" + strings.TrimPrefix(tok, ClaudePoolTokenPrefix)
+	if uid, ok := parseClaudePoolToken(secret, legacy); ok {
+		t.Fatalf("legacy parseClaudePoolToken accepted retired prefix: uid=%q", uid)
 	}
-	if ok, uid := isClaudePoolToken(secret, "Bearer "+legacy); !ok || uid != userID {
-		t.Fatalf("legacy isClaudePoolToken failed: ok=%v uid=%q want=%q", ok, uid, userID)
+	if ok, uid := isClaudePoolToken(secret, "Bearer "+legacy); ok {
+		t.Fatalf("legacy isClaudePoolToken accepted retired prefix: uid=%q", uid)
+	}
+	if _, _, ok := parseClaudePoolCredential(secret, legacy); ok {
+		t.Fatal("legacy parseClaudePoolCredential accepted retired prefix")
 	}
 }

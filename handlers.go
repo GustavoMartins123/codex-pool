@@ -337,10 +337,16 @@ func (h *proxyHandler) clearAllRateLimits(w http.ResponseWriter) {
 // purgeAnonymousUsers removes all usage data for users that are not registered pool users.
 func (h *proxyHandler) purgeAnonymousUsers(w http.ResponseWriter) {
 	allowed := make(map[string]bool)
-	if h.poolUsers != nil {
-		for _, u := range h.poolUsers.List() {
-			allowed[u.ID] = true
+	if h.passport != nil {
+		h.passport.mu.RLock()
+		for principalID, principal := range h.passport.principals {
+			allowed[principalID] = true
+			_ = principal
 		}
+		for _, client := range h.passport.clients {
+			allowed[client.PrincipalID+"-c-"+client.ID] = true
+		}
+		h.passport.mu.RUnlock()
 	}
 
 	deleted, err := h.store.purgeNonPoolUsers(allowed)
@@ -485,7 +491,7 @@ func (h *proxyHandler) serveTokenCapacity(w http.ResponseWriter) {
 
 func (h *proxyHandler) serveFakeOAuthToken(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a pool credential refresh request.
-	if r.Method == http.MethodPost && (h.poolUsers != nil || h.passport != nil) {
+	if r.Method == http.MethodPost && h.passport != nil {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
 			RefreshToken string `json:"refresh_token"`
@@ -525,8 +531,6 @@ func (h *proxyHandler) handlePoolUserRefresh(w http.ResponseWriter, refreshToken
 	if h.passport != nil {
 		if signed {
 			_, _, ok = h.passport.authorizeIssuedCredential(identity, issuedAt)
-		} else {
-			_, _, ok = h.passport.authorizeLegacyRefresh(identity)
 		}
 		if ok {
 			pr, client, active := h.passport.credentialState(identity)
@@ -540,11 +544,6 @@ func (h *proxyHandler) handlePoolUserRefresh(w http.ResponseWriter, refreshToken
 				}
 				user = &PoolUser{ID: identity, Email: pr.Email, PlanType: pr.PlanType, CreatedAt: client.CreatedAt, credentialIssuedAt: nextIssuedAt}
 			}
-		}
-	} else if h.poolUsers != nil {
-		user = h.poolUsers.Get(identity)
-		if user != nil && user.Disabled {
-			user = nil
 		}
 	}
 	if user == nil {

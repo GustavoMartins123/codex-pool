@@ -71,7 +71,6 @@ type config struct {
 	originRetention            time.Duration // Retain origin metadata at most this long (0 = unlimited)
 	storePath                  string
 	retentionDays              int
-	legacyFriendCode           string
 	adminToken                 string
 	backupDir                  string
 	restoreManifest            string
@@ -277,7 +276,6 @@ func buildConfig() *config {
 	cfg.originHashWindow = time.Duration(getConfigInt("PROXY_ORIGIN_HASH_WINDOW_HOURS", fileCfg.OriginHashWindowHours, 0)) * time.Hour
 	cfg.originRetention = time.Duration(getConfigInt("PROXY_ORIGIN_RETENTION_DAYS", fileCfg.OriginRetentionDays, 0)) * 24 * time.Hour
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
-	cfg.legacyFriendCode = getConfigString("FRIEND_CODE", fileCfg.LegacyFriendCode, "")
 	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
 	cfg.retentionDays = 30
 	if v := getenv("PROXY_USAGE_RETENTION_DAYS", ""); v != "" {
@@ -622,23 +620,23 @@ func main() {
 		log.Printf("ignoring refresh_proxy_url; token refreshes always use direct server egress")
 	}
 
-	// Initialize pool users store if configured
-	var poolUsers *PoolUserStore
-	// Pool users require a JWT secret. Admin token or friend code provides access control.
+	// The retired pool_users.json store is read once for the final Passport
+	// migration and never consulted again during runtime.
+	var legacyPoolUsers *PoolUserStore
 	if getPoolJWTSecret() != "" {
-		poolUsersPath := getPoolUsersPath()
 		var err error
-		poolUsers, err = newPoolUserStore(poolUsersPath)
+		legacyPoolUsers, err = newPoolUserStore(getPoolUsersPath())
 		if err != nil {
-			log.Printf("warning: failed to load pool users: %v", err)
-		} else {
-			log.Printf("pool users enabled (%d users)", len(poolUsers.List()))
+			log.Printf("warning: failed to load legacy pool users: %v", err)
 		}
 	}
 
-	passport, passportErr := newPassportStore(store.db, poolUsers, cfg.legacyFriendCode)
+	passport, passportErr := newPassportStore(store.db)
 	if passportErr != nil {
 		log.Fatalf("failed to initialize Pool Passport: %v", passportErr)
+	}
+	if err := passport.migrateLegacyPoolUsers(legacyPoolUsers); err != nil {
+		log.Printf("warning: legacy pool users migration failed: %v", err)
 	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
 	experiments, err := newExperimentTracker(store.db, cfg.experiments)
@@ -704,7 +702,6 @@ func main() {
 		antigravityTransport: antigravityTransport,
 		refreshTransport:     refreshTransport,
 		pool:                 pool,
-		poolUsers:            poolUsers,
 		passport:             passport,
 		registry:             registry,
 		store:                store,
@@ -865,7 +862,6 @@ type proxyHandler struct {
 	antigravityTransport http.RoundTripper
 	refreshTransport     http.RoundTripper // Separate transport for refresh ops (may use proxy)
 	pool                 *poolState
-	poolUsers            *PoolUserStore
 	passport             *PassportStore
 	registry             *ProviderRegistry
 	store                *usageStore
@@ -5398,9 +5394,9 @@ func looksLikeProviderCredential(authHeader string) (bool, AccountType) {
 		return false, ""
 	}
 
-	// Pool-generated Claude tokens (current and legacy) should NOT be passed through.
-	// These are fake Claude OAuth/API-looking tokens that identify pool users.
-	if strings.HasPrefix(token, ClaudePoolTokenPrefix) || strings.HasPrefix(token, ClaudePoolTokenLegacyPrefix) {
+	// Pool-generated Claude tokens should NOT be passed through. The retired
+	// legacy prefix is matched literally so stale tokens never reach upstream.
+	if strings.HasPrefix(token, ClaudePoolTokenPrefix) || strings.HasPrefix(token, "sk-ant-api-pool-") {
 		return false, ""
 	}
 

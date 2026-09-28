@@ -12,7 +12,7 @@ import (
 // principal body, otherwise the dashboard renders and then 401s.
 func TestOperatorBootstrapSetsSession(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	p, err := newPassportStore(testUsageStore(t).db, nil)
+	p, err := newPassportStore(testUsageStore(t).db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestOperatorBootstrapSetsSession(t *testing.T) {
 
 func TestOperatorBootstrapRequiresAdminToken(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	p, err := newPassportStore(testUsageStore(t).db, nil)
+	p, err := newPassportStore(testUsageStore(t).db)
 	if err != nil {
 		t.Fatal(err)
 	}

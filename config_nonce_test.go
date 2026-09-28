@@ -18,7 +18,7 @@ func newNonceTestPassport(t *testing.T) (*PassportStore, *ClientCredential) {
 	t.Helper()
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}

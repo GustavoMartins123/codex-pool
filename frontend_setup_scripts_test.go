@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestServeCodexSetupScript_PowerShell(t *testing.T) {
@@ -291,31 +290,31 @@ func TestServePiSetupScriptMergesProviders(t *testing.T) {
 	}
 }
 
+func newSetupScriptHandler(t *testing.T) (*proxyHandler, string) {
+	t.Helper()
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	passport, err := newPassportStore(testUsageStore(t).db)
+	if err != nil {
+		t.Fatalf("newPassportStore: %v", err)
+	}
+	_, _, client, _, err := passport.createGuest("operator", "setup tester", "S", nil)
+	if err != nil {
+		t.Fatalf("createGuest: %v", err)
+	}
+	nonce, _, err := passport.mintConfigDownloadNonce(client)
+	if err != nil {
+		t.Fatalf("mintConfigDownloadNonce: %v", err)
+	}
+	return &proxyHandler{cfg: &config{}, passport: passport}, nonce
+}
+
 func TestServeGeminiSetupScript_PowerShell(t *testing.T) {
 	secret := "test-secret-key-12345678901234567890"
 	t.Setenv("POOL_JWT_SECRET", secret)
 
-	tmpDir := t.TempDir()
-	usersPath := filepath.Join(tmpDir, "pool_users.json")
-	store, err := newPoolUserStore(usersPath)
-	if err != nil {
-		t.Fatalf("newPoolUserStore: %v", err)
-	}
+	h, nonce := newSetupScriptHandler(t)
 
-	user := &PoolUser{
-		ID:        "user123",
-		Token:     "tok123",
-		Email:     "test@example.com",
-		PlanType:  "pro",
-		CreatedAt: time.Now(),
-	}
-	if err := store.Create(user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	h := &proxyHandler{poolUsers: store}
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/gemini/tok123?shell=powershell", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/gemini/"+nonce+"?shell=powershell", nil)
 	rr := httptest.NewRecorder()
 	h.serveGeminiSetupScript(rr, req)
 
@@ -332,25 +331,17 @@ func TestServeGeminiSetupScript_PowerShell(t *testing.T) {
 	if strings.Contains(body, "`") {
 		t.Fatalf("PowerShell script should not contain backticks (Go raw string safety), got:\n%s", body)
 	}
-}
 
-func newTestPoolUserStoreWithUser(t *testing.T, token string) *PoolUserStore {
-	t.Helper()
-	tmpDir := t.TempDir()
-	usersPath := filepath.Join(tmpDir, "pool_users.json")
-	store, err := newPoolUserStore(usersPath)
-	if err != nil {
-		t.Fatalf("newPoolUserStore: %v", err)
+	legacy := httptest.NewRequest(http.MethodGet, "http://example.com/setup/gemini/old-legacy-token", nil)
+	legacyRR := httptest.NewRecorder()
+	h.serveGeminiSetupScript(legacyRR, legacy)
+	if legacyRR.Code != http.StatusNotFound {
+		t.Fatalf("legacy token status = %d, want 404", legacyRR.Code)
 	}
-	user := &PoolUser{ID: "user-" + token, Token: token, Email: token + "@example.com", PlanType: "pro", CreatedAt: time.Now()}
-	if err := store.Create(user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	return store
 }
 
 func TestPassportSPAServesReactSignalRoom(t *testing.T) {
-	h := &proxyHandler{cfg: &config{legacyFriendCode: "peepee"}}
+	h := &proxyHandler{cfg: &config{}}
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/app", nil)
 	rr := httptest.NewRecorder()
 
@@ -373,7 +364,7 @@ func TestPassportSPAServesReactSignalRoom(t *testing.T) {
 }
 
 func TestServeSignalRoomAsset(t *testing.T) {
-	h := &proxyHandler{cfg: &config{legacyFriendCode: "peepee"}}
+	h := &proxyHandler{cfg: &config{}}
 	page := httptest.NewRecorder()
 	h.servePassportSPA(page, httptest.NewRequest(http.MethodGet, "http://example.com/app", nil))
 	body := page.Body.String()
@@ -425,8 +416,8 @@ func TestServeCuteCodeSetupScript_Bash(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", secret)
 	t.Setenv("PUBLIC_URL", "")
 
-	h := &proxyHandler{poolUsers: newTestPoolUserStoreWithUser(t, "tok-cute")}
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/cute-code/tok-cute", nil)
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/cute-code/"+nonce, nil)
 	rr := httptest.NewRecorder()
 	h.serveCuteCodeSetupScript(rr, req)
 
@@ -436,7 +427,7 @@ func TestServeCuteCodeSetupScript_Bash(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"https://git.irrigate.cc/pp/cute-code/raw/branch/main/install.sh",
-		"/config/cute-code/tok-cute",
+		"/config/cute-code/" + nonce,
 		"CLAUDE_DIR=\"${CLAUDE_CONFIG_DIR:-$HOME/.claude}\"",
 		"cute-code --model gpt-6-astra",
 	} {
@@ -451,8 +442,8 @@ func TestServeCuteCodeSetupScript_PowerShell(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", secret)
 	t.Setenv("PUBLIC_URL", "")
 
-	h := &proxyHandler{poolUsers: newTestPoolUserStoreWithUser(t, "tok-cute-ps")}
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/cute-code/tok-cute-ps?shell=powershell", nil)
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/cute-code/"+nonce+"?shell=powershell", nil)
 	rr := httptest.NewRecorder()
 	h.serveCuteCodeSetupScript(rr, req)
 
@@ -462,7 +453,7 @@ func TestServeCuteCodeSetupScript_PowerShell(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"https://git.irrigate.cc/pp/cute-code/raw/branch/main/install.ps1",
-		"/config/cute-code/tok-cute-ps",
+		"/config/cute-code/" + nonce,
 		"$claudeDir = $env:CLAUDE_CONFIG_DIR",
 		"cute-code --model gpt-6-astra",
 	} {
@@ -477,8 +468,8 @@ func TestServeCuteCodeSettingsConfig(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", secret)
 	t.Setenv("PUBLIC_URL", "")
 
-	h := &proxyHandler{poolUsers: newTestPoolUserStoreWithUser(t, "tok-cute-config")}
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/config/cute-code/tok-cute-config", nil)
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/config/cute-code/"+nonce, nil)
 	rr := httptest.NewRecorder()
 	h.serveCuteCodeSettingsConfig(rr, req)
 
@@ -518,20 +509,8 @@ func TestServeClaudeSetupScript_BashClearsConflictingClaudeAuth(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", secret)
 	t.Setenv("PUBLIC_URL", "")
 
-	tmpDir := t.TempDir()
-	usersPath := filepath.Join(tmpDir, "pool_users.json")
-	store, err := newPoolUserStore(usersPath)
-	if err != nil {
-		t.Fatalf("newPoolUserStore: %v", err)
-	}
-
-	user := &PoolUser{ID: "user789", Token: "tok789", Email: "test3@example.com", PlanType: "pro", CreatedAt: time.Now()}
-	if err := store.Create(user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	h := &proxyHandler{poolUsers: store}
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/tok789", nil)
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/"+nonce, nil)
 	rr := httptest.NewRecorder()
 	h.serveClaudeSetupScript(rr, req)
 
@@ -551,6 +530,13 @@ func TestServeClaudeSetupScript_BashClearsConflictingClaudeAuth(t *testing.T) {
 			t.Fatalf("expected bash script to contain %q, got:\n%s", want, body)
 		}
 	}
+
+	legacy := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/old-legacy-token", nil)
+	legacyRR := httptest.NewRecorder()
+	h.serveClaudeSetupScript(legacyRR, legacy)
+	if legacyRR.Code != http.StatusNotFound {
+		t.Fatalf("legacy token status = %d, want 404", legacyRR.Code)
+	}
 }
 
 func TestServeClaudeSetupScript_PowerShell(t *testing.T) {
@@ -560,27 +546,9 @@ func TestServeClaudeSetupScript_PowerShell(t *testing.T) {
 	// Ensure env is not contaminated by user-specific settings during test runs.
 	t.Setenv("PUBLIC_URL", "")
 
-	tmpDir := t.TempDir()
-	usersPath := filepath.Join(tmpDir, "pool_users.json")
-	store, err := newPoolUserStore(usersPath)
-	if err != nil {
-		t.Fatalf("newPoolUserStore: %v", err)
-	}
+	h, nonce := newSetupScriptHandler(t)
 
-	user := &PoolUser{
-		ID:        "user456",
-		Token:     "tok456",
-		Email:     "test2@example.com",
-		PlanType:  "pro",
-		CreatedAt: time.Now(),
-	}
-	if err := store.Create(user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	h := &proxyHandler{poolUsers: store}
-
-	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/tok456?shell=powershell", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/claude/"+nonce+"?shell=powershell", nil)
 	rr := httptest.NewRecorder()
 	h.serveClaudeSetupScript(rr, req)
 

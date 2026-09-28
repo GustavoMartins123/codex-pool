@@ -133,7 +133,6 @@ export interface AccountStats {
 export interface PoolStats {
   total_accounts: number;
   active_accounts: number;
-  total_pool_users: number;
   last_24h_tokens?: number;
   accounts: AccountStats[];
   aggregate: {

@@ -1,4 +1,4 @@
-﻿import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import {
   Area,

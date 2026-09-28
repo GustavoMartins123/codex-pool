@@ -34,7 +34,8 @@ func poolCredentialIssuedAt(user *PoolUser) time.Time {
 	return now
 }
 
-// PoolUserStore manages pool user persistence.
+// PoolUserStore is the read-only reader for the retired pool_users.json
+// store, kept solely for the one-shot Passport migration at startup.
 type PoolUserStore struct {
 	mu    sync.RWMutex
 	path  string
@@ -74,38 +75,6 @@ func (s *PoolUserStore) load() error {
 	return nil
 }
 
-func (s *PoolUserStore) save() error {
-	users := make([]*PoolUser, 0, len(s.users))
-	for _, u := range s.users {
-		users = append(users, u)
-	}
-	data, err := json.MarshalIndent(users, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.path, data, 0o600)
-}
-
-func (s *PoolUserStore) Create(u *PoolUser) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.users[u.ID] = u
-	s.byTok[u.Token] = u
-	return s.save()
-}
-
-func (s *PoolUserStore) Get(id string) *PoolUser {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.users[id]
-}
-
-func (s *PoolUserStore) GetByToken(token string) *PoolUser {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.byTok[token]
-}
-
 func (s *PoolUserStore) List() []*PoolUser {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -114,27 +83,6 @@ func (s *PoolUserStore) List() []*PoolUser {
 		out = append(out, u)
 	}
 	return out
-}
-
-func (s *PoolUserStore) GetByEmail(email string) *PoolUser {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, u := range s.users {
-		if u.Email == email {
-			return u
-		}
-	}
-	return nil
-}
-
-func (s *PoolUserStore) Disable(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if u, ok := s.users[id]; ok {
-		u.Disabled = true
-		return s.save()
-	}
-	return fmt.Errorf("user not found: %s", id)
 }
 
 // JWT generation
@@ -181,9 +129,6 @@ func parsePoolRefreshToken(secret, token string) (identity string, issuedAt time
 		return "", time.Time{}, false, false
 	}
 	parts := strings.Split(strings.TrimPrefix(token, "poolrt_"), "_")
-	if len(parts) == 2 {
-		return parts[0], time.Time{}, false, parts[0] != "" && parts[1] != ""
-	}
 	if len(parts) != 4 || parts[0] == "" || parts[2] == "" || parts[3] == "" {
 		return "", time.Time{}, false, false
 	}
@@ -587,12 +532,7 @@ func generateClaudeAuth(secret string, user *PoolUser) (*PoolUserClaudeAuth, err
 
 // ClaudePoolTokenPrefix is the prefix for pool-generated Claude tokens.
 // These look like real sk-ant-oat01 tokens but have a "pool" marker for detection.
-//
-// Note: we keep accepting the legacy sk-ant-api-pool-* prefix for backward compatibility
-// with already-issued tokens.
 const ClaudePoolTokenPrefix = "sk-ant-oat01-pool-"
-
-const ClaudePoolTokenLegacyPrefix = "sk-ant-api-pool-"
 
 // generateClaudePoolToken creates a fake Claude OAuth token with embedded pool user info.
 // Format: sk-ant-oat01-pool-<base64url(userID.timestamp.signature)>
@@ -622,8 +562,6 @@ func parseClaudePoolCredential(secret, token string) (string, time.Time, bool) {
 	switch {
 	case strings.HasPrefix(token, ClaudePoolTokenPrefix):
 		encoded = strings.TrimPrefix(token, ClaudePoolTokenPrefix)
-	case strings.HasPrefix(token, ClaudePoolTokenLegacyPrefix):
-		encoded = strings.TrimPrefix(token, ClaudePoolTokenLegacyPrefix)
 	default:
 		return "", time.Time{}, false
 	}

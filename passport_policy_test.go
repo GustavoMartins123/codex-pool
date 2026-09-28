@@ -15,7 +15,7 @@ func testPolicyPassport(t *testing.T) (*PassportStore, *ClientCredential) {
 	t.Helper()
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-policy-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestClientPolicyConcurrencyAndPersistentRequestBudget(t *testing.T) {
 	_, err = passport.beginPolicyRequest("policy-user", client.ID, policies, now)
 	requirePolicyCode(t, err, "policy_rate_limit_exceeded")
 
-	reloaded, err := newPassportStore(passport.db, nil)
+	reloaded, err := newPassportStore(passport.db)
 	if err != nil {
 		t.Fatal(err)
 	}

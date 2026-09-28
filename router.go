@@ -756,15 +756,6 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pool user admin routes
-	if strings.HasPrefix(r.URL.Path, "/admin/pool-users") {
-		if !h.checkAdminAuth(w, r) {
-			return
-		}
-		h.servePoolUsersAdmin(w, r)
-		return
-	}
-
 	// Provider mutations require an explicit operator unlock. The Claude OAuth
 	// callback remains public because it is invoked by the upstream redirect;
 	// exchanging that callback for credentials still requires admin auth.

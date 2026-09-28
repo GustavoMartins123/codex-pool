@@ -204,7 +204,7 @@ func (p *PassportStore) hasOperator() bool {
 	return false
 }
 
-func (p *PassportStore) bootstrapOperator(username, email, displayName, password, legacyCredential string) (*Principal, error) {
+func (p *PassportStore) bootstrapOperator(username, email, displayName, password string) (*Principal, error) {
 	if p.hasOperator() {
 		return nil, errors.New("operator already exists")
 	}
@@ -225,26 +225,11 @@ func (p *PassportStore) bootstrapOperator(username, email, displayName, password
 	if err != nil {
 		return nil, err
 	}
-
-	var principal *Principal
-	if token := strings.TrimSpace(legacyCredential); token != "" {
-		identity, issuedAt, ok := parseClaudePoolCredential(getPoolJWTSecret(), token)
-		if !ok {
-			return nil, errors.New("legacy credential is invalid")
-		}
-		principalID, _, allowed := p.authorizeIssuedCredential(identity, issuedAt)
-		if !allowed {
-			return nil, errors.New("legacy credential is no longer active")
-		}
-		principal = p.principal(principalID)
+	id, err := secureID(12)
+	if err != nil {
+		return nil, err
 	}
-	if principal == nil {
-		id, err := secureID(12)
-		if err != nil {
-			return nil, err
-		}
-		principal = &Principal{ID: id, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
-	}
+	principal := &Principal{ID: id, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
 	updated := *principal
 	updated.Kind = PrincipalOperator
 	updated.Status = PrincipalActive

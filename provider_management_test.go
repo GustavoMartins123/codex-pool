@@ -11,7 +11,7 @@ import (
 
 func TestProviderAdminRoutesRequireAdminToken(t *testing.T) {
 	h := &proxyHandler{
-		cfg:  &config{legacyFriendCode: "friend", adminToken: "admin"},
+		cfg:  &config{adminToken: "admin"},
 		pool: newPoolState([]*Account{{ID: "kimi", Type: AccountTypeKimi}}, false),
 	}
 

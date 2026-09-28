@@ -23,11 +23,10 @@ type StatusData struct {
 	MinimaxCount    int
 	ZAICount        int
 	GrokCount       int
-	PoolUsers       int
 	Accounts        []AccountStatus
 	TokenAnalytics  *TokenAnalytics
 	PoolUtilization []PoolUtilization `json:"pool_utilization,omitempty"`
-	Operator bool `json:"operator"`
+	Operator        bool              `json:"operator"`
 }
 
 // TokenAnalytics contains capacity estimation data for the status page.
@@ -172,10 +171,6 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 		GeneratedAt: now,
 		Uptime:      now.Sub(h.startTime),
 		Operator:    operator,
-	}
-
-	if operator && h.poolUsers != nil {
-		data.PoolUsers = len(h.poolUsers.List())
 	}
 
 	for _, a := range accounts {
@@ -527,12 +522,6 @@ const statusHTML = `<!DOCTYPE html>
         <div class="stat">
             <div class="stat-value">{{.GrokCount}}</div>
             <div class="stat-label">Grok</div>
-        </div>
-        {{end}}
-        {{if .PoolUsers}}
-        <div class="stat">
-            <div class="stat-value">{{.PoolUsers}}</div>
-            <div class="stat-label">Pool Users</div>
         </div>
         {{end}}
     </div>

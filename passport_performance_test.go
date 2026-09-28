@@ -21,7 +21,7 @@ func BenchmarkAuthorizePrincipal(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = store.Close() })
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -142,8 +142,8 @@ func analyticsBenchRows(b *testing.B) int {
 func seedAnalyticsFacts(b *testing.B, a *DuckAnalytics, rows int) {
 	b.Helper()
 	const (
-		principals  = 50
-		batchSize   = 10000
+		principals = 50
+		batchSize  = 10000
 	)
 	providers := []string{"codex", "claude", "gemini", "kimi", "minimax"}
 	models := []string{"gpt-5.6", "claude-opus-5", "gemini-3-pro", "kimi-k2", "minimax-m2"}

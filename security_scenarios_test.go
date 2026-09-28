@@ -20,7 +20,7 @@ import (
 func TestSecurityPrivilegeEscalation(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestSecurityPrivilegeEscalation(t *testing.T) {
 func TestSecurityModelPolicyEnforcement(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestSecurityModelPolicyEnforcement(t *testing.T) {
 func TestSecurityConversationDataIsolation(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestSecurityConversationDataIsolation(t *testing.T) {
 func TestSecurityClientCredentialIsolation(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
 func TestSecurityUnauthenticatedPassthroughOpenProxy(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	s := testUsageStore(t)
-	p, err := newPassportStore(s.db, nil)
+	p, err := newPassportStore(s.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,4 +689,3 @@ func TestSecurityUnboundedStainlessTimeout(t *testing.T) {
 		t.Fatalf("expected X-Stainless-Timeout to be clamped to %v, got %v", expectedCap, timeout)
 	}
 }
-

@@ -82,6 +82,39 @@ func (p *PassportStore) mintConfigDownloadNonce(client *ClientCredential) (strin
 	return nonce, expires, nil
 }
 
+func (p *PassportStore) peekConfigDownloadNonce(nonce string) *ClientCredential {
+	nonce = strings.TrimSpace(nonce)
+	if nonce == "" {
+		return nil
+	}
+	nonceDigest := hashToken(nonce)
+	digest := hex.EncodeToString(nonceDigest[:])
+	var clientID, principalID string
+	if p.db.View(func(tx *bbolt.Tx) error {
+		raw := tx.Bucket([]byte(bucketConfigNonces)).Get([]byte(digest))
+		if raw == nil {
+			return nil
+		}
+		var record configDownloadNonce
+		if json.Unmarshal(raw, &record) != nil || time.Now().UTC().After(record.ExpiresAt) {
+			return nil
+		}
+		clientID, principalID = record.ClientID, record.PrincipalID
+		return nil
+	}) != nil || clientID == "" {
+		return nil
+	}
+	p.mu.RLock()
+	stored := p.clients[clientID]
+	var client *ClientCredential
+	if stored != nil && stored.Status == "active" && stored.PrincipalID == principalID {
+		cp := *stored
+		client = &cp
+	}
+	p.mu.RUnlock()
+	return client
+}
+
 func (p *PassportStore) redeemConfigDownloadNonce(nonce string) *ClientCredential {
 	nonce = strings.TrimSpace(nonce)
 	if nonce == "" {
@@ -204,7 +237,7 @@ func passportAEADForSecret(secret string) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt ...string) (*PassportStore, error) {
+func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
 	if db == nil {
 		return nil, errors.New("passport requires bolt")
 	}
@@ -225,15 +258,10 @@ func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt .
 		}
 		salt := string(state.Get([]byte("analytics_salt")))
 		if salt == "" {
-			if len(legacyAnalyticsSalt) > 0 {
-				salt = strings.TrimSpace(legacyAnalyticsSalt[0])
-			}
-			if salt == "" {
-				var err error
-				salt, err = secureToken(32)
-				if err != nil {
-					return err
-				}
+			var err error
+			salt, err = secureToken(32)
+			if err != nil {
+				return err
 			}
 			if err := state.Put([]byte("analytics_salt"), []byte(salt)); err != nil {
 				return err
@@ -247,15 +275,58 @@ func newPassportStore(db *bbolt.DB, legacy *PoolUserStore, legacyAnalyticsSalt .
 	if err := p.load(); err != nil {
 		return nil, err
 	}
-	if len(p.principals) == 0 && legacy != nil {
-		if err := p.migrateLegacy(legacy.List()); err != nil {
-			return nil, err
-		}
-		if err := p.load(); err != nil {
-			return nil, err
-		}
-	}
 	return p, nil
+}
+
+const legacyPoolUsersMigratedKey = "legacy_pool_users_migrated"
+
+// migrateLegacyPoolUsers performs the final one-shot import of the retired
+// pool_users.json store. It preserves identity metadata only: no client
+// credential is created and pre-existing legacy- clients get a validity
+// cutoff so envelopes issued before the retirement stop authenticating.
+// A state marker makes the import idempotent and immune to a re-added file.
+func (p *PassportStore) migrateLegacyPoolUsers(legacy *PoolUserStore) error {
+	if legacy == nil || len(legacy.List()) == 0 {
+		return nil
+	}
+	migrated := false
+	err := p.db.Update(func(tx *bbolt.Tx) error {
+		state := tx.Bucket([]byte(bucketAnalyticsState))
+		if state == nil || state.Get([]byte(legacyPoolUsersMigratedKey)) != nil {
+			return nil
+		}
+		migrated = true
+		cutoff := nextCredentialCutoff(time.Now())
+		principals := tx.Bucket([]byte(bucketPrincipals))
+		clients := tx.Bucket([]byte(bucketClientCredentials))
+		for _, u := range legacy.List() {
+			if principals.Get([]byte(u.ID)) == nil {
+				status := PrincipalActive
+				if u.Disabled {
+					status = PrincipalSuspended
+				}
+				pr := Principal{ID: u.ID, Kind: PrincipalGuest, Status: status, Note: "legacy: " + u.Email, Email: u.Email, PlanType: u.PlanType, CreatedAt: u.CreatedAt}
+				if err := putJSON(principals, u.ID, &pr); err != nil {
+					return err
+				}
+			}
+			var client ClientCredential
+			if raw := clients.Get([]byte("legacy-" + u.ID)); raw != nil && json.Unmarshal(raw, &client) == nil {
+				client.ValidAfter = cutoff
+				if err := putJSON(clients, client.ID, &client); err != nil {
+					return err
+				}
+			}
+		}
+		if err := state.Put([]byte(legacyPoolUsersMigratedKey), []byte(time.Now().UTC().Format(time.RFC3339))); err != nil {
+			return err
+		}
+		return p.audit(tx, "system", "legacy.pool_users_migrated", "legacy", "")
+	})
+	if err != nil || !migrated {
+		return err
+	}
+	return p.load()
 }
 
 func (p *PassportStore) load() error {
@@ -288,38 +359,6 @@ func (p *PassportStore) load() error {
 		p.mu.Unlock()
 	}
 	return err
-}
-
-func (p *PassportStore) migrateLegacy(users []*PoolUser) error {
-	now := time.Now().UTC()
-	return p.db.Update(func(tx *bbolt.Tx) error {
-		pb := tx.Bucket([]byte(bucketPrincipals))
-		cb := tx.Bucket([]byte(bucketClientCredentials))
-		for _, u := range users {
-			status := PrincipalActive
-			if u.Disabled {
-				status = PrincipalSuspended
-			}
-			pr := Principal{ID: u.ID, Kind: PrincipalGuest, Status: status, Note: "legacy: " + u.Email, Email: u.Email, PlanType: u.PlanType, CreatedAt: u.CreatedAt}
-			cl := ClientCredential{ID: "legacy-" + u.ID, PrincipalID: u.ID, Label: "LEGACY DEFAULT", Status: "active", CreatedAt: now}
-			digest := hashToken(u.Token)
-			cl.DownloadDigest = hex.EncodeToString(digest[:])
-			sealed, err := p.seal("client", cl.ID, cl.PrincipalID, u.Token)
-			if err != nil {
-				return err
-			}
-			cl.DownloadCiphertext = sealed
-			pv, _ := json.Marshal(pr)
-			cv, _ := json.Marshal(cl)
-			if err := pb.Put([]byte(pr.ID), pv); err != nil {
-				return err
-			}
-			if err := cb.Put([]byte(cl.ID), cv); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func (p *PassportStore) seal(kind, id, principalID, plaintext string) ([]byte, error) {
@@ -595,28 +634,6 @@ func (p *PassportStore) authorizeIssuedCredential(identity string, issuedAt time
 	return pr.ID, client.ID, true
 }
 
-func (p *PassportStore) authorizeLegacyRefresh(identity string) (string, string, bool) {
-	pr, client, ok := p.credentialState(identity)
-	if !ok || !pr.CredentialsValidAfter.IsZero() || !client.ValidAfter.IsZero() {
-		return "", "", false
-	}
-	return pr.ID, client.ID, true
-}
-
-func (p *PassportStore) clientByDownloadToken(token string) *ClientCredential {
-	digest := hashToken(token)
-	want := hex.EncodeToString(digest[:])
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for _, c := range p.clients {
-		if subtle.ConstantTimeCompare([]byte(c.DownloadDigest), []byte(want)) == 1 {
-			cp := *c
-			cp.DownloadToken = token
-			return &cp
-		}
-	}
-	return nil
-}
 func (p *PassportStore) clientDownloadToken(c *ClientCredential) (string, error) {
 	if c.DownloadToken != "" {
 		return c.DownloadToken, nil
@@ -671,8 +688,6 @@ func (h *proxyHandler) originHashSalt() string {
 	salt := ""
 	if h != nil && h.passport != nil && h.passport.analyticsSalt != "" {
 		salt = h.passport.analyticsSalt
-	} else if h != nil && h.cfg != nil {
-		salt = poolHashSalt(h.cfg.legacyFriendCode)
 	} else {
 		salt = poolHashSalt("")
 	}

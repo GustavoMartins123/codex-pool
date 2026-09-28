@@ -119,20 +119,15 @@ func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Re
 	if secret == "" {
 		return nil, fmt.Errorf("JWT secret not configured")
 	}
-	var user *PoolUser
-	if h.passport != nil {
-		if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
-			user = passportClientAsPoolUser(h, client)
-		}
+	if h.passport == nil {
+		return nil, fmt.Errorf("passport not configured")
 	}
-	if user == nil && h.poolUsers != nil {
-		user = h.poolUsers.GetByToken(token)
+	var user *PoolUser
+	if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
+		user = passportClientAsPoolUser(h, client)
 	}
 	if user == nil {
 		return nil, fmt.Errorf("invalid token")
-	}
-	if user.Disabled {
-		return nil, fmt.Errorf("user disabled")
 	}
 	claudeAuth, err := generateClaudeAuth(secret, user)
 	if err != nil {
@@ -973,18 +968,15 @@ func (h *proxyHandler) serveGeminiSetupScript(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Validate token and get user to generate credentials
-	if h.poolUsers == nil {
-		http.Error(w, "pool users not configured", http.StatusServiceUnavailable)
+	if h.passport == nil {
+		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
 		return
 	}
-	user := h.poolUsers.GetByToken(token)
+	// The token is a single-use config nonce: peek (without consuming) so the
+	// generated script can still redeem it when fetching the config file.
+	user := passportClientAsPoolUser(h, h.passport.peekConfigDownloadNonce(token))
 	if user == nil {
 		http.Error(w, "invalid token", http.StatusNotFound)
-		return
-	}
-	if user.Disabled {
-		http.Error(w, "user disabled", http.StatusForbidden)
 		return
 	}
 
@@ -1142,17 +1134,13 @@ func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Req
 	}
 
 	// Validate token and get user
-	if h.poolUsers == nil {
-		http.Error(w, "pool users not configured", http.StatusServiceUnavailable)
+	if h.passport == nil {
+		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
 		return
 	}
-	user := h.poolUsers.GetByToken(token)
+	user := passportClientAsPoolUser(h, h.passport.peekConfigDownloadNonce(token))
 	if user == nil {
 		http.Error(w, "invalid token", http.StatusNotFound)
-		return
-	}
-	if user.Disabled {
-		http.Error(w, "user disabled", http.StatusForbidden)
 		return
 	}
 
@@ -1579,7 +1567,6 @@ func formatPlanWithTier(planType, tier string) string {
 type PoolStats struct {
 	TotalAccounts    int               `json:"total_accounts"`
 	ActiveAccounts   int               `json:"active_accounts"`
-	TotalPoolUsers   int               `json:"total_pool_users"`
 	Accounts         []AccountStats    `json:"accounts"`
 	AggregateUsage   AggregateStats    `json:"aggregate"`
 	CapacityAnalysis *CapacityAnalysis `json:"capacity_analysis,omitempty"`
@@ -1720,10 +1707,6 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 		TotalAccounts: len(accounts),
 		Accounts:      []AccountStats{},
 		GeneratedAt:   time.Now(),
-	}
-
-	if h.poolUsers != nil {
-		stats.TotalPoolUsers = len(h.poolUsers.List())
 	}
 
 	var totalInput, totalCached, totalOutput, totalReasoning, totalBillable int64

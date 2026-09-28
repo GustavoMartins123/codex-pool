@@ -7,145 +7,10 @@ import (
 	"time"
 )
 
-// Pool user admin handlers - JSON API only
-
-// servePoolUsersAdmin routes pool user admin requests (auth already checked by router)
-func (h *proxyHandler) servePoolUsersAdmin(w http.ResponseWriter, r *http.Request) {
-	if h.poolUsers == nil {
-		respondJSONError(w, http.StatusServiceUnavailable, "pool users not configured")
-		return
-	}
-
-	path := strings.TrimPrefix(r.URL.Path, "/admin/pool-users")
-	if path == "" {
-		path = "/"
-	}
-
-	switch {
-	case path == "/" && r.Method == http.MethodGet:
-		h.handlePoolUsersList(w, r)
-
-	case path == "/" && r.Method == http.MethodPost:
-		h.handlePoolUsersCreate(w, r)
-
-	case strings.HasPrefix(path, "/") && r.Method == http.MethodDelete:
-		id := strings.TrimPrefix(path, "/")
-		id = strings.TrimSuffix(id, "/")
-		h.handlePoolUserDelete(w, r, id)
-
-	// Support POST with /disable suffix for backwards compatibility
-	case strings.HasSuffix(path, "/disable") && r.Method == http.MethodPost:
-		id := strings.TrimPrefix(path, "/")
-		id = strings.TrimSuffix(id, "/disable")
-		h.handlePoolUserDelete(w, r, id)
-
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// GET /admin/pool-users - list all pool users
-func (h *proxyHandler) handlePoolUsersList(w http.ResponseWriter, r *http.Request) {
-	users := h.poolUsers.List()
-
-	type userInfo struct {
-		ID        string    `json:"id"`
-		Email     string    `json:"email"`
-		PlanType  string    `json:"plan_type"`
-		CreatedAt time.Time `json:"created_at"`
-		Disabled  bool      `json:"disabled"`
-	}
-
-	var result []userInfo
-	for _, u := range users {
-		result = append(result, userInfo{
-			ID:        u.ID,
-			Email:     u.Email,
-			PlanType:  u.PlanType,
-			CreatedAt: u.CreatedAt,
-			Disabled:  u.Disabled,
-		})
-	}
-
-	respondJSON(w, map[string]any{
-		"users": result,
-		"count": len(result),
-	})
-}
-
-// POST /admin/pool-users - create a new pool user
-func (h *proxyHandler) handlePoolUsersCreate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email    string `json:"email"`
-		PlanType string `json:"plan_type"`
-	}
-
-	if r.Header.Get("Content-Type") == "application/json" {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondJSONError(w, http.StatusBadRequest, "invalid json: "+err.Error())
-			return
-		}
-	} else {
-		req.Email = r.FormValue("email")
-		req.PlanType = r.FormValue("plan_type")
-	}
-
-	email := strings.TrimSpace(req.Email)
-	planType := req.PlanType
-	if planType == "" {
-		planType = "pro"
-	}
-
-	if email == "" {
-		respondJSONError(w, http.StatusBadRequest, "email is required")
-		return
-	}
-
-	user := &PoolUser{
-		ID:        randomHex(16),
-		Token:     randomHex(32),
-		Email:     email,
-		PlanType:  planType,
-		CreatedAt: time.Now(),
-	}
-
-	if err := h.poolUsers.Create(user); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	baseURL := h.getEffectivePublicURL(r)
-
-	respondJSON(w, map[string]any{
-		"user": map[string]any{
-			"id":         user.ID,
-			"email":      user.Email,
-			"plan_type":  user.PlanType,
-			"created_at": user.CreatedAt,
-		},
-		"token": user.Token,
-		"setup": map[string]string{
-			"codex_config":  baseURL + "/config/codex/" + user.Token,
-			"gemini_config": baseURL + "/config/gemini/" + user.Token,
-			"claude_config": baseURL + "/config/claude/" + user.Token,
-		},
-	})
-}
-
-// DELETE /admin/pool-users/:id - disable/delete a pool user
-func (h *proxyHandler) handlePoolUserDelete(w http.ResponseWriter, r *http.Request, id string) {
-	if err := h.poolUsers.Disable(id); err != nil {
-		respondJSONError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	respondJSON(w, map[string]any{
-		"success": true,
-		"id":      id,
-	})
-}
-
 func passportClientAsPoolUser(h *proxyHandler, client *ClientCredential) *PoolUser {
+	if client == nil {
+		return nil
+	}
 	if dl, err := h.passport.clientDownloadToken(client); err == nil {
 		client.DownloadToken = dl
 	}
@@ -170,7 +35,7 @@ func passportClientAsPoolUser(h *proxyHandler, client *ClientCredential) *PoolUs
 // Config download endpoints (no auth - token IS the auth)
 
 func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Request) {
-	if h.poolUsers == nil && h.passport == nil {
+	if h.passport == nil {
 		respondJSONError(w, http.StatusServiceUnavailable, "pool identities not configured")
 		return
 	}
@@ -207,13 +72,8 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 	}
 
 	var user *PoolUser
-	if h.passport != nil {
-		if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
-			user = passportClientAsPoolUser(h, client)
-		}
-	}
-	if user == nil && h.poolUsers != nil {
-		user = h.poolUsers.GetByToken(token)
+	if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
+		user = passportClientAsPoolUser(h, client)
 	}
 	if user == nil {
 		respondJSONError(w, http.StatusNotFound, "invalid or revoked token")

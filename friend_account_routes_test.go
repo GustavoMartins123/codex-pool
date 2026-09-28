@@ -12,7 +12,7 @@ import (
 )
 
 func TestRetiredFriendCodeNeverAuthenticates(t *testing.T) {
-	h := &proxyHandler{cfg: &config{legacyFriendCode: "legacy-salt-only", adminToken: "admin"}}
+	h := &proxyHandler{cfg: &config{adminToken: "admin"}}
 	for _, request := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/pool/stats?code=legacy-salt-only", nil),
 		httptest.NewRequest(http.MethodGet, "/api/pool/stats", nil),
@@ -81,7 +81,7 @@ func passportContributionRequest(method, path, sessionToken, csrf string, body [
 func TestAccountContributionRequiresCSRFAndBindsOAuthActor(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db, nil)
+	passport, err := newPassportStore(store.db)
 	if err != nil {
 		t.Fatal(err)
 	}
