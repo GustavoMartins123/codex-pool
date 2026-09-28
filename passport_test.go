@@ -24,10 +24,9 @@ func testUsageStore(t *testing.T) *usageStore {
 }
 
 func legacyStoreWithUsers(users ...*PoolUser) *PoolUserStore {
-	legacy := &PoolUserStore{users: map[string]*PoolUser{}, byTok: map[string]*PoolUser{}}
+	legacy := &PoolUserStore{users: map[string]*PoolUser{}}
 	for _, u := range users {
 		legacy.users[u.ID] = u
-		legacy.byTok[u.Token] = u
 	}
 	return legacy
 }

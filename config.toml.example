@@ -19,7 +19,7 @@ public_url = ""
 
 # Grok Code upstream and accounts
 # Accounts are loaded from pool/grok/*.json. You can paste/import ~/.grok auth JSON
-# from the friend admin page, or place pi-grok/simple auth JSON in that directory.
+# from the operator console, or place pi-grok/simple auth JSON in that directory.
 grok_base = "https://cli-chat-proxy.grok.com/v1"
 
 # Final metadata-only import of the retired pool-user store. When present at
@@ -27,7 +27,7 @@ grok_base = "https://cli-chat-proxy.grok.com/v1"
 # old tokens never authenticate. After the one-shot retirement completes, this
 # file is ignored forever.
 [pool_users]
-# Secret key retained for validating existing signed client credentials.
+# Stable signing key for pool-issued client credentials.
 jwt_secret = ""
 
 # Where to store pool user data

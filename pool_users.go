@@ -40,14 +40,12 @@ type PoolUserStore struct {
 	mu    sync.RWMutex
 	path  string
 	users map[string]*PoolUser // keyed by ID
-	byTok map[string]*PoolUser // keyed by download token
 }
 
 func newPoolUserStore(path string) (*PoolUserStore, error) {
 	s := &PoolUserStore{
 		path:  path,
 		users: make(map[string]*PoolUser),
-		byTok: make(map[string]*PoolUser),
 	}
 	if err := s.load(); err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -67,10 +65,8 @@ func (s *PoolUserStore) load() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.users = make(map[string]*PoolUser, len(users))
-	s.byTok = make(map[string]*PoolUser, len(users))
 	for _, u := range users {
 		s.users[u.ID] = u
-		s.byTok[u.Token] = u
 	}
 	return nil
 }
