@@ -1121,7 +1121,7 @@ function SetupPage() {
       manual: [
         { file: "~/.gemini/antigravity-cli/settings.json", body: '{\n  "modelProvider": "gemini"\n}', note: "Merge into the existing file, keeping other keys. GEMINI_API_KEY alone is not enough — modelProvider must be set." },
         { file: "shell profile exports", url: `${base}/config/antigravity/${nonce("antigravity")}`, note: "The one-time JSON returns api_key and base_url. Export GEMINI_API_KEY (api_key) and GOOGLE_GEMINI_BASE_URL (base_url) in your shell profile." },
-        { file: "disconnect from the pool", body: 'sed -i.bak \'/# >>> Antigravity Pool Configuration >>>/,/# <<< Antigravity Pool Configuration <<</d\' ~/.zshrc ~/.bashrc\nunset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL\n# Windows: [Environment]::SetEnvironmentVariable(\'GEMINI_API_KEY\', $null, \'User\')\n# Then remove "modelProvider" from ~/.gemini/antigravity-cli/settings.json to restore Google sign-in.', note: "Optional: revert to the default account sign-in." },
+        { file: "disconnect from the pool", body: 'sed -i.bak \'/# >>> Antigravity Pool Configuration >>>/,/# <<< Antigravity Pool Configuration <<</d\' ~/.zshrc ~/.bashrc\nunset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL\n# Windows: clear the persisted user-scope vars and the live session\n#   [Environment]::SetEnvironmentVariable(\'GEMINI_API_KEY\', $null, \'User\')\n#   [Environment]::SetEnvironmentVariable(\'GOOGLE_GEMINI_BASE_URL\', $null, \'User\')\n#   Remove-Item Env:GEMINI_API_KEY, Env:GOOGLE_GEMINI_BASE_URL -ErrorAction SilentlyContinue\n# Then remove "modelProvider" from ~/.gemini/antigravity-cli/settings.json to restore Google sign-in.', note: "Optional: revert to the default account sign-in." },
       ],
     },
     grok: {
