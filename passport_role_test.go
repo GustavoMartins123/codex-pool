@@ -44,6 +44,57 @@ func insertTestPrincipal(t *testing.T, p *PassportStore, id string, kind Princip
 	return member
 }
 
+func TestUsableOperatorInvariant(t *testing.T) {
+	p, first := testPassportWithOperator(t)
+	suspended := insertTestPrincipal(t, p, "suspended-member", PrincipalMember, "suspended-member", "s@local")
+	suspended.Status = PrincipalSuspended
+	expired := insertTestPrincipal(t, p, "expired-member", PrincipalMember, "expired-member", "e@local")
+	past := time.Now().Add(-time.Minute)
+	expired.ExpiresAt = &past
+	if _, err := p.setPrincipalKind(first.ID, suspended.ID, PrincipalOperator); err == nil {
+		t.Fatal("suspended member was promoted")
+	}
+	if _, err := p.setPrincipalKind(first.ID, expired.ID, PrincipalOperator); err == nil {
+		t.Fatal("expired member was promoted")
+	}
+	if !p.hasOperator() {
+		t.Fatal("active operator was not recognized")
+	}
+	second := insertTestPrincipal(t, p, "second-operator", PrincipalOperator, "second-operator", "o@local")
+	second.Status = PrincipalSuspended
+	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err == nil {
+		t.Fatal("demoted last active operator with suspended fallback")
+	}
+	second.Status = PrincipalActive
+	second.ExpiresAt = &past
+	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err == nil {
+		t.Fatal("demoted last active operator with expired fallback")
+	}
+	second.ExpiresAt = nil
+	if _, err := p.setPrincipalStatus(first.ID, first.ID, PrincipalSuspended); err != nil {
+		t.Fatalf("suspending one of two usable operators: %v", err)
+	}
+	if _, err := p.setPrincipalStatus(first.ID, second.ID, PrincipalSuspended); err == nil {
+		t.Fatal("suspended last usable operator")
+	}
+	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err != nil {
+		t.Fatalf("demoting with active fallback: %v", err)
+	}
+	second.Status = PrincipalSuspended
+	if p.hasOperator() {
+		t.Fatal("suspended operator counted as usable")
+	}
+	second.Status = PrincipalActive
+	second.ExpiresAt = &past
+	if p.hasOperator() {
+		t.Fatal("expired operator counted as usable")
+	}
+	second.ExpiresAt = nil
+	if !p.hasOperator() {
+		t.Fatal("active operator not counted as usable")
+	}
+}
+
 func TestSetPrincipalKindPromoteAndDemote(t *testing.T) {
 	p, operator := testPassportWithOperator(t)
 

@@ -62,8 +62,16 @@ func (p *PassportStore) setPrincipalStatus(actorID, principalID string, status P
 	if current == nil {
 		return nil, errors.New("principal not found")
 	}
-	if current.Kind == PrincipalOperator && status != PrincipalActive {
-		return nil, errors.New("operator cannot be suspended")
+	if principalIsUsableOperator(current, time.Now()) && status != PrincipalActive {
+		remaining := 0
+		for id, other := range p.principals {
+			if id != principalID && principalIsUsableOperator(other, time.Now()) {
+				remaining++
+			}
+		}
+		if remaining == 0 {
+			return nil, errors.New("cannot suspend the last usable operator")
+		}
 	}
 	if current.Status == status {
 		cp := *current
@@ -133,15 +141,18 @@ func (p *PassportStore) setPrincipalKind(actorID, principalID string, kind Princ
 		cp := *current
 		return &cp, nil
 	}
+	if kind == PrincipalOperator && (current.Status != PrincipalActive || (current.ExpiresAt != nil && !time.Now().Before(*current.ExpiresAt))) {
+		return nil, errors.New("cannot promote an inactive or expired principal")
+	}
 	if current.Kind == PrincipalOperator {
 		operators := 0
-		for _, other := range p.principals {
-			if other.Kind == PrincipalOperator {
+		for id, other := range p.principals {
+			if id != principalID && principalIsUsableOperator(other, time.Now()) {
 				operators++
 			}
 		}
-		if operators < 2 {
-			return nil, errors.New("cannot demote the last operator")
+		if operators == 0 {
+			return nil, errors.New("cannot demote the last usable operator")
 		}
 	}
 

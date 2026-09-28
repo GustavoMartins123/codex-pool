@@ -272,12 +272,18 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 func (p *PassportStore) hasOperator() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	now := time.Now()
 	for _, principal := range p.principals {
-		if principal.Kind == PrincipalOperator {
+		if principalIsUsableOperator(principal, now) {
 			return true
 		}
 	}
 	return false
+}
+
+func principalIsUsableOperator(principal *Principal, now time.Time) bool {
+	return principal != nil && principal.Kind == PrincipalOperator && principal.Status == PrincipalActive &&
+		(principal.ExpiresAt == nil || now.Before(*principal.ExpiresAt))
 }
 
 func (p *PassportStore) bootstrapOperator(username, email, displayName, password string) (*Principal, error) {
