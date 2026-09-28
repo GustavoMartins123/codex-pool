@@ -493,6 +493,11 @@ func TestServeAntigravitySetupScript_Bash(t *testing.T) {
 		"https://antigravity.google/cli/install.sh",
 		"python3",
 		"node",
+		"tmp_fd, tmp = tempfile.mkstemp",
+		"os.fsync(handle.fileno())",
+		"os.replace(tmp, path)",
+		"fs.fsyncSync(fd)",
+		"fs.renameSync(tmp,p)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected Antigravity bash setup to contain %q, got:\n%s", want, body)
@@ -570,6 +575,9 @@ func TestServeAntigravitySetupScript_BashIdempotent(t *testing.T) {
 	backups, err := filepath.Glob(settingsFile + ".bak.*")
 	if err != nil || len(backups) > 1 {
 		t.Fatalf("expected at most one versioned backup, got %v (err=%v)", backups, err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(settingsDir, ".settings.*.tmp")); len(leftovers) != 0 {
+		t.Fatalf("atomic write left temp files behind: %v", leftovers)
 	}
 
 	// Both existing profiles must carry the pool block exactly once.
@@ -749,6 +757,9 @@ func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
 		"[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $ApiKey, 'User')",
 		"[Environment]::SetEnvironmentVariable('GOOGLE_GEMINI_BASE_URL', $BaseUrl, 'User')",
 		"Copy-Item $settingsPath $backup",
+		"Set-Utf8NoBomAtomic -Path $settingsPath -Value $json",
+		"[System.IO.File]::Replace($tmp, $Path, $null)",
+		"$stream.Flush($true)",
 		"Get-Command agy -ErrorAction SilentlyContinue",
 		"https://antigravity.google/cli/install.ps1",
 		"# >>> Antigravity Pool Configuration >>>",

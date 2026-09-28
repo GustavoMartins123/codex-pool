@@ -1272,6 +1272,29 @@ function Set-Utf8NoBom {
   [System.IO.File]::WriteAllText($Path, $Value, $utf8)
 }
 
+# Atomic variant for existing files: full write + flush to a temp sibling,
+# then swap into place so a mid-write failure cannot truncate the original.
+function Set-Utf8NoBomAtomic {
+  param([string]$Path, [string]$Value)
+  $utf8 = New-Object System.Text.UTF8Encoding($false)
+  $tmp = Join-Path (Split-Path -Parent $Path) ('.' + (Split-Path -Leaf $Path) + '.tmp')
+  $stream = New-Object System.IO.FileStream($tmp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+  try {
+    $bytes = $utf8.GetBytes($Value)
+    $stream.Write($bytes, 0, $bytes.Length)
+    $stream.Flush($true)
+  } finally {
+    $stream.Close()
+  }
+  try { (Get-Acl -LiteralPath $Path) | Set-Acl -LiteralPath $tmp } catch {}
+  try {
+    [System.IO.File]::Replace($tmp, $Path, $null)
+  } catch {
+    Copy-Item -LiteralPath $tmp -Destination $Path -Force
+    Remove-Item -LiteralPath $tmp -Force
+  }
+}
+
 Write-Host 'Configuring Antigravity CLI for pool access...'
 Write-Host ''
 
@@ -1303,10 +1326,11 @@ if (Test-Path $settingsPath) {
     $settings | Add-Member -NotePropertyName modelProvider -NotePropertyValue 'gemini'
   }
   $json = $settings | ConvertTo-Json -Depth 10
+  Set-Utf8NoBomAtomic -Path $settingsPath -Value $json
 } else {
   $json = '{"modelProvider": "gemini"}'
+  Set-Utf8NoBom -Path $settingsPath -Value $json
 }
-Set-Utf8NoBom -Path $settingsPath -Value $json
 Write-Host ('Set modelProvider to gemini in ' + $settingsPath)
 
 # Point the CLI at the pool using Gemini API key mode
@@ -1378,7 +1402,9 @@ set_provider() {
     if command -v python3 >/dev/null 2>&1; then
         python3 - "$SETTINGS_FILE" <<'PY'
 import json
+import os
 import sys
+import tempfile
 
 path = sys.argv[1]
 with open(path, encoding="utf-8") as handle:
@@ -1386,12 +1412,25 @@ with open(path, encoding="utf-8") as handle:
 if not isinstance(data, dict):
     raise SystemExit("settings.json root must be an object")
 data["modelProvider"] = "gemini"
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(data, handle, indent=2, ensure_ascii=False)
-    handle.write("\n")
+directory = os.path.dirname(path) or "."
+tmp_fd, tmp = tempfile.mkstemp(prefix=".settings.", suffix=".tmp", dir=directory)
+try:
+    with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, os.stat(path).st_mode & 0o777)
+    os.replace(tmp, path)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
 PY
     elif command -v node >/dev/null 2>&1; then
-        node -e 'const fs=require("fs");const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,"utf8"));if(data===null||typeof data!=="object"||Array.isArray(data)){console.error("settings.json root must be an object");process.exit(1);}data.modelProvider="gemini";fs.writeFileSync(p,JSON.stringify(data,null,2)+"\n");' "$SETTINGS_FILE"
+        node -e 'const fs=require("fs"),path=require("path");const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,"utf8"));if(data===null||typeof data!=="object"||Array.isArray(data)){console.error("settings.json root must be an object");process.exit(1);}data.modelProvider="gemini";const tmp=path.join(path.dirname(p),".settings."+process.pid+".tmp");try{const fd=fs.openSync(tmp,"w",0o600);try{fs.writeFileSync(fd,JSON.stringify(data,null,2)+"\n","utf8");fs.fsyncSync(fd);}finally{fs.closeSync(fd);}try{fs.chmodSync(tmp,fs.statSync(p).mode&0o777);}catch(e){}fs.renameSync(tmp,p);}catch(err){try{fs.unlinkSync(tmp);}catch(e){}throw err;}' "$SETTINGS_FILE"
     else
         echo "✗ python3 or node is required to edit $SETTINGS_FILE safely."
         return 2
@@ -1402,7 +1441,7 @@ if [ ! -f "$SETTINGS_FILE" ]; then
     printf '{\n  "modelProvider": "gemini"\n}\n' > "$SETTINGS_FILE"
 else
     STAMP="$(date +%%Y%%m%%d%%H%%M%%S)"
-    rm -f "$SETTINGS_FILE".bak.* 2>/dev/null || true
+    rm -f "$SETTINGS_FILE".bak.* "$SETTINGS_DIR"/.settings.*.tmp 2>/dev/null || true
     cp "$SETTINGS_FILE" "$SETTINGS_FILE.bak.$STAMP"
     if ! set_provider; then
         echo "  A copy was saved as $SETTINGS_FILE.bak.$STAMP."
