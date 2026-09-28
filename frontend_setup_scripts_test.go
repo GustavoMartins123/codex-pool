@@ -434,6 +434,9 @@ func TestServeGeminiSetupScript_PowerShell(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("Content-Type = %q, want text/plain*", ct)
 	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store (script embeds a credential)", cc)
+	}
 	body := rr.Body.String()
 	if !strings.Contains(body, "$env:CODE_ASSIST_ENDPOINT = $BaseUrl") {
 		t.Fatalf("expected PowerShell env setup in body, got:\n%s", body)
@@ -474,6 +477,9 @@ func TestServeAntigravitySetupScript_Bash(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/x-shellscript") {
 		t.Fatalf("Content-Type = %q, want text/x-shellscript*", ct)
 	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store (script embeds a credential)", cc)
+	}
 	body := rr.Body.String()
 	for _, want := range []string{
 		"AIzaSy-pool-",
@@ -483,7 +489,9 @@ func TestServeAntigravitySetupScript_Bash(t *testing.T) {
 		".gemini/antigravity-cli",
 		"# >>> Antigravity Pool Configuration >>>",
 		"# <<< Antigravity Pool Configuration <<<",
-		"agy",
+		"command -v agy",
+		"https://antigravity.google/cli/install.sh",
+		"json_ok",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected Antigravity bash setup to contain %q, got:\n%s", want, body)
@@ -523,7 +531,10 @@ func TestServeAntigravitySetupScript_BashIdempotent(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export EDITOR=vim\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte("export EDITOR=vim\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export PAGER=less\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	settingsDir := filepath.Join(home, ".gemini", "antigravity-cli")
@@ -538,7 +549,7 @@ func TestServeAntigravitySetupScript_BashIdempotent(t *testing.T) {
 	for range 2 {
 		cmd := exec.Command("bash")
 		cmd.Stdin = strings.NewReader(rr.Body.String())
-		cmd.Env = append(os.Environ(), "HOME="+home)
+		cmd.Env = append(os.Environ(), "HOME="+home, "SHELL=/bin/bash")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("run installer: %v\n%s", err, output)
 		}
@@ -555,21 +566,104 @@ func TestServeAntigravitySetupScript_BashIdempotent(t *testing.T) {
 	if count := strings.Count(settingsText, "modelProvider"); count != 1 {
 		t.Fatalf("modelProvider count = %d, want 1:\n%s", count, settingsText)
 	}
+	backups, err := filepath.Glob(settingsFile + ".bak.*")
+	if err != nil || len(backups) > 1 {
+		t.Fatalf("expected at most one versioned backup, got %v (err=%v)", backups, err)
+	}
 
-	bashrc, err := os.ReadFile(filepath.Join(home, ".bashrc"))
+	// Both existing profiles must carry the pool block exactly once.
+	for _, profileName := range []string{".zshrc", ".bashrc"} {
+		profileBytes, err := os.ReadFile(filepath.Join(home, profileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		profileText := string(profileBytes)
+		if !strings.Contains(profileText, `export GEMINI_API_KEY="AIzaSy-pool-`) || !strings.Contains(profileText, `export GOOGLE_GEMINI_BASE_URL="http://example.com"`) {
+			t.Fatalf("%s missing pool env exports:\n%s", profileName, profileText)
+		}
+		if count := strings.Count(profileText, "# >>> Antigravity Pool Configuration >>>"); count != 1 {
+			t.Fatalf("%s pool block count = %d, want 1:\n%s", profileName, count, profileText)
+		}
+	}
+	if !strings.Contains(string(mustReadFile(t, filepath.Join(home, ".zshrc"))), "export EDITOR=vim") {
+		t.Fatalf("existing .zshrc content dropped:\n%s", mustReadFile(t, filepath.Join(home, ".zshrc")))
+	}
+	if !strings.Contains(string(mustReadFile(t, filepath.Join(home, ".bashrc"))), "export PAGER=less") {
+		t.Fatalf("existing .bashrc content dropped:\n%s", mustReadFile(t, filepath.Join(home, ".bashrc")))
+	}
+}
+
+func TestServeAntigravitySetupScript_BashInvalidSettingsAborts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		if _, nodeErr := exec.LookPath("node"); nodeErr != nil {
+			t.Skip("no JSON validator (python3/node) available for the abort path")
+		}
+	}
+	secret := "test-secret-key-12345678901234567890"
+	t.Setenv("POOL_JWT_SECRET", secret)
+	t.Setenv("PUBLIC_URL", "")
+
+	h, nonce := newSetupScriptHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/antigravity/"+nonce, nil)
+	rr := httptest.NewRecorder()
+	h.serveAntigravitySetupScript(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export EDITOR=vim\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settingsDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+	broken := "{\n  \"theme\": \"dark\"\n"
+	if err := os.WriteFile(settingsFile, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("bash")
+	cmd.Stdin = strings.NewReader(rr.Body.String())
+	cmd.Env = append(os.Environ(), "HOME="+home, "SHELL=/bin/bash")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("installer must abort on invalid settings.json:\n%s", output)
+	}
+	if !strings.Contains(string(output), "not valid JSON") && !strings.Contains(string(output), "would break its JSON") {
+		t.Fatalf("installer must explain the settings.json failure:\n%s", output)
+	}
+
+	// The original file survives via backup, and profiles are left untouched.
+	current, readErr := os.ReadFile(settingsFile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(current), `"theme": "dark"`) || strings.Contains(string(current), "modelProvider") {
+		t.Fatalf("broken settings.json was modified in place:\n%s", current)
+	}
+	backups, globErr := filepath.Glob(settingsFile + ".bak.*")
+	if globErr != nil || len(backups) != 1 {
+		t.Fatalf("expected one backup of the broken file, got %v (err=%v)", backups, globErr)
+	}
+	bashrc := string(mustReadFile(t, filepath.Join(home, ".bashrc")))
+	if strings.Contains(bashrc, "Antigravity Pool Configuration") {
+		t.Fatalf("profile was modified before settings.json aborted:\n%s", bashrc)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	profileText := string(bashrc)
-	if !strings.Contains(profileText, "export EDITOR=vim") {
-		t.Fatalf("existing profile content dropped:\n%s", profileText)
-	}
-	if !strings.Contains(profileText, `export GEMINI_API_KEY="AIzaSy-pool-`) || !strings.Contains(profileText, `export GOOGLE_GEMINI_BASE_URL="http://example.com"`) {
-		t.Fatalf("pool env exports missing:\n%s", profileText)
-	}
-	if count := strings.Count(profileText, "# >>> Antigravity Pool Configuration >>>"); count != 1 {
-		t.Fatalf("pool block count = %d, want 1:\n%s", count, profileText)
-	}
+	return data
 }
 
 func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
@@ -588,6 +682,9 @@ func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Fatalf("Content-Type = %q, want text/plain*", ct)
 	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
 	body := rr.Body.String()
 	for _, want := range []string{
 		"$env:GEMINI_API_KEY",
@@ -596,6 +693,11 @@ func TestServeAntigravitySetupScript_PowerShell(t *testing.T) {
 		".gemini\\antigravity-cli",
 		"ConvertFrom-Json",
 		"Add-Member -NotePropertyName modelProvider",
+		"[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $ApiKey, 'User')",
+		"[Environment]::SetEnvironmentVariable('GOOGLE_GEMINI_BASE_URL', $BaseUrl, 'User')",
+		"Copy-Item $settingsPath $backup",
+		"Get-Command agy -ErrorAction SilentlyContinue",
+		"https://antigravity.google/cli/install.ps1",
 		"# >>> Antigravity Pool Configuration >>>",
 	} {
 		if !strings.Contains(body, want) {
@@ -619,6 +721,9 @@ func TestServeAntigravitySettingsConfig(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store (response embeds a credential)", cc)
 	}
 	body := rr.Body.String()
 	for _, want := range []string{

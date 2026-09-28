@@ -35,6 +35,7 @@ func passportClientAsPoolUser(h *proxyHandler, client *ClientCredential) *PoolUs
 // Config download endpoints (no auth - token IS the auth)
 
 func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
 	if h.passport == nil {
 		respondJSONError(w, http.StatusServiceUnavailable, "pool identities not configured")
 		return
