@@ -275,7 +275,11 @@ type providerContributionActorKey struct{}
 
 func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *http.Request) bool {
 	if h.passport != nil {
-		if principal, session := h.passport.authenticate(r); principal != nil && (principal.Kind == PrincipalMember || principal.Kind == PrincipalOperator) {
+		if principal, session := h.passport.authenticate(r); principal != nil {
+			if principal.Kind != PrincipalOperator {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return false
+			}
 			if !h.passportCSRF(r, session) {
 				respondJSONError(w, http.StatusForbidden, "invalid CSRF token")
 				return false
@@ -284,7 +288,7 @@ func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *h
 			return true
 		}
 	}
-	if !h.checkMemberOrAdminAuth(w, r) {
+	if !h.checkAdminAuth(w, r) {
 		return false
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
@@ -728,8 +732,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Friends may contribute new provider credentials, but cannot inspect raw
-	// account identities, remove accounts, or mutate existing provider state.
+	// Provider accounts are managed only by operators or break-glass admins.
 	if strings.HasPrefix(r.URL.Path, "/api/pool/accounts/") {
 		if !h.checkProviderContributionAuth(w, r) {
 			return

@@ -65,7 +65,8 @@ func TestAuthorityMatrix(t *testing.T) {
 		{"guest passes", http.MethodGet, "/api/passes", "", map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
 		{"console", http.MethodGet, "/api/console/principals", "", map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"member creation", http.MethodPost, "/api/console/members", `{"email":"new@example.com","purpose":"onboard"}`, map[PrincipalKind]bool{PrincipalOperator: true}},
-		{"provider contribution", http.MethodPost, "/api/pool/accounts/codex/add", `{}`, map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
+		{"provider OAuth contribution", http.MethodPost, "/api/pool/accounts/codex/add", `{}`, map[PrincipalKind]bool{PrincipalOperator: true}},
+		{"provider key contribution", http.MethodPost, "/api/pool/accounts/kimi/add", `{}`, map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"principal suspension", http.MethodPatch, "/api/principals/guest", `{"status":"suspended"}`, map[PrincipalKind]bool{PrincipalOperator: true}},
 	}
 	// Global telemetry is operator-only. The catalog remains available to

@@ -49,9 +49,9 @@ func TestAccountContributionRequiresAuthentication(t *testing.T) {
 	}
 }
 
-func addTestPassportMember(t *testing.T, passport *PassportStore, id string) (sessionToken, csrf string) {
+func addTestPassportOperator(t *testing.T, passport *PassportStore, id string) (sessionToken, csrf string) {
 	t.Helper()
-	principal := &Principal{ID: id, Kind: PrincipalMember, Status: PrincipalActive, Email: id + "@example.com", CreatedAt: time.Now().UTC()}
+	principal := &Principal{ID: id, Kind: PrincipalOperator, Status: PrincipalActive, Email: id + "@example.com", CreatedAt: time.Now().UTC()}
 	if err := passport.db.Update(func(tx *bbolt.Tx) error {
 		return putJSON(tx.Bucket([]byte(bucketPrincipals)), principal.ID, principal)
 	}); err != nil {
@@ -85,8 +85,8 @@ func TestAccountContributionRequiresCSRFAndBindsOAuthActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstSession, firstCSRF := addTestPassportMember(t, passport, "member-one")
-	secondSession, secondCSRF := addTestPassportMember(t, passport, "member-two")
+	firstSession, firstCSRF := addTestPassportOperator(t, passport, "operator-one")
+	secondSession, secondCSRF := addTestPassportOperator(t, passport, "operator-two")
 	h := &proxyHandler{cfg: &config{}, passport: passport}
 
 	withoutCSRF := httptest.NewRecorder()
