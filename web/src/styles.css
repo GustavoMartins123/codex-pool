@@ -1207,6 +1207,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .manual-setup { margin: 12px 0 30px 48px; }
 .manual-setup summary { width: fit-content; min-height: 44px; padding: 12px 0; color: var(--gold); cursor: pointer; font: .85rem "IBM Plex Sans Condensed", sans-serif; }
 .manual-setup > p { color: var(--muted); font: .85rem/1.5 "IBM Plex Sans Condensed", sans-serif; }
+.manual-item { margin: 14px 0; }
+.manual-item .step-note { margin: 6px 0 0; }
 .sdk-example { margin-top: 32px; }
 .api-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 20px 32px; margin: 24px 0; }
 .api-card { min-width: 0; }

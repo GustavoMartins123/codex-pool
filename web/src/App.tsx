@@ -1091,7 +1091,7 @@ function SetupPage() {
     if (!setupLinks) return "························";
     return (setupLinks.urls[provider] || "").split("/").pop() || ".";
   };
-  const cliTools: Record<string, { name: string; install: string; oneliner: string; powershell: string; manual: { file: string; url: string }[] }> = {
+  const cliTools: Record<string, { name: string; install: string; oneliner: string; powershell: string; manual: { file: string; url?: string; body?: string; note?: string }[] }> = {
     codex: {
       name: "Codex",
       install: "npm install -g @openai/codex    # or: brew install codex",
@@ -1118,7 +1118,11 @@ function SetupPage() {
       install: "curl -fsSL https://antigravity.google/cli/install.sh | bash    # or Windows: irm https://antigravity.google/cli/install.ps1 | iex",
       oneliner: `curl -sL "${base}/setup/antigravity/${nonce("antigravity")}" | bash`,
       powershell: `irm "${base}/setup/antigravity/${nonce("antigravity")}?shell=powershell" | iex`,
-      manual: [{ file: "~/.gemini/antigravity-cli/settings.json", url: `${base}/config/antigravity/${nonce("antigravity")}` }],
+      manual: [
+        { file: "~/.gemini/antigravity-cli/settings.json", body: '{\n  "modelProvider": "gemini"\n}', note: "Merge into the existing file, keeping other keys. GEMINI_API_KEY alone is not enough — modelProvider must be set." },
+        { file: "shell profile exports", url: `${base}/config/antigravity/${nonce("antigravity")}`, note: "The one-time JSON returns api_key and base_url. Export GEMINI_API_KEY (api_key) and GOOGLE_GEMINI_BASE_URL (base_url) in your shell profile." },
+        { file: "disconnect from the pool", body: 'sed -i.bak \'/# >>> Antigravity Pool Configuration >>>/,/# <<< Antigravity Pool Configuration <<</d\' ~/.zshrc ~/.bashrc\nunset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL\n# Windows: [Environment]::SetEnvironmentVariable(\'GEMINI_API_KEY\', $null, \'User\')\n# Then remove "modelProvider" from ~/.gemini/antigravity-cli/settings.json to restore Google sign-in.', note: "Optional: revert to the default account sign-in." },
+      ],
     },
     grok: {
       name: "Grok",
@@ -1201,7 +1205,10 @@ function SetupPage() {
           {setupLinks && <button className="quiet-button" disabled={!selected || revealing} onClick={() => selected && reveal(selected)}>{revealing ? "Generating…" : "Revoke and generate new"}</button>}
           <p className="step-note">macOS or Linux</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.oneliner}</pre></div><CopyButton className="copy-btn" text={activeTool.oneliner} disabled={!setupLinks} /></div>
           <p className="step-note">Windows PowerShell</p><div className="code-wrapper"><div className="code-block"><pre>{activeTool.powershell}</pre></div><CopyButton className="copy-btn" text={activeTool.powershell} disabled={!setupLinks} /></div>
-          <details className="manual-setup"><summary>Configure files manually</summary><p>Fetch the config file directly and place it yourself.</p>{activeTool.manual.map((item) => <div key={item.file} className="code-wrapper"><div className="code-block"><pre>{`curl -sL "${item.url}"\n# → ${item.file}`}</pre></div><CopyButton className="copy-btn" text={`curl -sL "${item.url}"`} disabled={!setupLinks} /></div>)}</details>
+          <details className="manual-setup"><summary>Configure files manually</summary>{activeTool.manual.every((item) => item.url) ? <p>Fetch the config file directly and place it yourself.</p> : <p>Place each snippet yourself.</p>}{activeTool.manual.map((item) => <div key={item.file} className="manual-item">
+            <div className="code-wrapper"><div className="code-block"><pre>{item.body ? `${item.body}\n# → ${item.file}` : `curl -sL "${item.url}"\n# → ${item.file}`}</pre></div><CopyButton className="copy-btn" text={item.body ?? `curl -sL "${item.url}"`} disabled={!item.body && !setupLinks} /></div>
+            {item.note && <p className="step-note">{item.note}</p>}
+          </div>)}</details>
         </div></section>
       </div>}
       {activeSdk && <div className="tool-detail">
