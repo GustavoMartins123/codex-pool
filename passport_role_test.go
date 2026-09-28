@@ -57,6 +57,12 @@ func TestUsableOperatorInvariant(t *testing.T) {
 	if _, err := p.setPrincipalKind(first.ID, expired.ID, PrincipalOperator); err == nil {
 		t.Fatal("expired member was promoted")
 	}
+	future := time.Now().Add(time.Hour)
+	expiring := insertTestPrincipal(t, p, "expiring-member", PrincipalMember, "expiring-member", "future@local")
+	expiring.ExpiresAt = &future
+	if _, err := p.setPrincipalKind(first.ID, expiring.ID, PrincipalOperator); err == nil {
+		t.Fatal("member with future expiry was promoted")
+	}
 	if !p.hasOperator() {
 		t.Fatal("active operator was not recognized")
 	}
@@ -69,6 +75,10 @@ func TestUsableOperatorInvariant(t *testing.T) {
 	second.ExpiresAt = &past
 	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err == nil {
 		t.Fatal("demoted last active operator with expired fallback")
+	}
+	second.ExpiresAt = &future
+	if _, err := p.setPrincipalKind(first.ID, first.ID, PrincipalMember); err == nil {
+		t.Fatal("demoted last active operator with future expiring fallback")
 	}
 	second.ExpiresAt = nil
 	if _, err := p.setPrincipalStatus(first.ID, first.ID, PrincipalSuspended); err != nil {
@@ -92,6 +102,42 @@ func TestUsableOperatorInvariant(t *testing.T) {
 	second.ExpiresAt = nil
 	if !p.hasOperator() {
 		t.Fatal("active operator not counted as usable")
+	}
+}
+
+func TestExpiringOperatorLoadedFromStoreIsUnusable(t *testing.T) {
+	p, operator := testPassportWithOperator(t)
+	token, _, err := p.createSession(operator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	operator.ExpiresAt = &future
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketPrincipals)), operator.ID, operator)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := newPassportStore(p.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.hasOperator() {
+		t.Fatal("expiring operator loaded as usable")
+	}
+	r := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
+	r.AddCookie(&http.Cookie{Name: "pool_session", Value: token})
+	if principal, _ := loaded.authenticate(r); principal != nil {
+		t.Fatal("expiring operator session was accepted")
+	}
+}
+
+func TestActiveNonExpiringMemberCanBecomeOperator(t *testing.T) {
+	p, first := testPassportWithOperator(t)
+	member := insertTestPrincipal(t, p, "eligible-member", PrincipalMember, "eligible-member", "eligible@local")
+	promoted, err := p.setPrincipalKind(first.ID, member.ID, PrincipalOperator)
+	if err != nil || !principalIsUsableOperator(promoted) {
+		t.Fatalf("active non-expiring member promotion = %+v, %v", promoted, err)
 	}
 }
 

@@ -283,18 +283,16 @@ func deleteMemberLinksForPrincipal(bucket *bbolt.Bucket, principalID string) err
 func (p *PassportStore) hasOperator() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	now := time.Now()
 	for _, principal := range p.principals {
-		if principalIsUsableOperator(principal, now) {
+		if principalIsUsableOperator(principal) {
 			return true
 		}
 	}
 	return false
 }
 
-func principalIsUsableOperator(principal *Principal, now time.Time) bool {
-	return principal != nil && principal.Kind == PrincipalOperator && principal.Status == PrincipalActive &&
-		(principal.ExpiresAt == nil || now.Before(*principal.ExpiresAt))
+func principalIsUsableOperator(principal *Principal) bool {
+	return principal != nil && principal.Kind == PrincipalOperator && principal.Status == PrincipalActive && principal.ExpiresAt == nil
 }
 
 func (p *PassportStore) bootstrapOperator(username, email, displayName, password string) (*Principal, error) {

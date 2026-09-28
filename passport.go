@@ -604,7 +604,7 @@ func (p *PassportStore) authenticate(r *http.Request) (*Principal, *passportSess
 		return nil, nil
 	}
 	pr := p.principal(s.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
 		return nil, nil
 	}
 	return pr, &s
@@ -627,7 +627,7 @@ func (p *PassportStore) login(email, password string) (*Principal, string, strin
 		encoded = pr.PasswordHash
 	}
 	ok := verifyPassword(encoded, password)
-	if !ok || pr == nil || pr.Kind == PrincipalGuest || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+	if !ok || pr == nil || pr.Kind == PrincipalGuest || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
 		return nil, "", "", errors.New("invalid credentials")
 	}
 	t, c, e := p.createSession(pr.ID)
@@ -644,7 +644,7 @@ func splitClientIdentity(identity string) (string, string) {
 func (p *PassportStore) credentialState(identity string) (*Principal, *ClientCredential, bool) {
 	principalID, clientID := splitClientIdentity(identity)
 	pr := p.principal(principalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
 		return nil, nil, false
 	}
 	p.mu.RLock()
