@@ -159,6 +159,12 @@ func TestMemberOnboardingAndRecoveryLinksAreSingleUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := passport.createMemberLink("operator", "member@example.com", "Member", "onboard"); err == nil {
+		t.Fatal("onboard link minted for an existing email")
+	}
+	if _, err := passport.createMemberLink("operator", "member@example.com", strings.Repeat("x", 49), "recover"); err == nil {
+		t.Fatal("display name over 48 characters accepted")
+	}
 	member, oldSession, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery")
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +190,83 @@ func TestMemberOnboardingAndRecoveryLinksAreSingleUse(t *testing.T) {
 	}
 	if _, _, _, err := passport.login(member.Email, "replacement password"); err != nil {
 		t.Fatalf("replacement password rejected: %v", err)
+	}
+}
+
+func TestMemberRecoveryRejectsExpiredPrincipal(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "expired@example.com", "E", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := time.Now().Add(-time.Minute)
+	updated := *passport.principal(member.ID)
+	updated.ExpiresAt = &expired
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketPrincipals)), member.ID, &updated)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	passport.mu.Lock()
+	passport.principals[member.ID] = &updated
+	passport.mu.Unlock()
+
+	recovery, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(recovery.Token, "another replacement password"); err == nil {
+		t.Fatal("recovery link redeemed for an expired principal")
+	}
+}
+
+func TestMemberRecoveryRateLimitsRepeatedFailures(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "rate@example.com", "R", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := passport.createMemberLink("operator", "rate@example.com", "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := newBruteForceTracker()
+	t.Cleanup(tracker.stop)
+	h := &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker, metrics: newMetrics()}
+
+	body := func(token string) *http.Request {
+		request := httptest.NewRequest(http.MethodPost, "/api/auth/recover", strings.NewReader(`{"token":"`+token+`","password":"valid replacement 12"}`))
+		request.Header.Set("Content-Type", "application/json")
+		return request
+	}
+	for i := 0; i < bruteForceMaxAttempts; i++ {
+		recorder := httptest.NewRecorder()
+		h.handleMemberRecovery(recorder, body(fmt.Sprintf("wrong-token-%d", i)))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("attempt %d status = %d", i, recorder.Code)
+		}
+	}
+	banned := httptest.NewRecorder()
+	h.handleMemberRecovery(banned, body(recovery.Token))
+	if banned.Code != http.StatusTooManyRequests {
+		t.Fatalf("valid recovery after failures status = %d, want 429", banned.Code)
 	}
 }
 

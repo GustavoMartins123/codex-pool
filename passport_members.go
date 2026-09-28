@@ -71,6 +71,10 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 	if purpose != "onboard" && purpose != "recover" {
 		return nil, errors.New("invalid member link purpose")
 	}
+	displayName = strings.TrimSpace(displayName)
+	if len([]rune(displayName)) > 48 {
+		return nil, errors.New("display name must be 48 characters or fewer")
+	}
 
 	principal := p.byEmail(email)
 	if purpose == "onboard" {
@@ -165,7 +169,8 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			return errors.New("member link unavailable")
 		}
 		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(link.PrincipalID))
-		if value == nil || json.Unmarshal(value, &principal) != nil || principal.Status != PrincipalActive {
+		if value == nil || json.Unmarshal(value, &principal) != nil || principal.Status != PrincipalActive ||
+			(principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
 			return errors.New("member link unavailable")
 		}
 		principal.PasswordHash = passwordHash
@@ -299,6 +304,11 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	ip := getClientIP(r)
+	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
 	var input struct {
 		Token    string `json:"token"`
 		Password string `json:"password"`
@@ -313,8 +323,14 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if h.bruteForce != nil {
+			h.bruteForce.recordFailure(ip)
+		}
 		respondJSONError(w, http.StatusBadRequest, "This recovery link is unavailable.")
 		return
+	}
+	if h.bruteForce != nil {
+		h.bruteForce.recordSuccess(ip)
 	}
 	setSessionCookies(w, sessionToken, csrf)
 	respondJSON(w, map[string]any{"principal": publicPrincipal(principal)})
