@@ -16,6 +16,7 @@ import (
 
 const (
 	bucketJoinLinks           = "join_links"
+	bucketJoinLinksByToken    = "join_links_by_token"
 	bucketPassportAudit       = "passport_audit"
 	bucketWebAuthnCredentials = "webauthn_credentials"
 	bucketWebAuthnChallenges  = "webauthn_challenges"
@@ -135,6 +136,9 @@ func (p *PassportStore) createGuest(actorID, note, displayName string, expires *
 		if err := putJSON(tx.Bucket([]byte(bucketJoinLinks)), linkID, link); err != nil {
 			return err
 		}
+		if err := tx.Bucket([]byte(bucketJoinLinksByToken)).Put([]byte(link.TokenDigest), []byte(linkID)); err != nil {
+			return err
+		}
 		if err := putJSON(tx.Bucket([]byte(bucketClientCredentials)), clientID, client); err != nil {
 			return err
 		}
@@ -157,13 +161,23 @@ func (p *PassportStore) linkByToken(token string) (*JoinLink, error) {
 	want := hex.EncodeToString(digest[:])
 	var found *JoinLink
 	err := p.db.View(func(tx *bbolt.Tx) error {
-		return tx.Bucket([]byte(bucketJoinLinks)).ForEach(func(_, v []byte) error {
-			var x JoinLink
-			if json.Unmarshal(v, &x) == nil && subtle.ConstantTimeCompare([]byte(x.TokenDigest), []byte(want)) == 1 {
-				found = &x
-			}
+		indexBucket := tx.Bucket([]byte(bucketJoinLinksByToken))
+		if indexBucket == nil {
+			return errors.New("join links index unavailable")
+		}
+		linkID := indexBucket.Get([]byte(want))
+		if linkID == nil {
 			return nil
-		})
+		}
+		raw := tx.Bucket([]byte(bucketJoinLinks)).Get(linkID)
+		if raw == nil {
+			return nil
+		}
+		var x JoinLink
+		if json.Unmarshal(raw, &x) == nil && subtle.ConstantTimeCompare([]byte(x.TokenDigest), []byte(want)) == 1 {
+			found = &x
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

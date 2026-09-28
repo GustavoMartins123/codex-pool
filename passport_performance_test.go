@@ -47,6 +47,41 @@ func BenchmarkAuthorizePrincipal(b *testing.B) {
 	}
 }
 
+// BenchmarkLinkByToken measures indexed join link lookup performance with
+// 200 passes in the Bolt store.
+func BenchmarkLinkByToken(b *testing.B) {
+	b.Setenv("POOL_AUTH_ENCRYPTION_KEY", "bench-passport-encryption-key")
+	store, err := newUsageStore(filepath.Join(b.TempDir(), "proxy.db"), 30)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = store.Close() })
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	const passes = 200
+	tokens := make([]string, 0, passes)
+	for i := 0; i < passes; i++ {
+		_, _, _, token, err := passport.createGuest("operator", fmt.Sprintf("guest pass %d", i), "", nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tokens = append(tokens, token)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		token := tokens[i%len(tokens)]
+		link, err := passport.linkByToken(token)
+		if err != nil || link == nil {
+			b.Fatalf("failed to find link: %v", err)
+		}
+	}
+}
+
 // BenchmarkDuckDBUsageQueries proves the console remains usable on long-horizon
 // data. It catches a query shape that scans irrelevant columns or a reader that
 // blocks behind the writer. The row count is set by ANALYTICS_BENCH_ROWS; the

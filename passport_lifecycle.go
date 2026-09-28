@@ -439,6 +439,7 @@ func (p *PassportStore) rotateGuestLink(actor *Principal, principalID string) (s
 		return "", err
 	}
 	digest := hashToken(token)
+	oldDigest := link.TokenDigest
 	link.TokenDigest = hex.EncodeToString(digest[:])
 	link.TokenCiphertext, err = p.seal("join", link.ID, principalID, token)
 	if err != nil {
@@ -447,6 +448,14 @@ func (p *PassportStore) rotateGuestLink(actor *Principal, principalID string) (s
 	if err = p.db.Update(func(tx *bbolt.Tx) error {
 		if err := putJSON(tx.Bucket([]byte(bucketJoinLinks)), link.ID, link); err != nil {
 			return err
+		}
+		if indexBucket := tx.Bucket([]byte(bucketJoinLinksByToken)); indexBucket != nil {
+			if oldDigest != "" {
+				_ = indexBucket.Delete([]byte(oldDigest))
+			}
+			if err := indexBucket.Put([]byte(link.TokenDigest), []byte(link.ID)); err != nil {
+				return err
+			}
 		}
 		return p.audit(tx, actorID, "guest.link_rotated", principalID, "")
 	}); err != nil {
