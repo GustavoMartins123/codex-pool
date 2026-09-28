@@ -133,10 +133,18 @@ func TestConfigDownloadNonceHTTPFlow(t *testing.T) {
 		t.Fatalf("create status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		CreatedAt string `json:"created_at"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil || created.ID == "" {
 		t.Fatalf("create response: %s", recorder.Body.String())
+	}
+	// The Setup page appends the create response to its client list and gates
+	// every interaction on status == "active"; a bare {id,label} response
+	// bricks the newly created profile (first client of a new member).
+	if created.Status != "active" || created.CreatedAt == "" {
+		t.Fatalf("create response must mirror the list view (status/created_at): %s", recorder.Body.String())
 	}
 
 	linkRequest := httptest.NewRequest(http.MethodPost, "/api/me/clients/"+created.ID+"/setup-link", nil)

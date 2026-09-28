@@ -1075,7 +1075,7 @@ function SetupPage() {
     try {
       const result = await createMyClient(label);
       revealVersion.current++;
-      setClients(current => [...current, result]);
+      await refresh();
       setSelected(result.id);
       setSetupLinks(null);
       setLabel("");

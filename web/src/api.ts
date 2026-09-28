@@ -64,10 +64,10 @@ export async function loadMyClients(): Promise<ClientCredential[]> {
   return decode(await fetch("/api/me/clients", { cache: "no-store", credentials: "same-origin" }));
 }
 export type ClientSetupLinks = { setup_urls: Record<string, string>; nonce_expires_at: string };
-export async function createMyClient(label: string): Promise<ClientCredential & ClientSetupLinks> {
+export async function createMyClient(label: string): Promise<ClientCredential> {
   return decode(await fetch("/api/me/clients", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ label }) }));
 }
-export async function rotateMyClient(id: string): Promise<ClientCredential & ClientSetupLinks> {
+export async function rotateMyClient(id: string): Promise<ClientCredential> {
   return decode(await fetch(`/api/me/clients/${encodeURIComponent(id)}/rotate`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 export async function setupLinkMyClient(id: string): Promise<{ id: string } & ClientSetupLinks> {

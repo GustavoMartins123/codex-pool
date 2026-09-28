@@ -259,10 +259,12 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 		}
 		c, err := h.passport.createClient(pr.ID, q.Label, q.ExpiresAt)
 		if err != nil {
-			respondJSONError(w, 400, err.Error())
+			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		respondJSON(w, map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt})
+		// Mirror the GET list view: the Setup page appends this response
+		// directly to its client list and needs the live status/created_at.
+		respondJSON(w, clientCredentialView{ID: c.ID, Label: c.Label, Status: c.Status, ExpiresAt: c.ExpiresAt, CreatedAt: c.CreatedAt})
 	default:
 		http.Error(w, "method not allowed", 405)
 	}
