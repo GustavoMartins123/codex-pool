@@ -465,12 +465,8 @@ func (h *proxyHandler) handlePassportClientItem(w http.ResponseWriter, r *http.R
 			respondJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		response := map[string]any{"id": client.ID, "label": client.Label, "expires_at": client.ExpiresAt}
-		if urls, expires, err := h.mintSetupURLs(r, client); err == nil {
-			response["setup_urls"] = urls
-			response["nonce_expires_at"] = expires
-		}
-		respondJSON(w, response)
+		_ = h.passport.revokeClientConfigNonces(client.ID)
+		respondJSON(w, map[string]any{"id": client.ID, "label": client.Label, "expires_at": client.ExpiresAt})
 	case r.Method == http.MethodPost && action == "setup-link":
 		h.passport.mu.RLock()
 		stored := h.passport.clients[clientID]

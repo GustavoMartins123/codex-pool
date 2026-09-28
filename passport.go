@@ -37,6 +37,20 @@ type configDownloadNonce struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+func (p *PassportStore) revokeClientConfigNonces(clientID string) error {
+	return p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketConfigNonces))
+		cursor := bucket.Cursor()
+		for k, raw := cursor.First(); k != nil; k, raw = cursor.Next() {
+			var existing configDownloadNonce
+			if json.Unmarshal(raw, &existing) != nil || existing.ClientID == clientID {
+				_ = cursor.Delete()
+			}
+		}
+		return nil
+	})
+}
+
 func (p *PassportStore) mintConfigDownloadNonce(client *ClientCredential) (string, time.Time, error) {
 	nonce, err := secureToken(24)
 	if err != nil {

@@ -866,13 +866,9 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
     event.preventDefault();
     setBusy("create-client");
     try {
-      const result = await createMyClient(label);
-      setSetupFor(result.id ?? null);
-      if (result.setup_urls && result.nonce_expires_at) {
-        setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
-      } else {
-        setSetupLinks(null);
-      }
+      await createMyClient(label);
+      setSetupFor(null);
+      setSetupLinks(null);
       setLabel("");
       setShowMint(false);
       await loadClientsData();
@@ -889,13 +885,9 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
       : `Restore ${client.label} with a new key? You will need to run setup again.`)) return;
     setBusy(`rotate:${client.id}`);
     try {
-      const result = await rotateMyClient(client.id);
-      setSetupFor(client.id);
-      if (result.setup_urls && result.nonce_expires_at) {
-        setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
-      } else {
-        setSetupLinks(null);
-      }
+      await rotateMyClient(client.id);
+      setSetupFor(null);
+      setSetupLinks(null);
       setNotice(`${client.label} has a new key. Run setup again on this device.`);
       await loadClientsData();
     } catch (cause) {
@@ -1103,21 +1095,19 @@ function SetupPage() {
       if (version === revealVersion.current) setRevealing(false);
     }
   }, []);
-
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const items = await loadMyClients();
       setClients(items);
-      const target = items.find(client => client.status === "active");
-      if (target) await reveal(target.id);
+      setSelected(current => current || (items.find(client => client.status === "active")?.id ?? ""));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to load clients. Try again.");
     } finally {
       setLoading(false);
     }
-  }, [reveal]);
+  }, []);
   useEffect(() => { void refresh(); return () => { revealVersion.current++; }; }, [refresh]);
 
   const create = async (event: FormEvent) => {
@@ -1130,8 +1120,7 @@ function SetupPage() {
       revealVersion.current++;
       setClients(current => [...current, result]);
       setSelected(result.id);
-      setSetupLinks({ urls: result.setup_urls, expires: new Date(result.nonce_expires_at) });
-      setRevealing(false);
+      setSetupLinks(null);
       setLabel("");
       setShowMint(false);
     } catch (cause) {
@@ -1216,7 +1205,7 @@ function SetupPage() {
     <section className="setup-client-bar" aria-labelledby="setup-client-title">
       <div><span id="setup-client-title">Client</span></div>
       <div className="setup-clients">
-      {clients.map((client) => <button key={client.id} className={classNames("client-pill", selected === client.id && "active", client.status !== "active" && "inactive")} disabled={client.status !== "active" || creating} aria-pressed={selected === client.id} onClick={() => reveal(client.id)}>{client.label}</button>)}
+      {clients.map((client) => <button key={client.id} className={classNames("client-pill", selected === client.id && "active", client.status !== "active" && "inactive")} disabled={client.status !== "active" || creating} aria-pressed={selected === client.id} onClick={() => { setSelected(client.id); setSetupLinks(null); }}>{client.label}</button>)}
       {!showMint && clients.length > 0 && <button className="client-pill add" onClick={() => setShowMint(true)}>Add client</button>}
         {showMint && <form className="setup-client-create" onSubmit={create}>
           <input aria-label="Client name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Work laptop" maxLength={80} required autoFocus />
@@ -1226,9 +1215,13 @@ function SetupPage() {
       </div>
     </section>
     {!loading && !error && !clients.some(client => client.status === "active") && !showMint && <div className="empty-state setup-empty"><p>No active clients. Create one to connect a tool.</p><button className="gold-button" onClick={() => setShowMint(true)}>Create a client</button></div>}
-    {loading || revealing ? <div className="empty-state setup-loading" role="status">Loading setup…</div> : error && !setupLinks && <button className="quiet-button" onClick={() => selected ? reveal(selected) : refresh()}>Retry setup</button>}
+    {!loading && !error && selected && <div className="setup-generate">
+      <button className="gold-button" disabled={revealing} onClick={() => reveal(selected)}>{revealing ? "Generating…" : "Generate setup links"}</button>
+      {setupLinks && <span className="step-note">Generating again revokes the current links.</span>}
+    </div>}
+    {revealing ? <div className="empty-state setup-loading" role="status">Generating setup…</div> : error && !setupLinks && selected && <button className="quiet-button" onClick={() => reveal(selected)}>Retry setup</button>}
     {setupLinks && <>
-      <p className="step-note">One-time links, expire {setupLinks.expires.toLocaleTimeString()}. Select the client again for fresh ones.</p>
+      <p className="step-note">One-time links, expire {setupLinks.expires.toLocaleTimeString()}. Generate again to revoke and replace.</p>
       <nav className="tool-tabs" aria-label="Tool to configure">
         {Object.keys(cliTools).map((key) => <button key={key} className={classNames("tab", tool === key && "active")} onClick={() => setTool(key)}>{cliTools[key].name}</button>)}
         <span className="tool-tab-divider" aria-hidden="true" />

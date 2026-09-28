@@ -59,6 +59,27 @@ func TestConfigDownloadNonceIsSingleUse(t *testing.T) {
 	}
 }
 
+func TestConfigDownloadNonceMintRevokesPrevious(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-config-nonce")
+	passport, client := newNonceTestPassport(t)
+	handler := &proxyHandler{cfg: &config{}, passport: passport}
+
+	first, _, err := passport.mintConfigDownloadNonce(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := handler.mintSetupURLs(httptest.NewRequest(http.MethodGet, "/", nil), client); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.serveConfigDownload(recorder, httptest.NewRequest(http.MethodGet, "/config/codex/"+first, nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("stale nonce after regeneration status = %d, want 404", recorder.Code)
+	}
+}
+
 func TestConfigDownloadNonceRejectsExpired(t *testing.T) {
 	passport, client := newNonceTestPassport(t)
 	nonce, _, err := passport.mintConfigDownloadNonce(client)
@@ -112,14 +133,30 @@ func TestConfigDownloadNonceHTTPFlow(t *testing.T) {
 		t.Fatalf("create status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil || created.ID == "" {
+		t.Fatalf("create response: %s", recorder.Body.String())
+	}
+
+	linkRequest := httptest.NewRequest(http.MethodPost, "/api/me/clients/"+created.ID+"/setup-link", nil)
+	linkRequest.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
+	linkRequest.AddCookie(&http.Cookie{Name: "pool_csrf", Value: csrf})
+	linkRequest.Header.Set("X-CSRF-Token", csrf)
+	linkRecorder := httptest.NewRecorder()
+	handler.handlePassportClientItem(linkRecorder, linkRequest)
+	if linkRecorder.Code != http.StatusOK {
+		t.Fatalf("setup-link status = %d body=%s", linkRecorder.Code, linkRecorder.Body.String())
+	}
+	var linked struct {
 		SetupURLs map[string]string `json:"setup_urls"`
 	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+	if err := json.Unmarshal(linkRecorder.Body.Bytes(), &linked); err != nil {
 		t.Fatal(err)
 	}
-	url, ok := created.SetupURLs["codex"]
+	url, ok := linked.SetupURLs["codex"]
 	if !ok || !strings.Contains(url, "/config/codex/") {
-		t.Fatalf("setup_urls = %#v", created.SetupURLs)
+		t.Fatalf("setup_urls = %#v", linked.SetupURLs)
 	}
 
 	download := httptest.NewRequest(http.MethodGet, url, nil)

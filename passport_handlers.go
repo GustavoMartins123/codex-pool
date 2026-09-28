@@ -213,6 +213,9 @@ func (h *proxyHandler) passportCSRF(r *http.Request, s *passportSession) bool {
 	return x == s.CSRFHash
 }
 func (h *proxyHandler) mintSetupURLs(r *http.Request, client *ClientCredential) (map[string]string, time.Time, error) {
+	if err := h.passport.revokeClientConfigNonces(client.ID); err != nil {
+		return nil, time.Time{}, err
+	}
 	base := h.getEffectivePublicURL(r)
 	paths := []string{"codex", "gemini", "claude", "pi", "grok", "cute-code"}
 	urls := make(map[string]string, len(paths))
@@ -269,12 +272,7 @@ func (h *proxyHandler) handlePassportClients(w http.ResponseWriter, r *http.Requ
 			respondJSONError(w, 400, err.Error())
 			return
 		}
-		response := map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt}
-		if urls, expires, err := h.mintSetupURLs(r, c); err == nil {
-			response["setup_urls"] = urls
-			response["nonce_expires_at"] = expires
-		}
-		respondJSON(w, response)
+		respondJSON(w, map[string]any{"id": c.ID, "label": c.Label, "expires_at": c.ExpiresAt})
 	default:
 		http.Error(w, "method not allowed", 405)
 	}

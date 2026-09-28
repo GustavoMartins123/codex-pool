@@ -263,17 +263,12 @@ func (h *proxyHandler) handlePasses(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, 400, "invalid json")
 			return
 		}
-		pr, _, client, token, err := h.passport.createGuest(actor.ID, q.Note, q.DisplayName, q.ExpiresAt)
+		pr, _, _, token, err := h.passport.createGuest(actor.ID, q.Note, q.DisplayName, q.ExpiresAt)
 		if err != nil {
 			respondJSONError(w, 400, err.Error())
 			return
 		}
-		response := map[string]any{"principal": publicPrincipal(pr), "link": "/join#" + token}
-		if urls, expires, err := h.mintSetupURLs(r, client); err == nil {
-			response["setup_urls"] = urls
-			response["nonce_expires_at"] = expires
-		}
-		respondJSON(w, response)
+		respondJSON(w, map[string]any{"principal": publicPrincipal(pr), "link": "/join#" + token})
 	default:
 		http.Error(w, "method not allowed", 405)
 	}
