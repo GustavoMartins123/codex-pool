@@ -90,7 +90,7 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 			DisplayName: strings.TrimSpace(displayName), Email: email,
 			Note: "member", CreatedAt: time.Now().UTC(),
 		}
-	} else if principal == nil || (principal.Kind != PrincipalMember && principal.Kind != PrincipalOperator) {
+	} else if principal == nil || principal.Kind != PrincipalMember {
 		return nil, errors.New("member not found")
 	}
 
@@ -133,6 +133,10 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 				return err
 			}
 		} else {
+			var current Principal
+			if value := principals.Get([]byte(principal.ID)); value == nil || json.Unmarshal(value, &current) != nil || current.Kind != PrincipalMember {
+				return errors.New("member not found")
+			}
 			// A fresh recovery link retires every pending link of this principal.
 			if err := links.ForEach(func(key, value []byte) error {
 				var candidate memberRecoveryLink
@@ -196,7 +200,7 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 		return nil, "", "", errors.New("member link unavailable")
 	}
 	principal := p.principal(link.PrincipalID)
-	if principal == nil || principal.Status != PrincipalActive || (principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
+	if principal == nil || principal.Kind != PrincipalMember || principal.Status != PrincipalActive || (principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
 		return nil, "", "", errors.New("member link unavailable")
 	}
 	select {
@@ -235,7 +239,7 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			return errors.New("member link unavailable")
 		}
 		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(live.PrincipalID))
-		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Status != PrincipalActive ||
+		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Kind != PrincipalMember || updated.Status != PrincipalActive ||
 			(updated.ExpiresAt != nil && applyNow.After(*updated.ExpiresAt)) {
 			return errors.New("member link unavailable")
 		}
