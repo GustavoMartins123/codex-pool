@@ -63,7 +63,7 @@ func TestAuthorityMatrix(t *testing.T) {
 	}{
 		{"self clients", http.MethodGet, "/api/me/clients", "", map[PrincipalKind]bool{PrincipalGuest: true, PrincipalMember: true, PrincipalOperator: true}},
 		{"guest passes", http.MethodGet, "/api/passes", "", map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
-		{"console", http.MethodGet, "/api/console/principals", "", map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
+		{"console", http.MethodGet, "/api/console/principals", "", map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"member creation", http.MethodPost, "/api/console/members", `{"email":"new@example.com","purpose":"onboard"}`, map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"provider contribution", http.MethodPost, "/api/pool/accounts/codex/add", `{}`, map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
 		{"principal suspension", http.MethodPatch, "/api/principals/guest", `{"status":"suspended"}`, map[PrincipalKind]bool{PrincipalOperator: true}},

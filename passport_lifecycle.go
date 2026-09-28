@@ -611,8 +611,14 @@ func (h *proxyHandler) handlePrincipalItem(w http.ResponseWriter, r *http.Reques
 		Kind               *PrincipalKind   `json:"kind"`
 		MaxReasoningEffort *string          `json:"max_reasoning_effort"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&input) != nil {
 		respondJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	// Structural mutations are one per request: applying status and kind in
+	// sequence would allow states the individual transitions prohibit.
+	if input.Status != nil && input.Kind != nil {
+		respondJSONError(w, http.StatusBadRequest, "change status and kind in separate requests")
 		return
 	}
 	// Accept a username or email in place of the principal ID.

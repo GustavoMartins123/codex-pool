@@ -270,6 +270,192 @@ func TestMemberRecoveryRateLimitsRepeatedFailures(t *testing.T) {
 	}
 }
 
+func TestMemberRecoveryInvalidTokenSkipsArgon2(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain the password semaphore: an invalid token must still fail fast
+	// instead of queueing behind a busy Argon2 pool.
+	for i := 0; i < 4; i++ {
+		passport.passwordWork <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 4; i++ {
+			<-passport.passwordWork
+		}
+	})
+	start := time.Now()
+	if _, _, _, err := passport.redeemMemberLink("totally-unknown-token", "some valid password 12"); err == nil {
+		t.Fatal("unknown token redeemed")
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("invalid token took %v; Argon2 ran before token check", time.Since(start))
+	}
+}
+
+func TestFreshRecoveryLinkRetiresPendingOnes(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "retire@example.com", "R", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(first.Token, "new password from stale link"); err == nil {
+		t.Fatal("stale recovery link survived a newer mint")
+	}
+	if _, _, _, err := passport.redeemMemberLink(second.Token, "new password valid 123"); err != nil {
+		t.Fatalf("latest recovery link rejected: %v", err)
+	}
+	// Redeeming must also clear any other pending link of the principal.
+	third, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fourth, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = third
+	if _, _, _, err := passport.redeemMemberLink(fourth.Token, "another new password 1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(third.Token, "should be gone 12345"); err == nil {
+		t.Fatal("pending sibling link survived a redemption")
+	}
+}
+
+func TestConsoleEndpointsRequireOperator(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "console@example.com", "C", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
+		t.Fatal(err)
+	}
+	member := passport.byEmail("console@example.com")
+	session, _, err := passport.createSession(member.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &proxyHandler{cfg: &config{}, passport: passport, store: store}
+	for _, path := range []string{"/api/console/principals", "/api/console/audit", "/api/console/analytics-health", "/api/console/principals/" + member.ID + "/usage"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("%s member status = %d, want 403", path, recorder.Code)
+		}
+	}
+}
+
+func TestPrincipalPatchRejectsCombinedStatusAndKind(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	if _, err := createOperatorForTest(t, store); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := func() *Principal {
+		for _, pr := range p2.principals {
+			if pr.Kind == PrincipalOperator {
+				cp := *pr
+				return &cp
+			}
+		}
+		return nil
+	}()
+	session, csrf, err := p2.createSession(operator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := p2.createMemberLink(operator.ID, "patch@example.com", "P", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, _, _, err := p2.redeemMemberLink(onboarding.Token, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &proxyHandler{cfg: &config{}, passport: p2, metrics: newMetrics()}
+	request := httptest.NewRequest(http.MethodPatch, "/api/principals/"+member.ID, strings.NewReader(`{"status":"suspended","kind":"operator"}`))
+	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
+	request.AddCookie(&http.Cookie{Name: "pool_csrf", Value: csrf})
+	request.Header.Set("X-CSRF-Token", csrf)
+	recorder := httptest.NewRecorder()
+	h.handlePrincipalItem(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("combined status+kind patch status = %d, want 400", recorder.Code)
+	}
+	updated := p2.principal(member.ID)
+	if updated == nil || updated.Status != PrincipalActive || updated.Kind != PrincipalMember {
+		t.Fatalf("rejected patch mutated the principal: %+v", updated)
+	}
+}
+
+func TestOnboardingEmailUniquenessIsTransactional(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Principal written directly to the bucket, bypassing the in-memory map,
+	// simulating a concurrent onboard that won the race.
+	direct := &Principal{ID: "direct-racer", Kind: PrincipalMember, Status: PrincipalActive, Email: "race@example.com", CreatedAt: time.Now().UTC()}
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketPrincipals)), direct.ID, direct)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := passport.createMemberLink("operator", "RACE@example.com", "R", "onboard"); err == nil {
+		t.Fatal("onboard created a duplicate email despite the bucket entry")
+	}
+}
+
+func TestWebAuthnLoginBeginPostOnlyAndCapped(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics()}
+	get := httptest.NewRecorder()
+	h.handleWebAuthnLoginBegin(get, httptest.NewRequest(http.MethodGet, "/api/auth/passkey/begin", nil))
+	if get.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", get.Code)
+	}
+}
+
 func TestBootstrapOperatorCreatesFreshPrincipal(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-for-bootstrap")

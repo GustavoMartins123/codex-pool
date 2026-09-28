@@ -177,6 +177,8 @@ func (p *PassportStore) updateWebAuthnCredential(principalID string, credential 
 	return p.db.Update(func(tx *bbolt.Tx) error { return putJSON(tx.Bucket([]byte(bucketWebAuthnCredentials)), key, &record) })
 }
 
+const maxPendingWebAuthnChallenges = 512
+
 func (p *PassportStore) saveWebAuthnChallenge(principalID, purpose string, session *wa.SessionData) (string, error) {
 	id, err := secureToken(18)
 	if err != nil {
@@ -187,11 +189,17 @@ func (p *PassportStore) saveWebAuthnChallenge(principalID, purpose string, sessi
 	err = p.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketWebAuthnChallenges))
 		cursor := bucket.Cursor()
+		live := 0
 		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
 			var existing storedWebAuthnChallenge
 			if json.Unmarshal(v, &existing) != nil || !now.Before(existing.ExpiresAt) {
 				_ = cursor.Delete()
+				continue
 			}
+			live++
+		}
+		if live >= maxPendingWebAuthnChallenges {
+			return errors.New("too many pending passkey challenges")
 		}
 		return putJSON(bucket, id, &record)
 	})
@@ -329,7 +337,7 @@ func (h *proxyHandler) handleWebAuthnRegisterBegin(w http.ResponseWriter, r *htt
 		Password string `json:"password"`
 		Label    string `json:"label"`
 	}
-	if json.NewDecoder(r.Body).Decode(&input) != nil || !verifyPassword(principal.PasswordHash, input.Password) {
+	if json.NewDecoder(r.Body).Decode(&input) != nil || !h.passport.verifyPasswordGuarded(principal.PasswordHash, input.Password) {
 		respondJSONError(w, http.StatusUnauthorized, "fresh password verification required")
 		return
 	}
@@ -393,6 +401,15 @@ func (h *proxyHandler) handleWebAuthnRegisterFinish(w http.ResponseWriter, r *ht
 
 func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ip := getClientIP(r)
+	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
 	web, err := h.webAuthnForRequest(r)
 	if err != nil {
 		respondJSONError(w, 500, "passkey unavailable")
@@ -405,7 +422,7 @@ func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.R
 	}
 	challengeID, err := h.passport.saveWebAuthnChallenge("", "login", data)
 	if err != nil {
-		respondJSONError(w, 500, "passkey unavailable")
+		respondJSONError(w, http.StatusTooManyRequests, "too many pending passkey challenges")
 		return
 	}
 	respondJSON(w, map[string]any{"challenge_id": challengeID, "options": assertion.Response})
@@ -429,19 +446,26 @@ func (h *proxyHandler) handleWebAuthnLoginFinish(w http.ResponseWriter, r *http.
 		return
 	}
 	passportUser, ok := user.(*passportWebAuthnUser)
-	if !ok || passportUser.principal.Status != PrincipalActive {
+	if !ok {
 		respondJSONError(w, http.StatusUnauthorized, "passkey sign-in failed")
 		return
 	}
-	if err := h.passport.updateWebAuthnCredential(passportUser.principal.ID, credential); err != nil {
+	// Passkey sign-in mirrors password login eligibility: members/operators
+	// only, active, and not expired.
+	pr := passportUser.principal
+	if pr.Kind == PrincipalGuest || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+		respondJSONError(w, http.StatusUnauthorized, "passkey sign-in failed")
+		return
+	}
+	if err := h.passport.updateWebAuthnCredential(pr.ID, credential); err != nil {
 		respondJSONError(w, 500, "passkey store failed")
 		return
 	}
-	token, csrf, err := h.passport.createSession(passportUser.principal.ID)
+	token, csrf, err := h.passport.createSession(pr.ID)
 	if err != nil {
 		respondJSONError(w, 500, "session unavailable")
 		return
 	}
 	setSessionCookies(w, token, csrf)
-	respondJSON(w, map[string]any{"principal": publicPrincipal(passportUser.principal), "csrf": csrf})
+	respondJSON(w, map[string]any{"principal": publicPrincipal(pr), "csrf": csrf})
 }

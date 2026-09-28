@@ -84,7 +84,7 @@ func (p *PassportStore) recentAudit(limit int) ([]AuditEntry, error) {
 
 func (h *proxyHandler) handleConsolePrincipals(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	if _, _, ok := h.requireMember(w, r); !ok {
+	if _, _, ok := h.requireOperator(w, r); !ok {
 		return
 	}
 	if h.duckAnalytics == nil {
@@ -119,7 +119,7 @@ func consoleUsageHours(r *http.Request) int {
 
 func (h *proxyHandler) handleConsolePrincipalUsage(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	if _, _, ok := h.requireMember(w, r); !ok {
+	if _, _, ok := h.requireOperator(w, r); !ok {
 		return
 	}
 	principalID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/console/principals/"), "/")
@@ -140,7 +140,7 @@ func (h *proxyHandler) handleConsolePrincipalUsage(w http.ResponseWriter, r *htt
 
 func (h *proxyHandler) handleConsoleAnalyticsHealth(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	if _, _, ok := h.requireMember(w, r); !ok {
+	if _, _, ok := h.requireOperator(w, r); !ok {
 		return
 	}
 	if h.duckAnalytics == nil || h.store == nil {
@@ -161,7 +161,7 @@ func (h *proxyHandler) handleConsoleAnalyticsHealth(w http.ResponseWriter, r *ht
 
 func (h *proxyHandler) handleConsoleAudit(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	if _, _, ok := h.requireMember(w, r); !ok {
+	if _, _, ok := h.requireOperator(w, r); !ok {
 		return
 	}
 	entries, err := h.passport.recentAudit(200)

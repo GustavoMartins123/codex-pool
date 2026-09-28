@@ -504,7 +504,7 @@ export function App() {
           {view === "insights" && <Insights stats={stats} signal={signal} onAccounts={() => goToView("accounts", { accounts: null })} />}
           {view === "mine" && <PassportMine principal={passport} onPrincipal={setPassport} />}
           {view === "passes" && passport && passport.kind !== "guest" && <Passes />}
-          {view === "console" && passport && passport.kind !== "guest" && <PassportConsole principal={passport} />}
+          {view === "console" && passport && passport.kind === "operator" && <PassportConsole principal={passport} />}
           {view === "accounts" && (
             <Accounts
               stats={stats}

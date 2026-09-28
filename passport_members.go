@@ -111,12 +111,40 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 	}
 
 	err = p.db.Update(func(tx *bbolt.Tx) error {
+		principals := tx.Bucket([]byte(bucketPrincipals))
+		links := tx.Bucket([]byte(bucketMemberRecoveryLinks))
 		if purpose == "onboard" {
-			if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), principal.ID, principal); err != nil {
+			// Transactional email uniqueness: the pre-transaction byEmail check
+			// races under concurrent onboarding, the bucket scan cannot.
+			duplicate := false
+			if err := principals.ForEach(func(_, value []byte) error {
+				var existing Principal
+				if json.Unmarshal(value, &existing) == nil && strings.EqualFold(existing.Email, email) && existing.Email != "" {
+					duplicate = true
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			if duplicate {
+				return errors.New("an account already uses that email")
+			}
+			if err := putJSON(principals, principal.ID, principal); err != nil {
+				return err
+			}
+		} else {
+			// A fresh recovery link retires every pending link of this principal.
+			if err := links.ForEach(func(key, value []byte) error {
+				var candidate memberRecoveryLink
+				if json.Unmarshal(value, &candidate) != nil || candidate.PrincipalID != principal.ID {
+					return nil
+				}
+				return links.Delete(key)
+			}); err != nil {
 				return err
 			}
 		}
-		if err := putJSON(tx.Bucket([]byte(bucketMemberRecoveryLinks)), link.ID, &link); err != nil {
+		if err := putJSON(links, link.ID, &link); err != nil {
 			return err
 		}
 		action := "member.onboarding_link_created"
@@ -136,22 +164,11 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 	return &memberLinkResult{Principal: copyPrincipal(principal), Token: token, ExpiresAt: link.ExpiresAt}, nil
 }
 
-func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, string, string, error) {
-	if len(password) < 12 {
-		return nil, "", "", errors.New("password must be at least 12 characters")
-	}
-	passwordHash, err := hashPassword(password)
-	if err != nil {
-		return nil, "", "", err
-	}
-	digest := hashToken(strings.TrimSpace(token))
-	var principal Principal
+func (p *PassportStore) memberLinkByDigest(digest [32]byte) (memberRecoveryLink, bool) {
 	var link memberRecoveryLink
-	now := time.Now().UTC()
-	err = p.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
-		var matchedKey []byte
-		if err := bucket.ForEach(func(key, value []byte) error {
+	found := false
+	_ = p.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketMemberRecoveryLinks)).ForEach(func(_, value []byte) error {
 			var candidate memberRecoveryLink
 			if json.Unmarshal(value, &candidate) != nil {
 				return nil
@@ -159,43 +176,97 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			stored, decodeErr := hex.DecodeString(candidate.TokenDigest)
 			if decodeErr == nil && len(stored) == len(digest) && subtle.ConstantTimeCompare(stored, digest[:]) == 1 {
 				link = candidate
-				matchedKey = append([]byte(nil), key...)
+				found = true
+			}
+			return nil
+		})
+	})
+	return link, found
+}
+
+func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, string, string, error) {
+	if len(password) < 12 {
+		return nil, "", "", errors.New("password must be at least 12 characters")
+	}
+	// Cheap digest lookup first: invalid tokens must never reach Argon2.
+	digest := hashToken(strings.TrimSpace(token))
+	link, found := p.memberLinkByDigest(digest)
+	now := time.Now().UTC()
+	if !found || now.After(link.ExpiresAt) {
+		return nil, "", "", errors.New("member link unavailable")
+	}
+	principal := p.principal(link.PrincipalID)
+	if principal == nil || principal.Status != PrincipalActive || (principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
+		return nil, "", "", errors.New("member link unavailable")
+	}
+	select {
+	case p.passwordWork <- struct{}{}:
+		defer func() { <-p.passwordWork }()
+	default:
+		return nil, "", "", errors.New("password verification busy")
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		return nil, "", "", err
+	}
+	var updated Principal
+	err = p.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+		// Re-check the link inside the transaction: it may have been consumed
+		// between the pre-check and this write.
+		var live memberRecoveryLink
+		matched := false
+		if err := bucket.ForEach(func(key, value []byte) error {
+			var candidate memberRecoveryLink
+			if json.Unmarshal(value, &candidate) != nil {
+				return nil
+			}
+			stored, decodeErr := hex.DecodeString(candidate.TokenDigest)
+			if decodeErr == nil && len(stored) == len(digest) && subtle.ConstantTimeCompare(stored, digest[:]) == 1 {
+				live = candidate
+				matched = true
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
-		if matchedKey == nil || now.After(link.ExpiresAt) {
+		applyNow := time.Now().UTC()
+		if !matched || applyNow.After(live.ExpiresAt) {
 			return errors.New("member link unavailable")
 		}
-		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(link.PrincipalID))
-		if value == nil || json.Unmarshal(value, &principal) != nil || principal.Status != PrincipalActive ||
-			(principal.ExpiresAt != nil && now.After(*principal.ExpiresAt)) {
+		value := tx.Bucket([]byte(bucketPrincipals)).Get([]byte(live.PrincipalID))
+		if value == nil || json.Unmarshal(value, &updated) != nil || updated.Status != PrincipalActive ||
+			(updated.ExpiresAt != nil && applyNow.After(*updated.ExpiresAt)) {
 			return errors.New("member link unavailable")
 		}
-		principal.PasswordHash = passwordHash
-		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), principal.ID, &principal); err != nil {
+		updated.PasswordHash = passwordHash
+		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated); err != nil {
 			return err
 		}
-		if err := deletePrincipalSessions(tx, principal.ID); err != nil {
+		if err := deletePrincipalSessions(tx, updated.ID); err != nil {
 			return err
 		}
-		if err := bucket.Delete(matchedKey); err != nil {
-			return err
-		}
-		return p.audit(tx, principal.ID, "member.password_set", principal.ID, link.Purpose)
+		// Consuming a link retires every other pending link of this principal.
+		return bucket.ForEach(func(key, value []byte) error {
+			var candidate memberRecoveryLink
+			if json.Unmarshal(value, &candidate) != nil || candidate.PrincipalID != updated.ID {
+				return nil
+			}
+			return bucket.Delete(key)
+		})
 	})
 	if err != nil {
 		return nil, "", "", err
 	}
+	_ = p.recordAudit(updated.ID, "member.password_set", updated.ID, link.Purpose)
 	p.mu.Lock()
-	p.principals[principal.ID] = &principal
+	p.principals[updated.ID] = &updated
 	p.mu.Unlock()
-	sessionToken, csrf, err := p.createSession(principal.ID)
+	sessionToken, csrf, err := p.createSession(updated.ID)
 	if err != nil {
 		return nil, "", "", err
 	}
-	return copyPrincipal(&principal), sessionToken, csrf, nil
+	return copyPrincipal(&updated), sessionToken, csrf, nil
 }
 
 func (p *PassportStore) hasOperator() bool {

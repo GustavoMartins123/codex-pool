@@ -452,6 +452,19 @@ func verifyPassword(encoded, password string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
+// verifyPasswordGuarded routes Argon2 verification through the same bounded
+// semaphore as login so public endpoints cannot exhaust CPU and memory with
+// parallel password hashes.
+func (p *PassportStore) verifyPasswordGuarded(encoded, password string) bool {
+	select {
+	case p.passwordWork <- struct{}{}:
+		defer func() { <-p.passwordWork }()
+	default:
+		return false
+	}
+	return verifyPassword(encoded, password)
+}
+
 func (p *PassportStore) principal(id string) *Principal {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
