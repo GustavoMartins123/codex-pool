@@ -49,7 +49,7 @@ func TestProxyStreamedRequestClaude(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	body := bytes.Repeat([]byte("a"), 2048)
@@ -136,7 +136,7 @@ func TestProxyClaude429FallsThroughToNextAccount(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	body := []byte(`{"model":"claude-opus-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)

@@ -63,7 +63,7 @@ func TestContextStreamedReplay(t *testing.T) {
 			base, _ := url.Parse(upstream.URL)
 			h.registry = NewProviderRegistry(NewCodexProvider(base, base, nil), NewClaudeProvider(base), NewGeminiProvider(base, base))
 			body := `{"input":[{"role":"user","content":"` + prompt + `"},{"type":"function_call_output","call_id":"context-call","output":[{"type":"encrypted_content","encrypted_content":"` + envelope + `"}]}],"client_metadata":{"session_id":"` + session + `"},"reasoning":{"context":"all_turns"},"model":"gpt-5.5","stream":true}`
-			proxy := httptest.NewServer(h)
+			proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 			defer proxy.Close()
 			send := func(body string, wantStatus, wantCalls int) {
 				t.Helper()

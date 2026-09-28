@@ -344,7 +344,7 @@ func TestSecurityEffortCapBypassDefense(t *testing.T) {
 	req1 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body1))
 	req1.Header.Set("Authorization", "Bearer "+token)
 	req1.Header.Set("Content-Type", "application/json")
-	h.proxyRequest(httptest.NewRecorder(), req1, "bypass-1")
+	testPoolProxyRequest(t, h, httptest.NewRecorder(), req1, "bypass-1")
 
 	var obj1 map[string]any
 	if err := json.Unmarshal(interceptedBody, &obj1); err != nil {
@@ -364,7 +364,7 @@ func TestSecurityEffortCapBypassDefense(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body2))
 	req2.Header.Set("Authorization", "Bearer "+token)
 	req2.Header.Set("Content-Type", "application/json")
-	h.proxyRequest(httptest.NewRecorder(), req2, "bypass-2")
+	testPoolProxyRequest(t, h, httptest.NewRecorder(), req2, "bypass-2")
 
 	var obj2 map[string]any
 	if err := json.Unmarshal(interceptedBody, &obj2); err != nil {

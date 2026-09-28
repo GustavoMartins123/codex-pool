@@ -137,7 +137,7 @@ func TestFailedCodexRequestFallsBackWithSafeHistory(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("transition-fallback-secret", "user"))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	testPoolServeHTTP(t, h, w, r)
 	if w.Code != 200 || len(claudePayload) == 0 {
 		t.Fatalf("fallback status=%d payload=%s response=%s", w.Code, claudePayload, w.Body.String())
 	}

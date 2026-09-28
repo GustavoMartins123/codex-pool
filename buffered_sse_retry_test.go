@@ -119,7 +119,7 @@ func TestResponsesNonStreamingBufferedRetriesOnCyberPolicy(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user-buffered-responses"))
 	req.Header.Set("session_id", "buffered-responses-cyber-test")
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	testPoolServeHTTP(t, h, rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
@@ -241,7 +241,7 @@ func TestClaudeSDKBufferedTranslationRetriesOnCyberPolicy(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user-buffered"))
 	req.Header.Set("session_id", "buffered-cyber-test")
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	testPoolServeHTTP(t, h, rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())

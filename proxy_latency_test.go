@@ -58,7 +58,7 @@ func TestProxySSEIncremental(t *testing.T) {
 			}))
 			defer upstream.Close()
 			h := latencyTestHandler(t, upstream.URL, tc.bodyLimit)
-			proxy := httptest.NewServer(h)
+			proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 			defer proxy.Close()
 			defer close(stop)
 			client := &http.Client{Timeout: 5 * time.Second}
@@ -130,7 +130,7 @@ func TestProxySSEAccountingLatency(t *testing.T) {
 			h.store = store
 			done := make(chan struct{})
 			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.ServeHTTP(w, r)
+				testPoolServeHTTP(t, h, w, r)
 				close(done)
 			}))
 			defer proxy.Close()

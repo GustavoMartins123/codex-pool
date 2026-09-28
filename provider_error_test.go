@@ -104,7 +104,7 @@ func TestGeneric429SessionErrorDoesNotConsumeQuota(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("generic-429-secret", "user"))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
+	testPoolServeHTTP(t, h, w, r)
 	if w.Code != 429 || !strings.Contains(w.Body.String(), "invalid session") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}

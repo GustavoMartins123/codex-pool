@@ -29,7 +29,7 @@ func contextProxyFixture(t *testing.T, upstream string, accounts ...*Account) (*
 	base, _ := url.Parse(upstream + "/backend-api/codex")
 	wham, _ := url.Parse(upstream + "/backend-api")
 	h.registry = NewProviderRegistry(NewCodexProvider(base, wham, nil), NewClaudeProvider(base), NewGeminiProvider(base, base))
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	t.Cleanup(proxy.Close)
 	return h, proxy
 }
@@ -390,14 +390,14 @@ func TestNativeContextHTTPInvalidSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":[],"reasoning":{"context":"all_turns"}}`))
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("context-proxy-secret", "context-user"))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "context-invalid")
+	testPoolProxyRequest(t, h, rr, req, "context-invalid")
 	if rr.Code != http.StatusBadRequest || calls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", rr.Code, calls, rr.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(contextProxyInference("")))
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("context-proxy-secret", "context-user"))
 	rr = httptest.NewRecorder()
-	h.proxyRequest(rr, req, "context-missing-store")
+	testPoolProxyRequest(t, h, rr, req, "context-missing-store")
 	if rr.Code != http.StatusServiceUnavailable || calls != 0 {
 		t.Fatalf("missing store fell back: status=%d calls=%d body=%s", rr.Code, calls, rr.Body.String())
 	}

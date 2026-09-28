@@ -95,7 +95,7 @@ func TestGenericProviderParticipatesInProxyRouting(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("generic-routing-secret", "client"))
 	recorder := httptest.NewRecorder()
-	handler.proxyRequest(recorder, request, "generic-route")
+	testPoolProxyRequest(t, handler, recorder, request, "generic-route")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

@@ -299,7 +299,7 @@ func TestPoolModelsEndpointRequiresPoolToken(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "http://pool.example/api/pool/models", nil)
 	recorder := httptest.NewRecorder()
-	handler.proxyRequest(recorder, request, "request-id")
+	testPoolProxyRequest(t, handler, recorder, request, "request-id")
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
@@ -315,7 +315,7 @@ func TestPoolModelsEndpointRequiresPoolToken(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "http://pool.example/api/pool/models", nil)
 	request.Header.Set("Authorization", "Bearer "+auth.AccessToken)
 	recorder = httptest.NewRecorder()
-	handler.proxyRequest(recorder, request, "request-id")
+	testPoolProxyRequest(t, handler, recorder, request, "request-id")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("authenticated status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}

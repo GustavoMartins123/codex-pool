@@ -89,7 +89,7 @@ func TestAuditWebSocketRejectionRelay(t *testing.T) {
 	account := &Account{ID: "rejected", Type: AccountTypeCodex, AccountID: "acct_rejected", AccessToken: "token", PlanType: "pro"}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	finished := make(chan struct{})
-	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fx.handler.ServeHTTP(w, r); close(finished) }))
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { testPoolServeHTTP(t, fx.handler, w, r); close(finished) }))
 	defer proxy.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

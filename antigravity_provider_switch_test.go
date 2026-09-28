@@ -103,7 +103,7 @@ func TestConversationSwitchCodexToAntigravity(t *testing.T) {
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 
-	h.ServeHTTP(w1, req1)
+	testPoolServeHTTP(t, h, w1, req1)
 	if w1.Code != http.StatusOK {
 		t.Fatalf("Request 1 status = %d, want 200", w1.Code)
 	}
@@ -123,7 +123,7 @@ func TestConversationSwitchCodexToAntigravity(t *testing.T) {
 	req2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 
-	h.ServeHTTP(w2, req2)
+	testPoolServeHTTP(t, h, w2, req2)
 	t.Logf("Request 2 status: %d", w2.Code)
 
 	if w2.Code != http.StatusOK {

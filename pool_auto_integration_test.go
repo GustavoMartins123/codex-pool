@@ -66,7 +66,7 @@ func TestPoolAutoResponsesEndpointIntegration(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("integration-secret", "user-auto"))
 	rec := httptest.NewRecorder()
 
-	handler.ServeHTTP(rec, req)
+	testPoolServeHTTP(t, handler, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
@@ -153,7 +153,7 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("integration-secret", "user-fast"))
 	rec := httptest.NewRecorder()
 
-	handler.ServeHTTP(rec, req)
+	testPoolServeHTTP(t, handler, rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK after fallback, got %d: %s", rec.Code, rec.Body.String())

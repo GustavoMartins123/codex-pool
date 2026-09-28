@@ -32,7 +32,7 @@ func TestAuditNativeUsage(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("audit-secret", "audit-user"))
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "audit-native-usage")
+			testPoolProxyRequest(t, h, rr, req, "audit-native-usage")
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}

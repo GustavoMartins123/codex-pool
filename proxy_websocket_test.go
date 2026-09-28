@@ -84,7 +84,7 @@ func TestRealtimeCallAndSidebandUseSamePooledAccount(t *testing.T) {
 		metrics:   newMetrics(),
 		recent:    newRecentErrors(5),
 	}
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 	auth := "Bearer " + generateClaudePoolToken("test-secret", "voice-user")
 
@@ -196,7 +196,7 @@ func TestProxyWebSocketPoolRewritesAuthAndPinsSession(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	statusLine := performRawWebSocketHandshake(t, proxy.URL, "/responses", map[string]string{
@@ -273,7 +273,7 @@ func TestProxyWebSocketUsesPinnedAccountBeforeCyberPolicy(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	statusLine := performRawWebSocketHandshake(t, proxy.URL, "/responses", map[string]string{
@@ -323,7 +323,7 @@ func TestProxyWebSocketPassthroughPreservesAuthorization(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	statusLine := performRawWebSocketHandshake(t, proxy.URL, "/responses", map[string]string{
@@ -382,7 +382,7 @@ func TestProxyWebSocketPinsMaxPlanWhen1MHeaderPresent(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	statusLine := performRawWebSocketHandshake(t, proxy.URL, "/v1/messages", map[string]string{
@@ -438,7 +438,7 @@ func TestProxyWebSocketForwardsTurnStateBothWays(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	statusLine, headers := performRawWebSocketHandshakeWithResponseHeaders(t, proxy.URL, "/responses", map[string]string{
@@ -514,7 +514,7 @@ func TestProxyWebSocketRelaysFrameLargerThanOld64MiBLimit(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	proxyURL, err := url.Parse(proxy.URL)
@@ -591,7 +591,7 @@ func TestProxyWebSocketKeepsCodexConnectionAliveDuringSilentUpstream(t *testing.
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	proxyURL, err := url.Parse(proxy.URL)

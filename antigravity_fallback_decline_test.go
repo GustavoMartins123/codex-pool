@@ -54,7 +54,7 @@ func postCodexModelRequest(t *testing.T, h *proxyHandler, model string) *httptes
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user-1"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	testPoolServeHTTP(t, h, w, req)
 	return w
 }
 

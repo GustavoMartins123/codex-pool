@@ -293,7 +293,7 @@ func TestAutoRedeemCodexResetCreditWhenExhausted(t *testing.T) {
 							"primary_window": {"used_percent": 0, "reset_at": 1788748328, "limit_window_seconds": 604800}
 						}
 					}`)),
-					Header:     make(http.Header),
+					Header: make(http.Header),
 				}, nil
 			default:
 				t.Fatalf("unexpected request %d", requests)
@@ -520,7 +520,7 @@ func TestOversizedCodexBackendAPIResponsesStillHitsCodexPath(t *testing.T) {
 		recent:    newRecentErrors(5),
 		aliases:   newModelAliases(nil),
 	}
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	payload := fmt.Sprintf(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"user","content":%q}]}`, strings.Repeat("x", 2048))
@@ -608,7 +608,7 @@ func TestOversizedResponsesModelRoutesAwayFromChatGPT(t *testing.T) {
 		recent:    newRecentErrors(5),
 		aliases:   newModelAliases(nil),
 	}
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	cases := []struct {
@@ -827,7 +827,7 @@ func TestCodexClientClaudeModelStaysOnCodexAccount(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "codex-user"))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "req-codex-opus")
+	testPoolProxyRequest(t, h, rr, req, "req-codex-opus")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -885,7 +885,7 @@ func TestClaudePoolTranslatesResponsesClientFormat(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "claude-user"))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "req-claude-responses")
+	testPoolProxyRequest(t, h, rr, req, "req-claude-responses")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -989,7 +989,7 @@ func TestClaudePoolTokenAcceptedViaXAPIKeyPreservesNativeClaudeRequest(t *testin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "sdk-user"))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "req-sdk")
+	testPoolProxyRequest(t, h, rr, req, "req-sdk")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -1085,7 +1085,7 @@ func TestClaudeSDKRequestToGPTMapsReasoningEffort(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "sdk-user"))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "req-gpt")
+	testPoolProxyRequest(t, h, rr, req, "req-gpt")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -1153,7 +1153,7 @@ func TestCyberPolicyStreamPinsConversationToCyberAccessAccount(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("session_id", "thread-cyber")
 		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, req)
+		testPoolServeHTTP(t, h, rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("request %d status=%d body=%s", i+1, rr.Code, rr.Body.String())
 		}
@@ -1207,7 +1207,7 @@ func TestCyberPolicyErrorRetriesOnCyberAccessAccount(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	h.ServeHTTP(rr, req)
+	testPoolServeHTTP(t, h, rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())

@@ -80,7 +80,7 @@ func TestProxyRequestAppliesEffortCap(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
-			h.proxyRequest(httptest.NewRecorder(), req, "effort-cap-test")
+			testPoolProxyRequest(t, h, httptest.NewRecorder(), req, "effort-cap-test")
 
 			if !called {
 				t.Fatal("upstream was never called")

@@ -65,7 +65,7 @@ func TestCodexProxyStripsHostedMCPFromResponsesRequest(t *testing.T) {
 		metrics:   newMetrics(),
 		recent:    newRecentErrors(5),
 	}
-	proxy := httptest.NewServer(handler)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, handler))
 	defer proxy.Close()
 
 	body := []byte(`{
@@ -179,7 +179,7 @@ func TestCodexProxyStripsHostedMCPFromResponsesStream(t *testing.T) {
 		metrics: newMetrics(),
 		recent:  newRecentErrors(5),
 	}
-	proxy := httptest.NewServer(handler)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, handler))
 	defer proxy.Close()
 
 	req, err := http.NewRequest(http.MethodPost, proxy.URL+"/v1/responses", strings.NewReader(`{"model":"gpt-5.4","stream":true,"input":"hello"}`))
@@ -305,7 +305,7 @@ func TestCodexPassthroughStripsHostedMCPFromLargeRequestAndJSONResponse(t *testi
 		metrics: newMetrics(),
 		recent:  newRecentErrors(5),
 	}
-	proxy := httptest.NewServer(handler)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, handler))
 	defer proxy.Close()
 
 	requestBody := []byte(`{

@@ -104,7 +104,7 @@ func newCodexProxyFixture(t *testing.T, base *url.URL, accounts []*Account) *cod
 		recent:    newRecentErrors(8),
 	}
 	h.cfg.debug.Store(true)
-	srv := httptest.NewServer(h)
+	srv := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	t.Cleanup(srv.Close)
 	return &codexProxyFixture{server: srv, handler: h}
 }

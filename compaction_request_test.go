@@ -75,7 +75,7 @@ func TestCompactInvalidRequest(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(body))
 			req.Header.Set("Authorization", "Bearer "+token)
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "invalid-compact")
+			testPoolProxyRequest(t, h, rr, req, "invalid-compact")
 			if rr.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}

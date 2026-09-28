@@ -65,7 +65,7 @@ func TestPreflightSpoolAdmission(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "preflight-admission")
+			testPoolProxyRequest(t, h, rr, req, "preflight-admission")
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}
@@ -168,7 +168,7 @@ func TestPreflightOriginalIntent(t *testing.T) {
 			req.Header.Set("Accept", tc.accept)
 			req.Header.Set("X-Stainless-Timeout", tc.timeoutHeader)
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "preflight-intent")
+			testPoolProxyRequest(t, h, rr, req, "preflight-intent")
 			if !called || rr.Code != http.StatusOK {
 				t.Fatalf("called=%v status=%d body=%s", called, rr.Code, rr.Body.String())
 			}
@@ -216,7 +216,7 @@ func TestPreflightHostedMCP(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "preflight-mcp")
+			testPoolProxyRequest(t, h, rr, req, "preflight-mcp")
 			if !called || rr.Code != http.StatusOK {
 				t.Fatalf("called=%v status=%d body=%s", called, rr.Code, rr.Body.String())
 			}

@@ -201,7 +201,7 @@ func TestProxyRequestStreamsLargeXiaomiBodyAfterModelPeek(t *testing.T) {
 			req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "xiaomi-user"))
 			rr := httptest.NewRecorder()
 
-			h.proxyRequest(rr, req, "req-xiaomi-streamed")
+			testPoolProxyRequest(t, h, rr, req, "req-xiaomi-streamed")
 
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -283,7 +283,7 @@ func TestProxyRequestRoutesXiaomiModelsToSingaporeLongContext(t *testing.T) {
 			req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "xiaomi-user"))
 			rr := httptest.NewRecorder()
 
-			h.proxyRequest(rr, req, "req-xiaomi")
+			testPoolProxyRequest(t, h, rr, req, "req-xiaomi")
 
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())

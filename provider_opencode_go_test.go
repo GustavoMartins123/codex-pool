@@ -381,7 +381,7 @@ func TestProxyRequestRoutesOpencodeGoModel(t *testing.T) {
 	req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "go-user"))
 	rr := httptest.NewRecorder()
 
-	h.proxyRequest(rr, req, "req-go")
+	testPoolProxyRequest(t, h, rr, req, "req-go")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -513,7 +513,7 @@ func TestProxyRequestStampsOpencodeGoSession(t *testing.T) {
 	req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "go-user"))
 	rr := httptest.NewRecorder()
 
-	h.proxyRequest(rr, req, "req-go-session")
+	testPoolProxyRequest(t, h, rr, req, "req-go-session")
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())

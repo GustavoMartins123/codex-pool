@@ -90,7 +90,7 @@ func TestClaudeTraceWritesFileForPooledRequest(t *testing.T) {
 		recent:    newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)
@@ -187,7 +187,7 @@ func TestClaudeTraceWritesFileForPooledRoundTripError(t *testing.T) {
 		recent:   newRecentErrors(5),
 	}
 
-	proxy := httptest.NewServer(h)
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 
 	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`)

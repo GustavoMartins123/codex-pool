@@ -25,7 +25,7 @@ func TestProxyFailedWriteUsage(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("audit-secret", "audit-user"))
-			h.proxyRequest(&flushTestSink{writeErr: errors.New("client disconnected")}, req, "failed-write-usage")
+			testPoolProxyRequest(t, h, &flushTestSink{writeErr: errors.New("client disconnected")}, req, "failed-write-usage")
 			usage, err := store.loadAccountUsage("codex")
 			if err != nil {
 				t.Fatal(err)
@@ -66,7 +66,7 @@ func TestProxyStreamWriteFailure(t *testing.T) {
 			sink := &flushTestSink{writeErr: errors.New("client disconnected")}
 			finished := make(chan struct{})
 			go func() {
-				h.ServeHTTP(sink, req)
+				testPoolServeHTTP(t, h, sink, req)
 				close(finished)
 			}()
 			select {

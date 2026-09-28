@@ -46,7 +46,7 @@ func TestCompactionFailures(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"gpt-5.5","input":[]}`))
 			req.Header.Set("Authorization", "Bearer "+token)
 			rr := httptest.NewRecorder()
-			h.proxyRequest(rr, req, "compact-failure")
+			testPoolProxyRequest(t, h, rr, req, "compact-failure")
 			if rr.Code != tc.wantStatus || !strings.Contains(rr.Body.String(), tc.want) {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 			}
@@ -142,7 +142,7 @@ func TestCompactionRoundTrip(t *testing.T) {
 				h.pool = h.nativeContext.pool
 			}
 			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.proxyRequest(w, r, "compact-round-trip")
+				testPoolProxyRequest(t, h, w, r, "compact-round-trip")
 			}))
 			defer proxy.Close()
 
