@@ -797,6 +797,7 @@ function PassportMine({ principal, onPrincipal }: { principal: PassportPrincipal
     codex: `curl -sL "${base}/setup/codex/${(urls.codex ?? "").split("/").pop()}" | bash`,
     claude: `source <(curl -sL "${base}/setup/claude/${(urls.claude ?? "").split("/").pop()}")`,
     gemini: `curl -sL "${base}/setup/gemini/${(urls.gemini ?? "").split("/").pop()}" | bash`,
+    antigravity: `curl -sL "${base}/setup/antigravity/${(urls.antigravity ?? "").split("/").pop()}" | bash`,
     grok: `curl -sL "${base}/setup/grok/${(urls.grok ?? "").split("/").pop()}" | bash`,
     "cute-code": `curl -sL "${base}/setup/cute-code/${(urls["cute-code"] ?? "").split("/").pop()}" | bash`,
     pi: `curl -sL "${base}/setup/pi/${(urls.pi ?? "").split("/").pop()}" | bash`,
@@ -1111,6 +1112,13 @@ function SetupPage() {
       oneliner: `curl -sL "${base}/setup/gemini/${nonce("gemini")}" | bash`,
       powershell: `irm "${base}/setup/gemini/${nonce("gemini")}?shell=powershell" | iex`,
       manual: [{ file: "~/.gemini/oauth_creds.json", url: `${base}/config/gemini/${nonce("gemini")}` }],
+    },
+    antigravity: {
+      name: "Antigravity",
+      install: "curl -fsSL https://antigravity.google/cli/install.sh | bash    # or Windows: irm https://antigravity.google/cli/install.ps1 | iex",
+      oneliner: `curl -sL "${base}/setup/antigravity/${nonce("antigravity")}" | bash`,
+      powershell: `irm "${base}/setup/antigravity/${nonce("antigravity")}?shell=powershell" | iex`,
+      manual: [{ file: "~/.gemini/antigravity-cli/settings.json", url: `${base}/config/antigravity/${nonce("antigravity")}` }],
     },
     grok: {
       name: "Grok",

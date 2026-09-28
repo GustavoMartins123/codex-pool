@@ -25,7 +25,7 @@
 
 A reverse proxy that distributes coding-agent sessions across pooled provider accounts. Got three Codex accounts? Five Claude logins? The proxy spreads your usage across all of them automatically - no manual switching, no juggling auth files. Google subscription accounts use the Antigravity sign-in flow; Gemini remains the API-key provider.
 
-The setup dashboard configures **Codex CLI**, **Claude Code**, **Gemini CLI**, **Grok Build**, **Pi**, and **Cute Code**. Grok Build runs through the proxy without its own login and can select the other pool models; Pi merges pool providers into its existing `models.json`.
+The setup dashboard configures **Codex CLI**, **Claude Code**, **Gemini CLI**, **Antigravity CLI**, **Grok Build**, **Pi**, and **Cute Code**. Grok Build runs through the proxy without its own login and can select the other pool models; Pi merges pool providers into its existing `models.json`.
 
 For browser, mobile, or CLI speech-to-speech agents, see [Realtime voice agents through codex-pool](docs/realtime-voice-agent.md). It uses a pooled ephemeral secret followed by a direct WebRTC session.
 
@@ -205,6 +205,12 @@ export ANTHROPIC_API_KEY="pool"
 **Gemini CLI**:
 ```bash
 export CODE_ASSIST_ENDPOINT="http://127.0.0.1:8989"
+```
+
+**Antigravity CLI** (`agy`): install with `curl -fsSL https://antigravity.google/cli/install.sh | bash` (Windows: `irm https://antigravity.google/cli/install.ps1 | iex`). The setup script selects Gemini API key mode in `~/.gemini/antigravity-cli/settings.json` (`modelProvider: "gemini"`) and exports the pool key, so requests hit `/v1beta/` with `x-goog-api-key` authentication:
+```bash
+export GEMINI_API_KEY="AIzaSy-pool-..."
+export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:8989"
 ```
 
 **Google Antigravity account**: open the dashboard, choose "Contribute an account", then press "Google Antigravity". The popup completes the callback automatically. Pasting the callback URL remains available when popups are blocked.
