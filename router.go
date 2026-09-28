@@ -680,6 +680,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Route Trace: /api/pool/routes/:request_id
 	if strings.HasPrefix(r.URL.Path, "/api/pool/routes/") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
 		h.handleRouteTrace(w, r)
 		return
 	}

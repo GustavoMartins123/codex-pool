@@ -164,6 +164,7 @@ func (s *routeTraceStore) SanitizeForClient(trace *RouteTrace) *RouteTrace {
 	clean.ScoreBreakdown = nil
 	clean.ClientIP = ""
 	clean.UserID = ""
+	clean.Error = ""
 
 	if len(clean.Alternatives) > 0 {
 		sanitizedAlts := make([]RouteAlternative, len(clean.Alternatives))

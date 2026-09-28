@@ -121,33 +121,19 @@ func TestRouteTraceEndpointAuth(t *testing.T) {
 	}
 	h.getRouteTraces().Record(trace)
 
-	// 1. Unauthenticated client request
+	// The HTTP router must deny unauthenticated trace lookups.
 	req1 := httptest.NewRequest("GET", "/api/pool/routes/req_endpoint_abc", nil)
 	rec1 := httptest.NewRecorder()
-	h.handleRouteTrace(rec1, req1)
-
-	if rec1.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for client trace, got %d", rec1.Code)
-	}
-	var clientResp map[string]any
-	if err := json.Unmarshal(rec1.Body.Bytes(), &clientResp); err != nil {
-		t.Fatal(err)
-	}
-	if clientResp["account_id"] != nil {
-		t.Errorf("client response must not contain account_id, got %v", clientResp["account_id"])
-	}
-	if clientResp["score_breakdown"] != nil {
-		t.Errorf("client response must not contain score_breakdown, got %v", clientResp["score_breakdown"])
-	}
-	if clientResp["request_id"] != "req_endpoint_abc" {
-		t.Errorf("client response request_id mismatch: %v", clientResp["request_id"])
+	h.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated trace status = %d, want 401", rec1.Code)
 	}
 
 	// 2. Operator request with X-Admin-Token
 	req2 := httptest.NewRequest("GET", "/api/pool/routes/req_endpoint_abc", nil)
 	req2.Header.Set("X-Admin-Token", "super-secret-admin")
 	rec2 := httptest.NewRecorder()
-	h.handleRouteTrace(rec2, req2)
+	h.ServeHTTP(rec2, req2)
 
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for operator trace, got %d", rec2.Code)
@@ -166,9 +152,37 @@ func TestRouteTraceEndpointAuth(t *testing.T) {
 	// 3. Not found request
 	req3 := httptest.NewRequest("GET", "/api/pool/routes/non_existent_id", nil)
 	rec3 := httptest.NewRecorder()
-	h.handleRouteTrace(rec3, req3)
+	req3.Header.Set("X-Admin-Token", "super-secret-admin")
+	h.ServeHTTP(rec3, req3)
 	if rec3.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown trace, got %d", rec3.Code)
+	}
+}
+
+func TestRouteTraceRejectsMemberSession(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := addAuthorityPrincipal(t, passport, "other-member", PrincipalMember)
+	operator := addAuthorityPrincipal(t, passport, "operator", PrincipalOperator)
+	h := &proxyHandler{cfg: &config{}, passport: passport, routeTraces: newRouteTraceStore(2)}
+	h.routeTraces.Record(&RouteTrace{RequestID: "someone-elses-trace", UserID: "owner", AccountID: "secret"})
+	for _, test := range []struct {
+		session authoritySession
+		want    int
+	}{{member, http.StatusForbidden}, {operator, http.StatusOK}} {
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, authorityRequest(http.MethodGet, "/api/pool/routes/someone-elses-trace", test.session, ""))
+		if response.Code != test.want {
+			t.Fatalf("trace status = %d, want %d", response.Code, test.want)
+		}
+	}
+	clean := h.routeTraces.SanitizeForClient(&RouteTrace{Error: "upstream internal secret"})
+	if clean.Error != "" {
+		t.Fatal("raw upstream error leaked through client sanitizer")
 	}
 }
 

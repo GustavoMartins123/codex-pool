@@ -2215,36 +2215,18 @@ func accountPlanForSubscription(planType string) string {
 	}
 }
 
-// handleWhoami returns the current user's ID based on their JWT, Claude pool token, or hashed IP.
+// handleWhoami reports only live Passport client credentials as pool users.
 func (h *proxyHandler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	var userID string
 	var userType string
-	authHeader := r.Header.Get("Authorization")
-	secret := getPoolJWTSecret()
 	originID := hashRequestOrigin(r, h.originHashSalt())
-
-	// Check for Claude pool tokens first (sk-ant-oat01-pool-* or legacy sk-ant-api-pool-*)
-	if secret != "" {
-		if isClaudePool, uid := isClaudePoolToken(secret, authHeader); isClaudePool {
-			userID = uid
-			userType = "pool_user"
-		}
-	}
-
-	// Check for JWT-based pool tokens (Codex, Gemini)
-	if userID == "" && secret != "" {
-		if isPoolUser, uid, _ := isPoolUserToken(secret, authHeader); isPoolUser {
-			userID = uid
-			userType = "pool_user"
-		}
-	}
-
-	// Check for Gemini OAuth pool tokens (ya29.pool-*)
-	if userID == "" && secret != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if isPoolToken, uid := isGeminiOAuthPoolToken(secret, token); isPoolToken {
-			userID = uid
-			userType = "pool_user"
+	if h.passport != nil {
+		identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, getPoolJWTSecret())
+		if parsed {
+			if _, _, allowed := h.passport.authorizeIssuedCredential(identity, issuedAt); allowed {
+				userID = identity
+				userType = "pool_user"
+			}
 		}
 	}
 
