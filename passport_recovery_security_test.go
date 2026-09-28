@@ -151,6 +151,73 @@ func TestPasswordChangeInvalidatesOutstandingRecovery(t *testing.T) {
 	}
 }
 
+func TestMemberRecoveryStatusIsReadOnly(t *testing.T) {
+	passport := newRecoveryTestPassport(t)
+	link := onboardMemberLink(t, passport, "readonly@example.com")
+	expireMemberLinksFor(t, passport, link.Principal.ID)
+
+	h := &proxyHandler{cfg: &config{}, passport: passport}
+	for range 2 {
+		recorder := httptest.NewRecorder()
+		h.handleMemberRecoveryStatus(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/recover/status", strings.NewReader(`{"token":"`+link.Token+`"}`)))
+		if recorder.Code != http.StatusOK || strings.TrimSpace(recorder.Body.String()) != `{"valid":false}` {
+			t.Fatalf("expired status = %d %s", recorder.Code, recorder.Body.String())
+		}
+	}
+
+	// Status must not reclaim anything: the expired record survives for the
+	// gated create/redeem cleanup paths.
+	remaining := 0
+	if err := passport.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketMemberRecoveryLinks)).ForEach(func(_, value []byte) error {
+			var candidate memberRecoveryLink
+			if json.Unmarshal(value, &candidate) == nil && candidate.PrincipalID == link.Principal.ID {
+				remaining++
+			}
+			return nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("status deleted the expired link record; want it preserved, got %d", remaining)
+	}
+}
+
+func TestMemberRecoveryIndexBackfillCoversLegacyLinks(t *testing.T) {
+	passport := newRecoveryTestPassport(t)
+	link := onboardMemberLink(t, passport, "legacy@example.com")
+
+	// Simulate a link written before the digest index existed.
+	var legacyDigest string
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		index := tx.Bucket([]byte(bucketMemberRecoveryLinksByToken))
+		return index.ForEach(func(digest, id []byte) error {
+			var candidate memberRecoveryLink
+			if json.Unmarshal(tx.Bucket([]byte(bucketMemberRecoveryLinks)).Get(id), &candidate) == nil && candidate.PrincipalID == link.Principal.ID {
+				legacyDigest = string(digest)
+			}
+			return nil
+		})
+	}); err != nil || legacyDigest == "" {
+		t.Fatalf("index entry lookup failed: %v %q", err, legacyDigest)
+	}
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketMemberRecoveryLinksByToken)).Delete([]byte(legacyDigest))
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopening the store backfills the index; the live token must resolve.
+	reopened, err := newPassportStore(passport.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := reopened.redeemMemberLink(link.Token, "legacy password 1"); err != nil {
+		t.Fatalf("legacy link stopped resolving after reopen: %v", err)
+	}
+}
+
 func TestMemberRecoveryStatusMatrix(t *testing.T) {
 	passport := newRecoveryTestPassport(t)
 	h := &proxyHandler{cfg: &config{}, passport: passport}

@@ -13,7 +13,10 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const bucketMemberRecoveryLinks = "member_recovery_links"
+const (
+	bucketMemberRecoveryLinks        = "member_recovery_links"
+	bucketMemberRecoveryLinksByToken = "member_recovery_links_by_token"
+)
 
 type memberRecoveryLink struct {
 	ID          string    `json:"id"`
@@ -113,6 +116,11 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 	err = p.db.Update(func(tx *bbolt.Tx) error {
 		principals := tx.Bucket([]byte(bucketPrincipals))
 		links := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+		linksByToken := tx.Bucket([]byte(bucketMemberRecoveryLinksByToken))
+		// Operator-gated maintenance point for expired links.
+		if err := cleanupExpiredMemberLinksTx(tx, now); err != nil {
+			return err
+		}
 		if purpose == "onboard" {
 			// Transactional email uniqueness: the pre-transaction byEmail check
 			// races under concurrent onboarding, the bucket scan cannot.
@@ -145,6 +153,9 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 		if err := putJSON(links, link.ID, &link); err != nil {
 			return err
 		}
+		if err := linksByToken.Put([]byte(link.TokenDigest), []byte(link.ID)); err != nil {
+			return err
+		}
 		action := "member.onboarding_link_created"
 		if purpose == "recover" {
 			action = "member.recovery_link_created"
@@ -162,22 +173,37 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 	return &memberLinkResult{Principal: copyPrincipal(principal), Token: token, ExpiresAt: link.ExpiresAt}, nil
 }
 
+// memberLinkByDigestInTx resolves a recovery link through the digest index in
+// O(1) instead of scanning the bucket, and constant-time confirms the stored
+// digest still matches the presented one.
+func memberLinkByDigestInTx(tx *bbolt.Tx, digestHex string) (memberRecoveryLink, bool) {
+	var link memberRecoveryLink
+	links := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+	index := tx.Bucket([]byte(bucketMemberRecoveryLinksByToken))
+	if links == nil || index == nil {
+		return link, false
+	}
+	id := index.Get([]byte(digestHex))
+	if id == nil {
+		return link, false
+	}
+	if json.Unmarshal(links.Get(id), &link) != nil {
+		return link, false
+	}
+	stored, decodeErr := hex.DecodeString(link.TokenDigest)
+	presented, presentedErr := hex.DecodeString(digestHex)
+	if decodeErr != nil || presentedErr != nil || len(stored) != len(presented) || subtle.ConstantTimeCompare(stored, presented) != 1 {
+		return memberRecoveryLink{}, false
+	}
+	return link, true
+}
+
 func (p *PassportStore) memberLinkByDigest(digest [32]byte) (memberRecoveryLink, bool) {
 	var link memberRecoveryLink
 	found := false
 	_ = p.db.View(func(tx *bbolt.Tx) error {
-		return tx.Bucket([]byte(bucketMemberRecoveryLinks)).ForEach(func(_, value []byte) error {
-			var candidate memberRecoveryLink
-			if json.Unmarshal(value, &candidate) != nil {
-				return nil
-			}
-			stored, decodeErr := hex.DecodeString(candidate.TokenDigest)
-			if decodeErr == nil && len(stored) == len(digest) && subtle.ConstantTimeCompare(stored, digest[:]) == 1 {
-				link = candidate
-				found = true
-			}
-			return nil
-		})
+		link, found = memberLinkByDigestInTx(tx, hex.EncodeToString(digest[:]))
+		return nil
 	})
 	return link, found
 }
@@ -221,29 +247,36 @@ func (p *PassportStore) memberLinkStatus(token string) (memberRecoveryLink, bool
 	return link, memberLinkUsable(link, p.principal(link.PrincipalID), time.Now().UTC())
 }
 
-// cleanupExpiredMemberLinks lazily reclaims dead links. Keys are collected as
-// copies and deleted after the iteration, never inside ForEach. Expiry
-// validation stays mandatory regardless of cleanup.
-func (p *PassportStore) cleanupExpiredMemberLinks(now time.Time) {
-	_ = p.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
-		var keys [][]byte
-		if err := bucket.ForEach(func(key, value []byte) error {
-			var candidate memberRecoveryLink
-			if json.Unmarshal(value, &candidate) == nil && memberLinkExpired(candidate, now) {
-				keys = append(keys, append([]byte(nil), key...))
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		for _, key := range keys {
-			if err := bucket.Delete(key); err != nil {
-				return err
-			}
+// cleanupExpiredMemberLinksTx lazily reclaims dead links and their index
+// entries. Keys are collected as copies and deleted after the iteration,
+// never inside ForEach. Expiry validation stays mandatory regardless of
+// cleanup; this only runs inside operator- or token-gated transactions.
+func cleanupExpiredMemberLinksTx(tx *bbolt.Tx, now time.Time) error {
+	links := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+	index := tx.Bucket([]byte(bucketMemberRecoveryLinksByToken))
+	type staleLink struct {
+		key    []byte
+		digest []byte
+	}
+	var expired []staleLink
+	if err := links.ForEach(func(key, value []byte) error {
+		var candidate memberRecoveryLink
+		if json.Unmarshal(value, &candidate) == nil && memberLinkExpired(candidate, now) {
+			expired = append(expired, staleLink{key: append([]byte(nil), key...), digest: []byte(candidate.TokenDigest)})
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	for _, item := range expired {
+		if err := links.Delete(item.key); err != nil {
+			return err
+		}
+		if err := index.Delete(item.digest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setMemberPasswordLocked is the only in-transaction way a member password is
@@ -326,25 +359,9 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 	}
 	var updated Principal
 	err = p.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
-		// Re-check the link inside the transaction: it may have been consumed
-		// between the pre-check and this write.
-		var live memberRecoveryLink
-		matched := false
-		if err := bucket.ForEach(func(key, value []byte) error {
-			var candidate memberRecoveryLink
-			if json.Unmarshal(value, &candidate) != nil {
-				return nil
-			}
-			stored, decodeErr := hex.DecodeString(candidate.TokenDigest)
-			if decodeErr == nil && len(stored) == len(digest) && subtle.ConstantTimeCompare(stored, digest[:]) == 1 {
-				live = candidate
-				matched = true
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
+		// Re-check the link inside the transaction through the digest index:
+		// it may have been consumed between the pre-check and this write.
+		live, matched := memberLinkByDigestInTx(tx, hex.EncodeToString(digest[:]))
 		applyNow := time.Now().UTC()
 		if !matched {
 			return errors.New("member link unavailable")
@@ -358,7 +375,11 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 		// Single redemption: consuming the link, rotating the hash, killing
 		// sessions, retiring every pending link, and the audit all commit (or
 		// roll back) as one transaction.
-		return p.setMemberPasswordLocked(tx, &updated, passwordHash, txPrincipal.ID, "member.password_set", live.Purpose, applyNow)
+		if err := p.setMemberPasswordLocked(tx, &updated, passwordHash, txPrincipal.ID, "member.password_set", live.Purpose, applyNow); err != nil {
+			return err
+		}
+		// Token-gated maintenance point for expired links.
+		return cleanupExpiredMemberLinksTx(tx, applyNow)
 	})
 	if err != nil {
 		return nil, "", "", err
@@ -375,10 +396,12 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 
 func deleteMemberLinksForPrincipal(bucket *bbolt.Bucket, principalID string) error {
 	var keys [][]byte
+	var digests [][]byte
 	if err := bucket.ForEach(func(key, value []byte) error {
 		var candidate memberRecoveryLink
 		if json.Unmarshal(value, &candidate) == nil && candidate.PrincipalID == principalID {
 			keys = append(keys, append([]byte(nil), key...))
+			digests = append(digests, []byte(candidate.TokenDigest))
 		}
 		return nil
 	}); err != nil {
@@ -386,6 +409,15 @@ func deleteMemberLinksForPrincipal(bucket *bbolt.Bucket, principalID string) err
 	}
 	for _, key := range keys {
 		if err := bucket.Delete(key); err != nil {
+			return err
+		}
+	}
+	index := bucket.Tx().Bucket([]byte(bucketMemberRecoveryLinksByToken))
+	if index == nil {
+		return nil
+	}
+	for _, digest := range digests {
+		if err := index.Delete(digest); err != nil {
 			return err
 		}
 	}
@@ -503,6 +535,12 @@ func (h *proxyHandler) handleMemberRecoveryStatus(w http.ResponseWriter, r *http
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Rate limit: banned IPs are refused, but status probes never count as
+	// failures themselves (a stale link must not lock its owner out).
+	if ip := getClientIP(r); h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+		return
+	}
 	var input struct {
 		Token string `json:"token"`
 	}
@@ -512,7 +550,8 @@ func (h *proxyHandler) handleMemberRecoveryStatus(w http.ResponseWriter, r *http
 		respondJSON(w, map[string]any{"valid": false})
 		return
 	}
-	h.passport.cleanupExpiredMemberLinks(time.Now().UTC())
+	// Read-only path: hash, indexed lookup, validity, answer. No write
+	// transactions and no bucket scans are reachable by anonymous callers.
 	link, ok := h.passport.memberLinkStatus(input.Token)
 	if !ok {
 		respondJSON(w, map[string]any{"valid": false})
