@@ -138,13 +138,7 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 				return errors.New("member not found")
 			}
 			// A fresh recovery link retires every pending link of this principal.
-			if err := links.ForEach(func(key, value []byte) error {
-				var candidate memberRecoveryLink
-				if json.Unmarshal(value, &candidate) != nil || candidate.PrincipalID != principal.ID {
-					return nil
-				}
-				return links.Delete(key)
-			}); err != nil {
+			if err := deleteMemberLinksForPrincipal(links, principal.ID); err != nil {
 				return err
 			}
 		}
@@ -251,13 +245,7 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 			return err
 		}
 		// Consuming a link retires every other pending link of this principal.
-		return bucket.ForEach(func(key, value []byte) error {
-			var candidate memberRecoveryLink
-			if json.Unmarshal(value, &candidate) != nil || candidate.PrincipalID != updated.ID {
-				return nil
-			}
-			return bucket.Delete(key)
-		})
+		return deleteMemberLinksForPrincipal(bucket, updated.ID)
 	})
 	if err != nil {
 		return nil, "", "", err
@@ -271,6 +259,25 @@ func (p *PassportStore) redeemMemberLink(token, password string) (*Principal, st
 		return nil, "", "", err
 	}
 	return copyPrincipal(&updated), sessionToken, csrf, nil
+}
+
+func deleteMemberLinksForPrincipal(bucket *bbolt.Bucket, principalID string) error {
+	var keys [][]byte
+	if err := bucket.ForEach(func(key, value []byte) error {
+		var candidate memberRecoveryLink
+		if json.Unmarshal(value, &candidate) == nil && candidate.PrincipalID == principalID {
+			keys = append(keys, append([]byte(nil), key...))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := bucket.Delete(key); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *PassportStore) hasOperator() bool {

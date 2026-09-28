@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -341,6 +343,79 @@ func TestFreshRecoveryLinkRetiresPendingOnes(t *testing.T) {
 	if _, _, _, err := passport.redeemMemberLink(third.Token, "should be gone 12345"); err == nil {
 		t.Fatal("pending sibling link survived a redemption")
 	}
+}
+
+func TestRecoveryDeletesAllPrincipalLinksOutsideIteration(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onboarding, err := passport.createMemberLink("operator", "many@example.com", "Many", "onboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := func(prefix string) []string {
+		t.Helper()
+		tokens := []string{prefix + "-a", prefix + "-b", prefix + "-c"}
+		if err := passport.db.Update(func(tx *bbolt.Tx) error {
+			bucket := tx.Bucket([]byte(bucketMemberRecoveryLinks))
+			for _, token := range tokens {
+				digest := hashToken(token)
+				link := memberRecoveryLink{ID: token, PrincipalID: member.ID, Purpose: "recover", TokenDigest: hex.EncodeToString(digest[:]), ExpiresAt: time.Now().Add(time.Hour)}
+				if err := putJSON(bucket, link.ID, &link); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return tokens
+	}
+	count := func(want int) {
+		t.Helper()
+		found := 0
+		if err := passport.db.View(func(tx *bbolt.Tx) error {
+			return tx.Bucket([]byte(bucketMemberRecoveryLinks)).ForEach(func(_, value []byte) error {
+				var link memberRecoveryLink
+				if err := json.Unmarshal(value, &link); err != nil {
+					return err
+				}
+				if link.PrincipalID == member.ID {
+					found++
+				}
+				return nil
+			})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if found != want {
+			t.Fatalf("recovery links = %d, want %d", found, want)
+		}
+	}
+	old := seed("old")
+	latest, err := passport.createMemberLink("operator", member.Email, "", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count(1)
+	for _, token := range old {
+		if _, found := passport.memberLinkByDigest(hashToken(token)); found {
+			t.Fatalf("old link %q survived", token)
+		}
+	}
+	seed("sibling")
+	count(4)
+	if _, _, _, err := passport.redeemMemberLink(latest.Token, "another valid password"); err != nil {
+		t.Fatal(err)
+	}
+	count(0)
 }
 
 func TestConsoleEndpointsRequireOperator(t *testing.T) {
