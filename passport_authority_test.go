@@ -68,6 +68,22 @@ func TestAuthorityMatrix(t *testing.T) {
 		{"provider contribution", http.MethodPost, "/api/pool/accounts/codex/add", `{}`, map[PrincipalKind]bool{PrincipalMember: true, PrincipalOperator: true}},
 		{"principal suspension", http.MethodPatch, "/api/principals/guest", `{"status":"suspended"}`, map[PrincipalKind]bool{PrincipalOperator: true}},
 	}
+	// Global telemetry is operator-only. The catalog remains available to
+	// members for model discovery and omits administrative capacity details.
+	for _, path := range []string{
+		"/api/pool/stats", "/api/pool/performance", "/api/pool/circuit-breakers",
+		"/api/pool/users", "/api/pool/origins", "/api/pool/daily-breakdown",
+		"/api/pool/hourly", "/api/pool/signal", "/api/pool/users/foo/daily",
+		"/api/pool/users/foo/hourly", "/status",
+	} {
+		tests = append(tests, struct {
+			name    string
+			method  string
+			path    string
+			body    string
+			allowed map[PrincipalKind]bool
+		}{"global " + path, http.MethodGet, path, "", map[PrincipalKind]bool{PrincipalOperator: true}})
+	}
 	for _, test := range tests {
 		for kind, session := range sessions {
 			t.Run(test.name+"/"+string(kind), func(t *testing.T) {

@@ -151,7 +151,7 @@ func allProviderTypes() map[AccountType]struct{} {
 }
 
 func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
-	if !h.checkMemberOrAdminAuth(w, r) {
+	if !h.checkAdminAuth(w, r) {
 		return
 	}
 	var viewer *Principal

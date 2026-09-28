@@ -463,13 +463,13 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleOperatorBootstrap(w, r)
 		return
 	case "/api/pool/stats":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handlePoolStats(w, r)
 		return
 	case "/api/pool/performance":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -480,7 +480,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, summary)
 		return
 	case "/api/pool/circuit-breakers":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		if r.Method != http.MethodGet {
@@ -493,31 +493,31 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleWhoami(w, r)
 		return
 	case "/api/pool/users":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handlePoolUsers(w, r)
 		return
 	case "/api/pool/origins":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handlePoolOrigins(w, r)
 		return
 	case "/api/pool/daily-breakdown":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handleDailyBreakdown(w, r)
 		return
 	case "/api/pool/hourly":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handleGlobalHourly(w, r)
 		return
 	case "/api/pool/signal":
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handleSignalAnalytics(w, r)
@@ -530,7 +530,19 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		servePoolModels(w, h.pool)
+		if h.isOperatorRequest(r) {
+			servePoolModels(w, h.pool)
+		} else {
+			// Clients need model capabilities and availability, not pool capacity.
+			models := poolModelsForClients(h.pool)
+			for i := range models {
+				models[i].SupportingAccounts = 0
+				models[i].AvailableAccounts = 0
+				models[i].QuotaRemaining = nil
+				models[i].NextResetAt = nil
+			}
+			respondJSON(w, map[string]any{"schema_version": poolModelsSchemaVersion, "models": models})
+		}
 		return
 	case "/favicon.ico":
 		http.NotFound(w, r)
@@ -670,7 +682,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// User daily usage: /api/pool/users/:id/daily
 	if strings.HasPrefix(r.URL.Path, "/api/pool/users/") && strings.HasSuffix(r.URL.Path, "/daily") {
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handleUserDaily(w, r)
@@ -679,7 +691,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// User hourly usage: /api/pool/users/:id/hourly
 	if strings.HasPrefix(r.URL.Path, "/api/pool/users/") && strings.HasSuffix(r.URL.Path, "/hourly") {
-		if !h.checkMemberOrAdminAuth(w, r) {
+		if !h.checkAdminAuth(w, r) {
 			return
 		}
 		h.handleUserHourly(w, r)

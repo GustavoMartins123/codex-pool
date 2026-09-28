@@ -378,7 +378,7 @@ export function App() {
           if (result.principal) {
             setPassport(result.principal);
             setView("mine");
-            if (result.principal.kind !== "guest") await refresh();
+            if (result.principal.kind === "operator") await refresh();
             return;
           }
         } catch (cause) {
@@ -390,7 +390,7 @@ export function App() {
         const principal = await loadPassportMe();
         setPassport(principal);
         if (principal.kind === "guest") setView("mine");
-        else await refresh();
+        else if (principal.kind === "operator") await refresh();
       } catch {
         setPassport(null);
       }
@@ -418,7 +418,7 @@ export function App() {
   }, [passport, view]);
 
   useEffect(() => {
-    if (!passport || passport.kind === "guest") return;
+    if (passport?.kind !== "operator") return;
     refresh();
     const timer = window.setInterval(refresh, 30_000);
     return () => window.clearInterval(timer);
@@ -443,7 +443,7 @@ export function App() {
   }, [passport]);
 
   if (booting) return <BootScreen />;
-  if (recoveryToken && !passport) return <MemberRecovery token={recoveryToken} onAccess={(next) => { setRecoveryToken(""); setPassport(next); setView("mine"); refresh(); }} />;
+  if (recoveryToken && !passport) return <MemberRecovery token={recoveryToken} onAccess={(next) => { setRecoveryToken(""); setPassport(next); setView("mine"); if (next.kind === "operator") refresh(); }} />;
   if (pendingJoin) {
     return <JoinSwitch current={pendingJoin.current} busy={joinBusy} onCancel={() => { setPassport(pendingJoin.current); setView("mine"); setPendingJoin(null); }} onConfirm={async () => {
       if (joinBusy) return;
@@ -464,7 +464,7 @@ export function App() {
     }} />;
   }
   if (!passport) {
-    return joinError ? <JoinUnavailable /> : <AccessGate onAccess={(next) => { setPassport(next); setView(next.kind === "guest" ? "mine" : "pulse"); if (next.kind !== "guest") refresh(); }} />;
+    return joinError ? <JoinUnavailable /> : <AccessGate onAccess={(next) => { setPassport(next); setView(next.kind === "operator" ? "pulse" : "mine"); if (next.kind === "operator") refresh(); }} />;
   }
 
   const signOut = async () => {
@@ -485,7 +485,7 @@ export function App() {
         stats={stats}
         loading={loading}
         operator={passport?.kind === "operator"}
-        onRefresh={passport?.kind === "guest" ? undefined : refresh}
+        onRefresh={passport?.kind === "operator" ? refresh : undefined}
       />
       <div className="app-grid">
         <Navigation view={view} principal={passport} onChange={goToView} onSignOut={signOut} />

@@ -171,80 +171,17 @@ func decodeStatusJSON(t *testing.T, recorder *httptest.ResponseRecorder) StatusD
 	return data
 }
 
-func TestStatusPageFiltersMemberToAllowedProviders(t *testing.T) {
-	handler, session := newStatusMemberHandler(t, PolicySelector{Allow: []string{"codex"}})
-	request := httptest.NewRequest("GET", "/status", nil)
-	request.Header.Set("Accept", "application/json")
-	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
-	recorder := httptest.NewRecorder()
-	handler.serveStatusPage(recorder, request)
-	if recorder.Code != 200 {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	data := decodeStatusJSON(t, recorder)
-	if data.Operator {
-		t.Fatal("member was treated as operator")
-	}
-	if data.TotalCount != 1 || data.CodexCount != 1 || data.GeminiCount != 0 || data.ClaudeCount != 0 {
-		t.Fatalf("filtered counts = total %d codex %d gemini %d claude %d", data.TotalCount, data.CodexCount, data.GeminiCount, data.ClaudeCount)
-	}
-	for _, account := range data.Accounts {
-		if account.Type != string(AccountTypeCodex) {
-			t.Fatalf("non-codex account visible to codex-only member: %+v", account)
+func TestStatusPageDeniesMembers(t *testing.T) {
+	for _, policy := range []PolicySelector{{Allow: []string{"codex"}}, {}} {
+		handler, session := newStatusMemberHandler(t, policy)
+		request := httptest.NewRequest(http.MethodGet, "/status", nil)
+		request.Header.Set("Accept", "application/json")
+		request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
+		recorder := httptest.NewRecorder()
+		handler.serveStatusPage(recorder, request)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", recorder.Code)
 		}
-	}
-	if data.TokenAnalytics != nil {
-		t.Fatal("member saw capacity analytics")
-	}
-}
-
-func TestStatusPageUnrestrictedMemberSeesAllProviders(t *testing.T) {
-	handler, session := newStatusMemberHandler(t, PolicySelector{})
-	request := httptest.NewRequest("GET", "/status", nil)
-	request.Header.Set("Accept", "application/json")
-	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
-	recorder := httptest.NewRecorder()
-	handler.serveStatusPage(recorder, request)
-	if recorder.Code != 200 {
-		t.Fatalf("status = %d", recorder.Code)
-	}
-	data := decodeStatusJSON(t, recorder)
-	if data.TotalCount != 3 {
-		t.Fatalf("unrestricted member total = %d, want 3", data.TotalCount)
-	}
-}
-
-func TestStatusPageMemberWithoutCredentialsSeesNothing(t *testing.T) {
-	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	store := testUsageStore(t)
-	passport, err := newPassportStore(store.db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	onboarding, err := passport.createMemberLink("operator", "bare@example.com", "B", "onboard")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
-		t.Fatal(err)
-	}
-	session, _, err := passport.createSession(passport.byEmail("bare@example.com").ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := &proxyHandler{
-		pool:     newPoolState([]*Account{{ID: "cx", Type: AccountTypeCodex}}, false),
-		cfg:      &config{adminToken: "admin"},
-		passport: passport, startTime: time.Now(),
-	}
-	request := httptest.NewRequest("GET", "/status", nil)
-	request.Header.Set("Accept", "application/json")
-	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
-	recorder := httptest.NewRecorder()
-	handler.serveStatusPage(recorder, request)
-	data := decodeStatusJSON(t, recorder)
-	if data.TotalCount != 0 {
-		t.Fatalf("member without credentials saw %d accounts", data.TotalCount)
 	}
 }
 
