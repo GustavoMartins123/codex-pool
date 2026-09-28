@@ -261,15 +261,20 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 		joinLinks := tx.Bucket([]byte(bucketJoinLinks))
 		joinLinksByToken := tx.Bucket([]byte(bucketJoinLinksByToken))
 		if joinLinks != nil && joinLinksByToken != nil {
-			_ = joinLinks.ForEach(func(k, v []byte) error {
+			// The token index resolves guest passes; a swallowed Put here
+			// would boot the server with existing passes unreachable.
+			if err := joinLinks.ForEach(func(k, v []byte) error {
 				var l JoinLink
-				if json.Unmarshal(v, &l) == nil && l.TokenDigest != "" {
-					if joinLinksByToken.Get([]byte(l.TokenDigest)) == nil {
-						_ = joinLinksByToken.Put([]byte(l.TokenDigest), []byte(l.ID))
-					}
+				if json.Unmarshal(v, &l) != nil || l.TokenDigest == "" {
+					return nil
+				}
+				if joinLinksByToken.Get([]byte(l.TokenDigest)) == nil {
+					return joinLinksByToken.Put([]byte(l.TokenDigest), []byte(l.ID))
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		// Backfill the recovery digest index for links written before it
 		// existed, so index lookups never miss a live token. The index
