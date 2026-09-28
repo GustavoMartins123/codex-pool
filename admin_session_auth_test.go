@@ -83,4 +83,14 @@ func TestAdminRoutesRequireOperatorSessionOrBreakGlassToken(t *testing.T) {
 	if !h.checkAdminAuth(httptest.NewRecorder(), validPost) {
 		t.Fatal("operator mutation with CSRF was rejected")
 	}
+	breakGlassPost := httptest.NewRequest(http.MethodPost, "/admin/reload", nil)
+	breakGlassPost.Header.Set("X-Admin-Token", "break-glass-admin-token")
+	if !h.checkAdminAuth(httptest.NewRecorder(), breakGlassPost) {
+		t.Fatal("break-glass mutation without CSRF was rejected")
+	}
+	getWithoutCSRF := authorityRequest(http.MethodGet, "/admin/accounts", operator, "")
+	getWithoutCSRF.Header.Del("X-CSRF-Token")
+	if !h.checkAdminAuth(httptest.NewRecorder(), getWithoutCSRF) {
+		t.Fatal("operator GET without CSRF was rejected")
+	}
 }
