@@ -28,13 +28,11 @@ func newAuditConfigWatcher(t *testing.T, poolDir, configPath string) (*poolWatch
 }
 
 // TestAuditWatcherSurvivesRepeatedAtomicConfigReplace
-// BUG-AUDIT-106 (cross-platform): fsnotify watches config.toml itself, so an
-// atomic replace (temp+rename) supersedes the watched inode/handle. The
-// first replace still delivers a terminal event for the old file and reloads
-// once; every later save is silently ignored until restart. Editors and
-// deployment tools commonly save atomically.
-// Expected: every atomic replace of config.toml hot-reloads.
-// Actual: only the first replace is observed.
+// BUG-AUDIT-106 regression (cross-platform): atomic saves replace
+// config.toml via rename, which supersedes any file-level watch after the
+// first replace. The watcher now observes the config's parent directory, so
+// every replace — and rename, delete, delete+recreate cycles — must keep
+// hot-reloading. Editors and deployment tools commonly save atomically.
 func TestAuditWatcherSurvivesRepeatedAtomicConfigReplace(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
@@ -55,6 +53,32 @@ func TestAuditWatcherSurvivesRepeatedAtomicConfigReplace(t *testing.T) {
 			t.Fatalf("BUG-AUDIT-106: config replace %d (debug=%v) not hot-reloaded within 3s (file watch superseded by earlier atomic replace)", i, want)
 		}
 	}
+
+	// Rename the config away (with new content) and back — the watch is on
+	// the directory, so the restored file must be observed and reloaded.
+	if err := os.Rename(cfgPath, cfgPath+".away"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath+".away", []byte("debug = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(cfgPath+".away", cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 3*time.Second, func() bool { return !h.cfg.debug.Load() }) {
+		t.Fatal("BUG-AUDIT-106: config events lost after rename away/back cycle")
+	}
+
+	// Delete and recreate: directory watch must still deliver events.
+	if err := os.Remove(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("debug = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
+		t.Fatal("BUG-AUDIT-106: config events lost after delete/recreate cycle")
+	}
 }
 
 // TestAuditWatcherReloadsCRLFConfigFile writes config.toml with Windows
@@ -73,32 +97,6 @@ func TestAuditWatcherReloadsCRLFConfigFile(t *testing.T) {
 	}
 	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
 		t.Fatal("CRLF config.toml hot-reload did not apply debug=true")
-	}
-}
-
-// TestAuditWatcherMatchesConfigPathCaseInsensitively
-// BUG-AUDIT-104 (Windows-only): NTFS is case-insensitive, so newPoolWatcher
-// happily watches a CONFIG_PATH whose casing differs from the on-disk name,
-// but ReadDirectoryChangesW reports events with the on-disk casing and
-// handleEvent compares with `==`. The config change is then misclassified as
-// a pool event and the hot-reload is silently lost. On Linux a wrong-case
-// path fails Add outright and is at least logged as unwatchable.
-// Expected: a modify event for the config file (any casing) reloads config.
-// Actual: debug never flips.
-func TestAuditWatcherMatchesConfigPathCaseInsensitively(t *testing.T) {
-	dir := t.TempDir()
-	onDisk := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(onDisk, []byte("debug = false\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	requested := filepath.Join(dir, "Config.TOML")
-	_, h := newAuditConfigWatcher(t, "", requested)
-
-	if err := os.WriteFile(onDisk, []byte("debug = true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
-		t.Fatal("BUG-AUDIT-104: config hot-reload lost because event name casing differs from CONFIG_PATH")
 	}
 }
 

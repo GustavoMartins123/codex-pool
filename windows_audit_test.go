@@ -155,14 +155,21 @@ func TestAuditWatcherHotReloadsAtomicCredentialSave(t *testing.T) {
 	}
 }
 
+// watchlistContains reports whether the watcher currently watches path.
+func watchlistContains(pw *poolWatcher, path string) bool {
+	for _, existing := range pw.watcher.WatchList() {
+		if pathsEqual(existing, path) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestAuditWatcherReloadsCredentialAddedToNewProviderDirectory
-// BUG-AUDIT-101: provider subdirectories created after startup are never
-// added to the fsnotify watch (newPoolWatcher only scans once), so credential
-// files saved inside them do not hot-reload. The poolDir Create event fires
-// for the directory itself but nothing watches its contents afterwards.
-// Expected: adding pool/<new-provider>/one.json triggers a reload.
-// Actual: no event is delivered; the account only appears after a manual
-// /admin/reload or restart.
+// BUG-AUDIT-101 regression (cross-platform): provider subdirectories created
+// after startup must be added to the fsnotify watch, so credential files
+// saved inside them hot-reload. The test synchronizes on the watch list
+// (deterministic) instead of sleeping past the debounce.
 func TestAuditWatcherReloadsCredentialAddedToNewProviderDirectory(t *testing.T) {
 	dir := t.TempDir()
 	h := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
@@ -172,20 +179,65 @@ func TestAuditWatcherReloadsCredentialAddedToNewProviderDirectory(t *testing.T) 
 	}
 	defer pw.close()
 
-	// Create the provider directory after startup; the Create event for the
-	// directory itself triggers one (empty) reload after the debounce.
-	if err := os.MkdirAll(filepath.Join(dir, "codex"), 0o755); err != nil {
+	// Create the provider directory after startup. The watch must be armed
+	// before the credential file is written, otherwise the test would race
+	// on whether the Create or the directory scan saw it first.
+	providerDir := filepath.Join(dir, "codex")
+	if err := os.MkdirAll(providerDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(1200 * time.Millisecond)
+	if !auditWaitFor(t, 5*time.Second, func() bool { return watchlistContains(pw, providerDir) }) {
+		t.Fatal("BUG-AUDIT-101: provider directory created after startup was never added to the watch")
+	}
 
 	// A credential file inside the new provider directory must hot-reload.
-	file := filepath.Join(dir, "codex", "one.json")
+	file := filepath.Join(providerDir, "one.json")
 	if err := os.WriteFile(file, []byte(`{"tokens":{"access_token":"late-token","refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !auditWaitFor(t, 5*time.Second, func() bool { return h.pool.count() == 1 }) {
 		t.Fatalf("BUG-AUDIT-101: credential added to provider directory created after startup never hot-reloaded (pool=%d)", h.pool.count())
+	}
+}
+
+// TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory covers the
+// rename/recreate cycle of a provider directory: the stale watch must be
+// dropped and re-armed, so credentials written into the recreated directory
+// still hot-reload.
+func TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory(t *testing.T) {
+	dir := t.TempDir()
+	h := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
+	pw, err := newPoolWatcher(dir, "", h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pw.close()
+
+	providerDir := filepath.Join(dir, "codex")
+	if err := os.MkdirAll(providerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 5*time.Second, func() bool { return watchlistContains(pw, providerDir) }) {
+		t.Fatal("setup: initial provider directory not watched")
+	}
+
+	// Rename the provider directory away, then recreate it.
+	if err := os.Rename(providerDir, filepath.Join(dir, "codex-old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(providerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 5*time.Second, func() bool { return watchlistContains(pw, providerDir) }) {
+		t.Fatal("BUG-AUDIT-101: recreated provider directory not re-watched")
+	}
+
+	file := filepath.Join(providerDir, "two.json")
+	if err := os.WriteFile(file, []byte(`{"tokens":{"access_token":"recreated-token","refresh_token":"r"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 5*time.Second, func() bool { return h.pool.count() == 1 }) {
+		t.Fatalf("BUG-AUDIT-101: credential in recreated provider directory never hot-reloaded (pool=%d)", h.pool.count())
 	}
 }
 

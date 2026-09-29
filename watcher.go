@@ -1,10 +1,10 @@
 package main
 
 import (
-	"strings"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,32 +46,59 @@ func newPoolWatcher(poolDir, configPath string, handler *proxyHandler) (*poolWat
 			return nil, err
 		}
 		log.Printf("watching pool directory: %s", poolDir)
+	}
+
+	// Watch the config file's PARENT DIRECTORY rather than the file itself:
+	// config saves are atomic (temp + rename), which supersedes any
+	// file-level watch after the first replace. A directory watch survives
+	// replacements, renames, and delete/recreate cycles.
+	if configPath != "" {
+		if err := w.Add(filepath.Dir(configPath)); err != nil {
+			// Non-fatal — config may not exist yet.
+			log.Printf("warning: cannot watch config directory %s: %v", filepath.Dir(configPath), err)
+		} else {
+			log.Printf("watching config directory: %s", filepath.Dir(configPath))
+		}
+	}
+
+	// Register the provider directories that exist at startup. Directories
+	// created later are picked up from Create events in handleEvent.
+	if poolDir != "" {
 		entries, readErr := os.ReadDir(poolDir)
 		if readErr == nil {
 			for _, entry := range entries {
 				if !entry.IsDir() {
 					continue
 				}
-				subdir := filepath.Join(poolDir, entry.Name())
-				if addErr := w.Add(subdir); addErr != nil {
-					log.Printf("warning: cannot watch provider directory %s: %v", subdir, addErr)
-				}
+				pw.watchDirIfNew(filepath.Join(poolDir, entry.Name()))
 			}
-		}
-	}
-
-	// Watch config file for setting changes.
-	if configPath != "" {
-		if err := w.Add(configPath); err != nil {
-			// Non-fatal — config may not exist yet.
-			log.Printf("warning: cannot watch config file %s: %v", configPath, err)
-		} else {
-			log.Printf("watching config file: %s", configPath)
 		}
 	}
 
 	go pw.loop()
 	return pw, nil
+}
+
+// watchDirIfNew adds dir to the watch set unless it is already watched.
+func (pw *poolWatcher) watchDirIfNew(dir string) {
+	for _, existing := range pw.watcher.WatchList() {
+		if pathsEqual(existing, dir) {
+			return
+		}
+	}
+	if err := pw.watcher.Add(dir); err != nil {
+		log.Printf("warning: cannot watch provider directory %s: %v", dir, err)
+	}
+}
+
+// unwatchDir drops a stale watch (directory removed or renamed away).
+func (pw *poolWatcher) unwatchDir(dir string) {
+	for _, existing := range pw.watcher.WatchList() {
+		if pathsEqual(existing, dir) {
+			_ = pw.watcher.Remove(dir)
+			return
+		}
+	}
 }
 
 func (pw *poolWatcher) loop() {
@@ -97,14 +124,18 @@ func (pw *poolWatcher) loop() {
 }
 
 func (pw *poolWatcher) handleEvent(event fsnotify.Event) {
+	// Atomic writers stage through *.tmp files and dotfiles in the same
+	// directories; they never carry reload-worthy state.
 	if strings.HasSuffix(event.Name, ".tmp") || strings.HasPrefix(filepath.Base(event.Name), ".") {
 		return
 	}
 	pw.mu.Lock()
 	defer pw.mu.Unlock()
 
-	// Is this the config file?
-	if pw.configPath != "" && event.Name == pw.configPath {
+	// Config events match by path (case-insensitively on Windows, where
+	// ReadDirectoryChangesW reports the on-disk casing, which may differ
+	// from the CONFIG_PATH the operator wrote).
+	if pw.configPath != "" && pathsEqual(event.Name, pw.configPath) {
 		if pw.debounceCfg != nil {
 			pw.debounceCfg.Stop()
 		}
@@ -112,7 +143,27 @@ func (pw *poolWatcher) handleEvent(event fsnotify.Event) {
 		return
 	}
 
-	// Otherwise it's a pool directory change.
+	// Everything else only matters when it happens inside the pool
+	// directory: the config directory may be watched simultaneously and its
+	// unrelated files must not trigger pool reloads.
+	if pw.poolDir == "" || !pathWithin(pw.poolDir, event.Name) {
+		return
+	}
+
+	switch {
+	case event.Has(fsnotify.Create):
+		// A provider directory created after startup must be watched from
+		// now on; its credential files are otherwise invisible to reloads.
+		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+			pw.watchDirIfNew(event.Name)
+		}
+	case event.Has(fsnotify.Remove), event.Has(fsnotify.Rename):
+		// The watch on a removed/renamed directory is stale (and on Linux a
+		// rename keeps pointing at the old inode); drop it. Recreating the
+		// directory re-arms the watch via the Create event.
+		pw.unwatchDir(event.Name)
+	}
+
 	if pw.debouncePool != nil {
 		pw.debouncePool.Stop()
 	}
