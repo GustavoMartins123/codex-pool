@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -27,7 +28,8 @@ type CanaryConfig struct {
 }
 
 type ExperimentsConfig struct {
-	Canary map[string]CanaryConfig `toml:"canary"`
+	Canary  map[string]CanaryConfig `toml:"canary"`
+	Traffic TrafficShadowConfig     `toml:"traffic"`
 }
 
 type experimentAssignment struct {
@@ -329,13 +331,17 @@ func requestObjectUsesTools(object map[string]any) bool {
 // the pool currently has a usable account for it — without any upstream
 // call, quota consumption, or runtime mutation. Sending real traffic as an
 // experiment requires the separate traffic-shadow configuration.
-func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, reqID string) {
+func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
 		r.Header.Get("X-Pool-Shadow") != "" || !shadowSafeRequest(r, body) {
 		return
 	}
 	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
 	if shadowBody == nil {
+		return
+	}
+	if h.trafficShadow.enabledFor(assignment.Name, principal) {
+		h.startTrafficShadow(r, body, assignment, principal, reqID)
 		return
 	}
 	status := http.StatusOK
@@ -379,4 +385,182 @@ func (a *experimentAssignment) String() string {
 		return ""
 	}
 	return fmt.Sprintf("%s:%s", a.Name, a.Variant)
+}
+
+type TrafficShadowConfig struct {
+	Enabled          bool     `toml:"enabled" json:"enabled"`
+	Experiments      []string `toml:"experiments" json:"experiments"`
+	Accounts         []string `toml:"accounts" json:"accounts"`
+	Principals       []string `toml:"principals" json:"principals"`
+	MaxInflight      int      `toml:"max_inflight" json:"max_inflight"`
+	DailyBudget      int      `toml:"daily_request_budget" json:"daily_request_budget"`
+	TimeoutSeconds   int      `toml:"timeout_seconds" json:"timeout_seconds"`
+	DetachFromClient bool     `toml:"detach_from_client" json:"detach_from_client"`
+}
+
+type trafficShadowRuntime struct {
+	mu       sync.Mutex
+	cfg      TrafficShadowConfig
+	inflight int
+	day      string
+	spent    int
+}
+
+func newTrafficShadowRuntime(cfg TrafficShadowConfig) *trafficShadowRuntime {
+	r := &trafficShadowRuntime{}
+	r.Update(cfg)
+	return r
+}
+
+func (r *trafficShadowRuntime) Update(cfg TrafficShadowConfig) {
+	trimmed := func(list []string) []string {
+		var out []string
+		for _, item := range list {
+			if item = strings.TrimSpace(item); item != "" {
+				out = append(out, item)
+			}
+		}
+		return out
+	}
+	cfg.Experiments = trimmed(cfg.Experiments)
+	cfg.Accounts = trimmed(cfg.Accounts)
+	cfg.Principals = trimmed(cfg.Principals)
+	if !cfg.Enabled {
+		cfg = TrafficShadowConfig{}
+	} else {
+		if cfg.MaxInflight < 1 {
+			cfg.MaxInflight = 1
+		}
+		if cfg.TimeoutSeconds < 1 {
+			cfg.TimeoutSeconds = 120
+		}
+		if cfg.DailyBudget < 1 || len(cfg.Experiments) == 0 || len(cfg.Accounts) == 0 || len(cfg.Principals) == 0 {
+			cfg.Enabled = false
+		}
+	}
+	r.mu.Lock()
+	r.cfg = cfg
+	r.mu.Unlock()
+}
+
+func (r *trafficShadowRuntime) enabledFor(experiment, principal string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.cfg.Enabled || !containsString(r.cfg.Experiments, experiment) || !containsString(r.cfg.Principals, principal) {
+		return false
+	}
+	return len(r.cfg.Accounts) > 0
+}
+
+func (r *trafficShadowRuntime) begin(now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.cfg.Enabled {
+		return false
+	}
+	day := now.UTC().Format("2006-01-02")
+	if r.day != day {
+		r.day, r.spent = day, 0
+	}
+	if r.spent >= r.cfg.DailyBudget || r.inflight >= r.cfg.MaxInflight {
+		return false
+	}
+	r.spent++
+	r.inflight++
+	return true
+}
+
+func (r *trafficShadowRuntime) end() {
+	r.mu.Lock()
+	if r.inflight > 0 {
+		r.inflight--
+	}
+	r.mu.Unlock()
+}
+
+func (r *trafficShadowRuntime) timeout() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return time.Duration(r.cfg.TimeoutSeconds) * time.Second
+}
+
+func (r *trafficShadowRuntime) detachFromClient() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cfg.DetachFromClient
+}
+
+func (r *trafficShadowRuntime) accountAllowed(id string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return containsString(r.cfg.Accounts, id)
+}
+
+// markShadowAccountExclusions restricts a traffic-shadow leg to the
+// explicitly authorized accounts: every other pool account is excluded from
+// candidate selection.
+func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool) {
+	if h.trafficShadow == nil {
+		return
+	}
+	h.pool.mu.RLock()
+	ids := make([]string, 0, len(h.pool.accounts))
+	for _, a := range h.pool.accounts {
+		ids = append(ids, a.ID)
+	}
+	h.pool.mu.RUnlock()
+	for _, id := range ids {
+		if !h.trafficShadow.accountAllowed(id) {
+			exclude[id] = true
+		}
+	}
+}
+
+// startTrafficShadow sends the candidate model to a real upstream under the
+// traffic-experiment guardrails: explicit opt-in, experiment/account/
+// principal allowlists, daily budget, inflight cap, its own deadline, a
+// "-traffic-shadow" request id for separate accounting, and — unless
+// detach_from_client is set — cancellation together with the client request.
+func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
+	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
+	if shadowBody == nil || !h.trafficShadow.begin(time.Now()) {
+		return
+	}
+	base := r.Context()
+	if h.trafficShadow.detachFromClient() {
+		base = context.WithoutCancel(base)
+	}
+	ctx, cancel := context.WithTimeout(base, h.trafficShadow.timeout())
+	request := r.Clone(ctx)
+	request.Body = ioNopCloserBytes(shadowBody)
+	request.ContentLength = int64(len(shadowBody))
+	request.Header = r.Header.Clone()
+	request.Header.Set("X-Pool-Shadow", assignment.Name)
+	request.Header.Set("X-Pool-Canary-Bypass", "1")
+	request.Header.Del("Content-Length")
+	go func() {
+		defer cancel()
+		defer h.trafficShadow.end()
+		started := time.Now()
+		writer := &shadowResponseWriter{}
+		h.proxyRequest(writer, request, reqID+"-traffic-shadow")
+		status := writer.status
+		if status == 0 {
+			status = http.StatusServiceUnavailable
+		}
+		ttft := time.Duration(0)
+		if !writer.firstWrite.IsZero() {
+			ttft = writer.firstWrite.Sub(started)
+		}
+		h.experiments.Record(assignment.Name, "traffic-shadow", ExperimentObservation{
+			Status: status, Duration: time.Since(started), TTFT: ttft,
+			ResponseBytes: writer.bytes, StreamError: status >= 500,
+		})
+	}()
 }

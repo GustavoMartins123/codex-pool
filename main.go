@@ -754,6 +754,7 @@ func main() {
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		experiments:          experiments,
+		trafficShadow:        newTrafficShadowRuntime(cfg.experiments.Traffic),
 		recent:               newRecentErrors(50),
 		startTime:            time.Now(),
 		pacer:                pacer,
@@ -915,6 +916,7 @@ type proxyHandler struct {
 	metrics              *metrics
 	routeTraces          *routeTraceStore
 	experiments          *experimentTracker
+	trafficShadow        *trafficShadowRuntime
 	circuitBreakers      *CircuitBreakerManager
 	fallbackGraph        *FallbackGraph
 	poolAuto             *PoolAutoOrchestrator
@@ -2546,7 +2548,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if experiment != nil {
 		shadowAllowed := admission == nil || admission.CheckModel(experiment.Rule.Candidate) == nil
 		if shadowAllowed {
-			h.maybeStartShadow(r, bodyBytes, experiment, reqID)
+			h.maybeStartShadow(r, bodyBytes, experiment, userID, reqID)
 		}
 		experimentStarted := time.Now()
 		experimentWriter := &experimentResponseWriter{ResponseWriter: w}
@@ -2908,6 +2910,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	exclude := map[string]bool{}
+	if r.Header.Get("X-Pool-Shadow") != "" {
+		h.markShadowAccountExclusions(exclude)
+	}
 	exhaustionRetries := 0
 	var lastErr error
 	var lastStatus int

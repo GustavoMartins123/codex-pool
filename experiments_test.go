@@ -156,3 +156,177 @@ func TestRoutingShadowSendsNoUpstreamTraffic(t *testing.T) {
 		t.Fatalf("shadow row implies upstream bytes: %#v", shadow)
 	}
 }
+
+func trafficShadowFixture(t *testing.T, traffic TrafficShadowConfig, poolAccounts []*Account) (*proxyHandler, *experimentTracker, *int32, *[]string) {
+	t.Helper()
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+	store := testUsageStore(t)
+	tracker, err := newExperimentTracker(store.db, ExperimentsConfig{
+		Canary:  map[string]CanaryConfig{"gpt-5.6-sol": {Candidate: "gpt-5.6-sol", Percent: 0, Shadow: true}},
+		Traffic: traffic,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexBase, _ := url.Parse("https://codex.mock")
+	pool := newPoolState(poolAccounts, false)
+	calls := int32(0)
+	var seenAccounts []string
+	h := &proxyHandler{
+		cfg:           &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
+		pool:          pool,
+		registry:      NewProviderRegistry(NewCodexProvider(codexBase, codexBase, nil), nil, nil),
+		metrics:       newMetrics(),
+		recent:        newRecentErrors(5),
+		experiments:   tracker,
+		trafficShadow: newTrafficShadowRuntime(TrafficShadowConfig{}),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&calls, 1)
+			seenAccounts = append(seenAccounts, req.Header.Get("ChatGPT-Account-ID"))
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
+		}),
+	}
+	for i, principal := range traffic.Principals {
+		if principal == "user" {
+			traffic.Principals[i] = testPoolIdentity(t, h, "user")
+		}
+	}
+	h.trafficShadow.Update(traffic)
+	return h, tracker, &calls, &seenAccounts
+}
+
+func trafficShadowRequest(t *testing.T, h *proxyHandler) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"model":"gpt-5.6-sol","conversation_id":"traffic-shadow","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user"))
+	w := httptest.NewRecorder()
+	testPoolServeHTTP(t, h, w, r)
+	return w
+}
+
+func trafficShadowAccounts() []*Account {
+	return []*Account{
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "token-a", AccountID: "acct_a", PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "token-b", AccountID: "acct_b", PlanType: "pro"},
+	}
+}
+
+func enabledTraffic() TrafficShadowConfig {
+	return TrafficShadowConfig{
+		Enabled:        true,
+		Experiments:    []string{"gpt-5.6-sol->gpt-5.6-sol"},
+		Accounts:       []string{"codex-a", "codex-b"},
+		Principals:     []string{"user"},
+		MaxInflight:    4,
+		DailyBudget:    10,
+		TimeoutSeconds: 5,
+	}
+}
+
+func TestTrafficShadowOffByDefault(t *testing.T) {
+	h, _, calls, _ := trafficShadowFixture(t, TrafficShadowConfig{}, trafficShadowAccounts())
+	w := trafficShadowRequest(t, h)
+	if w.Code != 200 {
+		t.Fatalf("status=%d", w.Code)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("traffic must not run without explicit opt-in: calls=%d", got)
+	}
+}
+
+func TestTrafficShadowSendsSecondCallAndSeparateMetric(t *testing.T) {
+	h, tracker, calls, _ := trafficShadowFixture(t, enabledTraffic(), trafficShadowAccounts())
+	w := trafficShadowRequest(t, h)
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(calls) < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(calls); got != 2 {
+		t.Fatalf("traffic shadow must add exactly one upstream call: calls=%d", got)
+	}
+	for time.Now().Before(deadline) {
+		metrics, _ := tracker.Metrics()
+		found := false
+		for _, m := range metrics {
+			if m.Variant == "traffic-shadow" && m.Requests == 1 {
+				found = true
+			}
+		}
+		if found {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("traffic-shadow metric row missing")
+}
+
+func TestTrafficShadowRestrictedToAllowlistedAccounts(t *testing.T) {
+	cfg := enabledTraffic()
+	cfg.Accounts = []string{"codex-b"}
+	accounts := trafficShadowAccounts()
+	accounts[1].Usage.SecondaryUsedPercent = 0.99
+	h, _, calls, _ := trafficShadowFixture(t, cfg, accounts)
+	w := trafficShadowRequest(t, h)
+	if w.Code != 200 {
+		t.Fatalf("status=%d", w.Code)
+	}
+	time.Sleep(700 * time.Millisecond)
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("shadow must abort when only non-authorized accounts remain: calls=%d", got)
+	}
+}
+
+func TestTrafficShadowBudgetExhausts(t *testing.T) {
+	cfg := enabledTraffic()
+	cfg.DailyBudget = 1
+	h, _, calls, _ := trafficShadowFixture(t, cfg, trafficShadowAccounts())
+	trafficShadowRequest(t, h)
+	time.Sleep(700 * time.Millisecond)
+	first := atomic.LoadInt32(calls)
+	trafficShadowRequest(t, h)
+	time.Sleep(700 * time.Millisecond)
+	second := atomic.LoadInt32(calls)
+	if first != 2 || second != 3 {
+		t.Fatalf("daily budget must stop the second shadow leg: after-first=%d after-second=%d", first, second)
+	}
+}
+
+func TestTrafficShadowPrincipalNotAllowed(t *testing.T) {
+	cfg := enabledTraffic()
+	cfg.Principals = []string{"someone-else"}
+	h, _, calls, _ := trafficShadowFixture(t, cfg, trafficShadowAccounts())
+	trafficShadowRequest(t, h)
+	time.Sleep(300 * time.Millisecond)
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Fatalf("principal outside the allowlist must not generate traffic: calls=%d", got)
+	}
+}
+
+func TestTrafficShadowConfigNormalizes(t *testing.T) {
+	r := newTrafficShadowRuntime(TrafficShadowConfig{Enabled: true})
+	if r.cfg.Enabled {
+		t.Fatal("config without allowlists/budget must disable itself")
+	}
+	r = newTrafficShadowRuntime(TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, DailyBudget: 3})
+	if r.cfg.MaxInflight != 1 || r.cfg.TimeoutSeconds != 120 {
+		t.Fatalf("defaults missing: %#v", r.cfg)
+	}
+	if r.enabledFor("e", "p") == false || r.enabledFor("e", "q") || r.enabledFor("other", "p") {
+		t.Fatal("gate semantics broken")
+	}
+	now := time.Now()
+	if !r.begin(now) || r.begin(now) {
+		t.Fatal("inflight cap of one must block a second begin")
+	}
+	r.end()
+	if !r.begin(now) {
+		t.Fatal("end must release the inflight slot")
+	}
+	r.end()
+	r.day = ""
+}

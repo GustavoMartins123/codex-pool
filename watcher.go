@@ -214,6 +214,7 @@ func (pw *poolWatcher) reloadConfig() {
 	pw.handler.cfg.setHotReloadable(threshold, routing, cfg.ClientPolicies, cfg.Experiments)
 	if pw.handler.experiments != nil {
 		pw.handler.experiments.Configure(cfg.Experiments)
+		pw.handler.trafficShadow.Update(cfg.Experiments.Traffic)
 	}
 
 	// Reload model aliases (built-in defaults + optional config overrides).
