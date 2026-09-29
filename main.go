@@ -296,7 +296,9 @@ func buildConfig() *config {
 	if v := os.Getenv("PROXY_IP_DENY"); v != "" {
 		ipDeny = splitCommaEntries(v)
 	}
-	globalIPAccess.configure(ipAllow, ipDeny)
+	if err := globalIPAccess.configure(ipAllow, ipDeny); err != nil {
+		log.Fatalf("invalid ip access policy: %v (refusing to start unrestricted)", err)
+	}
 	if globalIPAccess.restricted() {
 		log.Printf("ip access policy active: allow=%v deny=%v (loopback always permitted)", ipAllow, ipDeny)
 	}

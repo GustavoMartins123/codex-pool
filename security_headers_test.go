@@ -117,8 +117,10 @@ func TestServeHTTPRejectsDeniedIP(t *testing.T) {
 	base, _ := url.Parse("http://upstream.example")
 	fx := newCodexProxyFixture(t, base, nil)
 
-	globalIPAccess.configure(nil, []string{"203.0.113.0/24"})
-	t.Cleanup(func() { globalIPAccess.configure(nil, nil) })
+	if err := globalIPAccess.configure(nil, []string{"203.0.113.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = globalIPAccess.configure(nil, nil) })
 
 	req, _ := http.NewRequest(http.MethodGet, fx.server.URL+"/healthz", nil)
 	req.RemoteAddr = "203.0.113.7:41234"

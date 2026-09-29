@@ -1,56 +1,63 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"sync"
 )
 
-// ipAccessPolicy gates requests by client IP/CIDR. An empty allow list means
-// every address is a candidate; deny always wins over allow. Loopback is
-// always permitted so container health checks and local admin tooling keep
-// working regardless of the configured policy.
 type ipAccessPolicy struct {
 	mu    sync.RWMutex
 	allow []*net.IPNet
 	deny  []*net.IPNet
 }
 
-// globalIPAccess is wired once at startup from config/env, mirroring the
-// trusted-proxies pattern in utils.go.
 var globalIPAccess = &ipAccessPolicy{}
 
-// parseIPNetList converts "ip" and "ip/prefix" entries into CIDR networks.
-// Invalid entries are skipped silently, matching setTrustedProxies.
-func parseIPNetList(entries []string) []*net.IPNet {
+func parseIPNetList(field string, entries []string) ([]*net.IPNet, error) {
 	var nets []*net.IPNet
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
 		}
+		var ipNet *net.IPNet
 		if strings.Contains(entry, "/") {
-			if _, ipNet, err := net.ParseCIDR(entry); err == nil && ipNet != nil {
-				nets = append(nets, ipNet)
+			if _, parsed, err := net.ParseCIDR(entry); err == nil && parsed != nil {
+				ipNet = parsed
 			}
-			continue
-		}
-		if ip := net.ParseIP(entry); ip != nil {
+		} else if ip := net.ParseIP(entry); ip != nil {
 			if v4 := ip.To4(); v4 != nil {
-				nets = append(nets, &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)})
+				ipNet = &net.IPNet{IP: v4, Mask: net.CIDRMask(32, 32)}
 			} else {
-				nets = append(nets, &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)})
+				ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)}
 			}
 		}
+		if ipNet == nil {
+			return nil, fmt.Errorf("%s: invalid IP or CIDR entry %q", field, entry)
+		}
+		nets = append(nets, ipNet)
 	}
-	return nets
+	return nets, nil
 }
 
-func (p *ipAccessPolicy) configure(allow, deny []string) {
+// configure installs an access policy atomically: on any invalid entry it
+// returns an error and keeps the previously installed policy untouched.
+func (p *ipAccessPolicy) configure(allow, deny []string) error {
+	allowNets, err := parseIPNetList("PROXY_IP_ALLOW", allow)
+	if err != nil {
+		return err
+	}
+	denyNets, err := parseIPNetList("PROXY_IP_DENY", deny)
+	if err != nil {
+		return err
+	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.allow = parseIPNetList(allow)
-	p.deny = parseIPNetList(deny)
+	p.allow = allowNets
+	p.deny = denyNets
+	p.mu.Unlock()
+	return nil
 }
 
 func (p *ipAccessPolicy) restricted() bool {
@@ -59,8 +66,6 @@ func (p *ipAccessPolicy) restricted() bool {
 	return len(p.allow) > 0 || len(p.deny) > 0
 }
 
-// permitted reports whether the client IP may reach the pool. Unparseable
-// peers are refused only when an explicit allow list exists.
 func (p *ipAccessPolicy) permitted(clientIP string) bool {
 	ip := net.ParseIP(strings.TrimSpace(clientIP))
 	if ip == nil {
