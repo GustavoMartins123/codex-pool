@@ -99,13 +99,31 @@ func validateBoltFileBounds(path string) error {
 		return boltCorruptError(path, fmt.Sprintf("file size %d is smaller than the minimum bolt page size %d", size, boltMinPageSize))
 	}
 
-	chosen := findBoltMeta(file, size)
-	if chosen == nil {
-		// No checksum-valid meta: bbolt's own header validation produces a
-		// clean error (or its fallback page size does); nothing to prove.
+	// Step 1 — discover the page size exactly like bbolt's getPageSize():
+	// a checksum-valid meta 0 wins, otherwise meta 1 is probed at candidate
+	// page sizes from 1 KiB to 16 MiB (bounded by the file size). This says
+	// NOTHING about which meta page represents the database's current state.
+	pageSize, ok := discoverBoltPageSize(file, size)
+	if !ok {
+		// No checksum-valid meta anywhere: bbolt's own header validation
+		// produces a clean error; nothing to prove.
 		return nil
 	}
-	pageSize := chosen.pageSize
+
+	// Step 2 — with the page size known, read BOTH meta pages and choose the
+	// current one exactly like bbolt's DB.meta(): among the checksum-valid
+	// metas, the HIGHEST txid wins (falling back to the older valid one).
+	// Reusing the discovery winner here would miss the classic torn state:
+	// meta 0 valid but old (small page count that fits the truncated file),
+	// meta 1 valid and newer with a page count beyond EOF — bbolt would use
+	// meta 1 and fault.
+	meta0, ok0 := readBoltMetaAt(file, 0)
+	meta1, ok1 := readBoltMetaAt(file, int64(pageSize))
+	chosen := chooseBoltMeta(meta0, ok0, meta1, ok1)
+	if chosen == nil {
+		return nil
+	}
+
 	if chosen.pgid == 0 || uint64(chosen.pgid)*uint64(pageSize) > uint64(size) {
 		return boltCorruptError(path, fmt.Sprintf("meta page count %d exceeds file size %d", chosen.pgid, size))
 	}
@@ -139,15 +157,13 @@ func validateBoltFileBounds(path string) error {
 	return nil
 }
 
-// findBoltMeta locates the meta page bbolt will trust, mirroring its
-// discovery order: a checksum-valid meta 0 wins outright; otherwise meta 1
-// is probed at every candidate page size from 1 KiB to 16 MiB (bounded by
-// the file size), exactly like bbolt's getPageSize.
-func findBoltMeta(file *os.File, size int64) *boltMetaView {
-	if m, ok := readBoltMetaAt(file, 0); ok {
-		if plausibleBoltPageSize(m.pageSize) {
-			return m
-		}
+// discoverBoltPageSize mirrors bbolt's getPageSize(): the page size of a
+// checksum-valid meta 0, otherwise of a checksum-valid meta 1 found at a
+// candidate page size (1 KiB doubling to 16 MiB, bounded by the file size).
+// The bool is false when no valid meta exists anywhere bbolt would look.
+func discoverBoltPageSize(file *os.File, size int64) (uint32, bool) {
+	if m, ok := readBoltMetaAt(file, 0); ok && plausibleBoltPageSize(m.pageSize) {
+		return m.pageSize, true
 	}
 	for i := 0; i <= 14; i++ {
 		pos := int64(1024) << uint(i)
@@ -155,10 +171,24 @@ func findBoltMeta(file *os.File, size int64) *boltMetaView {
 			break
 		}
 		if m, ok := readBoltMetaAt(file, pos); ok && plausibleBoltPageSize(m.pageSize) {
-			return m
+			return m.pageSize, true
 		}
 	}
-	return nil
+	return 0, false
+}
+
+// chooseBoltMeta mirrors bbolt's DB.meta(): among the checksum-valid meta
+// pages, the one with the highest txid represents the database's current
+// state; an invalid higher-txid meta falls back to the older valid one.
+func chooseBoltMeta(meta0 *boltMetaView, ok0 bool, meta1 *boltMetaView, ok1 bool) *boltMetaView {
+	chosen, chosenOK := meta0, ok0
+	if ok1 && (!ok0 || meta1.txid > meta0.txid) {
+		chosen, chosenOK = meta1, true
+	}
+	if !chosenOK {
+		return nil
+	}
+	return chosen
 }
 
 // readBoltMetaAt decodes and checksum-verifies the meta page whose page

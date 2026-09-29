@@ -13,16 +13,20 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.etcd.io/bbolt"
 )
 
 const (
 	boltCorruptHelperEnv = "CODEX_POOL_TEST_BOLT_PATH"
 	boltSmallSweepHelper = "CODEX_POOL_TEST_BOLT_SMALL_SWEEP"
+	boltSplitMetaHelper  = "CODEX_POOL_TEST_BOLT_SPLIT_META"
 )
 
 // TestAuditUsageStoreTruncatedBoltFailsGracefully
@@ -135,6 +139,173 @@ func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
 	}
 	if out, err := runSmallSweepHelper(t, sweepDir); err != nil {
 		t.Fatalf("BUG-AUDIT-109: small-file probe crashed the helper (last size attempted is the last line): %v\n%s", err, out)
+	}
+}
+
+// readRawBoltMeta returns the raw 80-byte meta page stored at the given slot.
+func readRawBoltMeta(t *testing.T, path string, slot int, pageSize uint32) []byte {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	raw := make([]byte, boltMetaSize)
+	if _, err := file.ReadAt(raw, int64(slot)*int64(pageSize)+boltPageHeaderSize); err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// forgeSplitMetaStore composes a proxy.db whose two meta slots hold
+// checksum-valid metas from DIFFERENT databases: the untouched slot keeps
+// the small store's meta (low txid, page count fits the file), and
+// newerSlot is overwritten with the big store's higher-txid meta (page
+// count far beyond EOF). This is the classic torn-truncation shape: the
+// alternating meta commit scheme leaves the older slot consistent while the
+// newer commit points past a truncated file.
+func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
+	t.Helper()
+	smallPath := filepath.Join(dir, "small.db")
+	small, err := newUsageStore(smallPath, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := small.Close(); err != nil {
+		t.Fatal(err)
+	}
+	bigPath := filepath.Join(dir, "big.db")
+	big, err := newUsageStore(bigPath, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes64K()
+	for i := 0; i < 80; i++ {
+		if err := big.db.Update(func(tx *bbolt.Tx) error {
+			return tx.Bucket([]byte(bucketUsageRequests)).Put([]byte(fmt.Sprintf("grow-%04d", i)), payload)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := big.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read the page size from the small store's meta 0.
+	smallFile, err := os.Open(smallPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallMeta0, ok0 := readBoltMetaAt(smallFile, 0)
+	smallMeta1, ok1 := readBoltMetaAt(smallFile, int64(smallMeta0.pageSize))
+	smallInfo, err := smallFile.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallFile.Close()
+	if !ok0 || !ok1 {
+		t.Fatal("setup: small store metas must both be valid")
+	}
+	pageSize := smallMeta0.pageSize
+
+	// The big store's higher-txid meta is the one bbolt's DB.meta() would
+	// pick; it must be valid and much newer than the small store's metas.
+	bigFile, err := os.Open(bigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigMeta0, bok0 := readBoltMetaAt(bigFile, 0)
+	bigMeta1, bok1 := readBoltMetaAt(bigFile, int64(pageSize))
+	bigFile.Close()
+	bigChosen := chooseBoltMeta(bigMeta0, bok0, bigMeta1, bok1)
+	if bigChosen == nil {
+		t.Fatal("setup: big store meta unreadable")
+	}
+	var bigRawSlot int
+	if bigChosen == bigMeta0 {
+		bigRawSlot = 0
+	} else {
+		bigRawSlot = 1
+	}
+	smallChosen := chooseBoltMeta(smallMeta0, true, smallMeta1, true)
+	if bigChosen.txid < smallChosen.txid+10 {
+		t.Fatalf("setup: big txid %d not safely above small txid %d", bigChosen.txid, smallChosen.txid)
+	}
+	if uint64(bigChosen.pgid)*uint64(pageSize) <= uint64(smallInfo.Size()) {
+		t.Fatalf("setup: big page count %d fits the small file (%d bytes) — fixture proves nothing", bigChosen.pgid, smallInfo.Size())
+	}
+
+	forged := filepath.Join(dir, fmt.Sprintf("forged-newer-in-%d.db", newerSlot))
+	if err := copyFileLocal(smallPath, forged); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.OpenFile(forged, os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := out.WriteAt(readRawBoltMeta(t, bigPath, bigRawSlot, pageSize), int64(newerSlot)*int64(pageSize)+boltPageHeaderSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return forged
+}
+
+func bytes64K() []byte {
+	return make([]byte, 64*1024)
+}
+
+func copyFileLocal(source, destination string) error {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(destination, raw, 0o600)
+}
+
+// TestAuditUsageStoreSplitMetaTornBoltFailsGracefully
+// BUG-AUDIT-109 regression, split-meta variant: bbolt's DB.meta() picks the
+// checksum-valid meta with the HIGHEST txid, not meta 0. A torn truncation
+// can leave meta 0 valid-but-old with a page count that fits, while the
+// newer meta points beyond EOF — the guard must bound-check the meta bbolt
+// will actually use, or the pass-through SIGBUSes on the first transaction.
+// Both slot parities are forged so the test cannot depend on which slot
+// happens to hold the newer commit.
+func TestAuditUsageStoreSplitMetaTornBoltFailsGracefully(t *testing.T) {
+	if path := os.Getenv(boltSplitMetaHelper); path != "" {
+		_, err := newUsageStore(path, 30)
+		if err == nil {
+			t.Fatal("opening a split-meta torn Bolt store unexpectedly succeeded")
+		}
+		if !errors.Is(err, ErrBoltCorrupt) {
+			t.Fatalf("expected a corruption error, got: %v", err)
+		}
+		return
+	}
+
+	for _, newerSlot := range []int{0, 1} {
+		dir, err := os.MkdirTemp("", fmt.Sprintf("codex-pool-bolt-splitmeta-%d-*", newerSlot))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forged := forgeSplitMetaStore(t, dir, newerSlot)
+
+		// The guard itself must reject in-process (it never mmaps).
+		if err := validateBoltFileBounds(forged); !errors.Is(err, ErrBoltCorrupt) {
+			t.Fatalf("newer-in-slot-%d: guard did not reject the torn split-meta store: %v", newerSlot, err)
+		}
+
+		// And the full newUsageStore path must fail cleanly in a subprocess:
+		// if the guard ever passes the file through, bbolt.Open mmaps and
+		// the child dies with SIGBUS instead of exiting zero.
+		cmd := exec.Command(os.Args[0], "-test.run=TestAuditUsageStoreSplitMetaTornBoltFailsGracefully", "-test.timeout=2m", "-test.v")
+		cmd.Env = append(os.Environ(), boltSplitMetaHelper+"="+forged)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("newer-in-slot-%d: BUG-AUDIT-109: opening the split-meta torn store crashed the process instead of failing cleanly: %v\n%s", newerSlot, err, out)
+		}
+		os.RemoveAll(dir)
 	}
 }
 
