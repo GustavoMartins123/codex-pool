@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"sort"
@@ -332,6 +334,7 @@ type trafficShadowContextKey struct{}
 type trafficShadowIdentity struct {
 	experiment string
 	principal  string
+	accounts   []string
 }
 
 func trafficShadowFromRequest(r *http.Request) (trafficShadowIdentity, bool) {
@@ -393,106 +396,108 @@ type trafficShadowRuntime struct {
 	cfg      TrafficShadowConfig
 	db       *bbolt.DB
 	inflight int
-	day      string
-	spent    int
 }
 
-func newTrafficShadowRuntime(db *bbolt.DB, cfg TrafficShadowConfig) *trafficShadowRuntime {
-	r := &trafficShadowRuntime{db: db}
-	r.Update(cfg)
-	return r
-}
-
-func (r *trafficShadowRuntime) Update(cfg TrafficShadowConfig) {
-	trimmed := func(list []string) []string {
-		var out []string
-		for _, item := range list {
-			if item = strings.TrimSpace(item); item != "" {
-				out = append(out, item)
+func validateTrafficShadowConfig(cfg TrafficShadowConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.MaxInflight < 1 || cfg.DailyBudget < 1 || cfg.TimeoutSeconds < 1 || cfg.TimeoutSeconds > 3600 {
+		return errors.New("enabled traffic shadow requires positive concurrency, daily budget and timeout (at most 3600 seconds)")
+	}
+	for name, list := range map[string][]string{"experiments": cfg.Experiments, "accounts": cfg.Accounts, "principals": cfg.Principals} {
+		if len(list) == 0 {
+			return fmt.Errorf("traffic shadow requires explicit %s", name)
+		}
+		for _, value := range list {
+			if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+				return fmt.Errorf("traffic shadow %s contains an empty or untrimmed entry", name)
 			}
 		}
-		return out
 	}
-	cfg.Experiments = trimmed(cfg.Experiments)
-	cfg.Accounts = trimmed(cfg.Accounts)
-	cfg.Principals = trimmed(cfg.Principals)
-	if !cfg.Enabled {
-		cfg = TrafficShadowConfig{}
-	} else {
-		if cfg.MaxInflight < 1 {
-			cfg.MaxInflight = 1
-		}
-		if cfg.TimeoutSeconds < 1 {
-			cfg.TimeoutSeconds = 120
-		}
-		if cfg.DailyBudget < 1 || len(cfg.Experiments) == 0 || len(cfg.Accounts) == 0 || len(cfg.Principals) == 0 {
-			cfg.Enabled = false
-		}
+	return nil
+}
+func newTrafficShadowRuntime(db *bbolt.DB, cfg TrafficShadowConfig) (*trafficShadowRuntime, error) {
+	r := &trafficShadowRuntime{db: db}
+	if err := r.Update(cfg); err != nil {
+		return nil, err
 	}
+	return r, nil
+}
+func (r *trafficShadowRuntime) Update(cfg TrafficShadowConfig) error {
+	if err := validateTrafficShadowConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.Enabled && r.db == nil {
+		return errors.New("traffic shadow requires a persistent budget database")
+	}
+	cfg.Experiments = append([]string(nil), cfg.Experiments...)
+	cfg.Accounts = append([]string(nil), cfg.Accounts...)
+	cfg.Principals = append([]string(nil), cfg.Principals...)
 	r.mu.Lock()
 	r.cfg = cfg
 	r.mu.Unlock()
+	return nil
 }
-
 func (r *trafficShadowRuntime) enabledFor(experiment, principal string) bool {
 	if r == nil {
 		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.cfg.Enabled || !containsString(r.cfg.Experiments, experiment) || !containsString(r.cfg.Principals, principal) {
-		return false
-	}
-	return len(r.cfg.Accounts) > 0
+	return r.cfg.Enabled && containsString(r.cfg.Experiments, experiment) && containsString(r.cfg.Principals, principal)
 }
 
-// begin admits a leg under the daily budget and inflight cap. The daily
-// spend is persisted in Bolt so a restart cannot reset the day's budget.
-func (r *trafficShadowRuntime) begin(now time.Time) bool {
+// begin persists the reservation before dispatch. Every runtime sharing the
+// database reads and increments the authoritative counter in one transaction.
+func (r *trafficShadowRuntime) begin(experiment, principal string, now time.Time) (TrafficShadowConfig, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.cfg.Enabled {
-		return false
+	cfg := r.cfg
+	if !cfg.Enabled || !containsString(cfg.Experiments, experiment) || !containsString(cfg.Principals, principal) || r.inflight >= cfg.MaxInflight {
+		return cfg, false, nil
+	}
+	if r.db == nil {
+		return cfg, false, errors.New("traffic shadow budget database unavailable")
 	}
 	day := now.UTC().Format("2006-01-02")
-	if r.day != day {
-		r.day, r.spent = day, r.loadSpentLocked(day)
-	}
-	if r.spent >= r.cfg.DailyBudget || r.inflight >= r.cfg.MaxInflight {
-		return false
-	}
-	r.spent++
-	r.persistSpentLocked()
-	r.inflight++
-	return true
-}
-
-func (r *trafficShadowRuntime) loadSpentLocked(day string) int {
-	if r.db == nil {
-		return 0
-	}
-	var spent int
-	_ = r.db.View(func(tx *bbolt.Tx) error {
-		if bucket := tx.Bucket([]byte(bucketTrafficShadowBudget)); bucket != nil {
-			_ = json.Unmarshal(bucket.Get([]byte(day)), &spent)
-		}
-		return nil
-	})
-	return spent
-}
-
-func (r *trafficShadowRuntime) persistSpentLocked() {
-	if r.db == nil {
-		return
-	}
-	encoded, _ := json.Marshal(r.spent)
-	_ = r.db.Update(func(tx *bbolt.Tx) error {
+	admitted := false
+	err := r.db.Update(func(tx *bbolt.Tx) error {
 		bucket, err := tx.CreateBucketIfNotExists([]byte(bucketTrafficShadowBudget))
 		if err != nil {
 			return err
 		}
-		return bucket.Put([]byte(r.day), encoded)
+		spent := 0
+		if raw := bucket.Get([]byte(day)); raw != nil {
+			var count *int
+			if err := json.Unmarshal(raw, &count); err != nil {
+				return fmt.Errorf("invalid traffic shadow budget: %w", err)
+			}
+			if count == nil || *count < 0 {
+				return errors.New("invalid traffic shadow budget counter")
+			}
+			spent = *count
+		}
+		if spent >= cfg.DailyBudget {
+			return nil
+		}
+		encoded, err := json.Marshal(spent + 1)
+		if err != nil {
+			return err
+		}
+		if err := bucket.Put([]byte(day), encoded); err != nil {
+			return err
+		}
+		admitted = true
+		return nil
 	})
+	if err != nil {
+		return cfg, false, fmt.Errorf("traffic shadow budget admission failed: %w", err)
+	}
+	if admitted {
+		r.inflight++
+	}
+	return cfg, admitted, nil
 }
 
 func (r *trafficShadowRuntime) end() {
@@ -503,31 +508,10 @@ func (r *trafficShadowRuntime) end() {
 	r.mu.Unlock()
 }
 
-func (r *trafficShadowRuntime) timeout() time.Duration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return time.Duration(r.cfg.TimeoutSeconds) * time.Second
-}
-
-func (r *trafficShadowRuntime) detachFromClient() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.cfg.DetachFromClient
-}
-
-func (r *trafficShadowRuntime) accountAllowed(id string) bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return containsString(r.cfg.Accounts, id)
-}
-
 // markShadowAccountExclusions restricts a traffic-shadow leg to the
 // explicitly authorized accounts: every other pool account is excluded from
 // candidate selection.
-func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool) {
+func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool, accounts []string) {
 	if h.trafficShadow == nil {
 		return
 	}
@@ -538,7 +522,7 @@ func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool) {
 	}
 	h.pool.mu.RUnlock()
 	for _, id := range ids {
-		if !h.trafficShadow.accountAllowed(id) {
+		if !containsString(accounts, id) {
 			exclude[id] = true
 		}
 	}
@@ -551,15 +535,24 @@ func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool) {
 // detach_from_client is set — cancellation together with the client request.
 func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
 	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
-	if shadowBody == nil || !h.trafficShadow.begin(time.Now()) {
+	if shadowBody == nil {
+		return
+	}
+	cfg, admitted, err := h.trafficShadow.begin(assignment.Name, principal, time.Now())
+	if err != nil {
+		log.Printf("%s: %v", reqID, err)
+		h.experiments.Record(assignment.Name, "traffic-shadow", ExperimentObservation{Status: http.StatusServiceUnavailable})
+		return
+	}
+	if !admitted {
 		return
 	}
 	base := r.Context()
-	if h.trafficShadow.detachFromClient() {
+	if cfg.DetachFromClient {
 		base = context.WithoutCancel(base)
 	}
-	ctx, cancel := context.WithTimeout(base, h.trafficShadow.timeout())
-	ctx = context.WithValue(ctx, trafficShadowContextKey{}, trafficShadowIdentity{experiment: assignment.Name, principal: principal})
+	ctx, cancel := context.WithTimeout(base, time.Duration(cfg.TimeoutSeconds)*time.Second)
+	ctx = context.WithValue(ctx, trafficShadowContextKey{}, trafficShadowIdentity{experiment: assignment.Name, principal: principal, accounts: cfg.Accounts})
 	request := r.Clone(ctx)
 	request.Body = ioNopCloserBytes(shadowBody)
 	request.ContentLength = int64(len(shadowBody))

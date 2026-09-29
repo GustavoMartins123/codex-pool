@@ -195,6 +195,14 @@ func (pw *poolWatcher) reloadConfig() {
 	if cfg == nil {
 		return
 	}
+	if err := validateTrafficShadowConfig(cfg.Experiments.Traffic); err != nil {
+		log.Printf("config reload rejected: %v", err)
+		return
+	}
+	if cfg.Experiments.Traffic.Enabled && (pw.handler.trafficShadow == nil || pw.handler.trafficShadow.db == nil) {
+		log.Printf("config reload rejected: traffic shadow requires a persistent budget database")
+		return
+	}
 
 	// Only reload safe, non-sensitive fields.
 	newDebug := getConfigBool("DEBUG", cfg.Debug, false)
@@ -214,7 +222,12 @@ func (pw *poolWatcher) reloadConfig() {
 	pw.handler.cfg.setHotReloadable(threshold, routing, cfg.ClientPolicies, cfg.Experiments)
 	if pw.handler.experiments != nil {
 		pw.handler.experiments.Configure(cfg.Experiments)
-		pw.handler.trafficShadow.Update(cfg.Experiments.Traffic)
+		if pw.handler.trafficShadow != nil {
+			if err := pw.handler.trafficShadow.Update(cfg.Experiments.Traffic); err != nil {
+				log.Printf("traffic shadow reload rejected: %v", err)
+				return
+			}
+		}
 	}
 
 	// Reload model aliases (built-in defaults + optional config overrides).

@@ -742,6 +742,10 @@ func main() {
 		pacer = newRequestPacer(time.Duration(paceMs) * time.Millisecond)
 	}
 
+	trafficShadow, err := newTrafficShadowRuntime(store.db, cfg.experiments.Traffic)
+	if err != nil {
+		log.Fatalf("traffic shadow configuration rejected: %v", err)
+	}
 	h := &proxyHandler{
 		cfg:                  cfg,
 		transport:            transport,
@@ -760,7 +764,7 @@ func main() {
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		experiments:          experiments,
-		trafficShadow:        newTrafficShadowRuntime(store.db, cfg.experiments.Traffic),
+		trafficShadow:        trafficShadow,
 		recent:               newRecentErrors(50),
 		startTime:            time.Now(),
 		pacer:                pacer,
@@ -2940,7 +2944,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// restrictions will live here too). exclude is per-attempt state only.
 	hardExclude := map[string]bool{}
 	if internalShadow {
-		h.markShadowAccountExclusions(hardExclude)
+		h.markShadowAccountExclusions(hardExclude, shadow.accounts)
 	}
 	exclude := map[string]bool{}
 	exhaustionRetries := 0

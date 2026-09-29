@@ -174,6 +174,7 @@ func trafficShadowFixture(t *testing.T, traffic TrafficShadowConfig, poolAccount
 	pool := newPoolState(poolAccounts, false)
 	calls := int32(0)
 	var seenAccounts []string
+	var seenMu sync.Mutex
 	h := &proxyHandler{
 		cfg:           &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
 		pool:          pool,
@@ -181,10 +182,12 @@ func trafficShadowFixture(t *testing.T, traffic TrafficShadowConfig, poolAccount
 		metrics:       newMetrics(),
 		recent:        newRecentErrors(5),
 		experiments:   tracker,
-		trafficShadow: newTrafficShadowRuntime(nil, TrafficShadowConfig{}),
+		trafficShadow: mustTrafficShadowRuntime(t, store.db, TrafficShadowConfig{}),
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			atomic.AddInt32(&calls, 1)
+			seenMu.Lock()
 			seenAccounts = append(seenAccounts, req.Header.Get("ChatGPT-Account-ID"))
+			seenMu.Unlock()
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
 		}),
 	}
@@ -193,7 +196,9 @@ func trafficShadowFixture(t *testing.T, traffic TrafficShadowConfig, poolAccount
 			traffic.Principals[i] = testPoolIdentity(t, h, "user")
 		}
 	}
-	h.trafficShadow.Update(traffic)
+	if err := h.trafficShadow.Update(traffic); err != nil {
+		t.Fatal(err)
+	}
 	return h, tracker, &calls, &seenAccounts
 }
 
@@ -309,28 +314,25 @@ func TestTrafficShadowPrincipalNotAllowed(t *testing.T) {
 	}
 }
 
-func TestTrafficShadowConfigNormalizes(t *testing.T) {
-	r := newTrafficShadowRuntime(nil, TrafficShadowConfig{Enabled: true})
-	if r.cfg.Enabled {
-		t.Fatal("config without allowlists/budget must disable itself")
+func TestTrafficShadowConfigRejectsInvalid(t *testing.T) {
+	if _, err := newTrafficShadowRuntime(nil, TrafficShadowConfig{Enabled: true}); err == nil {
+		t.Fatal("invalid enabled configuration accepted")
 	}
-	r = newTrafficShadowRuntime(nil, TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, DailyBudget: 3})
-	if r.cfg.MaxInflight != 1 || r.cfg.TimeoutSeconds != 120 {
-		t.Fatalf("defaults missing: %#v", r.cfg)
+	cfg := TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, MaxInflight: 1, DailyBudget: 3, TimeoutSeconds: 5}
+	if _, err := newTrafficShadowRuntime(nil, cfg); err == nil {
+		t.Fatal("missing budget database accepted")
 	}
-	if r.enabledFor("e", "p") == false || r.enabledFor("e", "q") || r.enabledFor("other", "p") {
+	r := mustTrafficShadowRuntime(t, testUsageStore(t).db, cfg)
+	if !r.enabledFor("e", "p") || r.enabledFor("e", "q") || r.enabledFor("other", "p") {
 		t.Fatal("gate semantics broken")
 	}
-	now := time.Now()
-	if !r.begin(now) || r.begin(now) {
-		t.Fatal("inflight cap of one must block a second begin")
+	if !mustShadowBegin(t, r, time.Now()) || mustShadowBegin(t, r, time.Now()) {
+		t.Fatal("inflight cap violated")
 	}
 	r.end()
-	if !r.begin(now) {
-		t.Fatal("end must release the inflight slot")
+	if !mustShadowBegin(t, r, time.Now()) {
+		t.Fatal("end did not release slot")
 	}
-	r.end()
-	r.day = ""
 }
 
 func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
@@ -372,7 +374,7 @@ func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
 		}),
 	}
-	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
+	h.trafficShadow = mustTrafficShadowRuntime(t, store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a"}, Principals: []string{testPoolIdentity(t, h, "user")},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -429,7 +431,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"content":[{"text":"answer"}]}]}`)), Request: req}, nil
 		}),
 	}
-	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
+	h.trafficShadow = mustTrafficShadowRuntime(t, store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a", "codex-b"}, Principals: []string{testPoolIdentity(t, h, "user")},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -526,7 +528,7 @@ func TestTrafficShadowDoesNotConsumeClientPolicyBudget(t *testing.T) {
 		}),
 	}
 	owner := testPoolIdentity(t, h, "user")
-	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
+	h.trafficShadow = mustTrafficShadowRuntime(t, store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a"}, Principals: []string{owner},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -585,20 +587,37 @@ func TestTrafficShadowDailyBudgetSurvivesRestart(t *testing.T) {
 		Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"},
 		MaxInflight: 4, DailyBudget: 1, TimeoutSeconds: 5,
 	}
-	first := newTrafficShadowRuntime(store.db, cfg)
+	first := mustTrafficShadowRuntime(t, store.db, cfg)
 	now := time.Now()
-	if !first.begin(now) {
+	if !mustShadowBegin(t, first, now) {
 		t.Fatal("first leg must be admitted")
 	}
-	if first.begin(now) {
+	if mustShadowBegin(t, first, now) {
 		t.Fatal("budget of one must block the second leg")
 	}
-	restarted := newTrafficShadowRuntime(store.db, cfg)
-	if restarted.begin(now) {
+	restarted := mustTrafficShadowRuntime(t, store.db, cfg)
+	if mustShadowBegin(t, restarted, now) {
 		t.Fatal("restart must not reset the daily budget")
 	}
 	next := now.Add(26 * time.Hour)
-	if !restarted.begin(next) {
+	if !mustShadowBegin(t, restarted, next) {
 		t.Fatal("a new UTC day must have a fresh budget")
 	}
+}
+
+func mustTrafficShadowRuntime(t *testing.T, db *bbolt.DB, cfg TrafficShadowConfig) *trafficShadowRuntime {
+	t.Helper()
+	r, err := newTrafficShadowRuntime(db, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+func mustShadowBegin(t *testing.T, r *trafficShadowRuntime, now time.Time) bool {
+	t.Helper()
+	_, ok, err := r.begin("e", "p", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
 }

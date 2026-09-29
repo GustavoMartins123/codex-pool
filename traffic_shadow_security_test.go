@@ -1,11 +1,15 @@
 package main
 
 import (
+	"go.etcd.io/bbolt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestTrafficShadowForgedHeaderCannotBypassQuota(t *testing.T) {
@@ -57,5 +61,90 @@ func TestTrafficShadowPublicHeaderDoesNotChangeConversationNamespace(t *testing.
 	}
 	if _, ok := h.getContextHandoff().State(conversationScopedKey(owner, "shadow:forged-by-client\x00real-conversation")); ok {
 		t.Fatal("public header created internal shadow state")
+	}
+}
+
+func budgetTestConfig() TrafficShadowConfig {
+	return TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, MaxInflight: 10, DailyBudget: 1, TimeoutSeconds: 5}
+}
+func TestTrafficShadowBudgetStorageFailureDenies(t *testing.T) {
+	for _, mode := range []string{"closed", "readonly", "corrupt", "negative", "null"} {
+		t.Run(mode, func(t *testing.T) {
+			store := testUsageStore(t)
+			db := store.db
+			now := time.Now()
+			if mode == "readonly" {
+				path := filepath.Join(t.TempDir(), "budget.db")
+				w, err := bbolt.Open(path, 0600, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = w.Close(); err != nil {
+					t.Fatal(err)
+				}
+				db, err = bbolt.Open(path, 0600, &bbolt.Options{ReadOnly: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { db.Close() })
+			}
+			r := mustTrafficShadowRuntime(t, db, budgetTestConfig())
+			if mode == "closed" {
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode != "readonly" {
+				raw := map[string]string{"corrupt": "oops", "negative": "-1", "null": "null"}[mode]
+				if err := db.Update(func(tx *bbolt.Tx) error {
+					b, err := tx.CreateBucketIfNotExists([]byte(bucketTrafficShadowBudget))
+					if err != nil {
+						return err
+					}
+					return b.Put([]byte(now.UTC().Format("2006-01-02")), []byte(raw))
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, ok, err := r.begin("e", "p", now)
+			if ok || err == nil || r.inflight != 0 {
+				t.Fatalf("storage failure admitted traffic: ok=%v err=%v inflight=%d", ok, err, r.inflight)
+			}
+		})
+	}
+}
+func TestTrafficShadowBudgetSharedRuntimesCannotOverspend(t *testing.T) {
+	db := testUsageStore(t).db
+	cfg := budgetTestConfig()
+	runtimes := []*trafficShadowRuntime{mustTrafficShadowRuntime(t, db, cfg), mustTrafficShadowRuntime(t, db, cfg)}
+	var wg sync.WaitGroup
+	var admitted atomic.Int32
+	now := time.Now()
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, ok, err := runtimes[i%2].begin("e", "p", now)
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				admitted.Add(1)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if admitted.Load() != 1 {
+		t.Fatalf("budget of one admitted %d legs", admitted.Load())
+	}
+}
+func TestTrafficShadowAdmissionRechecksAuthorization(t *testing.T) {
+	r := mustTrafficShadowRuntime(t, testUsageStore(t).db, budgetTestConfig())
+	cfg := budgetTestConfig()
+	cfg.Principals = []string{"other"}
+	if err := r.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := r.begin("e", "p", time.Now()); ok || err != nil {
+		t.Fatalf("revoked principal admitted: %v %v", ok, err)
 	}
 }
