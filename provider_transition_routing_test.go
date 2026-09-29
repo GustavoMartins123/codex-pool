@@ -127,11 +127,13 @@ func TestFailedCodexRequestFallsBackWithSafeHistory(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(answer)), Request: req}, nil
 		}),
 	}
+	owner := testPoolIdentity(t, h, "user")
+	key := conversationScopedKey(owner, "fallback-live")
 	store := h.getContextHandoff()
-	if _, _, err := store.Prepare(conversationScopedKey("user", "fallback-live"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior request", false)); err != nil {
+	if _, _, err := store.Prepare(key, AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior request", false)); err != nil {
 		t.Fatal(err)
 	}
-	store.RecordAssistantText(conversationScopedKey("user", "fallback-live"), AccountTypeCodex, "prior answer")
+	store.RecordAssistantText(key, AccountTypeCodex, "prior answer")
 	body := `{"model":"gpt-5.6-sol","conversation_id":"fallback-live","previous_response_id":"resp_codex_foreign","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"current request"}]}],"stream":false}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("transition-fallback-secret", "user"))

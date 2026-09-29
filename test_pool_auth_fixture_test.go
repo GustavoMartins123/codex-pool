@@ -69,6 +69,51 @@ func ensureTestPassport(t *testing.T, h *proxyHandler) error {
 	return nil
 }
 
+// testPoolIdentity returns the credential identity the fixture mints for
+// subject, so tests can pre-seed owner-scoped state.
+func testPoolIdentity(t *testing.T, h *proxyHandler, subject string) string {
+	t.Helper()
+	if err := ensureTestPassport(t, h); err != nil {
+		t.Fatal(err)
+	}
+	testPoolCredentialMu.Lock()
+	defer testPoolCredentialMu.Unlock()
+	return subject + "-c-" + testPoolFixtureClientIDLocked(t, h, subject)
+}
+
+func testPoolFixtureClientIDLocked(t *testing.T, h *proxyHandler, identity string) string {
+	t.Helper()
+	var clientID string
+	h.passport.mu.RLock()
+	for id, client := range h.passport.clients {
+		if client.PrincipalID == identity && client.Label == "integration fixture" {
+			clientID = id
+			break
+		}
+	}
+	h.passport.mu.RUnlock()
+	if clientID != "" {
+		return clientID
+	}
+	principal := h.passport.principal(identity)
+	if principal == nil {
+		principal = &Principal{ID: identity, Kind: PrincipalMember, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
+		if err := h.passport.db.Update(func(tx *bbolt.Tx) error {
+			return putJSON(tx.Bucket([]byte(bucketPrincipals)), identity, principal)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		h.passport.mu.Lock()
+		h.passport.principals[identity] = principal
+		h.passport.mu.Unlock()
+	}
+	client, err := h.passport.createClient(identity, "integration fixture", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client.ID
+}
+
 func prepareTestPoolCredential(t *testing.T, h *proxyHandler, r *http.Request) error {
 	t.Helper()
 	if err := ensureTestPassport(t, h); err != nil {
@@ -88,34 +133,7 @@ func prepareTestPoolCredential(t *testing.T, h *proxyHandler, r *http.Request) e
 	}
 	testPoolCredentialMu.Lock()
 	defer testPoolCredentialMu.Unlock()
-	var clientID string
-	h.passport.mu.RLock()
-	for id, client := range h.passport.clients {
-		if client.PrincipalID == identity && client.Label == "integration fixture" {
-			clientID = id
-			break
-		}
-	}
-	h.passport.mu.RUnlock()
-	if clientID == "" {
-		principal := h.passport.principal(identity)
-		if principal == nil {
-			principal = &Principal{ID: identity, Kind: PrincipalMember, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
-			if err := h.passport.db.Update(func(tx *bbolt.Tx) error {
-				return putJSON(tx.Bucket([]byte(bucketPrincipals)), identity, principal)
-			}); err != nil {
-				return err
-			}
-			h.passport.mu.Lock()
-			h.passport.principals[identity] = principal
-			h.passport.mu.Unlock()
-		}
-		client, err := h.passport.createClient(identity, "integration fixture", nil)
-		if err != nil {
-			return err
-		}
-		clientID = client.ID
-	}
+	clientID := testPoolFixtureClientIDLocked(t, h, identity)
 	if passthrough {
 		if secret == "" {
 			session, _, err := h.passport.createSession(identity)
