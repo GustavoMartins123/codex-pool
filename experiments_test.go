@@ -397,3 +397,103 @@ func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
 		t.Fatalf("retry reset leaked the allowlist: unauthorized codex-b served the shadow leg: %v", calls)
 	}
 }
+
+func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+	store := testUsageStore(t)
+	tracker, err := newExperimentTracker(store.db, ExperimentsConfig{
+		Canary: map[string]CanaryConfig{"gpt-5.6-sol": {Candidate: "gpt-5.5", Percent: 0, Shadow: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexBase, _ := url.Parse("https://codex.mock")
+	pool := newPoolState([]*Account{
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", AccountID: "acct_cb", PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
+	}, false)
+	shadowDone := make(chan struct{})
+	h := &proxyHandler{
+		cfg:         &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
+		pool:        pool,
+		registry:    NewProviderRegistry(NewCodexProvider(codexBase, codexBase, nil), nil, nil),
+		metrics:     newMetrics(),
+		recent:      newRecentErrors(5),
+		experiments: tracker,
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			select {
+			case <-shadowDone:
+			default:
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"content":[{"text":"answer"}]}]}`)), Request: req}, nil
+		}),
+	}
+	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
+		Accounts: []string{"codex-a", "codex-b"}, Principals: []string{testPoolIdentity(t, h, "user")},
+		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
+	})
+
+	send := func() int {
+		body := `{"model":"gpt-5.6-sol","conversation_id":"state-iso","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user"))
+		w := httptest.NewRecorder()
+		testPoolServeHTTP(t, h, w, r)
+		return w.Code
+	}
+	if code := send(); code != 200 {
+		t.Fatalf("first request status=%d", code)
+	}
+
+	h.pool.mu.RLock()
+	realPin := h.pool.convPin["state-iso"]
+	h.pool.mu.RUnlock()
+	owner := testPoolIdentity(t, h, "user")
+	before, ok := h.getContextHandoff().State(conversationScopedKey(owner, "state-iso"))
+	if !ok || realPin == "" {
+		t.Fatalf("setup: real pin/state missing (pin=%q)", realPin)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	if code := send(); code != 200 {
+		t.Fatalf("second request status=%d", code)
+	}
+	shadowKey := conversationScopedKey(owner, "shadow:gpt-5.6-sol->gpt-5.5\x00state-iso")
+	for time.Now().Before(deadline) {
+		if _, ok := h.getContextHandoff().State(shadowKey); ok {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	h.pool.mu.RLock()
+	pinAfter := h.pool.convPin["state-iso"]
+	shadowPinned := h.pool.convPin["shadow:gpt-5.6-sol->gpt-5.5\x00state-iso"]
+	h.pool.mu.RUnlock()
+	if pinAfter != realPin {
+		t.Fatalf("real pin moved: before=%q after=%q (shadow pinned its own namespace: %q)", realPin, pinAfter, shadowPinned)
+	}
+	if shadowPinned == "" {
+		t.Fatal("shadow leg never ran (no namespaced pin)")
+	}
+	after, ok := h.getContextHandoff().State(conversationScopedKey(owner, "state-iso"))
+	if !ok {
+		t.Fatal("real state lost")
+	}
+	if after.ActiveProvider != before.ActiveProvider || after.TransitionEpoch != before.TransitionEpoch ||
+		len(after.ProviderSessions) != len(before.ProviderSessions) {
+		t.Fatalf("real conversation state mutated by shadow leg:\nbefore=%+v\nafter=%+v", before, after)
+	}
+	// Request 2 is real and legitimately appends its own turn; the shadow
+	// leg must not append another one under the real conversation.
+	if want := len(before.Messages) + 2; len(after.Messages) != want {
+		t.Fatalf("real history grew beyond request 2's own turn: want %d messages, got %d (shadow wrote into the real conversation)", want, len(after.Messages))
+	}
+	shadowState, ok := h.getContextHandoff().State(shadowKey)
+	if !ok || len(shadowState.Messages) == 0 {
+		t.Fatal("shadow leg state missing from its own namespace")
+	}
+}

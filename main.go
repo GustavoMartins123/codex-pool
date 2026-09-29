@@ -2502,6 +2502,12 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 		}
 	}
+	// Traffic-experiment legs run in their own conversation namespace: they
+	// may never pin, rewrite handoff state, or append assistant history to
+	// the production conversation.
+	if shadow := r.Header.Get("X-Pool-Shadow"); shadow != "" && conversationID != "" {
+		conversationID = "shadow:" + shadow + "\x00" + conversationID
+	}
 	if h.cfg.debug.Load() && conversationID == "" && originalJSONErr == nil {
 		keys := make([]string, 0, len(originalObject))
 		for key := range originalObject {
