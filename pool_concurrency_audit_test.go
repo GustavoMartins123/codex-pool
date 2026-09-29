@@ -31,7 +31,6 @@ func auditClaudePool(n int) *poolState {
 // accounts for the same conversation.
 func TestAuditPoolPinningStableUnderConcurrentSelection(t *testing.T) {
 	p := auditClaudePool(5)
-	accounts := p.allAccounts()
 	first := p.candidateForUser("user-1", "conv-1", nil, AccountTypeClaude, "", "")
 	if first == nil {
 		t.Fatal("no candidate")
@@ -57,7 +56,6 @@ func TestAuditPoolPinningStableUnderConcurrentSelection(t *testing.T) {
 	if violations.Load() != 0 {
 		t.Fatalf("pin stability violated %d times: conversation received accounts other than %s", violations.Load(), first.ID)
 	}
-	_ = accounts
 }
 
 // TestAuditPoolReplaceWhileSelecting runs candidate selection against a pool
@@ -88,9 +86,9 @@ func TestAuditPoolReplaceWhileSelecting(t *testing.T) {
 		}
 	}
 
-	done := make(chan struct{})
 	var wg sync.WaitGroup
 	stop := atomic.Bool{}
+	done := make(chan struct{})
 	for g := 0; g < 16; g++ {
 		wg.Add(1)
 		go func() {
@@ -114,12 +112,10 @@ func TestAuditPoolReplaceWhileSelecting(t *testing.T) {
 	}()
 	<-reloaderDone
 	stop.Store(true)
-	doneClosed := make(chan struct{})
-	go func() { wg.Wait(); close(doneClosed) }()
+	go func() { wg.Wait(); close(done) }()
 	select {
-	case <-doneClosed:
+	case <-done:
 	case <-time.After(20 * time.Second):
-		close(done)
 		t.Fatal("deadlock: selection did not finish within 20s of concurrent replace")
 	}
 }

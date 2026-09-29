@@ -206,18 +206,28 @@ func FuzzAuditSSESuppressionChunkIndependence(f *testing.F) {
 	})
 }
 
-// FuzzAuditParseSSEEventRobustness ensures the parser never panics on
-// arbitrary bytes and always returns data that is a substring join of the
-// input data lines.
+// FuzzAuditParseSSEEventRobustness is a crash-safety fuzz with a content
+// property: on arbitrary bytes the parser must never panic, and whatever it
+// extracts must have come from the input — every line of the joined data
+// payload (and the event type) must be a verbatim substring of the event
+// bytes, since extraction only strips field prefixes, one optional space,
+// and trailing whitespace.
 func FuzzAuditParseSSEEventRobustness(f *testing.F) {
 	f.Add([]byte("data: x\n\n"))
 	f.Add([]byte("data:x\ndata: y\r\n"))
 	f.Add([]byte("event: only\n"))
 	f.Add([]byte{0x00, 0x01, 0xff, 'd', 'a', 't', 'a', ':', ' ', 0xfe})
+	f.Add([]byte("event: e\r\ndata: {\"a\":1}\r\nid: 7\r\n"))
 	f.Fuzz(func(t *testing.T, event []byte) {
 		eventType, data := parseSSEEvent(event)
-		_ = eventType
-		_ = data
+		for _, extracted := range append(strings.Split(string(data), "\n"), eventType) {
+			if extracted == "" {
+				continue
+			}
+			if !strings.Contains(string(event), extracted) {
+				t.Fatalf("extracted %q is not a substring of the event %q", extracted, event)
+			}
+		}
 		extractSSEEventData(event)
 	})
 }

@@ -50,12 +50,10 @@ func TestAuditStreamUpstreamDeathDoesNotSpliceFallbackContent(t *testing.T) {
 		``,
 	}, "\n")
 
-	var dialed []string
 	h := &proxyHandler{
 		cfg: &config{maxAttempts: 3, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			accountID := req.Header.Get("ChatGPT-Account-ID")
-			dialed = append(dialed, accountID)
 			if accountID == "acct_backup" {
 				return &http.Response{
 					StatusCode: http.StatusOK,

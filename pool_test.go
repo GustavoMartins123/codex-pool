@@ -65,13 +65,23 @@ func TestPenaltyDecay(t *testing.T) {
 }
 
 func TestCandidateUsesPinUnlessExcluded(t *testing.T) {
-	a1 := &Account{ID: "a1", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
-	a2 := &Account{ID: "a2", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
+	// Pro plan is required: the pin path rejects non-pro codex accounts, so
+	// a pin test without a plan would silently pass via score selection.
+	// a1 is deliberately the WORSE-scoring account — without the pin it can
+	// never be selected, so returning it proves the pin branch ran.
+	a1 := &Account{ID: "a1", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.90}}
+	a2 := &Account{ID: "a2", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}}
 	p := newPoolState([]*Account{a1, a2}, true)
-	p.pin("c1", "a1")
 
+	// Control: with no pin in place, selection must prefer a2. If this ever
+	// flips, the pinned assertions below would stop proving pinning.
+	if got := p.candidate("fresh-conversation", nil, "", "", ""); got == nil || got.ID != "a2" {
+		t.Fatalf("control: unpinned selection returned %+v, want a2 (best score)", got)
+	}
+
+	p.pin("c1", "a1")
 	if got := p.candidate("c1", nil, "", "", ""); got == nil || got.ID != "a1" {
-		t.Fatalf("expected pinned a1, got %+v", got)
+		t.Fatalf("expected pinned a1 despite worse score, got %+v", got)
 	}
 	if got := p.candidate("c1", map[string]bool{"a1": true}, "", "", ""); got == nil || got.ID != "a2" {
 		t.Fatalf("expected a2 when pinned excluded, got %+v", got)
