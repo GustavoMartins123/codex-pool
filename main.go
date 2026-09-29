@@ -921,6 +921,7 @@ type proxyHandler struct {
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics
 	routeTraces          *routeTraceStore
+	routeTracesOnce      sync.Once
 	experiments          *experimentTracker
 	trafficShadow        *trafficShadowRuntime
 	circuitBreakers      *CircuitBreakerManager
@@ -967,9 +968,11 @@ func (h *proxyHandler) getRouteTraces() *routeTraceStore {
 	if h == nil {
 		return nil
 	}
-	if h.routeTraces == nil {
-		h.routeTraces = newRouteTraceStore(2048)
-	}
+	h.routeTracesOnce.Do(func() {
+		if h.routeTraces == nil {
+			h.routeTraces = newRouteTraceStore(2048)
+		}
+	})
 	return h.routeTraces
 }
 
@@ -2252,6 +2255,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		http.Error(w, "unauthorized: valid pool token required", http.StatusUnauthorized)
 		return
 	}
+	shadow, internalShadow := trafficShadowFromRequest(r)
+	if internalShadow && shadow.principal != userID {
+		http.Error(w, "traffic shadow principal mismatch", http.StatusForbidden)
+		return
+	}
 	if isContextRequestPath(r.URL.Path) {
 		h.proxyNativeContext(w, r, userID)
 		return
@@ -2276,7 +2284,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	{
 		var candidateAdmission *policyAdmission
 		var policyErr error
-		if r.Header.Get("X-Pool-Shadow") != "" {
+		if internalShadow {
 			candidateAdmission, policyErr = h.passport.beginPolicyRequestReadOnly(principalID, clientID, h.cfg.hotClientPolicies())
 		} else {
 			candidateAdmission, policyErr = h.passport.beginPolicyRequest(principalID, clientID, h.cfg.hotClientPolicies(), time.Now())
@@ -2511,8 +2519,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// Traffic-experiment legs run in their own conversation namespace: they
 	// may never pin, rewrite handoff state, or append assistant history to
 	// the production conversation.
-	if shadow := r.Header.Get("X-Pool-Shadow"); shadow != "" && conversationID != "" {
-		conversationID = "shadow:" + shadow + "\x00" + conversationID
+	if internalShadow && conversationID != "" {
+		conversationID = "shadow:" + shadow.experiment + "\x00" + conversationID
 	}
 	if h.cfg.debug.Load() && conversationID == "" && originalJSONErr == nil {
 		keys := make([]string, 0, len(originalObject))
@@ -2540,7 +2548,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	requestedModel, bodyBytes = routedModel, routedBody
-	canaryBypass := false
+	canaryBypass := internalShadow
 	if r.Header.Get("X-Pool-Canary-Bypass") != "" {
 		if h.isOperatorOrAdmin(r) {
 			canaryBypass = true
@@ -2931,7 +2939,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// reset below (traffic-experiment account allowlist; policy and ownership
 	// restrictions will live here too). exclude is per-attempt state only.
 	hardExclude := map[string]bool{}
-	if r.Header.Get("X-Pool-Shadow") != "" {
+	if internalShadow {
 		h.markShadowAccountExclusions(hardExclude)
 	}
 	exclude := map[string]bool{}

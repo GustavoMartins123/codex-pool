@@ -327,9 +327,22 @@ func requestObjectUsesTools(object map[string]any) bool {
 
 // maybeStartShadow records a routing-only shadow observation, or dispatches
 // a traffic-experiment leg when explicitly configured.
+type trafficShadowContextKey struct{}
+
+type trafficShadowIdentity struct {
+	experiment string
+	principal  string
+}
+
+func trafficShadowFromRequest(r *http.Request) (trafficShadowIdentity, bool) {
+	shadow, ok := r.Context().Value(trafficShadowContextKey{}).(trafficShadowIdentity)
+	return shadow, ok
+}
+
 func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
+	_, internalShadow := trafficShadowFromRequest(r)
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
-		r.Header.Get("X-Pool-Shadow") != "" {
+		internalShadow {
 		return
 	}
 	if h.trafficShadow.enabledFor(assignment.Name, principal) {
@@ -546,12 +559,13 @@ func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignme
 		base = context.WithoutCancel(base)
 	}
 	ctx, cancel := context.WithTimeout(base, h.trafficShadow.timeout())
+	ctx = context.WithValue(ctx, trafficShadowContextKey{}, trafficShadowIdentity{experiment: assignment.Name, principal: principal})
 	request := r.Clone(ctx)
 	request.Body = ioNopCloserBytes(shadowBody)
 	request.ContentLength = int64(len(shadowBody))
 	request.Header = r.Header.Clone()
-	request.Header.Set("X-Pool-Shadow", assignment.Name)
-	request.Header.Set("X-Pool-Canary-Bypass", "1")
+	request.Header.Del("X-Pool-Shadow")
+	request.Header.Del("X-Pool-Canary-Bypass")
 	request.Header.Del("Content-Length")
 	go func() {
 		defer cancel()
