@@ -83,6 +83,27 @@ func TestAuditWatcherSurvivesRepeatedAtomicConfigReplace(t *testing.T) {
 	}
 }
 
+// TestWatcherReloadsDefaultRelativeConfigPath covers the production default:
+// configPath is the bare relative "config.toml" (no directory part), so the
+// watcher watches "." and fsnotify composes event names like
+// "./config.toml". Path comparison must normalize both sides, or the default
+// deployment silently loses config hot-reload.
+func TestWatcherReloadsDefaultRelativeConfigPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfgPath := "config.toml"
+	if err := os.WriteFile(cfgPath, []byte("debug = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, h := newAuditConfigWatcher(t, "", cfgPath)
+
+	if err := writeFileAtomic(cfgPath, []byte("debug = true\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
+		t.Fatal("relative default config.toml hot-reload lost (watch of \".\" vs event \"./config.toml\")")
+	}
+}
+
 // TestAuditWatcherReloadsCRLFConfigFile writes config.toml with Windows
 // CRLF line endings and asserts the hot-reload still parses it. No parser or
 // watcher path may depend on Unix LF-only files.
