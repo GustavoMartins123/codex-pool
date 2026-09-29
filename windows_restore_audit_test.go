@@ -33,7 +33,8 @@ func TestAuditRestorePairedBackupRollsBackWhenDuckHeldOpen(t *testing.T) {
 	}
 	defer syscall.CloseHandle(handle)
 
-	if err := restorePairedBackup(manifest, boltPath, duckPath); err == nil {
+	err = restorePairedBackup(manifest, boltPath, duckPath)
+	if err == nil {
 		t.Fatal("restore unexpectedly succeeded while the DuckDB file was held open")
 	}
 	if !strings.Contains(err.Error(), "rolled back") {
