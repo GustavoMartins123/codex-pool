@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	httppprof "net/http/pprof"
 	"sort"
@@ -313,10 +314,34 @@ func providerContributionActor(r *http.Request) string {
 	return actor
 }
 
+// localHealthProbe permits only read-only health routes from a direct local
+// peer whose forwarded client identity is also local.
+func localHealthProbe(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	switch r.URL.Path {
+	case "/healthz", "/healthz/", "/livez", "/livez/", "/readyz", "/readyz/":
+	default:
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	peer, client := net.ParseIP(host), net.ParseIP(getClientIP(r))
+	return peer != nil && client != nil && peer.IsLoopback() && client.IsLoopback()
+}
+
 // ServeHTTP routes incoming requests to the appropriate handler.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	applySecurityHeaders(w, r.URL.Path)
-	if globalIPAccess.restricted() && !globalIPAccess.permitted(getClientIP(r)) {
+	clientIP, err := requestClientIP(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if globalIPAccess.restricted() && !localHealthProbe(r) && !globalIPAccess.permitted(clientIP) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}

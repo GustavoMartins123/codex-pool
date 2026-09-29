@@ -15,7 +15,7 @@ func TestIPAccessInvalidPolicyRejectedKeepsPrevious(t *testing.T) {
 	if !p.restricted() || p.permitted("198.51.100.20") {
 		t.Fatal("valid allowlist control did not reject outsider")
 	}
-	for _, bad := range [][]string{{"192.0.2.0/33"}, {"not-an-ip"}, {"198.51.100.1/24/25"}} {
+	for _, bad := range [][]string{{"192.0.2.0/33"}, {"not-an-ip"}, {" "}, {"198.51.100.1/24/25"}} {
 		if err := p.configure(bad, nil); err == nil {
 			t.Fatalf("invalid allowlist %q accepted", bad)
 		}
@@ -45,7 +45,7 @@ func TestIPAccessInvalidEntriesNamedWithField(t *testing.T) {
 
 func TestIPAccessSemantics(t *testing.T) {
 	p := &ipAccessPolicy{}
-	if err := p.configure([]string{"10.0.0.0/8", "2001:db8::/32", "  "}, []string{"10.6.0.0/16"}); err != nil {
+	if err := p.configure([]string{"10.0.0.0/8", "2001:db8::/32"}, []string{"10.6.0.0/16"}); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
@@ -56,8 +56,8 @@ func TestIPAccessSemantics(t *testing.T) {
 		{"10.6.1.1", false},
 		{"2001:db8::1", true},
 		{"198.51.100.20", false},
-		{"127.0.0.1", true},
-		{"::1", true},
+		{"127.0.0.1", false},
+		{"::1", false},
 	}
 	for _, tc := range cases {
 		if got := p.permitted(tc.ip); got != tc.want {

@@ -20,7 +20,7 @@ func parseIPNetList(field string, entries []string) ([]*net.IPNet, error) {
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
-			continue
+			return nil, fmt.Errorf("%s: empty IP or CIDR entry", field)
 		}
 		var ipNet *net.IPNet
 		if strings.Contains(entry, "/") {
@@ -53,11 +53,14 @@ func (p *ipAccessPolicy) configure(allow, deny []string) error {
 	if err != nil {
 		return err
 	}
+	p.install(allowNets, denyNets)
+	return nil
+}
+func (p *ipAccessPolicy) install(allowNets, denyNets []*net.IPNet) {
 	p.mu.Lock()
 	p.allow = allowNets
 	p.deny = denyNets
 	p.mu.Unlock()
-	return nil
 }
 
 func (p *ipAccessPolicy) restricted() bool {
@@ -71,10 +74,7 @@ func (p *ipAccessPolicy) permitted(clientIP string) bool {
 	if ip == nil {
 		p.mu.RLock()
 		defer p.mu.RUnlock()
-		return len(p.allow) == 0
-	}
-	if ip.IsLoopback() {
-		return true
+		return len(p.allow) == 0 && len(p.deny) == 0
 	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()

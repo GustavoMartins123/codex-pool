@@ -31,6 +31,7 @@ import (
 )
 
 type config struct {
+	configPath             string
 	listenAddr             string
 	responsesBase          *url.URL
 	realtimeBase           *url.URL
@@ -114,39 +115,21 @@ func mustParse(raw string) *url.URL {
 	return u
 }
 
-func parseInt64(s string) (int64, error) {
-	var n int64
-	_, err := fmt.Sscanf(s, "%d", &n)
-	return n, err
-}
-
+func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
 func parseBoolEnv(key string, def bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if v == "" {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
 		return def
 	}
-	switch v {
-	case "1", "true", "yes", "on", "enabled":
-		return true
-	case "0", "false", "no", "off", "disabled":
-		return false
-	default:
-		return def
+	value, err := configBoolValue(raw)
+	if err != nil {
+		log.Fatalf("invalid %s: %v", key, err)
 	}
+	return value
 }
-
-// parseBoolEnvPtr resolves a tri-state boolean setting: the environment wins,
-// then an explicit config-file value, then def. A nil config value means the
-// operator did not express a preference, so def applies.
 func parseBoolEnvPtr(key string, cfg *bool, def bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if v != "" {
-		switch v {
-		case "1", "true", "yes", "on", "enabled":
-			return true
-		case "0", "false", "no", "off", "disabled":
-			return false
-		}
+	if _, ok := os.LookupEnv(key); ok {
+		return parseBoolEnv(key, def)
 	}
 	if cfg != nil {
 		return *cfg
@@ -184,9 +167,13 @@ func configFilePath() string {
 
 func buildConfig() *config {
 	cfg := &config{}
-	configFile, err := loadConfigFile(configFilePath())
+	path, configFile, err := loadStartupConfiguration()
+	cfg.configPath = path
 	if err != nil {
-		log.Fatalf("invalid config file %s: %v (refusing to start with defaults)", configFilePath(), err)
+		log.Fatalf("invalid config file %s: %v (refusing to start with defaults)", path, err)
+	}
+	if err := validateConfigEnvironment(); err != nil {
+		log.Fatalf("invalid configuration environment: %v", err)
 	}
 	globalConfigFile = configFile
 
@@ -222,11 +209,13 @@ func buildConfig() *config {
 	cfg.refreshProxyURL = getConfigString("REFRESH_PROXY_URL", fileCfg.RefreshProxyURL, "")
 
 	cfg.debug.Store(getConfigBool("PROXY_DEBUG", fileCfg.Debug, false))
-	cfg.logBodies = getenv("PROXY_LOG_BODIES", "0") == "1"
+	cfg.logBodies = parseBoolEnv("PROXY_LOG_BODIES", false)
 	cfg.bodyLogLimit = 16 * 1024 // 16 KiB
 	if v := getenv("PROXY_BODY_LOG_LIMIT", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.bodyLogLimit = n
+		} else {
+			log.Fatalf("invalid PROXY_BODY_LOG_LIMIT: malformed or out-of-range integer")
 		}
 	}
 	cfg.claudeTraceDir = strings.TrimSpace(getenv("PROXY_CLAUDE_TRACE_DIR", ""))
@@ -234,31 +223,41 @@ func buildConfig() *config {
 	if v := getenv("PROXY_CLAUDE_TRACE_BODY_LIMIT", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.claudeTraceBodyLimit = n
+		} else {
+			log.Fatalf("invalid PROXY_CLAUDE_TRACE_BODY_LIMIT: malformed or out-of-range integer")
 		}
 	}
-	cfg.claudeTraceSecrets = getenv("PROXY_CLAUDE_TRACE_INCLUDE_SECRETS", "0") == "1"
+	cfg.claudeTraceSecrets = parseBoolEnv("PROXY_CLAUDE_TRACE_INCLUDE_SECRETS", false)
 	cfg.maxInMemoryBodyBytes = 16 * 1024 * 1024 // 16 MiB
 	if v := getenv("PROXY_MAX_INMEM_BODY_BYTES", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.maxInMemoryBodyBytes = n
+		} else {
+			log.Fatalf("invalid PROXY_MAX_INMEM_BODY_BYTES: malformed or out-of-range integer")
 		}
 	}
 	cfg.maxSpoolBodyBytes = 1024 * 1024 * 1024 // 1 GiB disk-backed request ceiling
 	if v := getenv("PROXY_MAX_SPOOL_BODY_BYTES", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.maxSpoolBodyBytes = n
+		} else {
+			log.Fatalf("invalid PROXY_MAX_SPOOL_BODY_BYTES: malformed or out-of-range integer")
 		}
 	}
 	cfg.flushInterval = 0
 	if v := getenv("PROXY_FLUSH_INTERVAL_MS", ""); v != "" {
 		if ms, err := parseInt64(v); err == nil && ms >= 0 {
 			cfg.flushInterval = time.Duration(ms) * time.Millisecond
+		} else {
+			log.Fatalf("invalid PROXY_FLUSH_INTERVAL_MS: malformed or out-of-range integer")
 		}
 	}
 	cfg.usageRefresh = 5 * time.Minute
 	if v := getenv("PROXY_USAGE_REFRESH_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.usageRefresh = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_USAGE_REFRESH_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.maxAttempts = getConfigInt("PROXY_MAX_ATTEMPTS", fileCfg.MaxAttempts, 3)
@@ -268,6 +267,8 @@ func buildConfig() *config {
 	if v := getenv("PROXY_EXHAUSTION_WAIT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.exhaustionWait = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_EXHAUSTION_WAIT_SECONDS: malformed or out-of-range integer")
 		}
 	} else if fileCfg.ExhaustionWaitSeconds > 0 {
 		cfg.exhaustionWait = time.Duration(fileCfg.ExhaustionWaitSeconds) * time.Second
@@ -289,25 +290,19 @@ func buildConfig() *config {
 	if v := getenv("PROXY_USAGE_RETENTION_DAYS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.retentionDays = int(n)
+		} else {
+			log.Fatalf("invalid PROXY_USAGE_RETENTION_DAYS: malformed or out-of-range integer")
 		}
 	}
-	if len(fileCfg.TrustedProxies) > 0 && os.Getenv("PROXY_TRUSTED_PROXIES") == "" && os.Getenv("TRUSTED_PROXIES") == "" {
-		setTrustedProxies(fileCfg.TrustedProxies)
+	if err := setTrustedProxies(effectiveTrustedProxies(fileCfg.TrustedProxies)); err != nil {
+		log.Fatalf("invalid trusted proxies: %v", err)
 	}
-
-	// IP allow/deny policy (env wins over config file; comma-separated).
-	ipAllow, ipDeny := fileCfg.IPAccessAllow, fileCfg.IPAccessDeny
-	if v := os.Getenv("PROXY_IP_ALLOW"); v != "" {
-		ipAllow = splitCommaEntries(v)
-	}
-	if v := os.Getenv("PROXY_IP_DENY"); v != "" {
-		ipDeny = splitCommaEntries(v)
-	}
+	ipAllow, ipDeny := effectiveIPPolicy(&fileCfg)
 	if err := globalIPAccess.configure(ipAllow, ipDeny); err != nil {
-		log.Fatalf("invalid ip access policy: %v (refusing to start unrestricted)", err)
+		log.Fatalf("invalid ip access policy: %v", err)
 	}
 	if globalIPAccess.restricted() {
-		log.Printf("ip access policy active: allow=%v deny=%v (loopback always permitted)", ipAllow, ipDeny)
+		log.Printf("ip access policy active: allow=%v deny=%v", ipAllow, ipDeny)
 	}
 
 	// Request and stream timeouts default to disabled so long-running jobs can finish.
@@ -316,36 +311,48 @@ func buildConfig() *config {
 	if v := getenv("PROXY_REQUEST_TIMEOUT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.requestTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_REQUEST_TIMEOUT_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.streamTimeout = 0
 	if v := getenv("PROXY_STREAM_TIMEOUT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.streamTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_STREAM_TIMEOUT_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.streamIdleTimeout = 0
 	if v := getenv("STREAM_IDLE_TIMEOUT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.streamIdleTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid STREAM_IDLE_TIMEOUT_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.websocketIdleTimeout = 0
 	if v := getenv("WEBSOCKET_IDLE_TIMEOUT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.websocketIdleTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid WEBSOCKET_IDLE_TIMEOUT_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.websocketHeartbeatInterval = heartbeatInterval
 	if v := getenv("WEBSOCKET_HEARTBEAT_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.websocketHeartbeatInterval = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid WEBSOCKET_HEARTBEAT_SECONDS: malformed or out-of-range integer")
 		}
 	}
 	cfg.websocketReadLimit = 64 * 1024 * 1024
 	if v := getenv("WEBSOCKET_READ_LIMIT_BYTES", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {
 			cfg.websocketReadLimit = n
+		} else {
+			log.Fatalf("invalid WEBSOCKET_READ_LIMIT_BYTES: malformed or out-of-range integer")
 		}
 	}
 	cfg.websocketCompression = parseBoolEnv("WEBSOCKET_COMPRESSION", false)
@@ -353,6 +360,8 @@ func buildConfig() *config {
 	if v := getenv("PROXY_SHUTDOWN_GRACE_SECONDS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n >= 0 {
 			cfg.shutdownGrace = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_SHUTDOWN_GRACE_SECONDS: malformed or out-of-range integer")
 		}
 	}
 
@@ -364,8 +373,7 @@ func buildConfig() *config {
 	cfg.experiments = fileCfg.Experiments
 	cfg.federation = fileCfg.Federation
 	if err := validateRoutingConfig(cfg.routing); err != nil {
-		log.Printf("warning: invalid routing config, using built-in profiles: %v", err)
-		cfg.routing = RoutingConfigFile{}
+		log.Fatalf("invalid routing config: %v", err)
 	}
 
 	flag.StringVar(&cfg.listenAddr, "listen", cfg.listenAddr, "listen address")
@@ -573,6 +581,8 @@ func main() {
 	if value := os.Getenv("ANALYTICS_EMERGENCY_RESERVE_BYTES"); value != "" {
 		if parsed, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil && parsed > 0 {
 			reserveBytes = parsed
+		} else {
+			log.Fatalf("invalid ANALYTICS_EMERGENCY_RESERVE_BYTES: expected a positive integer")
 		}
 	}
 	if err := store.configureAnalyticsReserve(cfg.storePath+".analytics-reserve", reserveBytes); err != nil {
@@ -735,6 +745,8 @@ func main() {
 	if v := os.Getenv("CODEX_REQUEST_PACE_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			paceMs = n
+		} else {
+			log.Fatalf("invalid CODEX_REQUEST_PACE_MS: malformed or out-of-range integer")
 		}
 	}
 	var pacer *requestPacer
@@ -811,8 +823,8 @@ func main() {
 	}
 
 	// Start file watcher for hot-reload of pool directory and config.
-	if watcher, err := newPoolWatcher(cfg.poolDir, configFilePath(), h); err != nil {
-		log.Printf("warning: failed to start file watcher: %v (hot-reload disabled)", err)
+	if watcher, err := newPoolWatcher(cfg.poolDir, cfg.configPath, h); err != nil {
+		log.Fatalf("failed to start file watcher: %v", err)
 	} else {
 		defer watcher.close()
 	}

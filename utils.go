@@ -6,11 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/textproto"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -55,22 +56,8 @@ func splitCommaEntries(raw string) []string {
 }
 
 func initTrustedProxiesFromEnv() {
-	raw := os.Getenv("PROXY_TRUSTED_PROXIES")
-	if raw == "" {
-		raw = os.Getenv("TRUSTED_PROXIES")
-	}
-	if raw != "" {
-		var list []string
-		for _, part := range strings.Split(raw, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				list = append(list, part)
-			}
-		}
-		setTrustedProxies(list)
-	} else {
-		// By default, only loopback addresses are trusted proxies.
-		setTrustedProxies(nil)
+	if err := setTrustedProxies(effectiveTrustedProxies(nil)); err != nil {
+		log.Fatalf("invalid trusted proxies: %v", err)
 	}
 	setTrustSameSubnet(parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
 }
@@ -159,47 +146,39 @@ func sameSubnetAsSelf(ip net.IP) bool {
 	return ipSharesSubnetWithAny(ip, localInterfaceSubnets())
 }
 
-// setTrustedProxies configures the list of trusted proxy CIDRs/IPs.
-// Passing "*" or "all" trusts all peer connections.
-// If empty, only loopback addresses (127.0.0.1, ::1) are trusted.
-func setTrustedProxies(entries []string) {
-	trustedProxiesMu.Lock()
-	defer trustedProxiesMu.Unlock()
-
-	trustedProxyTrustAll = false
-	trustedProxyNets = nil
-
+// parseTrustedProxies rejects malformed entries before replacing any policy.
+func parseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
+	var nets []*net.IPNet
+	trustAll := false
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
-		if entry == "" {
+		if entry == "*" {
+			trustAll = true
 			continue
 		}
-		if entry == "*" || strings.EqualFold(entry, "all") {
-			trustedProxyTrustAll = true
-			continue
+		parsed, err := parseIPNetList("trusted_proxies", []string{entry})
+		if err != nil {
+			return nil, false, err
 		}
-		if strings.Contains(entry, "/") {
-			_, ipNet, err := net.ParseCIDR(entry)
-			if err == nil && ipNet != nil {
-				trustedProxyNets = append(trustedProxyNets, ipNet)
-			}
-			continue
-		}
-		ip := net.ParseIP(entry)
-		if ip != nil {
-			if v4 := ip.To4(); v4 != nil {
-				trustedProxyNets = append(trustedProxyNets, &net.IPNet{
-					IP:   v4,
-					Mask: net.CIDRMask(32, 32),
-				})
-			} else {
-				trustedProxyNets = append(trustedProxyNets, &net.IPNet{
-					IP:   ip,
-					Mask: net.CIDRMask(128, 128),
-				})
-			}
-		}
+		nets = append(nets, parsed...)
 	}
+	return nets, trustAll, nil
+}
+
+// If empty, only loopback peers are trusted. "*" explicitly trusts all peers.
+func setTrustedProxies(entries []string) error {
+	nets, trustAll, err := parseTrustedProxies(entries)
+	if err != nil {
+		return err
+	}
+	installTrustedProxies(nets, trustAll)
+	return nil
+}
+func installTrustedProxies(nets []*net.IPNet, trustAll bool) {
+	trustedProxiesMu.Lock()
+	defer trustedProxiesMu.Unlock()
+	trustedProxyTrustAll = trustAll
+	trustedProxyNets = nets
 }
 
 // isTrustedProxy returns true if the remote peer IP is a trusted proxy.
@@ -230,57 +209,64 @@ func isTrustedProxy(ip net.IP) bool {
 	return false
 }
 
-// getClientIP extracts the client IP from the request.
-// Proxy headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP) are ONLY trusted
-// when the immediate connecting peer (r.RemoteAddr) is a verified trusted proxy
-// (e.g. loopback or configured trusted proxy CIDRs). Direct untrusted connections will always
-// use the IP from RemoteAddr to prevent header spoofing.
-func getClientIP(r *http.Request) string {
+// requestClientIP attributes a request to its peer unless that peer is a
+// trusted proxy. A supplied canonical forwarding header must be valid.
+func requestClientIP(r *http.Request) (string, error) {
 	if r == nil {
-		return ""
+		return "", errors.New("request missing")
 	}
 	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		remoteHost = strings.TrimSpace(r.RemoteAddr)
+		remoteHost = strings.Trim(strings.TrimSpace(r.RemoteAddr), "[]")
 	}
-	remoteHost = strings.Trim(remoteHost, "[]")
-	peerIP := net.ParseIP(remoteHost)
-
-	// If remote peer is not a trusted proxy, do not trust proxy headers.
-	if peerIP == nil || !isTrustedProxy(peerIP) {
-		if peerIP != nil {
-			return peerIP.String()
+	peer := net.ParseIP(remoteHost)
+	if peer == nil {
+		return "", errors.New("invalid remote peer IP")
+	}
+	if !isTrustedProxy(peer) {
+		return peer.String(), nil
+	}
+	single := func(name, raw string) (string, error) {
+		ip := net.ParseIP(strings.TrimSpace(raw))
+		if ip == nil {
+			return "", fmt.Errorf("invalid %s", name)
 		}
-		return remoteHost
+		return ip.String(), nil
 	}
-
-	// Peer is trusted, so inspect proxy headers.
-	// Check CF-Connecting-IP first (Cloudflare, most reliable when present).
-	if cfip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cfip != "" {
-		if ip := net.ParseIP(cfip); ip != nil {
-			return ip.String()
+	if raw, present := r.Header[http.CanonicalHeaderKey("CF-Connecting-IP")]; present {
+		if len(raw) != 1 {
+			return "", errors.New("invalid CF-Connecting-IP")
 		}
+		return single("CF-Connecting-IP", raw[0])
 	}
-	// Check X-Forwarded-For (may contain multiple IPs, take first valid one).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, part := range strings.Split(xff, ",") {
-			part = strings.TrimSpace(part)
-			if ip := net.ParseIP(part); ip != nil {
-				return ip.String()
+	if raw, present := r.Header[http.CanonicalHeaderKey("X-Forwarded-For")]; present {
+		parts := strings.Split(strings.Join(raw, ","), ",")
+		ips := make([]net.IP, len(parts))
+		for i, part := range parts {
+			ips[i] = net.ParseIP(strings.TrimSpace(part))
+			if ips[i] == nil {
+				return "", errors.New("invalid X-Forwarded-For")
+			}
+		}
+		// Walk from the immediate proxy toward the client. Any addresses to
+		// the left of the first untrusted hop may have been supplied by it.
+		for i := len(ips) - 1; i >= 0; i-- {
+			if !isTrustedProxy(ips[i]) || i == 0 {
+				return ips[i].String(), nil
 			}
 		}
 	}
-	// Check X-Real-IP.
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-		if ip := net.ParseIP(xri); ip != nil {
-			return ip.String()
+	if raw, present := r.Header[http.CanonicalHeaderKey("X-Real-IP")]; present {
+		if len(raw) != 1 {
+			return "", errors.New("invalid X-Real-IP")
 		}
+		return single("X-Real-IP", raw[0])
 	}
-	// Fall back to RemoteAddr.
-	if peerIP != nil {
-		return peerIP.String()
-	}
-	return remoteHost
+	return peer.String(), nil
+}
+func getClientIP(r *http.Request) string {
+	ip, _ := requestClientIP(r)
+	return ip
 }
 
 // secureSecretEquals compares two secret strings without leaking match

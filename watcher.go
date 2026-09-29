@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type poolWatcher struct {
 	configPath string
 	handler    *proxyHandler
 
+	reloadMu     sync.Mutex
 	mu           sync.Mutex
 	debouncePool *time.Timer
 	debounceCfg  *time.Timer
@@ -54,8 +56,8 @@ func newPoolWatcher(poolDir, configPath string, handler *proxyHandler) (*poolWat
 	// replacements, renames, and delete/recreate cycles.
 	if configPath != "" {
 		if err := w.Add(filepath.Dir(configPath)); err != nil {
-			// Non-fatal — config may not exist yet.
-			log.Printf("warning: cannot watch config directory %s: %v", filepath.Dir(configPath), err)
+			w.Close()
+			return nil, fmt.Errorf("cannot watch config directory %s: %w", filepath.Dir(configPath), err)
 		} else {
 			log.Printf("watching config directory: %s", filepath.Dir(configPath))
 		}
@@ -186,70 +188,67 @@ func (pw *poolWatcher) reloadPool() {
 }
 
 func (pw *poolWatcher) reloadConfig() {
-	log.Printf("config file changed, reloading non-sensitive settings")
+	if err := pw.reloadConfigCandidate(); err != nil {
+		log.Printf("config reload rejected (previous settings retained): %v", err)
+	}
+}
+func (pw *poolWatcher) reloadConfigCandidate() error {
+	pw.reloadMu.Lock()
+	defer pw.reloadMu.Unlock()
 	cfg, err := loadConfigFile(pw.configPath)
 	if err != nil {
-		log.Printf("config reload failed: %v", err)
-		return
+		return err
 	}
-	if cfg == nil {
-		return
+	if err := validateConfigEnvironment(); err != nil {
+		return err
 	}
-	if err := validateTrafficShadowConfig(cfg.Experiments.Traffic); err != nil {
-		log.Printf("config reload rejected: %v", err)
-		return
+	h := pw.handler
+	if cfg.Experiments.Traffic.Enabled && (h.trafficShadow == nil || h.trafficShadow.db == nil || h.experiments == nil) {
+		return fmt.Errorf("traffic shadow requires initialized experiments and a persistent budget database")
 	}
-	if cfg.Experiments.Traffic.Enabled && (pw.handler.trafficShadow == nil || pw.handler.trafficShadow.db == nil) {
-		log.Printf("config reload rejected: traffic shadow requires a persistent budget database")
-		return
+	newDebug := getConfigBool("PROXY_DEBUG", cfg.Debug, false)
+	threshold := getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.50)
+	proxies := effectiveTrustedProxies(cfg.TrustedProxies)
+	allow, deny := effectiveIPPolicy(cfg)
+	proxyNets, trustAll, err := parseTrustedProxies(proxies)
+	if err != nil {
+		return err
 	}
-
-	// Only reload safe, non-sensitive fields.
-	newDebug := getConfigBool("DEBUG", cfg.Debug, false)
-	pw.handler.cfg.debug.Store(newDebug)
-	threshold := getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.15)
-	routing := pw.handler.cfg.hotRouting()
-	if err := validateRoutingConfig(cfg.Routing); err != nil {
-		log.Printf("routing config reload rejected: %v", err)
-	} else {
-		routing = cfg.Routing
-		pw.handler.pool.configureRouting(routing)
-		log.Printf("reloaded routing profiles (default=%s overrides=%d)", pw.handler.pool.defaultRoutingProfile(), len(cfg.Routing.Profiles))
+	allowNets, err := parseIPNetList("PROXY_IP_ALLOW", allow)
+	if err != nil {
+		return err
 	}
-	pw.handler.pool.mu.Lock()
-	pw.handler.pool.debug = newDebug
-	pw.handler.pool.mu.Unlock()
-	pw.handler.cfg.setHotReloadable(threshold, routing, cfg.ClientPolicies, cfg.Experiments)
-	if pw.handler.experiments != nil {
-		pw.handler.experiments.Configure(cfg.Experiments)
-		if pw.handler.trafficShadow != nil {
-			if err := pw.handler.trafficShadow.Update(cfg.Experiments.Traffic); err != nil {
-				log.Printf("traffic shadow reload rejected: %v", err)
-				return
-			}
+	denyNets, err := parseIPNetList("PROXY_IP_DENY", deny)
+	if err != nil {
+		return err
+	}
+	// Every candidate is fully validated above. No state is changed on a
+	// rejected reload; reload serialization prevents competing publications.
+	if h.trafficShadow != nil {
+		if err := h.trafficShadow.Update(cfg.Experiments.Traffic); err != nil {
+			return err
 		}
 	}
-
-	// Reload model aliases (built-in defaults + optional config overrides).
-	if pw.handler.aliases != nil {
-		pw.handler.aliases.reload(cfg.ModelAliases)
-		log.Printf("reloaded model aliases (config overrides=%d)", len(cfg.ModelAliases))
+	// Install prepared policies without a fallible step after publication.
+	installTrustedProxies(proxyNets, trustAll)
+	globalIPAccess.install(allowNets, denyNets)
+	h.pool.configureRouting(cfg.Routing)
+	h.pool.mu.Lock()
+	h.pool.debug = newDebug
+	h.pool.mu.Unlock()
+	h.cfg.setHotReloadable(threshold, cfg.Routing, cfg.ClientPolicies, cfg.Experiments)
+	if h.experiments != nil {
+		h.experiments.Configure(cfg.Experiments)
 	}
-	if len(cfg.TrustedProxies) > 0 && os.Getenv("PROXY_TRUSTED_PROXIES") == "" && os.Getenv("TRUSTED_PROXIES") == "" {
-		setTrustedProxies(cfg.TrustedProxies)
-		log.Printf("reloaded trusted proxies (%d entries)", len(cfg.TrustedProxies))
+	if h.aliases != nil {
+		h.aliases.reload(cfg.ModelAliases)
 	}
-
-	// Reasoning-effort caps are operational throttles, so they retune without
-	// a restart like aliases do.
-	if pw.handler.effortCap != nil {
-		pw.handler.effortCap.reload(cfg.MaxReasoningEffortByUser, cfg.MaxReasoningEffortByOrigin)
-		log.Printf("reloaded reasoning effort caps (users=%d origins=%d)",
-			len(cfg.MaxReasoningEffortByUser), len(cfg.MaxReasoningEffortByOrigin))
+	if h.effortCap != nil {
+		h.effortCap.reload(cfg.MaxReasoningEffortByUser, cfg.MaxReasoningEffortByOrigin)
 	}
-
-	log.Printf("config hot-reload complete (debug=%v, tier_threshold=%.2f)",
-		newDebug, pw.handler.cfg.hotTierThreshold())
+	h.cfg.debug.Store(newDebug)
+	log.Printf("config hot-reload complete (debug=%v, tier_threshold=%.2f)", newDebug, threshold)
+	return nil
 }
 
 func (pw *poolWatcher) close() {

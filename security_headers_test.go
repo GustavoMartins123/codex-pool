@@ -84,12 +84,12 @@ func TestIPAccessPolicyPermitted(t *testing.T) {
 	}
 
 	p.configure([]string{"10.0.0.0/8", "192.168.1.5"}, nil)
-	for _, ip := range []string{"10.1.2.3", "192.168.1.5", "127.0.0.1", "::1"} {
+	for _, ip := range []string{"10.1.2.3", "192.168.1.5"} {
 		if !p.permitted(ip) {
 			t.Fatalf("allow list must permit %s", ip)
 		}
 	}
-	for _, ip := range []string{"192.168.1.6", "203.0.113.5", "unknown-peer"} {
+	for _, ip := range []string{"192.168.1.6", "203.0.113.5", "unknown-peer", "127.0.0.1", "::1"} {
 		if p.permitted(ip) {
 			t.Fatalf("allow list must refuse %s", ip)
 		}
