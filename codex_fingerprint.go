@@ -20,8 +20,8 @@ import (
 
 const (
 	codexDefaultOriginator     = "Codex Desktop"
-	codexDefaultAppVersion     = "26.318.11754"
-	codexDefaultBuildNumber    = "1100"
+	codexDefaultAppVersion     = "26.928.20755"
+	codexDefaultBuildNumber    = "12246"
 	codexDefaultChromium       = "144"
 	codexDefaultResidency      = "us"
 	codexAppcastURL            = "https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
@@ -262,7 +262,7 @@ func checkCodexFingerprintUpdate() {
 }
 
 var (
-	codexAppcastItemRegex       = regexp.MustCompile(`(?is)<item>(.*?)</item>`)
+	codexAppcastItemRegex      = regexp.MustCompile(`(?is)<item>(.*?)</item>`)
 	codexAppcastShortVerAttrRe = regexp.MustCompile(`sparkle:shortVersionString="([^"]+)"`)
 	codexAppcastShortVerTagRe  = regexp.MustCompile(`(?is)<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>`)
 	codexAppcastVerAttrRe      = regexp.MustCompile(`sparkle:version="([^"]+)"`)
