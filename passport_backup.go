@@ -186,6 +186,15 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 	// swap succeeds so a mid-restore crash never leaves both stores
 	// missing). If the DuckDB swap fails after the Bolt swap succeeded, the
 	// aside copy rolls Bolt back to its pre-restore state.
+	//
+	// Crash-atomicity limits, stated precisely: this rollback covers
+	// RETURNED errors, not power loss. A process death between the Bolt and
+	// DuckDB swaps still leaves the pair inconsistent (Bolt on the backup
+	// snapshot, DuckDB current); the surviving .prerestore copies enable
+	// manual recovery, but no two-file rename sequence can be atomic across
+	// a crash. A journaling restart-recovery protocol would be needed for
+	// that; until then, run restores with the service stopped and verify
+	// startup logs afterwards.
 	boltAside, duckAside := boltPath+".prerestore", duckPath+".prerestore"
 	_ = os.Remove(boltAside)
 	_ = os.Remove(duckAside)
