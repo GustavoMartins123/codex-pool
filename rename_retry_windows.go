@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 // isTransientRenameError reports whether a failed rename is worth retrying.
@@ -19,5 +21,5 @@ func isTransientRenameError(err error) bool {
 	if !errors.As(err, &errno) {
 		return false
 	}
-	return errno == syscall.ERROR_ACCESS_DENIED || errno == syscall.ERROR_SHARING_VIOLATION
+	return errno == windows.ERROR_ACCESS_DENIED || errno == windows.ERROR_SHARING_VIOLATION
 }
