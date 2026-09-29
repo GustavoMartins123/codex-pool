@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"codex-pool-proxy/internal/credstore"
 )
@@ -61,6 +62,41 @@ func readAccountFile(path string) ([]byte, error) {
 	return credstore.ReadFile(accountCredentialStore, path)
 }
 
+// renameRetryDelays bounds how long an atomic replace waits for transient
+// destination locks. Windows is the only platform with such locks (see
+// rename_retry_windows.go); the total budget stays small because writers run
+// inside request paths (token refresh, admin saves).
+var renameRetryDelays = []time.Duration{
+	25 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	200 * time.Millisecond,
+	400 * time.Millisecond,
+	800 * time.Millisecond,
+}
+
+// writeFileAtomicRetryHook, when non-nil, fires after each failed rename
+// attempt. Tests use it to coordinate releasing a simulated lock exactly
+// after the writer has observed it.
+var writeFileAtomicRetryHook func()
+
+// renameWithRetry replaces oldPath with newPath, retrying transient
+// destination locks (Windows only) with a bounded backoff. Permanent locks
+// still fail, after at most the total retry budget.
+func renameWithRetry(oldPath, newPath string) error {
+	var err error
+	for attempt := 0; ; attempt++ {
+		err = os.Rename(oldPath, newPath)
+		if err == nil || !isTransientRenameError(err) || attempt >= len(renameRetryDelays) {
+			return err
+		}
+		if writeFileAtomicRetryHook != nil {
+			writeFileAtomicRetryHook()
+		}
+		time.Sleep(renameRetryDelays[attempt])
+	}
+}
+
 // writeFileAtomic replaces path with payload via a temp file in the same
 // directory plus rename, so a crash mid-write can never truncate an existing
 // credential file. The payload is written verbatim (already at-rest form).
@@ -84,7 +120,7 @@ func writeFileAtomic(path string, payload []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return renameWithRetry(tmpName, path)
 }
 
 // writeAccountFile encodes plaintext JSON into its at-rest form and writes it
