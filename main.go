@@ -6448,9 +6448,8 @@ func (h *proxyHandler) tryOnce(
 		}
 	}
 
-	// Tee a bounded response sample only when later code needs it. Pass-through SSE
-	// stays on the direct upstream->client path so first tokens are not delayed by
-	// accounting-only parsing or sampling.
+	// Tee only the bounded sample required for history, tracing or translation.
+	// The tee forwards each chunk immediately; history parsing happens after EOF.
 	sampleLimit := int64(16 * 1024)
 	if conversationID != "" {
 		sampleLimit = 256 * 1024
@@ -6491,7 +6490,7 @@ func shouldSampleResponseBodyForRequest(provider Provider, acc *Account, path st
 	if provider == nil || resp == nil {
 		return true
 	}
-	if logBodies || translateDir != TranslateNone {
+	if logBodies || translateDir != TranslateNone || conversationID != "" {
 		return true
 	}
 	if !provider.DetectsSSE(path, resp.Header.Get("Content-Type")) {

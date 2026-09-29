@@ -708,8 +708,8 @@ func TestGrokPassThroughSSESkipsResponseSampling(t *testing.T) {
 	provider := NewGrokProvider(base)
 	resp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
 
-	if shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateNone, "conv", false) {
-		t.Fatal("grok pass-through SSE should skip response sampling")
+	if shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateNone, "", false) {
+		t.Fatal("grok SSE without a conversation can skip response sampling")
 	}
 	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateChatToResponses, "conv", false) {
 		t.Fatal("translated SSE should still sample/inspect response body")
@@ -727,8 +727,8 @@ func TestCodexSSEStillSamplesWhenCyberPolicyMayInspect(t *testing.T) {
 	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex}, "/v1/responses", resp, TranslateNone, "conv", false) {
 		t.Fatal("codex non-cyber SSE should keep sampling for cyber policy inspection")
 	}
-	if shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, CyberAccess: true}, "/v1/responses", resp, TranslateNone, "conv", false) {
-		t.Fatal("codex cyber-access SSE with conversation ID can skip response sampling")
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, CyberAccess: true}, "/v1/responses", resp, TranslateNone, "conv", false) {
+		t.Fatal("codex cyber-access SSE needs response sampling to preserve conversation history")
 	}
 }
 
