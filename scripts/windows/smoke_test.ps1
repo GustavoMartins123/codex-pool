@@ -22,12 +22,18 @@ $listener.Start()
 $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
 $listener.Stop()
 
+# Ephemeral vault key for the throwaway run (the vault is mandatory).
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$vaultKey = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+
 $envs = @{
     'PROXY_LISTEN_ADDR' = "127.0.0.1:$port"
     'POOL_DIR'          = 'pool'
     'PROXY_DB_PATH'     = 'data/proxy.db'
     'DUCKDB_PATH'       = 'data/usage.duckdb'
     'PROXY_DEBUG'       = '1'
+    'POOL_CREDENTIAL_KEY' = $vaultKey
 }
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo

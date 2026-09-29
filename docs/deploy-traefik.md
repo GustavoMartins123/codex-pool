@@ -15,7 +15,8 @@ repository contains no machine-specific domain, Docker network name, or secret.
    `TRAEFIK_NETWORK`, `TRAEFIK_ENTRYPOINT`, and `TRAEFIK_CERTRESOLVER` to the
    values configured in that Traefik installation. Set independent, strong
    `ADMIN_TOKEN`, `POOL_AUTH_ENCRYPTION_KEY`, `POOL_JWT_SECRET`, and
-   `POOL_CREDENTIAL_KEY`. Keep `.env` outside Git and readable only by the
+   `POOL_CREDENTIAL_KEY` (all four required; the server refuses to start
+   without the vault key). Keep `.env` outside Git and readable only by the
    deployment account.
 
 `ADMIN_TOKEN` is required to create the first operator. An installation

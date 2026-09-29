@@ -82,3 +82,4 @@ node_modules/
 
 # Reference checkout (not part of this repo)
 codex/
+.dev-vault-key

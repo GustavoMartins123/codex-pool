@@ -139,7 +139,19 @@ pool/
     └── main.json
 ```
 
-### 2. Run it
+### 2. Generate the vault key (required)
+
+The server refuses to start without `POOL_CREDENTIAL_KEY`; plaintext pool
+files are encrypted automatically on the first start with a key.
+
+```bash
+openssl rand -hex 32   # export as POOL_CREDENTIAL_KEY (hex or 32+ char passphrase)
+```
+
+The dev scripts (`scripts/dev_proxy.sh`, `scripts/windows/dev_proxy.ps1`)
+generate and reuse a local `.dev-vault-key` automatically.
+
+### 3. Run it
 
 Builds include the dashboard. Run the binary from a directory where you want
 `pool/`, `data/`, and optional `config.toml` to live.
@@ -182,7 +194,7 @@ Docker deployment, use `scripts/deploy.sh` or
 
 For a VPS behind Traefik, see [Traefik deployment and migration](docs/deploy-traefik.md).
 
-### 3. Point your CLI
+### 4. Point your CLI
 
 **Codex** - `~/.codex/config.toml`:
 ```toml
@@ -253,9 +265,37 @@ public_url = "https://pool.example.com"
 storage_path = "./data/pool_users.json"
 ```
 
-Set `POOL_AUTH_ENCRYPTION_KEY` to a stable 32-byte secret (hex or base64) before starting Passport. `ADMIN_TOKEN` remains the break-glass operator credential.
+Set `POOL_AUTH_ENCRYPTION_KEY` to a stable 32-byte secret (hex or base64) before starting Passport. `ADMIN_TOKEN` remains the break-glass operator credential. `POOL_CREDENTIAL_KEY` is required (see Credential vault below).
 
 Environment variable `PROXY_MAX_INMEM_BODY_BYTES` controls how large a request body can be before the proxy streams it directly (no retries). Default is 16777216 (16 MiB).
+
+### Canary experiments
+
+```toml
+[experiments.canary."gpt-5.6-sol"]
+candidate = "gpt-6-astra"
+percent = 10
+shadow = true
+```
+
+Canary rules with `shadow = true` record a routing-only observation — no
+second upstream call. Sending the candidate model as **real duplicate
+traffic** is a separate opt-in feature:
+
+```toml
+[experiments.traffic]
+enabled = true
+experiments = ["gpt-5.6-sol->gpt-6-astra"]  # canary rule names allowed to send traffic
+accounts = ["codex-a"]                      # only these accounts may serve shadow legs
+principals = ["user-c-<id>"]                # only these principals generate them
+max_inflight = 1
+daily_request_budget = 100
+timeout_seconds = 120
+detach_from_client = false                  # true keeps the leg after the client leaves
+```
+
+Traffic legs carry a `-traffic-shadow` request id and are recorded under the
+`traffic-shadow` variant; missing allowlists or budget disable the feature.
 
 ### Security hardening
 
@@ -311,20 +351,23 @@ not look like any known credential shape.
 credential file under `pool/` is group- or world-accessible; a permissive pool
 directory is tightened to `0700` automatically.
 
-**Credential vault.** Setting `POOL_CREDENTIAL_KEY` (64 hex characters, or a
-passphrase of at least 32 characters) encrypts every upstream credential file
-in `pool/` at rest with AES-256-GCM, using a fresh nonce per record and a
-versioned envelope (`{"cpvault":1,"kv":N,...}`).
+**Credential vault.** `POOL_CREDENTIAL_KEY` (64 hex characters, or a
+passphrase of at least 32 characters) is **required**: the server refuses to
+start without it, and every upstream credential file in `pool/` is encrypted
+at rest with AES-256-GCM, using a fresh nonce per record and a versioned
+envelope (`{"cpvault":1,"kv":N,...}`).
 
-- Set it **before** the first start. Plaintext files are migrated to encrypted
-  at startup, and an encrypted pool with no key fails closed rather than
-  loading as empty.
+- Plaintext pools are migrated (encrypted in place) on the first start with a
+  key; after that no plaintext credential exists on disk.
+- **Verify** offline that every file decodes with the current key:
+  `codex-pool -check-credentials`.
 - **Rotate** by moving the current key to `POOL_CREDENTIAL_KEY_PREVIOUS`
   (optionally `POOL_CREDENTIAL_KEY_PREVIOUS_VERSION`) and setting the new
   `POOL_CREDENTIAL_KEY` with an incremented `POOL_CREDENTIAL_KEY_VERSION`.
   The previous key stays valid for reads; the next startup re-encrypts
   everything to the current version.
-- **Roll back** to plaintext with the `-decrypt-credentials` startup flag.
+- **Roll back** to plaintext with the `-decrypt-credentials` startup flag
+  (requires the key).
 - Every credential write path goes through the vault, including Codex
   re-login and Z.ai OAuth; `pool/` files therefore never hold readable
   upstream tokens once a key is configured.
