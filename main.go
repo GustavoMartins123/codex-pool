@@ -2915,10 +2915,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		attempts = n
 	}
 
-	exclude := map[string]bool{}
+	// hardExclude holds restrictions that must survive every retry/fallback
+	// reset below (traffic-experiment account allowlist; policy and ownership
+	// restrictions will live here too). exclude is per-attempt state only.
+	hardExclude := map[string]bool{}
 	if r.Header.Get("X-Pool-Shadow") != "" {
-		h.markShadowAccountExclusions(exclude)
+		h.markShadowAccountExclusions(hardExclude)
 	}
+	exclude := map[string]bool{}
 	exhaustionRetries := 0
 	var lastErr error
 	var lastStatus int
@@ -2938,8 +2942,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	for attempt := 1; attempt <= attempts; attempt++ {
 		var acc *Account
 		candidateExclude := exclude
-		if imageGenerationRequest {
-			candidateExclude = make(map[string]bool, len(exclude)+h.pool.countByType(accountType))
+		if imageGenerationRequest || len(hardExclude) > 0 {
+			candidateExclude = make(map[string]bool, len(exclude)+len(hardExclude)+h.pool.countByType(accountType))
+			for id, excluded := range hardExclude {
+				candidateExclude[id] = excluded
+			}
 			for id, excluded := range exclude {
 				candidateExclude[id] = excluded
 			}

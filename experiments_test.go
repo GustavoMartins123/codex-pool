@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -329,4 +330,70 @@ func TestTrafficShadowConfigNormalizes(t *testing.T) {
 	}
 	r.end()
 	r.day = ""
+}
+
+func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+	store := testUsageStore(t)
+	tracker, err := newExperimentTracker(store.db, ExperimentsConfig{
+		Canary: map[string]CanaryConfig{"gpt-5.6-sol": {Candidate: "gpt-5.5", Percent: 0, Shadow: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexBase, _ := url.Parse("https://codex.mock")
+	pool := newPoolState([]*Account{
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", AccountID: "acct_cb", PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
+	}, false)
+	var mu sync.Mutex
+	calls := map[string]int{}
+	h := &proxyHandler{
+		cfg:         &config{maxAttempts: 3, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
+		pool:        pool,
+		registry:    NewProviderRegistry(NewCodexProvider(codexBase, codexBase, nil), nil, nil),
+		metrics:     newMetrics(),
+		recent:      newRecentErrors(5),
+		experiments: tracker,
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(req.Body)
+			auth := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Contains(string(body), "\"model\":\"gpt-5.5\"") || strings.Contains(string(body), `"model":"gpt-5.5"`) {
+				calls["shadow:"+auth]++
+				if auth == "t-ca" && calls["shadow:t-ca"] == 1 {
+					return &http.Response{StatusCode: 429, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)), Request: req}, nil
+				}
+			} else {
+				calls["real:"+auth]++
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
+		}),
+	}
+	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
+		Accounts: []string{"codex-a"}, Principals: []string{testPoolIdentity(t, h, "user")},
+		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
+	})
+
+	body := `{"model":"gpt-5.6-sol","conversation_id":"allowlist-retry","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user"))
+	w := httptest.NewRecorder()
+	testPoolServeHTTP(t, h, w, r)
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if calls["shadow:t-ca"] < 1 {
+		t.Fatalf("shadow leg never ran: %v", calls)
+	}
+	if calls["shadow:t-cb"] != 0 {
+		t.Fatalf("retry reset leaked the allowlist: unauthorized codex-b served the shadow leg: %v", calls)
+	}
 }
