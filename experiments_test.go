@@ -181,7 +181,7 @@ func trafficShadowFixture(t *testing.T, traffic TrafficShadowConfig, poolAccount
 		metrics:       newMetrics(),
 		recent:        newRecentErrors(5),
 		experiments:   tracker,
-		trafficShadow: newTrafficShadowRuntime(TrafficShadowConfig{}),
+		trafficShadow: newTrafficShadowRuntime(nil, TrafficShadowConfig{}),
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			atomic.AddInt32(&calls, 1)
 			seenAccounts = append(seenAccounts, req.Header.Get("ChatGPT-Account-ID"))
@@ -310,11 +310,11 @@ func TestTrafficShadowPrincipalNotAllowed(t *testing.T) {
 }
 
 func TestTrafficShadowConfigNormalizes(t *testing.T) {
-	r := newTrafficShadowRuntime(TrafficShadowConfig{Enabled: true})
+	r := newTrafficShadowRuntime(nil, TrafficShadowConfig{Enabled: true})
 	if r.cfg.Enabled {
 		t.Fatal("config without allowlists/budget must disable itself")
 	}
-	r = newTrafficShadowRuntime(TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, DailyBudget: 3})
+	r = newTrafficShadowRuntime(nil, TrafficShadowConfig{Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"}, DailyBudget: 3})
 	if r.cfg.MaxInflight != 1 || r.cfg.TimeoutSeconds != 120 {
 		t.Fatalf("defaults missing: %#v", r.cfg)
 	}
@@ -372,7 +372,7 @@ func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
 		}),
 	}
-	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a"}, Principals: []string{testPoolIdentity(t, h, "user")},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -429,7 +429,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[{"content":[{"text":"answer"}]}]}`)), Request: req}, nil
 		}),
 	}
-	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a", "codex-b"}, Principals: []string{testPoolIdentity(t, h, "user")},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -526,7 +526,7 @@ func TestTrafficShadowDoesNotConsumeClientPolicyBudget(t *testing.T) {
 		}),
 	}
 	owner := testPoolIdentity(t, h, "user")
-	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+	h.trafficShadow = newTrafficShadowRuntime(store.db, TrafficShadowConfig{
 		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
 		Accounts: []string{"codex-a"}, Principals: []string{owner},
 		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
@@ -576,5 +576,29 @@ func TestTrafficShadowDoesNotConsumeClientPolicyBudget(t *testing.T) {
 	}
 	if dayRequests != 1 {
 		t.Fatalf("policy must count the real request exactly once, got %d", dayRequests)
+	}
+}
+
+func TestTrafficShadowDailyBudgetSurvivesRestart(t *testing.T) {
+	store := testUsageStore(t)
+	cfg := TrafficShadowConfig{
+		Enabled: true, Experiments: []string{"e"}, Accounts: []string{"a"}, Principals: []string{"p"},
+		MaxInflight: 4, DailyBudget: 1, TimeoutSeconds: 5,
+	}
+	first := newTrafficShadowRuntime(store.db, cfg)
+	now := time.Now()
+	if !first.begin(now) {
+		t.Fatal("first leg must be admitted")
+	}
+	if first.begin(now) {
+		t.Fatal("budget of one must block the second leg")
+	}
+	restarted := newTrafficShadowRuntime(store.db, cfg)
+	if restarted.begin(now) {
+		t.Fatal("restart must not reset the daily budget")
+	}
+	next := now.Add(26 * time.Hour)
+	if !restarted.begin(next) {
+		t.Fatal("a new UTC day must have a fresh budget")
 	}
 }

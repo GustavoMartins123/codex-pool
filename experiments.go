@@ -373,16 +373,19 @@ type TrafficShadowConfig struct {
 	DetachFromClient bool     `toml:"detach_from_client" json:"detach_from_client"`
 }
 
+const bucketTrafficShadowBudget = "traffic_shadow_budget"
+
 type trafficShadowRuntime struct {
 	mu       sync.Mutex
 	cfg      TrafficShadowConfig
+	db       *bbolt.DB
 	inflight int
 	day      string
 	spent    int
 }
 
-func newTrafficShadowRuntime(cfg TrafficShadowConfig) *trafficShadowRuntime {
-	r := &trafficShadowRuntime{}
+func newTrafficShadowRuntime(db *bbolt.DB, cfg TrafficShadowConfig) *trafficShadowRuntime {
+	r := &trafficShadowRuntime{db: db}
 	r.Update(cfg)
 	return r
 }
@@ -430,6 +433,8 @@ func (r *trafficShadowRuntime) enabledFor(experiment, principal string) bool {
 	return len(r.cfg.Accounts) > 0
 }
 
+// begin admits a leg under the daily budget and inflight cap. The daily
+// spend is persisted in Bolt so a restart cannot reset the day's budget.
 func (r *trafficShadowRuntime) begin(now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -438,14 +443,43 @@ func (r *trafficShadowRuntime) begin(now time.Time) bool {
 	}
 	day := now.UTC().Format("2006-01-02")
 	if r.day != day {
-		r.day, r.spent = day, 0
+		r.day, r.spent = day, r.loadSpentLocked(day)
 	}
 	if r.spent >= r.cfg.DailyBudget || r.inflight >= r.cfg.MaxInflight {
 		return false
 	}
 	r.spent++
+	r.persistSpentLocked()
 	r.inflight++
 	return true
+}
+
+func (r *trafficShadowRuntime) loadSpentLocked(day string) int {
+	if r.db == nil {
+		return 0
+	}
+	var spent int
+	_ = r.db.View(func(tx *bbolt.Tx) error {
+		if bucket := tx.Bucket([]byte(bucketTrafficShadowBudget)); bucket != nil {
+			_ = json.Unmarshal(bucket.Get([]byte(day)), &spent)
+		}
+		return nil
+	})
+	return spent
+}
+
+func (r *trafficShadowRuntime) persistSpentLocked() {
+	if r.db == nil {
+		return
+	}
+	encoded, _ := json.Marshal(r.spent)
+	_ = r.db.Update(func(tx *bbolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte(bucketTrafficShadowBudget))
+		if err != nil {
+			return err
+		}
+		return bucket.Put([]byte(r.day), encoded)
+	})
 }
 
 func (r *trafficShadowRuntime) end() {

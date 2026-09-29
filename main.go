@@ -760,7 +760,7 @@ func main() {
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		experiments:          experiments,
-		trafficShadow:        newTrafficShadowRuntime(cfg.experiments.Traffic),
+		trafficShadow:        newTrafficShadowRuntime(store.db, cfg.experiments.Traffic),
 		recent:               newRecentErrors(50),
 		startTime:            time.Now(),
 		pacer:                pacer,
