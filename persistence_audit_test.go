@@ -4,13 +4,118 @@ package main
 // database files must fail gracefully (error, not panic or hard crash),
 // because DuckDB and Bolt sit behind CGO/native code paths where a crash
 // takes the whole proxy down.
+//
+// Truncated-Bolt repros MUST run in a subprocess: bbolt dereferences page
+// pointers off its mmap without bounds checks, so a truncated store raises
+// SIGBUS — a fatal, unrecoverable fault that would kill the entire
+// `go test` process. The parent test never opens the corrupted store
+// in-process; it observes the helper's exit status and output.
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+const boltCorruptHelperEnv = "CODEX_POOL_TEST_BOLT_PATH"
+
+// TestAuditUsageStoreTruncatedBoltFailsGracefully
+// BUG-AUDIT-109 regression (cross-platform): a proxy.db truncated by a crash
+// between write and flush must produce a clean, actionable error at startup —
+// never a SIGBUS or a raw panic that kills the process on every restart until
+// an operator repairs the file by hand.
+//
+// The corrupted store is only ever opened by the helper subprocess; the
+// parent asserts the helper survives with a corruption error.
+func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
+	// Helper branch: this process was re-executed by the parent to open the
+	// corrupted store. It must fail the clean way (error), never crash.
+	if path := os.Getenv(boltCorruptHelperEnv); path != "" {
+		_, err := newUsageStore(path, 30)
+		if err == nil {
+			t.Fatal("opening a truncated Bolt store unexpectedly succeeded")
+		}
+		if !errors.Is(err, ErrBoltCorrupt) {
+			t.Fatalf("expected a corruption error, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "passport backup") {
+			t.Fatalf("corruption error lacks remediation hint: %v", err)
+		}
+		return
+	}
+
+	// Parent branch: build the corrupted store, then re-exec this same test
+	// in a subprocess. A SIGBUS or panic in the helper shows up as a non-zero
+	// exit with signal output; the parent and the rest of the suite survive.
+	dir, err := os.MkdirTemp("", "codex-pool-bolt-truncate-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "proxy.db")
+	store, err := newUsageStore(path, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < 2*4096 {
+		t.Skipf("store too small to truncate meaningfully: %d bytes", info.Size())
+	}
+	for _, cut := range []int64{info.Size() / 2, info.Size() - 4096, info.Size() - 100} {
+		if cut <= 0 {
+			continue
+		}
+		if err := os.Truncate(path, cut); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestAuditUsageStoreTruncatedBoltFailsGracefully", "-test.timeout=2m")
+		cmd.Env = append(os.Environ(), boltCorruptHelperEnv+"="+path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("BUG-AUDIT-109: opening a store truncated to %d bytes crashed the process instead of failing cleanly: %v\n%s", cut, err, out)
+		}
+	}
+}
+
+// TestAuditUsageStoreCorruptBoltVariantsFailCleanly covers corruption shapes
+// that bbolt rejects before any unsafe dereference, so they can run
+// in-process: random garbage, tiny non-bolt files, and empty headers.
+func TestAuditUsageStoreCorruptBoltVariantsFailCleanly(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string][]byte{
+		"garbage":      []byte(strings.Repeat("not-a-bolt-database! ", 400)),
+		"empty-header": make([]byte, 128),
+		"torn-meta":    append(bytesRepeat(0x00, 16), bytesRepeat(0xff, 4096-16)...),
+	}
+	for name, payload := range cases {
+		path := filepath.Join(dir, name+".db")
+		if err := os.WriteFile(path, payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		store, err := newUsageStore(path, 30)
+		if err == nil {
+			store.Close()
+			t.Fatalf("%s: opening a corrupt Bolt store unexpectedly succeeded", name)
+		}
+	}
+}
+
+func bytesRepeat(b byte, n int) []byte {
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
 
 // TestAuditDuckAnalyticsCorruptDatabaseFailsGracefully writes garbage bytes
 // into a usage.duckdb file and verifies newDuckAnalytics reports an error
@@ -63,54 +168,6 @@ func TestAuditDuckAnalyticsTruncatedDatabaseFailsGracefully(t *testing.T) {
 		reopened.Close()
 		t.Fatal("opening a truncated DuckDB file unexpectedly succeeded")
 	}
-}
-
-// TestAuditUsageStoreTruncatedBoltFailsGracefully
-// BUG-AUDIT-109 (cross-platform): a proxy.db truncated by a crash between
-// write and flush makes bbolt panic ("invalid freelist page") inside
-// newUsageStore, which main.go calls at startup — the process dies with a
-// raw Go panic instead of a clean, actionable error, and keeps panicking on
-// every restart until an operator repairs the file by hand.
-// Expected: newUsageStore returns an error for a corrupt store.
-// Actual: panic propagates out of bbolt.Open's freelist load.
-func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
-	// Not t.TempDir(): the panicking bbolt leaves the mmap open, which would
-	// turn the framework's RemoveAll cleanup into a second failure.
-	dir, err := os.MkdirTemp("", "codex-pool-bolt-truncate-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "proxy.db")
-	store, err := newUsageStore(path, 30)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Truncate(path, info.Size()/2); err != nil {
-		t.Fatal(err)
-	}
-
-	panicked := true
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Fatalf("BUG-AUDIT-109: bbolt panicked on truncated store: %v", r)
-			}
-			panicked = false
-		}()
-		if reopened, err := newUsageStore(path, 30); err == nil {
-			defer reopened.Close()
-			t.Fatal("opening a truncated Bolt store unexpectedly succeeded")
-		}
-	}()
-	_ = panicked
 }
 
 // TestAuditUsageStoreReadOnlyFileFailsGracefully marks the Bolt file

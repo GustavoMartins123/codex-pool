@@ -154,17 +154,35 @@ type CapacitySample struct {
 	SecondaryDelta  float64   `json:"secondary_delta"` // Change in secondary %
 }
 
-func newUsageStore(path string, retentionDays int) (*usageStore, error) {
+func newUsageStore(path string, retentionDays int) (store *usageStore, err error) {
 	if retentionDays <= 0 {
 		retentionDays = 30
 	}
-	db, err := bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
+	// bbolt dereferences page pointers off the mmap without bounds checks; a
+	// truncated file faults the whole process with SIGBUS on the first
+	// transaction. Prove the file's committed meta stays inside EOF before
+	// any mmap exists, and convert bbolt's Go-level panics on corrupt content
+	// into an actionable startup error (see bolt_guard.go for the exact
+	// guarantees and limits).
+	if err := validateBoltFileBounds(path); err != nil {
+		return nil, err
+	}
+	var db *bbolt.DB
+	defer func() {
+		if r := recover(); r != nil {
+			if db != nil {
+				_ = db.Close()
+			}
+			store, err = nil, fmt.Errorf("%w: %s: bbolt panic: %v; restore it from a passport backup (see -restore-manifest) or delete the file to start a fresh store", ErrBoltCorrupt, path, r)
+		}
+	}()
+	db, err = bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		return nil, err
 	}
 	startedAt := time.Now().UTC()
 	needsOriginBackfill := false
-	if err := db.Update(func(tx *bbolt.Tx) error {
+	if uerr := db.Update(func(tx *bbolt.Tx) error {
 		for _, bucket := range []string{bucketUsageRequests, bucketAccountUsage, bucketPlanCapacity, bucketCapacitySamples, bucketUserUsage, bucketOriginUsage, bucketOriginMetadata, bucketOriginWeeklyUsage, bucketUserDailyUsage, bucketUserHourlyUsage, bucketGlobalHourlyUsage, bucketAnalyticsOutbox, bucketAnalyticsState} {
 			if _, e := tx.CreateBucketIfNotExists([]byte(bucket)); e != nil {
 				return e
@@ -185,11 +203,11 @@ func newUsageStore(path string, retentionDays int) (*usageStore, error) {
 			needsOriginBackfill = true
 		}
 		return nil
-	}); err != nil {
+	}); uerr != nil {
 		db.Close()
-		return nil, err
+		return nil, uerr
 	}
-	store := &usageStore{
+	store = &usageStore{
 		db:                 db,
 		retention:          time.Duration(retentionDays) * 24 * time.Hour,
 		lastRateLimits:     make(map[string]rateLimitSnapshot),
