@@ -163,33 +163,6 @@ func TestMigrateAndRollbackCredentialFiles(t *testing.T) {
 	}
 }
 
-func TestEncryptedFilesWithoutKeyFailStartup(t *testing.T) {
-	poolDir := t.TempDir()
-	codexDir := filepath.Join(poolDir, "codex")
-	if err := os.MkdirAll(codexDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	useKeyedVault(t, hexKey(t, 1, 'e'), nil)
-	atRest, err := accountCredentialStore.Encode([]byte(`{"api_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "one.json"), atRest, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate a restart without the key configured.
-	accountCredentialStore = credstore.PlainStore{}
-	t.Cleanup(func() { accountCredentialStore = credstore.PlainStore{} })
-	if err := ensureNoEncryptedFilesWithoutKey(poolDir); err == nil {
-		t.Fatal("encrypted files without a key must fail startup")
-	}
-	if err := ensureNoEncryptedFilesWithoutKey(t.TempDir()); err != nil {
-		t.Fatalf("empty pool dir must not fail: %v", err)
-	}
-}
-
 func TestBuildCredentialStoreFromEnv(t *testing.T) {
 	t.Setenv("POOL_CREDENTIAL_KEY", "")
 	os.Unsetenv("POOL_CREDENTIAL_KEY")

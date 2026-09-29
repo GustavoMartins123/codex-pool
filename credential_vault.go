@@ -224,27 +224,28 @@ func decryptCredentialFiles(poolDir string) (int, error) {
 	return count, err
 }
 
-// ensureNoEncryptedFilesWithoutKey fails startup when encrypted credential
-// files exist but no master key is configured: silently skipping them would
-// present the pool as empty.
-func ensureNoEncryptedFilesWithoutKey(poolDir string) error {
-	if accountCredentialStore.Enabled() {
-		return nil
-	}
-	var offenders []string
+// verifyCredentialFiles decodes every credential file with the configured
+// vault and reports per-file failures. Offline integrity check used by the
+// -check-credentials flag.
+func verifyCredentialFiles(poolDir string) (checked int, failures []string) {
 	_ = filepath.Walk(poolDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".json") {
 			return nil
 		}
-		if raw, err := os.ReadFile(path); err == nil && credstore.IsEncrypted(raw) {
-			offenders = append(offenders, path)
+		checked++
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			failures = append(failures, path+": "+err.Error())
+			return nil
+		}
+		if _, err := accountCredentialStore.Decode(raw); err != nil {
+			failures = append(failures, path+": "+err.Error())
+		} else if !credstore.IsEncrypted(raw) {
+			failures = append(failures, path+": file is not encrypted; start the server once with POOL_CREDENTIAL_KEY to migrate it")
 		}
 		return nil
 	})
-	if len(offenders) > 0 {
-		return fmt.Errorf("%d credential file(s) are encrypted but POOL_CREDENTIAL_KEY is not set (e.g. %s)", len(offenders), offenders[0])
-	}
-	return nil
+	return checked, failures
 }
 
 // initCredentialVault wires the global store, migrates the pool directory,
@@ -256,7 +257,9 @@ func initCredentialVault(poolDir string) error {
 	}
 	accountCredentialStore = store
 	if !store.Enabled() {
-		return ensureNoEncryptedFilesWithoutKey(poolDir)
+		return fmt.Errorf("POOL_CREDENTIAL_KEY is required: generate one with `openssl rand -hex 32`; " +
+			"existing plaintext pools are encrypted automatically on first start with the key, " +
+			"and rotation uses POOL_CREDENTIAL_KEY_PREVIOUS (see .env.example)")
 	}
 	encrypted, rotated, err := migrateCredentialFiles(poolDir)
 	if err != nil {

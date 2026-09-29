@@ -76,6 +76,7 @@ type config struct {
 	backupDir                  string
 	restoreManifest            string
 	decryptCredentials         bool
+	checkCredentials           bool
 	rotatePassportKey          bool
 	duckPath                   string
 	requestTimeout             time.Duration // Timeout for non-streaming requests (0 = no timeout)
@@ -371,6 +372,7 @@ func buildConfig() *config {
 	flag.StringVar(&cfg.backupDir, "backup-dir", "", "create an offline paired Bolt/DuckDB backup in this directory, then exit")
 	flag.StringVar(&cfg.restoreManifest, "restore-manifest", "", "restore Bolt/DuckDB from a paired backup manifest, then exit")
 	flag.BoolVar(&cfg.decryptCredentials, "decrypt-credentials", false, "decrypt every encrypted credential file back to plaintext (requires POOL_CREDENTIAL_KEY), then exit")
+	flag.BoolVar(&cfg.checkCredentials, "check-credentials", false, "verify every credential file decodes with POOL_CREDENTIAL_KEY (offline integrity check), then exit")
 	flag.BoolVar(&cfg.rotatePassportKey, "rotate-passport-key", false, "rotate sealed client tokens in the offline Bolt database using POOL_AUTH_ENCRYPTION_KEY_OLD and POOL_AUTH_ENCRYPTION_KEY, then exit")
 	flag.Parse()
 	return cfg
@@ -442,6 +444,25 @@ func main() {
 			log.Fatalf("decrypt credentials: %v", err)
 		}
 		log.Printf("credential vault: decrypted %d file(s) back to plaintext in %s", count, cfg.poolDir)
+		return
+	}
+	if cfg.checkCredentials {
+		store, err := buildCredentialStore()
+		if err != nil {
+			log.Fatalf("credential vault: %v", err)
+		}
+		if !store.Enabled() {
+			log.Fatal("credential vault: POOL_CREDENTIAL_KEY is required to verify credential files")
+		}
+		accountCredentialStore = store
+		checked, failures := verifyCredentialFiles(cfg.poolDir)
+		for _, failure := range failures {
+			log.Printf("credential check failed: %s", failure)
+		}
+		if len(failures) > 0 {
+			log.Fatalf("credential check: %d/%d file(s) failed to decode (wrong key or corrupted; rotate with POOL_CREDENTIAL_KEY_PREVIOUS or restore from backup)", len(failures), checked)
+		}
+		log.Printf("credential check: %d file(s) decode with the current key", checked)
 		return
 	}
 	if err := initCredentialVault(cfg.poolDir); err != nil {
