@@ -55,8 +55,8 @@ func TestAuditAnalyticsDBPathFollowsUsageStore(t *testing.T) {
 	if got := analyticsDBPathFor("./data/proxy.db"); got != filepath.Join("data", "analytics.db") {
 		t.Fatalf("default analytics path = %q, want data/analytics.db", got)
 	}
-	if got := analyticsDBPathFor("/srv/pool/proxy.db"); got != "/srv/pool/analytics.db" {
-		t.Fatalf("custom store analytics path = %q, want /srv/pool/analytics.db", got)
+	if got, want := analyticsDBPathFor("/srv/pool/proxy.db"), filepath.Join("/srv/pool", "analytics.db"); got != want {
+		t.Fatalf("custom store analytics path = %q, want %q", got, want)
 	}
 	t.Setenv("ANALYTICS_DB_PATH", "/elsewhere/analytics.db")
 	if got := analyticsDBPathFor("./data/proxy.db"); got != "/elsewhere/analytics.db" {
