@@ -360,7 +360,7 @@ try {
     $accessToken = [string]$auth.access_token
   }
   if (-not [string]::IsNullOrWhiteSpace($accessToken)) {
-    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.155.1'
+    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.159.0'
     $headers = @{ Authorization = "Bearer $accessToken" }
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
@@ -424,7 +424,7 @@ function Refresh-ModelCatalog {
   }
   if ([string]::IsNullOrWhiteSpace($token)) { return }
 
-  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.155.1'
+  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.159.0'
   $headers = @{ Authorization = "Bearer $token" }
 
   try {
@@ -749,7 +749,7 @@ ACCESS_TOKEN=$(sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/
 if [ -n "${ACCESS_TOKEN:-}" ]; then
     curl --connect-timeout 5 --max-time 10 -fsSL \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
-        "${BASE_URL%%/}/backend-api/codex/models?client_version=0.155.1" \
+        "${BASE_URL%%/}/backend-api/codex/models?client_version=0.159.0" \
         -o "$MODEL_CATALOG" 2>/dev/null && chmod 600 "$MODEL_CATALOG" 2>/dev/null || true
 fi
 
@@ -762,7 +762,7 @@ BASE_URL="${1:-}"
 AUTH_DIR="${HOME}/.codex"
 AUTH_FILE="$AUTH_DIR/auth.json"
 MODEL_CATALOG="$AUTH_DIR/model_catalog.json"
-CLIENT_VERSION="0.155.1"
+CLIENT_VERSION="0.159.0"
 
 refresh_model_catalog() {
     if [ -z "$BASE_URL" ] || [ ! -f "$AUTH_FILE" ]; then
