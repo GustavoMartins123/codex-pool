@@ -20,7 +20,10 @@ import (
 	"testing"
 )
 
-const boltCorruptHelperEnv = "CODEX_POOL_TEST_BOLT_PATH"
+const (
+	boltCorruptHelperEnv = "CODEX_POOL_TEST_BOLT_PATH"
+	boltSmallSweepHelper = "CODEX_POOL_TEST_BOLT_SMALL_SWEEP"
+)
 
 // TestAuditUsageStoreTruncatedBoltFailsGracefully
 // BUG-AUDIT-109 regression (cross-platform): a proxy.db truncated by a crash
@@ -43,6 +46,46 @@ func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "passport backup") {
 			t.Fatalf("corruption error lacks remediation hint: %v", err)
+		}
+		return
+	}
+	// Small-file sweep helper: a proxy.db of 1..27 bytes is shorter than the
+	// meta-page header probe; the guard must reject it with ErrBoltCorrupt
+	// and never slice out of range. Sizes around the meta decode boundaries
+	// (page header 16, meta struct 64, both plus one) cover every partial
+	// read shape.
+	if dir := os.Getenv(boltSmallSweepHelper); dir != "" {
+		for size := 1; size <= 27; size++ {
+			path := filepath.Join(dir, "small.db")
+			if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := newUsageStore(path, 30)
+			if err == nil {
+				store.Close()
+				t.Fatalf("%d-byte file opened a store unexpectedly", size)
+			}
+			if !errors.Is(err, ErrBoltCorrupt) {
+				t.Fatalf("%d-byte file: expected ErrBoltCorrupt, got: %v", size, err)
+			}
+			t.Logf("size %d: %v", size, err)
+		}
+		for _, size := range []int{28, 79, 80, 81, 95, 96, 4095, 4096} {
+			path := filepath.Join(dir, "small.db")
+			payload := make([]byte, size)
+			// Deterministic non-zero content: not a valid meta page, but a
+			// plausible torn header.
+			for i := range payload {
+				payload[i] = byte(i * 7)
+			}
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if store, err := newUsageStore(path, 30); err == nil {
+				store.Close()
+				t.Fatalf("%d-byte garbage file opened a store unexpectedly", size)
+			}
+			t.Logf("size %d rejected", size)
 		}
 		return
 	}
@@ -77,13 +120,36 @@ func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
 		if err := os.Truncate(path, cut); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(os.Args[0], "-test.run=TestAuditUsageStoreTruncatedBoltFailsGracefully", "-test.timeout=2m")
-		cmd.Env = append(os.Environ(), boltCorruptHelperEnv+"="+path)
-		out, err := cmd.CombinedOutput()
+		out, err := runBoltCorruptHelper(t, path)
 		if err != nil {
 			t.Fatalf("BUG-AUDIT-109: opening a store truncated to %d bytes crashed the process instead of failing cleanly: %v\n%s", cut, err, out)
 		}
 	}
+
+	// Small-file sweep in one helper subprocess: any panic slicing short
+	// headers shows up as a child crash with the offending size as the last
+	// logged line.
+	sweepDir := filepath.Join(dir, "sweep")
+	if err := os.Mkdir(sweepDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runSmallSweepHelper(t, sweepDir); err != nil {
+		t.Fatalf("BUG-AUDIT-109: small-file probe crashed the helper (last size attempted is the last line): %v\n%s", err, out)
+	}
+}
+
+func runBoltCorruptHelper(t *testing.T, path string) ([]byte, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestAuditUsageStoreTruncatedBoltFailsGracefully", "-test.timeout=2m", "-test.v")
+	cmd.Env = append(os.Environ(), boltCorruptHelperEnv+"="+path)
+	return cmd.CombinedOutput()
+}
+
+func runSmallSweepHelper(t *testing.T, dir string) ([]byte, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestAuditUsageStoreTruncatedBoltFailsGracefully", "-test.timeout=2m", "-test.v")
+	cmd.Env = append(os.Environ(), boltSmallSweepHelper+"="+dir)
+	return cmd.CombinedOutput()
 }
 
 // TestAuditUsageStoreCorruptBoltVariantsFailCleanly covers corruption shapes

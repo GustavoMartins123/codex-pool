@@ -172,10 +172,8 @@ func newUsageStore(path string, retentionDays int) (store *usageStore, err error
 	// transaction. Prove the file's committed meta stays inside EOF before
 	// any mmap exists, and convert bbolt's Go-level panics on corrupt content
 	// into an actionable startup error (see bolt_guard.go for the exact
-	// guarantees and limits).
-	if err := validateBoltFileBounds(path); err != nil {
-		return nil, err
-	}
+	// guarantees and limits). The recover is registered FIRST so a panic in
+	// the guard itself can never escape as a process crash either.
 	var db *bbolt.DB
 	defer func() {
 		if r := recover(); r != nil {
@@ -185,6 +183,9 @@ func newUsageStore(path string, retentionDays int) (store *usageStore, err error
 			store, err = nil, fmt.Errorf("%w: %s: bbolt panic: %v; restore it from a passport backup (see -restore-manifest) or delete the file to start a fresh store", ErrBoltCorrupt, path, r)
 		}
 	}()
+	if err := validateBoltFileBounds(path); err != nil {
+		return nil, err
+	}
 	db, err = bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		return nil, err
