@@ -174,12 +174,18 @@ func validateSecretStrength(cfg *config) error {
 	return nil
 }
 
+func configFilePath() string {
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		return v
+	}
+	return "config.toml"
+}
+
 func buildConfig() *config {
 	cfg := &config{}
-	// Load config.toml if it exists
-	configFile, err := loadConfigFile("config.toml")
+	configFile, err := loadConfigFile(configFilePath())
 	if err != nil {
-		log.Printf("warning: failed to load config.toml: %v", err)
+		log.Fatalf("invalid config file %s: %v (refusing to start with defaults)", configFilePath(), err)
 	}
 	globalConfigFile = configFile
 
@@ -773,11 +779,7 @@ func main() {
 	}
 
 	// Start file watcher for hot-reload of pool directory and config.
-	configPath := "config.toml"
-	if v := os.Getenv("CONFIG_PATH"); v != "" {
-		configPath = v
-	}
-	if watcher, err := newPoolWatcher(cfg.poolDir, configPath, h); err != nil {
+	if watcher, err := newPoolWatcher(cfg.poolDir, configFilePath(), h); err != nil {
 		log.Printf("warning: failed to start file watcher: %v (hot-reload disabled)", err)
 	} else {
 		defer watcher.close()
