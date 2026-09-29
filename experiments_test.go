@@ -104,7 +104,7 @@ func TestRoutingShadowSendsNoUpstreamTraffic(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 	store := testUsageStore(t)
 	tracker, err := newExperimentTracker(store.db, ExperimentsConfig{Canary: map[string]CanaryConfig{
-		"gpt-5.6-sol": {Candidate: "claude-sonnet-5", Percent: 0, Shadow: true},
+		"gpt-5.6-sol": {Candidate: "gpt-5.5", Percent: 0, Shadow: true},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,6 @@ func TestRoutingShadowSendsNoUpstreamTraffic(t *testing.T) {
 	codexBase, _ := url.Parse("https://codex.mock")
 	pool := newPoolState([]*Account{
 		{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex-token", PlanType: "pro"},
-		{ID: "claude", Type: AccountTypeClaude, AccessToken: "claude-token", PlanType: "pro"},
 	}, false)
 	upstreamCalls := int32(0)
 	h := &proxyHandler{

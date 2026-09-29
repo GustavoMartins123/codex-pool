@@ -2,11 +2,10 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"hash/fnv"
 	"io"
 	"net"
@@ -326,65 +325,41 @@ func requestObjectUsesTools(object map[string]any) bool {
 	return true
 }
 
-// maybeStartShadow records a ROUTING shadow: it evaluates what the candidate
-// model of the canary rule would resolve to — provider metadata and whether
-// the pool currently has a usable account for it — without any upstream
-// call, quota consumption, or runtime mutation. Sending real traffic as an
-// experiment requires the separate traffic-shadow configuration.
+// maybeStartShadow records a routing-only shadow observation, or dispatches
+// a traffic-experiment leg when explicitly configured.
 func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
-		r.Header.Get("X-Pool-Shadow") != "" || !shadowSafeRequest(r, body) {
-		return
-	}
-	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
-	if shadowBody == nil {
+		r.Header.Get("X-Pool-Shadow") != "" {
 		return
 	}
 	if h.trafficShadow.enabledFor(assignment.Name, principal) {
+		if !shadowSafeRequest(r, body) {
+			return
+		}
 		h.startTrafficShadow(r, body, assignment, principal, reqID)
 		return
 	}
+	h.recordRoutingShadow(r, assignment)
+}
+
+// recordRoutingShadow runs the real routing decision for the candidate model
+// — same provider resolution, plan requirement, IP restrictions and scoring
+// as a live request — with an empty conversation id so no pin or conversation
+// state is written. Circuit-breaker probes are the one side effect, the same
+// allowance every selection already makes.
+func (h *proxyHandler) recordRoutingShadow(r *http.Request, assignment *experimentAssignment) {
+	provider, _, _ := h.modelRouteOverride(r.URL.Path, assignment.Rule.Candidate, nil)
 	status := http.StatusOK
-	if !h.poolHasAccountForModel(assignment.Rule.Candidate) {
+	var selected *Account
+	if provider != nil {
+		accountType := provider.Type()
+		requiredPlan := requiredPlanForRequest(accountType, r, assignment.Rule.Candidate)
+		selected, _, _, _, _, _ = h.pool.candidateWithRoutingTraceForUser("shadow-probe", "", nil, accountType, requiredPlan, getClientIP(r), assignment.Rule.Candidate, "")
+	}
+	if provider == nil || selected == nil {
 		status = http.StatusServiceUnavailable
 	}
-	h.experiments.Record(assignment.Name, "shadow", ExperimentObservation{
-			Status:      status,
-		ToolRequest: requestUsesTools(shadowBody),
-	})
-}
-
-func (h *proxyHandler) poolHasAccountForModel(model string) bool {
-	meta, ok := lookupModelMetadata(model, h.pool)
-	if !ok || meta.Provider == "" {
-		return false
-	}
-	h.pool.mu.RLock()
-	defer h.pool.mu.RUnlock()
-	now := time.Now()
-	for _, a := range h.pool.accounts {
-		if a.Type != meta.Provider || a.Dead || a.Disabled {
-			continue
-		}
-		a.mu.Lock()
-		usable := !a.RateLimitUntil.After(now) && accountPrimaryUsageLocked(a) < primaryHardExcludeThreshold && accountSecondaryUsageLocked(a) < secondaryHardExcludeThreshold
-		a.mu.Unlock()
-		if usable {
-			return true
-		}
-	}
-	return false
-}
-
-func ioNopCloserBytes(body []byte) io.ReadCloser {
-	return io.NopCloser(bytes.NewReader(body))
-}
-
-func (a *experimentAssignment) String() string {
-	if a == nil {
-		return ""
-	}
-	return fmt.Sprintf("%s:%s", a.Name, a.Variant)
+	h.experiments.Record(assignment.Name, "shadow", ExperimentObservation{Status: status})
 }
 
 type TrafficShadowConfig struct {
@@ -563,4 +538,8 @@ func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignme
 			ResponseBytes: writer.bytes, StreamError: status >= 500,
 		})
 	}()
+}
+
+func ioNopCloserBytes(body []byte) io.ReadCloser {
+	return io.NopCloser(bytes.NewReader(body))
 }
