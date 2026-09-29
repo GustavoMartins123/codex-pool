@@ -83,7 +83,7 @@ func TestAuditCredentialFilesAreNotObservablyTruncatedByWatcherReload(t *testing
 					return
 				default:
 				}
-				data, err := os.ReadFile(file)
+				data, err := readAccountFile(file)
 				if err != nil {
 					corrupt.Store(err.Error(), true)
 					return
@@ -100,13 +100,18 @@ func TestAuditCredentialFilesAreNotObservablyTruncatedByWatcherReload(t *testing
 			}
 		}()
 	}
+	var writeErr error
 	for i := 0; i < 150; i++ {
 		if err := writeAccountFile(file, payload); err != nil {
-			t.Fatalf("BUG-AUDIT-001: iteration %d: atomic write failed while reload readers held the file: %v", i, err)
+			writeErr = err
+			break
 		}
 	}
 	close(stop)
 	wg.Wait()
+	if writeErr != nil {
+		t.Fatalf("atomic write failed while credential readers held the file: %v", writeErr)
+	}
 	corrupt.Range(func(k, _ any) bool {
 		t.Errorf("reader observed %v", k)
 		return false

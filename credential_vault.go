@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/atomicfile"
 	"codex-pool-proxy/internal/credstore"
 )
 
@@ -86,7 +87,7 @@ var writeFileAtomicRetryHook func()
 func renameWithRetry(oldPath, newPath string) error {
 	var err error
 	for attempt := 0; ; attempt++ {
-		err = os.Rename(oldPath, newPath)
+		err = atomicfile.Replace(oldPath, newPath)
 		if err == nil || !isTransientRenameError(err) || attempt >= len(renameRetryDelays) {
 			return err
 		}

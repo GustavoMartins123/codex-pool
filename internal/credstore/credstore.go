@@ -13,7 +13,6 @@
 package credstore
 
 import (
-	"strings"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -24,7 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
+	"strings"
 )
 
 const aadPrefix = "codex-pool/credstore/v1"
@@ -94,7 +93,7 @@ type PlainStore struct{}
 
 func (PlainStore) Encode(data []byte) ([]byte, error) { return data, nil }
 func (PlainStore) Decode(data []byte) ([]byte, error) { return data, nil }
-func (PlainStore) Enabled() bool                       { return false }
+func (PlainStore) Enabled() bool                      { return false }
 
 // KeyedStore encrypts with the current key and decrypts envelopes made with
 // the current or the previous key (rotation window).
@@ -208,7 +207,12 @@ func (s *KeyedStore) keyFor(version int) *Key {
 
 // ReadFile reads a credential file and decodes it if encrypted.
 func ReadFile(store Store, path string) ([]byte, error) {
-	raw, err := os.ReadFile(path)
+	file, err := openCredentialFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
