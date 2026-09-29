@@ -167,7 +167,7 @@ Use `arm64` for a Linux ARM64 host. To build and install for the current Linux
 architecture, run `./scripts/install.sh` (default: `~/.local/bin`); pass a
 directory to change the install location.
 
-**Windows (PowerShell, Go 1.25+, Node.js 24+, and MSYS2 UCRT64 GCC):**
+**Windows 10+ (PowerShell, Go 1.26.8+, Node.js 24+, and MSYS2 UCRT64 GCC):**
 
 ```powershell
 .\scripts\windows\build.ps1
@@ -186,6 +186,9 @@ TLS and `std::call_once` linkage.
 Windows builds target `amd64`; DuckDB's pinned bindings do not
 include a Windows ARM64 target. Installation copies only the executable and
 does not change `PATH` or create a service.
+Atomic credential replacement requires Windows POSIX rename support and a
+filesystem that supports it. Unsupported platforms or filesystems return an
+explicit error; no alternative replacement mechanism is used.
 
 For development, use `scripts/dev_proxy.sh` on Linux or
 `scripts/windows/dev_proxy.ps1` on Windows after building the dashboard. For
@@ -366,8 +369,10 @@ start without it, and every upstream credential file in `pool/` is encrypted
 at rest with AES-256-GCM, using a fresh nonce per record and a versioned
 envelope (`{"cpvault":1,"kv":N,...}`).
 
-- Plaintext pools are migrated (encrypted in place) on the first start with a
-  key; after that no plaintext credential exists on disk.
+- Startup encrypts valid plaintext account JSON and authenticates every existing
+  envelope, including those with the current key version. Invalid envelopes or
+  wrong keys abort startup without rewriting the rejected file. Runtime reads
+  reject plaintext; importing plaintext requires the explicit startup migration.
 - **Verify** offline that every file decodes with the current key:
   `codex-pool -check-credentials`.
 - **Rotate** by moving the current key to `POOL_CREDENTIAL_KEY_PREVIOUS`
@@ -382,6 +387,9 @@ envelope (`{"cpvault":1,"kv":N,...}`).
   upstream tokens once a key is configured.
 - Not covered: `data/pool_users.json` (pool-user download tokens) is
   protected by Passport sealing and OS file permissions, not by this vault.
+
+See [verification instructions](docs/verification.md) for dependency gates,
+platform race tests, and a disposable Docker/vault acceptance run.
 
 ### Smart routing
 
