@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -367,6 +368,17 @@ func buildConfig() *config {
 	return cfg
 }
 
+// analyticsDBPathFor resolves the legacy SQLite analytics database location:
+// next to the usage store (so a custom PROXY_DB_PATH keeps all databases in
+// one place), unless ANALYTICS_DB_PATH overrides it. The previous hardcoded
+// "./data/analytics.db" scattered databases when operators moved proxy.db.
+func analyticsDBPathFor(storePath string) string {
+	if v := os.Getenv("ANALYTICS_DB_PATH"); v != "" {
+		return v
+	}
+	return filepath.Join(filepath.Dir(storePath), "analytics.db")
+}
+
 func main() {
 	// Before anything can log: the pool has hundreds of log call sites and the
 	// stdlib logger offers no per-call redaction hook, so the output stream
@@ -658,8 +670,7 @@ func main() {
 	}
 
 	// Initialize legacy analytics store (SQLite)
-	analyticsDBPath := "./data/analytics.db"
-	analyticsStore, err := newAnalyticsStore(analyticsDBPath)
+	analyticsStore, err := newAnalyticsStore(analyticsDBPathFor(cfg.storePath))
 	if err != nil {
 		log.Printf("warning: failed to open analytics store: %v (cost tracking disabled)", err)
 	} else {
@@ -672,7 +683,7 @@ func main() {
 			}
 		}()
 		analyticsStore.startDailyRollup(shutdownCtx)
-		log.Printf("analytics store initialized at %s", analyticsDBPath)
+		log.Printf("analytics store initialized at %s", analyticsDBPathFor(cfg.storePath))
 	}
 
 	var aliasesCfg map[string]string

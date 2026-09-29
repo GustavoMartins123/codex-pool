@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -157,6 +159,13 @@ type CapacitySample struct {
 func newUsageStore(path string, retentionDays int) (store *usageStore, err error) {
 	if retentionDays <= 0 {
 		retentionDays = 30
+	}
+	// Bare-executable deployments (the documented Windows shape: "run the
+	// binary from a directory where you want pool/, data/ ... to live") start
+	// in a fresh working directory; the storage parent must be created, not
+	// assumed. Docker images mask this with a pre-created /app/data.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create usage store directory: %w", err)
 	}
 	// bbolt dereferences page pointers off the mmap without bounds checks; a
 	// truncated file faults the whole process with SIGBUS on the first

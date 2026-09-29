@@ -10,33 +10,56 @@ import (
 )
 
 // TestAuditFreshDirectoryStartupCreatesStorage
-// BUG-AUDIT-108: a bare codex-pool executable started in a fresh working
-// directory — the documented Windows deployment ("Run the binary from a
-// directory where you want pool/, data/ ... to live") — crashes because
-// newUsageStore opens ./data/proxy.db without creating the parent
-// directory. The Docker image masks this with `mkdir -p /app/data`, so the
-// bug only surfaces outside Docker, i.e. Windows.
-// Expected: opening the usage store in a fresh directory succeeds (or
-// creates the directory).
-// Actual: bbolt.Open fails with "The system cannot find the path
-// specified." and startup aborts.
+// BUG-AUDIT-108 regression (cross-platform): a bare codex-pool executable
+// started in a fresh working directory — the documented Windows deployment
+// ("Run the binary from a directory where you want pool/, data/ ... to
+// live") — must create the storage parent directories itself. The Docker
+// image masks this with `mkdir -p /app/data`, so the bug only surfaced
+// outside Docker.
 func TestAuditFreshDirectoryStartupCreatesStorage(t *testing.T) {
-	dir := t.TempDir()
-	working := filepath.Join(dir, "fresh-run")
-	if err := mkdirForAudit(working); err != nil {
-		t.Fatal(err)
+	base := t.TempDir()
+	absolute := filepath.Join(base, "abs", "deeper", "proxy.db")
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"default-data-subdir", filepath.Join(base, "fresh-run", "data", "proxy.db")},
+		{"nested-custom-parent", filepath.Join(base, "custom", "nested", "deeper", "proxy.db")},
+		{"spaces-in-path", filepath.Join(base, "codex pool data", "proxy.db")},
+		{"absolute-path", absolute},
 	}
-	storePath := filepath.Join(working, "data", "proxy.db")
-
-	store, err := newUsageStore(storePath, 30)
-	if err != nil {
-		t.Fatalf("BUG-AUDIT-108: fresh-directory startup cannot open usage store: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if filepath.IsAbs(tc.path) && !filepath.IsAbs(base) {
+				t.Skipf("cannot build an absolute-path case from base %q", base)
+			}
+			store, err := newUsageStore(tc.path, 30)
+			if err != nil {
+				t.Fatalf("BUG-AUDIT-108: fresh-directory startup cannot open usage store at %s: %v", tc.path, err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(tc.path); err != nil {
+				t.Fatalf("store file missing after open: %v", err)
+			}
+		})
 	}
-	defer store.Close()
 }
 
-// mkdirForAudit mirrors the operator's step of creating the working
-// directory only; data/ must not need to exist beforehand.
-func mkdirForAudit(path string) error {
-	return os.MkdirAll(path, 0o755)
+// TestAuditAnalyticsDBPathFollowsUsageStore verifies the analytics database
+// resolves next to the configured usage store (custom PROXY_DB_PATH keeps
+// all databases together) and honors ANALYTICS_DB_PATH as an override.
+func TestAuditAnalyticsDBPathFollowsUsageStore(t *testing.T) {
+	t.Setenv("ANALYTICS_DB_PATH", "")
+	if got := analyticsDBPathFor("./data/proxy.db"); got != filepath.Join("data", "analytics.db") {
+		t.Fatalf("default analytics path = %q, want data/analytics.db", got)
+	}
+	if got := analyticsDBPathFor("/srv/pool/proxy.db"); got != "/srv/pool/analytics.db" {
+		t.Fatalf("custom store analytics path = %q, want /srv/pool/analytics.db", got)
+	}
+	t.Setenv("ANALYTICS_DB_PATH", "/elsewhere/analytics.db")
+	if got := analyticsDBPathFor("./data/proxy.db"); got != "/elsewhere/analytics.db" {
+		t.Fatalf("override analytics path = %q", got)
+	}
 }
