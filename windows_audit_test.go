@@ -142,7 +142,10 @@ func TestAuditWatcherHotReloadsAtomicCredentialSave(t *testing.T) {
 	}
 	if !auditWaitFor(t, 5*time.Second, func() bool {
 		for _, a := range h.pool.allAccounts() {
-			if a.AccessToken == "new-token" {
+			a.mu.Lock()
+			token := a.AccessToken
+			a.mu.Unlock()
+			if token == "new-token" {
 				return true
 			}
 		}
