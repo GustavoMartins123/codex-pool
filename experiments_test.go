@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"go.etcd.io/bbolt"
 	"time"
 )
 
@@ -495,5 +497,85 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	shadowState, ok := h.getContextHandoff().State(shadowKey)
 	if !ok || len(shadowState.Messages) == 0 {
 		t.Fatal("shadow leg state missing from its own namespace")
+	}
+}
+
+func TestTrafficShadowDoesNotConsumeClientPolicyBudget(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+	store := testUsageStore(t)
+	tracker, err := newExperimentTracker(store.db, ExperimentsConfig{
+		Canary: map[string]CanaryConfig{"gpt-5.6-sol": {Candidate: "gpt-5.5", Percent: 0, Shadow: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexBase, _ := url.Parse("https://codex.mock")
+	pool := newPoolState([]*Account{
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
+	}, false)
+	calls := int32(0)
+	h := &proxyHandler{
+		cfg:         &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
+		pool:        pool,
+		registry:    NewProviderRegistry(NewCodexProvider(codexBase, codexBase, nil), nil, nil),
+		metrics:     newMetrics(),
+		recent:      newRecentErrors(5),
+		experiments: tracker,
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&calls, 1)
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"resp_1","output":[]}`)), Request: req}, nil
+		}),
+	}
+	owner := testPoolIdentity(t, h, "user")
+	h.trafficShadow = newTrafficShadowRuntime(TrafficShadowConfig{
+		Enabled: true, Experiments: []string{"gpt-5.6-sol->gpt-5.5"},
+		Accounts: []string{"codex-a"}, Principals: []string{owner},
+		MaxInflight: 4, DailyBudget: 10, TimeoutSeconds: 5,
+	})
+	principal, clientID := splitClientIdentity(owner)
+	principalRef := h.passport.principal(principal)
+	if principalRef == nil || clientID == "" {
+		t.Fatal("fixture identity missing")
+	}
+	h.passport.mu.Lock()
+	client := h.passport.clients[clientID]
+	cp := *client
+	cp.Policy = ClientPolicy{Limits: PolicyLimits{ConcurrentRequests: 1, DailyRequests: 100}}
+	h.passport.clients[clientID] = &cp
+	h.passport.mu.Unlock()
+
+	body := `{"model":"gpt-5.6-sol","conversation_id":"policy-budget","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user"))
+	w := httptest.NewRecorder()
+	testPoolServeHTTP(t, h, w, r)
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(&calls) < 2 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("shadow leg blocked by the client's own concurrency budget: calls=%d", got)
+	}
+	h.passport.policyMu.Lock()
+	inflight := h.passport.policyInflight[clientID]
+	h.passport.policyMu.Unlock()
+	if inflight != 0 {
+		t.Fatalf("shadow leg left inflight residue: %d", inflight)
+	}
+	_, dayKey, _ := policyUsageKeys(clientID, time.Now())
+	var dayRequests int64
+	if err := h.passport.db.View(func(tx *bbolt.Tx) error {
+		counter, err := readPolicyCounter(tx.Bucket([]byte(bucketPassportPolicyUsage)), dayKey)
+		dayRequests = counter.Requests
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if dayRequests != 1 {
+		t.Fatalf("policy must count the real request exactly once, got %d", dayRequests)
 	}
 }

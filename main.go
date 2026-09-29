@@ -2274,7 +2274,13 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	{
-		candidateAdmission, policyErr := h.passport.beginPolicyRequest(principalID, clientID, h.cfg.hotClientPolicies(), time.Now())
+		var candidateAdmission *policyAdmission
+		var policyErr error
+		if r.Header.Get("X-Pool-Shadow") != "" {
+			candidateAdmission, policyErr = h.passport.beginPolicyRequestReadOnly(principalID, clientID, h.cfg.hotClientPolicies())
+		} else {
+			candidateAdmission, policyErr = h.passport.beginPolicyRequest(principalID, clientID, h.cfg.hotClientPolicies(), time.Now())
+		}
 		if policyErr != nil {
 			h.auditPolicyDecision(&policyAdmission{principalID: principalID, clientID: clientID}, "policy.request_blocked", policyErr)
 			respondPolicyError(w, policyErr)

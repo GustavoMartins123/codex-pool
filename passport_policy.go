@@ -71,6 +71,7 @@ func (e *policyError) Error() string { return e.Message }
 
 type policyAdmission struct {
 	store       *PassportStore
+	readOnly    bool
 	principalID string
 	clientID    string
 	policy      ClientPolicy
@@ -94,7 +95,7 @@ func policyAdmissionFromRequest(r *http.Request) *policyAdmission {
 }
 
 func (a *policyAdmission) Release() {
-	if a == nil || a.store == nil {
+	if a == nil || a.store == nil || a.readOnly {
 		return
 	}
 	a.releaseOnce.Do(func() {
@@ -186,13 +187,13 @@ func policyUsageKeys(clientID string, now time.Time) (minute, day, month string)
 		"month|" + clientID + "|" + now.Format("200601")
 }
 
-func (p *PassportStore) beginPolicyRequest(principalID, clientID string, configured map[string]ClientPolicy, now time.Time) (*policyAdmission, error) {
+func (p *PassportStore) resolveClientPolicy(principalID, clientID string, configured map[string]ClientPolicy) (*Principal, ClientPolicy, bool, bool) {
 	if p == nil || clientID == "" {
-		return nil, nil
+		return nil, ClientPolicy{}, false, false
 	}
 	principal := p.principal(principalID)
 	if principal == nil {
-		return nil, &policyError{Status: http.StatusForbidden, Code: "policy_identity_missing", Message: "client policy identity is unavailable"}
+		return nil, ClientPolicy{}, false, false
 	}
 	p.mu.RLock()
 	client := p.clients[clientID]
@@ -216,6 +217,37 @@ func (p *PassportStore) beginPolicyRequest(principalID, clientID string, configu
 		if !policy.configured() {
 			policy = configured["*"]
 		}
+	}
+	return principal, policy, client != nil, true
+}
+
+// beginPolicyRequestReadOnly admits a request for authorization checks
+// (CheckModel/CheckProvider) without consuming any client budget: no
+// request counters, no concurrency slot, no token reservation. Used by
+// traffic-experiment legs whose consumption is accounted to the experiment.
+func (p *PassportStore) beginPolicyRequestReadOnly(principalID, clientID string, configured map[string]ClientPolicy) (*policyAdmission, error) {
+	principal, policy, _, ok := p.resolveClientPolicy(principalID, clientID, configured)
+	if !ok {
+		return nil, nil
+	}
+	if principal == nil {
+		return nil, &policyError{Status: http.StatusForbidden, Code: "policy_identity_missing", Message: "client policy identity is unavailable"}
+	}
+	priority := policy.Priority
+	explicitPolicy := policy.configured()
+	if priority == 0 {
+		priority = defaultPolicyPriority(principal.Kind)
+	}
+	return &policyAdmission{store: nil, principalID: principalID, clientID: clientID, policy: policy, priority: priority, configured: explicitPolicy, readOnly: true}, nil
+}
+
+func (p *PassportStore) beginPolicyRequest(principalID, clientID string, configured map[string]ClientPolicy, now time.Time) (*policyAdmission, error) {
+	principal, policy, _, ok := p.resolveClientPolicy(principalID, clientID, configured)
+	if !ok {
+		return nil, nil
+	}
+	if principal == nil {
+		return nil, &policyError{Status: http.StatusForbidden, Code: "policy_identity_missing", Message: "client policy identity is unavailable"}
 	}
 	priority := policy.Priority
 	explicitPolicy := policy.configured()
