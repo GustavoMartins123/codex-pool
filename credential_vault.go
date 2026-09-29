@@ -224,28 +224,61 @@ func decryptCredentialFiles(poolDir string) (int, error) {
 	return count, err
 }
 
+type credentialCheckStats struct {
+	Checked   int
+	Current   int
+	Previous  int
+	Plaintext int
+	Failures  []string
+}
+
+type credentialEnvelopeProbe struct {
+	KeyVer int `json:"kv"`
+}
+
 // verifyCredentialFiles decodes every credential file with the configured
-// vault and reports per-file failures. Offline integrity check used by the
-// -check-credentials flag.
-func verifyCredentialFiles(poolDir string) (checked int, failures []string) {
-	_ = filepath.Walk(poolDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() || !strings.HasSuffix(info.Name(), ".json") {
+// vault. Traversal errors fail the check; files are classified as current,
+// previous-key (rotation window, not yet re-encrypted), plaintext, or
+// failures. Used by the -check-credentials flag.
+func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
+	var stats credentialCheckStats
+	keyed, _ := accountCredentialStore.(*credstore.KeyedStore)
+	err := filepath.Walk(poolDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".json") {
 			return nil
 		}
-		checked++
+		stats.Checked++
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			failures = append(failures, path+": "+err.Error())
+			stats.Failures = append(stats.Failures, path+": "+err.Error())
+			return nil
+		}
+		if !credstore.IsEncrypted(raw) {
+			stats.Plaintext++
+			stats.Failures = append(stats.Failures, path+": file is not encrypted; start the server once with POOL_CREDENTIAL_KEY to migrate it")
 			return nil
 		}
 		if _, err := accountCredentialStore.Decode(raw); err != nil {
-			failures = append(failures, path+": "+err.Error())
-		} else if !credstore.IsEncrypted(raw) {
-			failures = append(failures, path+": file is not encrypted; start the server once with POOL_CREDENTIAL_KEY to migrate it")
+			stats.Failures = append(stats.Failures, path+": "+err.Error())
+			return nil
 		}
+		if keyed != nil {
+			var probe credentialEnvelopeProbe
+			if json.Unmarshal(raw, &probe) == nil && probe.KeyVer != keyed.CurrentVersion() {
+				stats.Previous++
+				return nil
+			}
+		}
+		stats.Current++
 		return nil
 	})
-	return checked, failures
+	if err != nil {
+		return stats, fmt.Errorf("walk %s: %w", poolDir, err)
+	}
+	return stats, nil
 }
 
 // initCredentialVault wires the global store, migrates the pool directory,

@@ -455,14 +455,20 @@ func main() {
 			log.Fatal("credential vault: POOL_CREDENTIAL_KEY is required to verify credential files")
 		}
 		accountCredentialStore = store
-		checked, failures := verifyCredentialFiles(cfg.poolDir)
-		for _, failure := range failures {
+		stats, err := verifyCredentialFiles(cfg.poolDir)
+		if err != nil {
+			log.Fatalf("credential check: %v", err)
+		}
+		for _, failure := range stats.Failures {
 			log.Printf("credential check failed: %s", failure)
 		}
-		if len(failures) > 0 {
-			log.Fatalf("credential check: %d/%d file(s) failed to decode (wrong key or corrupted; rotate with POOL_CREDENTIAL_KEY_PREVIOUS or restore from backup)", len(failures), checked)
+		if len(stats.Failures) > 0 {
+			log.Fatalf("credential check: %d/%d file(s) failed (wrong key, corrupted, or plaintext; rotate with POOL_CREDENTIAL_KEY_PREVIOUS, migrate by starting the server once, or restore from backup)", len(stats.Failures), stats.Checked)
 		}
-		log.Printf("credential check: %d file(s) decode with the current key", checked)
+		if stats.Previous > 0 {
+			log.Fatalf("credential check: %d/%d file(s) still decode only via the previous key version; restart the server once to finish rotation", stats.Previous, stats.Checked)
+		}
+		log.Printf("credential check: %d file(s) decode with the current key", stats.Checked)
 		return
 	}
 	if err := initCredentialVault(cfg.poolDir); err != nil {

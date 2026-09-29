@@ -1,6 +1,8 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+
 if (-not $env:PROXY_DEBUG) { $env:PROXY_DEBUG = '1' }
 if (-not $env:POOL_DIR) { $env:POOL_DIR = '.\pool' }
 if (-not $env:PROXY_LISTEN_ADDR) { $env:PROXY_LISTEN_ADDR = '127.0.0.1:8989' }
@@ -19,7 +21,6 @@ if (-not $env:POOL_CREDENTIAL_KEY) {
     $env:POOL_CREDENTIAL_KEY = (Get-Content -Raw $keyFile).Trim()
 }
 
-$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Push-Location $root
 try {
     & go run .

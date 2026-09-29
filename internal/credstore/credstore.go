@@ -13,6 +13,7 @@
 package credstore
 
 import (
+	"strings"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -44,9 +45,26 @@ type Key struct {
 // ParseKey materializes a Key. Accepted forms:
 //   - 64 hex chars: used verbatim as the AES-256 key.
 //   - any string with at least 32 chars: stretched with SHA-256.
+var placeholderKeys = map[string]bool{
+	"changeme": true, "change-me": true, "change_me": true,
+	"example": true, "placeholder": true, "replace-me": true,
+	"your-secret-here": true, "your-key-here": true,
+}
+
+func isPlaceholderKey(raw string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if strings.ContainsAny(trimmed, "<>") {
+		return true
+	}
+	return placeholderKeys[trimmed]
+}
+
 func ParseKey(version int, raw string) (Key, error) {
 	if version <= 0 {
 		return Key{}, fmt.Errorf("credstore: key version must be >= 1, got %d", version)
+	}
+	if isPlaceholderKey(raw) {
+		return Key{}, fmt.Errorf("credstore: key looks like a template placeholder, not a real secret; generate one with: openssl rand -hex 32")
 	}
 	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
 		return Key{Version: version, aesKey: decoded}, nil

@@ -64,9 +64,30 @@ func TestInitCredentialVaultMigratesPlaintextPool(t *testing.T) {
 		t.Fatalf("migrated file does not decode to the original payload: %v", err)
 	}
 
-	checked, failures := verifyCredentialFiles(poolDir)
-	if checked != 1 || len(failures) != 0 {
-		t.Fatalf("verify after migration: checked=%d failures=%v", checked, failures)
+	stats, err := verifyCredentialFiles(poolDir)
+	if err != nil || stats.Checked != 1 || stats.Current != 1 || len(stats.Failures) != 0 {
+		t.Fatalf("verify after migration: %+v err=%v", stats, err)
+	}
+}
+
+func TestCredentialVaultRejectsExamplePlaceholder(t *testing.T) {
+	placeholders := []string{
+		"<64-hex-chars-or-long-passphrase>",
+		"changeme",
+		"change-me",
+		"example",
+		"your-secret-here",
+		"  <generate-with-openssl-rand-hex-32>  ",
+	}
+	for _, raw := range placeholders {
+		t.Setenv("POOL_CREDENTIAL_KEY", raw)
+		t.Setenv("POOL_CREDENTIAL_KEY_VERSION", "")
+		os.Unsetenv("POOL_CREDENTIAL_KEY_VERSION")
+		previous := accountCredentialStore
+		t.Cleanup(func() { accountCredentialStore = previous })
+		if err := initCredentialVault(t.TempDir()); err == nil {
+			t.Fatalf("placeholder %q must be rejected", raw)
+		}
 	}
 }
 
@@ -88,8 +109,19 @@ func TestVerifyCredentialFilesFlagsUndecodable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	checked, failures := verifyCredentialFiles(poolDir)
-	if checked != 2 || len(failures) != 1 || !strings.Contains(failures[0], "bad.json") {
-		t.Fatalf("checked=%d failures=%v", checked, failures)
+	stats, err := verifyCredentialFiles(poolDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Checked != 2 || stats.Current != 1 || stats.Plaintext != 1 || len(stats.Failures) != 1 || !strings.Contains(stats.Failures[0], "bad.json") {
+		t.Fatalf("stats=%+v failures=%v", stats, stats.Failures)
+	}
+}
+
+func TestVerifyCredentialFilesFailsOnMissingPoolDir(t *testing.T) {
+	useKeyedVault(t, hexKey(t, 1, 'c'), nil)
+	_, err := verifyCredentialFiles(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err == nil {
+		t.Fatal("walk errors must fail the check instead of returning a clean pass")
 	}
 }
