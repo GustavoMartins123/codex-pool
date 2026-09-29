@@ -141,6 +141,10 @@ func verifyBackupFile(path string, expected backupFileManifest) error {
 	return nil
 }
 
+// restoreRename is indirected so tests can deterministically fail the
+// first or second swap and prove the rollback restores both stores.
+var restoreRename = os.Rename
+
 func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 	encoded, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -175,11 +179,57 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 		_ = os.Remove(boltTemp)
 		return err
 	}
-	if err := os.Rename(boltTemp, boltPath); err != nil {
-		return err
+
+	// The paired invariant: both stores move to the backup snapshot, or
+	// neither does. Before the first swap, keep aside COPIES of the current
+	// stores (copies, not renames: the originals must stay live until each
+	// swap succeeds so a mid-restore crash never leaves both stores
+	// missing). If the DuckDB swap fails after the Bolt swap succeeded, the
+	// aside copy rolls Bolt back to its pre-restore state.
+	boltAside, duckAside := boltPath+".prerestore", duckPath+".prerestore"
+	_ = os.Remove(boltAside)
+	_ = os.Remove(duckAside)
+	boltHadStore := true
+	if err := copyFile(boltPath, boltAside, 0o600); err != nil {
+		if !os.IsNotExist(err) {
+			_ = os.Remove(boltTemp)
+			_ = os.Remove(duckTemp)
+			return fmt.Errorf("snapshot current Bolt store before restore: %w", err)
+		}
+		boltHadStore = false
 	}
-	if err := os.Rename(duckTemp, duckPath); err != nil {
-		return err
+	if err := copyFile(duckPath, duckAside, 0o600); err != nil {
+		if !os.IsNotExist(err) {
+			_ = os.Remove(boltTemp)
+			_ = os.Remove(duckTemp)
+			_ = os.Remove(boltAside)
+			return fmt.Errorf("snapshot current DuckDB store before restore: %w", err)
+		}
 	}
+	cleanupStaging := func() {
+		_ = os.Remove(boltTemp)
+		_ = os.Remove(duckTemp)
+		_ = os.Remove(boltAside)
+		_ = os.Remove(duckAside)
+	}
+
+	if err := restoreRename(boltTemp, boltPath); err != nil {
+		cleanupStaging()
+		return fmt.Errorf("restore Bolt store: %w", err)
+	}
+	if err := restoreRename(duckTemp, duckPath); err != nil {
+		// Roll the Bolt swap back so the stores stay a matched pair.
+		if boltHadStore {
+			if rollbackErr := restoreRename(boltAside, boltPath); rollbackErr != nil {
+				return fmt.Errorf("restore DuckDB store failed (%v) AND rolling back the Bolt swap failed (%v); "+
+					"the previous Bolt store is preserved at %s — restore it manually before restarting", err, rollbackErr, boltAside)
+			}
+		} else {
+			_ = os.Remove(boltPath)
+		}
+		cleanupStaging()
+		return fmt.Errorf("restore DuckDB store: %w (Bolt rolled back to its pre-restore state)", err)
+	}
+	cleanupStaging()
 	return nil
 }

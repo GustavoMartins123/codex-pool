@@ -7,8 +7,10 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,20 +102,15 @@ func TestAuditWatcherReloadsCRLFConfigFile(t *testing.T) {
 	}
 }
 
-// TestAuditRestorePairedBackupRollsBackWhenSecondRenameFails
-// BUG-AUDIT-105 (cross-platform, Windows-amplified): restorePairedBackup
-// renames bolt first and duck second with no rollback. When the duck rename
-// fails — on Windows any open handle without FILE_SHARE_DELETE (indexer,
-// antivirus, a stray duckdb client) blocks it, while POSIX only fails on
-// exotic conditions — the paired backup invariant is torn: Bolt holds the
-// restored snapshot while DuckDB keeps current data, and the operator is
-// left in a state neither backup nor current.
-// Expected: a failed restore leaves both stores untouched.
-// Actual: Bolt is already replaced when the DuckDB rename fails.
-func TestAuditRestorePairedBackupRollsBackWhenSecondRenameFails(t *testing.T) {
+// buildPairedRestoreFixture creates a matched Bolt+DuckDB pair ("before"),
+// a paired backup, then advances both stores to "after". Restores from the
+// manifest should bring both back to "before"; failed restores must leave
+// both at "after".
+func buildPairedRestoreFixture(t *testing.T) (manifest, boltPath, duckPath string) {
+	t.Helper()
 	directory := t.TempDir()
-	boltPath := filepath.Join(directory, "proxy.db")
-	duckPath := filepath.Join(directory, "usage.duckdb")
+	boltPath = filepath.Join(directory, "proxy.db")
+	duckPath = filepath.Join(directory, "usage.duckdb")
 	backupDir := filepath.Join(directory, "backups")
 
 	bolt, err := bbolt.Open(boltPath, 0o600, nil)
@@ -143,12 +140,11 @@ func TestAuditRestorePairedBackupRollsBackWhenSecondRenameFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manifest, err := createPairedBackup(boltPath, duckPath, backupDir)
+	manifest, err = createPairedBackup(boltPath, duckPath, backupDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Advance both stores past the backup.
 	bolt, err = bbolt.Open(boltPath, 0o600, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -169,10 +165,123 @@ func TestAuditRestorePairedBackupRollsBackWhenSecondRenameFails(t *testing.T) {
 	if err := duck.Close(); err != nil {
 		t.Fatal(err)
 	}
+	return manifest, boltPath, duckPath
+}
 
-	// Force only the DuckDB rename to fail: a directory at the target path
-	// cannot be replaced by a file rename on any platform.
-	blocker := filepath.Join(directory, "usage-blocked")
+func readBoltProof(t *testing.T, path string) string {
+	t.Helper()
+	bolt, err := bbolt.Open(path, 0o600, &bbolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bolt.Close()
+	value := ""
+	if err := bolt.View(func(tx *bbolt.Tx) error {
+		value = string(tx.Bucket([]byte("proof")).Get([]byte("value")))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func readDuckProof(t *testing.T, path string) string {
+	t.Helper()
+	duck, err := sql.Open("duckdb", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer duck.Close()
+	var value string
+	if err := duck.QueryRow("SELECT value FROM proof").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+// assertNoRestoreLeftovers fails when .restore/.prerestore staging files
+// survive a restore attempt.
+func assertNoRestoreLeftovers(t *testing.T, boltPath, duckPath string) {
+	t.Helper()
+	for _, leftover := range []string{boltPath + ".restore", duckPath + ".restore", boltPath + ".prerestore", duckPath + ".prerestore"} {
+		if _, err := os.Stat(leftover); !os.IsNotExist(err) {
+			t.Fatalf("staging file %s survived the restore attempt", leftover)
+		}
+	}
+}
+
+// failRenameTo wraps os.Rename and fails every call whose destination
+// matches target — used to inject a failure at an exact swap point.
+func failRenameTo(target string) func(string, string) error {
+	return func(oldPath, newPath string) error {
+		if newPath == target {
+			return fmt.Errorf("injected rename failure for %s", newPath)
+		}
+		return os.Rename(oldPath, newPath)
+	}
+}
+
+// TestAuditRestorePairedBackupRollsBackWhenSecondSwapFails
+// BUG-AUDIT-105 regression (cross-platform, Windows-amplified): when the
+// DuckDB swap fails after the Bolt swap succeeded — on Windows any open
+// handle without FILE_SHARE_DELETE (indexer, antivirus, a stray duckdb
+// client) blocks the rename — the restore must roll Bolt back so the stores
+// stay a matched pair, instead of leaving Bolt on the backup snapshot while
+// DuckDB keeps current data. The failure is injected at the rename step
+// because no cross-platform filesystem state fails exactly the second swap
+// after the first one succeeded; the Windows-realistic variant runs in
+// windows_restore_audit_test.go.
+func TestAuditRestorePairedBackupRollsBackWhenSecondSwapFails(t *testing.T) {
+	manifest, boltPath, duckPath := buildPairedRestoreFixture(t)
+	previous := restoreRename
+	restoreRename = failRenameTo(duckPath)
+	t.Cleanup(func() { restoreRename = previous })
+
+	err := restorePairedBackup(manifest, boltPath, duckPath)
+	if err == nil {
+		t.Fatal("restore unexpectedly succeeded with an injected DuckDB swap failure")
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("restore error does not report rollback: %v", err)
+	}
+	if value := readBoltProof(t, boltPath); value != "after" {
+		t.Fatalf("BUG-AUDIT-105: torn restore — Bolt left at %q although the DuckDB swap failed", value)
+	}
+	if value := readDuckProof(t, duckPath); value != "after" {
+		t.Fatalf("BUG-AUDIT-105: DuckDB left at %q after a failed restore", value)
+	}
+	assertNoRestoreLeftovers(t, boltPath, duckPath)
+}
+
+// TestAuditRestorePairedBackupLeavesStoresUntouchedWhenFirstSwapFails covers
+// the first-swap failure: nothing has been replaced yet, so both stores must
+// remain exactly as they were.
+func TestAuditRestorePairedBackupLeavesStoresUntouchedWhenFirstSwapFails(t *testing.T) {
+	manifest, boltPath, duckPath := buildPairedRestoreFixture(t)
+	previous := restoreRename
+	restoreRename = failRenameTo(boltPath)
+	t.Cleanup(func() { restoreRename = previous })
+
+	if err := restorePairedBackup(manifest, boltPath, duckPath); err == nil {
+		t.Fatal("restore unexpectedly succeeded with an injected Bolt swap failure")
+	}
+	if value := readBoltProof(t, boltPath); value != "after" {
+		t.Fatalf("BUG-AUDIT-105: Bolt replaced (%q) although its swap failed", value)
+	}
+	if value := readDuckProof(t, duckPath); value != "after" {
+		t.Fatalf("BUG-AUDIT-105: DuckDB replaced (%q) although the Bolt swap failed", value)
+	}
+	assertNoRestoreLeftovers(t, boltPath, duckPath)
+}
+
+// TestAuditRestorePairedBackupFailsCleanlyWhenDuckPathBlocked exercises a
+// real filesystem obstacle: a directory sitting at the DuckDB path cannot
+// be snapshotted or replaced by a file on any platform. The restore must
+// fail cleanly BEFORE touching Bolt, with no staging files left behind.
+func TestAuditRestorePairedBackupFailsCleanlyWhenDuckPathBlocked(t *testing.T) {
+	manifest, boltPath, duckPath := buildPairedRestoreFixture(t)
+
+	blocker := filepath.Join(filepath.Dir(duckPath), "usage-blocked")
 	if err := os.Mkdir(blocker, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -186,21 +295,11 @@ func TestAuditRestorePairedBackupRollsBackWhenSecondRenameFails(t *testing.T) {
 	if err := restorePairedBackup(manifest, boltPath, duckPath); err == nil {
 		t.Fatal("restore unexpectedly succeeded with a directory at the DuckDB path")
 	}
-
-	// The paired invariant: a failed restore must leave Bolt untouched.
-	bolt, err = bbolt.Open(boltPath, 0o600, nil)
-	if err != nil {
-		t.Fatal(err)
+	if value := readBoltProof(t, boltPath); value != "after" {
+		t.Fatalf("BUG-AUDIT-105: torn restore — Bolt was replaced (%q) although the DuckDB path was blocked", value)
 	}
-	value := ""
-	if err := bolt.View(func(tx *bbolt.Tx) error {
-		value = string(tx.Bucket([]byte("proof")).Get([]byte("value")))
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	if value := readDuckProof(t, filepath.Join(blocker, "usage.duckdb")); value != "after" {
+		t.Fatalf("original DuckDB data damaged by the failed restore: %q", value)
 	}
-	_ = bolt.Close()
-	if value != "after" {
-		t.Fatalf("BUG-AUDIT-105: torn restore — Bolt was replaced (%q) although the DuckDB rename failed", value)
-	}
+	assertNoRestoreLeftovers(t, boltPath, duckPath)
 }
