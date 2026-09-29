@@ -42,13 +42,13 @@ storage_path = "./data/pool_users.json"
 # --- Security (CP-01) -------------------------------------------------------
 # Forwarded client-IP headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP)
 # are only honored when the peer address matches this list. An entry may be a
-# single address or a CIDR; "*"/"all" trusts every peer. When unset, only
+# single address or a CIDR; "*" trusts every peer. When unset, only
 # loopback peers are trusted, so a direct client cannot spoof its origin.
-# Env: PROXY_TRUSTED_PROXIES (or TRUSTED_PROXIES).
+# Env: PROXY_TRUSTED_PROXIES.
 # trusted_proxies = ["10.0.0.0/8", "192.168.1.5"]
 
-# Per-client access policy. Deny always wins over allow, and loopback is always
-# permitted so container health checks and local admin tooling keep working.
+# Per-client access policy. Deny always wins over allow. Only GET/HEAD probes
+# to /healthz, /livez and /readyz from loopback bypass the policy.
 # An empty allow list leaves the pool unrestricted. Env: PROXY_IP_ALLOW,
 # PROXY_IP_DENY (comma-separated).
 # ip_access_allow = ["10.0.0.0/8"]

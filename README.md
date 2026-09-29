@@ -295,7 +295,13 @@ detach_from_client = false                  # true keeps the leg after the clien
 ```
 
 Traffic legs carry a `-traffic-shadow` request id and are recorded under the
-`traffic-shadow` variant; missing allowlists or budget disable the feature.
+`traffic-shadow` variant; missing allowlists, budget, concurrency or deadline reject the configuration.
+The budget reservation must persist successfully before any traffic is sent.
+
+Configuration uses the same resolved path at startup and during reload. An
+explicit missing `CONFIG_PATH`, unknown TOML keys and malformed settings are
+errors. Only an absent implicit `config.toml` selects env-only configuration.
+A rejected reload retains the previous settings.
 
 ### Security hardening
 
@@ -305,11 +311,14 @@ Everything below is documented in `config.toml.example` and `.env.example`.
 **Client IP attribution.** `CF-Connecting-IP`, `X-Forwarded-For` and
 `X-Real-IP` are only honored when the peer address matches `trusted_proxies`
 (env `PROXY_TRUSTED_PROXIES`, accepts CIDR). When unset, only loopback peers
-are trusted, so a direct client cannot spoof its origin.
+are trusted, so a direct client cannot spoof its origin. Forwarding chains are
+read from right to left through trusted hops; malformed forwarding headers
+from a trusted peer reject the request.
 
 **Access policy.** `ip_access_allow` / `ip_access_deny` (env `PROXY_IP_ALLOW` /
 `PROXY_IP_DENY`) gate requests by IP or CIDR. Deny always wins over allow, and
-loopback is always permitted so container health checks keep working. An empty
+only local GET/HEAD probes to `/healthz`, `/livez` and `/readyz` bypass
+the policy so container health checks keep working. An empty
 allow list leaves the pool unrestricted.
 
 **IP privacy.** Enabled by default. Raw client IPs are not persisted (values
