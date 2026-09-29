@@ -174,6 +174,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 	defer relayCancel()
 
 	state := &codexRelayState{
+		credentialRequest:    clientReq,
 		h:                    h,
 		opts:                 opts,
 		owner:                opts.UserID,
@@ -209,7 +210,8 @@ type codexRelayTurn struct {
 }
 
 type codexRelayState struct {
-	owner string
+	credentialRequest *http.Request
+	owner             string
 	// Both pumps transition turns under this lock; response IDs bind to the
 	// request snapshot, never to the most recently received client frame.
 	turnMu sync.Mutex
@@ -307,7 +309,12 @@ func (s *codexRelayState) relayOnce() error {
 		upstreamErrCh <- pumpFrames(roundCtx, s.upstreamCh, s.clientWriter, s.opts.LogLabel, "upstream->client", debug, s.inspectUpstream, s.markUpstreamForwarded, activityCh)
 	}()
 	go func() {
-		clientErrCh <- pumpFrames(roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, s.inspectClient, s.markClientForwarded, activityCh)
+		clientErrCh <- pumpFrames(roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
+			if err := s.h.revalidatePoolCredential(s.credentialRequest, s.opts.UserID); err != nil {
+				return nil, err
+			}
+			return s.inspectClient(data)
+		}, s.markClientForwarded, activityCh)
 	}()
 
 	var idleTimer *time.Timer

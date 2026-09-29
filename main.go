@@ -4267,6 +4267,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	}
 
 	relay := relayWebSocket(w, r, outURL, upstreamHeaders, webSocketRelayOptions{
+		OnClientMessage:             func([]byte) error { return h.revalidatePoolCredential(r, userID) },
 		IdleTimeout:                 h.cfg.websocketIdleTimeout,
 		DownstreamHeartbeatInterval: downstreamHeartbeatInterval,
 		ReadLimit:                   readLimit,

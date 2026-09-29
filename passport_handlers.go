@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"go.etcd.io/bbolt"
 )
 
@@ -93,6 +94,22 @@ func (h *proxyHandler) requirePoolCredential(w http.ResponseWriter, r *http.Requ
 	}
 	http.Error(w, "unauthorized: valid pool credential required", http.StatusUnauthorized)
 	return false
+}
+
+// Revalidate long-lived transports without refreshing last-seen on every
+// frame. The connection remains bound to the identity from its handshake.
+func (h *proxyHandler) revalidatePoolCredential(r *http.Request, expectedIdentity string) error {
+	if r == nil || h.passport == nil {
+		return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "pool credential is no longer authorized"}
+	}
+	identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, getPoolJWTSecret())
+	if !parsed || identity != expectedIdentity {
+		return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "pool credential is no longer authorized"}
+	}
+	if _, _, allowed := h.passport.authorizeIssuedCredential(identity, issuedAt); !allowed {
+		return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "pool credential is no longer authorized"}
+	}
+	return nil
 }
 
 func (h *proxyHandler) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
