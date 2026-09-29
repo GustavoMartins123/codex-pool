@@ -295,10 +295,84 @@ func TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts(t *testing.T) {
 	}
 }
 
+// TestAuditAnalyticsGapOpenDuringCloseIsNotLost pins the serialization
+// invariant deterministically: a durable-write failure that arrives WHILE a
+// close is mid-flight must still end up with an active gap. Before the close
+// held analyticsReliabilityMu across its whole body, the failure could see
+// the still-uncleared old gap, skip opening its own, and have its sidecar
+// removed by the finishing close — losing the gap for the period after the
+// recovery.
+func TestAuditAnalyticsGapOpenDuringCloseIsNotLost(t *testing.T) {
+	s := testUsageStore(t)
+	gapA := time.Now().UTC().Add(-time.Minute)
+	s.openAccountingGap(gapA, errors.New("first failure"))
+
+	closeEntered := make(chan struct{})
+	closeProceed := make(chan struct{})
+	previous := accountingGapCloseHook
+	accountingGapCloseHook = func() {
+		select {
+		case closeEntered <- struct{}{}:
+		default:
+		}
+		<-closeProceed
+	}
+	t.Cleanup(func() { accountingGapCloseHook = previous })
+
+	// Freeze the close after persisting gap A, before clearing it.
+	closeDone := make(chan struct{})
+	go func() { defer close(closeDone); s.closeAccountingGap(time.Now().UTC()) }()
+	<-closeEntered
+
+	// A new failure arrives mid-close. Under the fixed serialization it
+	// blocks on the reliability lock; under the old interleaving it slipped
+	// through the window and vanished.
+	openStarted := make(chan struct{})
+	openDone := make(chan struct{})
+	go func() {
+		defer close(openDone)
+		close(openStarted)
+		s.openAccountingGap(time.Now().UTC(), errors.New("second failure"))
+	}()
+	<-openStarted
+	close(closeProceed)
+	<-closeDone
+	<-openDone
+
+	// The failure after the recovery must not be lost: an active gap exists
+	// and the sidecar matches it exactly.
+	s.analyticsReliabilityMu.Lock()
+	var active *AccountingGap
+	if s.analyticsGap != nil {
+		snapshot := *s.analyticsGap
+		active = &snapshot
+	}
+	path := s.analyticsGapPath
+	s.analyticsReliabilityMu.Unlock()
+	if active == nil {
+		t.Fatal("BUG-AUDIT-102: failure that arrived during the close was lost — no active gap remains")
+	}
+	if !active.StartedAt.After(gapA) {
+		t.Fatalf("active gap is the old one (%s), not a gap covering the post-recovery failure", active.StartedAt)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("active gap sidecar missing after post-close failure: %v", err)
+	}
+	var sidecar AccountingGap
+	if json.Unmarshal(raw, &sidecar) != nil {
+		t.Fatalf("BUG-AUDIT-102: sidecar corrupted: %s", raw)
+	}
+	if !sidecar.StartedAt.Equal(active.StartedAt) || sidecar.EndedAt != nil {
+		t.Fatalf("sidecar %s disagrees with in-memory active gap %+v", raw, active)
+	}
+}
+
 // TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts hammers the real
-// open/close lifecycle with distinct timestamps so that, at any moment the
-// sidecar exists, it parses as exactly one coherent snapshot and never
-// mixes payloads from two writers.
+// open/close lifecycle with distinct timestamps. At quiescence the state
+// must be CONSISTENT, not merely parseable: an active in-memory gap exists
+// if and only if its sidecar file exists, and both describe the same active
+// gap.
 func TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "proxy.db")
@@ -329,28 +403,34 @@ func TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	// Final state: either no sidecar (last lifecycle action closed the gap
-	// cleanly) or one coherent active-gap snapshot. Anything else — parse
-	// failure, mixed payloads, an "ended" gap left in the sidecar — is
-	// corruption.
-	raw, err := os.ReadFile(s.analyticsGapPath)
-	if os.IsNotExist(err) {
+	s.analyticsReliabilityMu.Lock()
+	var active *AccountingGap
+	if s.analyticsGap != nil {
+		snapshot := *s.analyticsGap
+		active = &snapshot
+	}
+	sidecarPath := s.analyticsGapPath
+	s.analyticsReliabilityMu.Unlock()
+
+	raw, readErr := os.ReadFile(sidecarPath)
+	if os.IsNotExist(readErr) {
+		if active != nil {
+			t.Fatalf("BUG-AUDIT-102: active gap %s has no sidecar — a late close removed it", active.StartedAt)
+		}
 		return
 	}
-	if err != nil {
-		t.Fatal(err)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if active == nil {
+		t.Fatalf("BUG-AUDIT-102: no active gap in memory but sidecar survives: %s", raw)
 	}
 	var gap AccountingGap
 	if err := json.Unmarshal(raw, &gap); err != nil {
 		t.Fatalf("BUG-AUDIT-102: sidecar corrupted by open/close race (%d bytes): %v", len(raw), err)
 	}
-	if gap.StartedAt.IsZero() {
-		t.Fatalf("sidecar snapshot has no start time: %s", raw)
-	}
-	// The sidecar payload is always an ACTIVE gap (EndedAt is only set in
-	// the closed snapshot persisted to Bolt, never in the sidecar).
-	if gap.EndedAt != nil {
-		t.Fatalf("BUG-AUDIT-102: sidecar holds a closed snapshot — stale writer resurrected a closed gap: %s", raw)
+	if gap.EndedAt != nil || !gap.StartedAt.Equal(active.StartedAt) {
+		t.Fatalf("BUG-AUDIT-102: sidecar %s disagrees with in-memory gap %+v after race", raw, active)
 	}
 }
 

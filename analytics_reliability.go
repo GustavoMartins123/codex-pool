@@ -170,10 +170,21 @@ func (s *usageStore) openAccountingGap(at time.Time, cause error) {
 	s.persistActiveAccountingGapSidecarLocked(s.analyticsGap)
 }
 
+// accountingGapCloseHook, when non-nil, runs inside closeAccountingGap while
+// analyticsReliabilityMu is held, after the closed gap has been durably
+// persisted and before it is cleared. Tests use it to freeze the close
+// mid-flight; it must not call back into the store (the lock is held).
+var accountingGapCloseHook func()
+
 func (s *usageStore) closeAccountingGap(at time.Time) {
+	// The persist, the in-memory clear, and the sidecar removal run under ONE
+	// lock hold. Releasing the lock between them let a failure arriving in
+	// that window see the still-uncleared old gap, skip opening its own, and
+	// then have its sidecar removed by the finishing close — silently losing
+	// the new accounting gap.
 	s.analyticsReliabilityMu.Lock()
+	defer s.analyticsReliabilityMu.Unlock()
 	if s.analyticsGap == nil {
-		s.analyticsReliabilityMu.Unlock()
 		return
 	}
 	gap := *s.analyticsGap
@@ -182,17 +193,14 @@ func (s *usageStore) closeAccountingGap(at time.Time) {
 		ended = time.Now().UTC()
 	}
 	gap.EndedAt = &ended
-	s.analyticsReliabilityMu.Unlock()
 	if s.persistAccountingGap(gap) == nil {
-		// Clearing the in-memory gap and removing the sidecar happen under
-		// the same lock hold, so no in-flight open can re-write a stale
-		// sidecar after the remove.
-		s.analyticsReliabilityMu.Lock()
+		if accountingGapCloseHook != nil {
+			accountingGapCloseHook()
+		}
 		if s.analyticsGap != nil && s.analyticsGap.StartedAt.Equal(gap.StartedAt) {
 			s.analyticsGap = nil
 		}
 		_ = os.Remove(s.analyticsGapPath)
-		s.analyticsReliabilityMu.Unlock()
 	}
 }
 
