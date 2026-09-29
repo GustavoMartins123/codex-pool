@@ -127,23 +127,28 @@ func FuzzAuditSSEDataExtractionLineEndingIndependence(f *testing.F) {
 }
 
 // TestAuditSSESuppressionSplitCRLFDivergence
-// BUG-AUDIT-107 (cross-platform): the SSE suppressor (onEvent drop mode)
-// withholds an event's bytes, but when the event's CRLF terminator is split
-// across two reads the framer re-emits the trailing LF as a standalone
-// pseudo-event which is never droppable (it carries no data). The client
-// therefore receives a stray blank line that depends on how TCP segmented
-// the stream: relayed output differs for identical input.
-// Expected: dropping an event removes all of its bytes including the
-// terminator, regardless of read boundaries.
-// Actual: a lone "\n" leaks through whenever the CRLF straddles a read.
+// BUG-AUDIT-107 regression (cross-platform): the SSE suppressor (onEvent
+// drop mode) must remove every byte of a dropped event, including its
+// terminator, no matter how reads split the stream. Historically the pairing
+// LF of a split CRLF leaked through as a standalone pseudo-event. The test
+// relays the same stream whole and at EVERY possible split point and
+// requires identical output, covering CR-only, LF-only, CRLF, split-CRLF,
+// and multi-event streams at once.
 func TestAuditSSESuppressionSplitCRLFDivergence(t *testing.T) {
-	stream := []byte("data: {\"drop\":true}\r\n\r\ndata: keep\n\n")
-
+	streams := []string{
+		"data: {\"drop\":true}\r\n\r\ndata: keep\n\n",
+		"data: {\"drop\":true}\n\ndata: keep\r\n\r\n",
+		"data: {\"drop\":true}\r\rdata: keep\n\n",
+		"data: keep\n\ndata: {\"drop\":true}\r\n\r\n",
+		"data: {\"drop\":1}\r\n\r\ndata: {\"drop\":2}\n\ndata: keep\r\r",
+		"data: no-marker\r\n\r\n",
+	}
+	dropMarker := func(data []byte) (bool, bool) {
+		return bytes.Contains(data, []byte("drop")), false
+	}
 	relay := func(chunks [][]byte) string {
 		var out bytes.Buffer
-		sw := &sseInterceptWriter{w: &out, onEvent: func(data []byte) (bool, bool) {
-			return bytes.Contains(data, []byte("drop")), false
-		}}
+		sw := &sseInterceptWriter{w: &out, onEvent: dropMarker}
 		for _, chunk := range chunks {
 			if _, err := sw.Write(chunk); err != nil {
 				t.Fatal(err)
@@ -152,21 +157,53 @@ func TestAuditSSESuppressionSplitCRLFDivergence(t *testing.T) {
 		return out.String()
 	}
 
-	whole := relay([][]byte{stream})
-	// Split exactly after the CR of the blank line that terminates the
-	// first event, so the pairing LF starts the second read.
-	cut := len("data: {\"drop\":true}\r\n\r")
-	var split [][]byte
-	split = append(split, stream[:cut])   // ends with the event-terminating CR
-	split = append(split, stream[cut:]) // starts with the pairing LF
-	piecewise := relay(split)
+	for _, stream := range streams {
+		whole := relay([][]byte{[]byte(stream)})
+		if strings.Contains(whole, "drop") {
+			t.Fatalf("dropped event content leaked: %q", whole)
+		}
+		for cut := 0; cut <= len(stream); cut++ {
+			split := [][]byte{[]byte(stream[:cut]), []byte(stream[cut:])}
+			piecewise := relay(split)
+			if piecewise != whole {
+				t.Fatalf("BUG-AUDIT-107: relayed output depends on read boundaries (cut=%d):\nwhole    = %q\npiecewise= %q", cut, whole, piecewise)
+			}
+		}
+		// One-byte chunks stress every boundary at once.
+		if bytewise := relay(auditSplitBytewise([]byte(stream))); bytewise != whole {
+			t.Fatalf("BUG-AUDIT-107: bytewise relay diverges:\nwhole    = %q\nbytewise = %q", whole, bytewise)
+		}
+	}
+}
 
-	if whole != piecewise {
-		t.Fatalf("BUG-AUDIT-107: relayed output depends on read boundaries:\nwhole    = %q\npiecewise= %q", whole, piecewise)
-	}
-	if strings.Contains(whole, "drop") {
-		t.Fatalf("dropped event content leaked: %q", whole)
-	}
+// FuzzAuditSSESuppressionChunkIndependence extends the chunk-independence
+// invariant to suppression mode: dropping every event whose data contains
+// the byte 'x' must yield byte-identical output no matter how the stream is
+// segmented, and no byte of a dropped event may survive.
+func FuzzAuditSSESuppressionChunkIndependence(f *testing.F) {
+	f.Add([]byte("data: ax\r\n\r\ndata: b\n\ndata: cx\r\r"))
+	f.Add([]byte("data: x\r\n\r\n"))
+	f.Add([]byte("data: keep\r\n\r\ndata: x\n\n"))
+	f.Add([]byte("\r\n\r\nx\n\n"))
+	f.Fuzz(func(t *testing.T, stream []byte) {
+		relay := func(chunks [][]byte) string {
+			var out bytes.Buffer
+			sw := &sseInterceptWriter{w: &out, onEvent: func(data []byte) (bool, bool) {
+				return bytes.Contains(data, []byte("x")), false
+			}}
+			for _, chunk := range chunks {
+				if _, err := sw.Write(chunk); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return out.String()
+		}
+		whole := relay([][]byte{append([]byte(nil), stream...)})
+		chunked := relay(auditSplitBytewise(stream))
+		if whole != chunked {
+			t.Fatalf("suppression output depends on chunking: whole=%q chunked=%q stream=%q", whole, chunked, stream)
+		}
+	})
 }
 
 // FuzzAuditParseSSEEventRobustness ensures the parser never panics on

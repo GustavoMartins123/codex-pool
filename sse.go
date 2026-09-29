@@ -249,13 +249,14 @@ func (fw *flushWriter) stop() error {
 const sseInterceptMaxBufferedBytes = 64 * 1024
 
 type sseInterceptWriter struct {
-	w          io.Writer
-	buf        []byte
-	framer     sseFramer
-	err        error
-	callback   func(eventData []byte)
-	onEvent    func(eventData []byte) (drop bool, terminate bool)
-	terminated bool
+	w           io.Writer
+	buf         []byte
+	framer      sseFramer
+	err         error
+	callback    func(eventData []byte)
+	onEvent     func(eventData []byte) (drop bool, terminate bool)
+	terminated  bool
+	lastDropped bool
 }
 
 func (sw *sseInterceptWriter) Write(p []byte) (int, error) {
@@ -300,7 +301,22 @@ func (sw *sseInterceptWriter) Write(p []byte) (int, error) {
 		}
 		eventBytes := append([]byte(nil), sw.buf[:advance]...)
 		sw.buf = sw.buf[advance:]
+		if event == nil {
+			// Pseudo-event: the pairing LF of a CRLF terminator that
+			// straddled two reads. Its bytes belong to the terminator of
+			// the PREVIOUS event, so it inherits that event's drop
+			// decision — otherwise suppression would leak a stray blank
+			// line depending on how the stream happened to be segmented.
+			if !sw.lastDropped {
+				writeSSE(sw.w, eventBytes, &sw.err)
+				if sw.err != nil {
+					return len(p), sw.err
+				}
+			}
+			continue
+		}
 		drop, terminate := sw.invokeInspect(event)
+		sw.lastDropped = drop
 		if !drop {
 			writeSSE(sw.w, eventBytes, &sw.err)
 			if sw.err != nil {
@@ -371,6 +387,13 @@ func extractSSEEventData(event []byte) []byte {
 // sseFramer scans each byte once, retaining line state across writes. A CR
 // ends a line immediately; a following LF belongs to that same line ending.
 // Callers discard exactly advance bytes after each successful next call.
+//
+// When an event's blank-line terminator ends in a CR at the very end of the
+// buffer and the pairing LF arrives in a later read, next returns the LF
+// alone as a PSEUDO-EVENT: (nil, 1, true). The pseudo-event's byte belongs
+// to the terminator of the previously returned event, so byte-relaying
+// callers forward it verbatim, while suppression callers must inherit the
+// previous event's drop decision (see sseInterceptWriter.Write).
 type sseFramer struct {
 	cursor    int
 	lineStart int
