@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -26,18 +27,42 @@ func (s *usageStore) loadActiveAccountingGapSidecar() {
 	}
 }
 
+// persistActiveAccountingGapSidecar atomically records the active gap so a
+// crash between "durable write failed" and "gap closed" cannot lose the
+// accounting window. Writers are serialized under analyticsReliabilityMu and
+// staged through a unique temp file: a fixed shared ".tmp" name let two
+// concurrent writers interleave truncation and payload, producing a mixed
+// file that failed to parse at restart — silently discarding the gap.
 func (s *usageStore) persistActiveAccountingGapSidecar(gap *AccountingGap) {
 	if s == nil || s.analyticsGapPath == "" || gap == nil {
 		return
 	}
+	s.analyticsReliabilityMu.Lock()
+	defer s.analyticsReliabilityMu.Unlock()
+	s.persistActiveAccountingGapSidecarLocked(gap)
+}
+
+// persistActiveAccountingGapSidecarLocked is the locked variant of
+// persistActiveAccountingGapSidecar; analyticsReliabilityMu must be held.
+func (s *usageStore) persistActiveAccountingGapSidecarLocked(gap *AccountingGap) {
 	encoded, err := json.Marshal(gap)
 	if err != nil {
 		return
 	}
-	temporary := s.analyticsGapPath + ".tmp"
-	if os.WriteFile(temporary, encoded, 0o600) == nil {
-		_ = os.Rename(temporary, s.analyticsGapPath)
+	temporary, err := os.CreateTemp(filepath.Dir(s.analyticsGapPath), ".analytics-gap-*.tmp")
+	if err != nil {
+		return
 	}
+	name := temporary.Name()
+	defer os.Remove(name)
+	if _, err := temporary.Write(encoded); err != nil {
+		temporary.Close()
+		return
+	}
+	if err := temporary.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(name, s.analyticsGapPath)
 }
 
 type AccountingGap struct {
@@ -129,17 +154,20 @@ func (s *usageStore) persistAccountingGap(gap AccountingGap) error {
 	})
 }
 
+// openAccountingGap records the start of an unreliable analytics window.
+// The snapshot AND its sidecar write run under one lock hold: a close (or a
+// later re-open creating a different gap) must not interleave between them,
+// or a stale sidecar could resurrect an already-closed gap after restart.
 func (s *usageStore) openAccountingGap(at time.Time, cause error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	s.analyticsReliabilityMu.Lock()
+	defer s.analyticsReliabilityMu.Unlock()
 	if s.analyticsGap == nil {
 		s.analyticsGap = &AccountingGap{StartedAt: at.UTC(), Reason: fmt.Sprintf("durable usage write failed: %v", cause)}
 	}
-	gap := *s.analyticsGap
-	s.analyticsReliabilityMu.Unlock()
-	s.persistActiveAccountingGapSidecar(&gap)
+	s.persistActiveAccountingGapSidecarLocked(s.analyticsGap)
 }
 
 func (s *usageStore) closeAccountingGap(at time.Time) {
@@ -156,12 +184,15 @@ func (s *usageStore) closeAccountingGap(at time.Time) {
 	gap.EndedAt = &ended
 	s.analyticsReliabilityMu.Unlock()
 	if s.persistAccountingGap(gap) == nil {
+		// Clearing the in-memory gap and removing the sidecar happen under
+		// the same lock hold, so no in-flight open can re-write a stale
+		// sidecar after the remove.
 		s.analyticsReliabilityMu.Lock()
 		if s.analyticsGap != nil && s.analyticsGap.StartedAt.Equal(gap.StartedAt) {
 			s.analyticsGap = nil
 		}
-		s.analyticsReliabilityMu.Unlock()
 		_ = os.Remove(s.analyticsGapPath)
+		s.analyticsReliabilityMu.Unlock()
 	}
 }
 

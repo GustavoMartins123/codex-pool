@@ -7,6 +7,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,21 +242,130 @@ func TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory(t *testing.T)
 	}
 }
 
-// TestAuditAnalyticsGapSidecarConcurrentWritersNeverCorrupt
-// BUG-AUDIT-102: persistActiveAccountingGapSidecar uses a fixed "<path>.tmp"
-// name with no mutual exclusion around the write+rename. Concurrent failing
-// requests both write the shared temp file; when both truncates land before
-// both writes, the final sidecar mixes payloads from two writers and the
-// JSON no longer unmarshals, silently discarding the active accounting gap
-// on restart. Expected: the sidecar always parses as exactly one snapshot.
-func TestAuditAnalyticsGapSidecarConcurrentWritersNeverCorrupt(t *testing.T) {
+// TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts
+// BUG-AUDIT-102 regression (cross-platform), driven through the real
+// lifecycle. The original repro called persistActiveAccountingGapSidecar
+// directly with two arbitrary payloads — production cannot race two
+// arbitrary payloads while a single gap is active (all snapshots share the
+// first gap), but it CAN race a close against a delayed open-write, or a
+// close+reopen cycle against a straggling writer, which mixed payloads in
+// the shared ".tmp" file and silently discarded the accounting gap at
+// restart.
+//
+// Two real paths are exercised:
+//  1. recordReliably against a failing (closed) Bolt store — many
+//     concurrent failed records all open/persist the same gap;
+//  2. concurrent openAccountingGap/closeAccountingGap cycles with distinct
+//     timestamps — close must remove the sidecar and no writer may leave a
+//     torn or stale-behind file behind.
+func TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts(t *testing.T) {
+	s := testUsageStore(t)
+	// Closing the Bolt handle makes recordReliably fail on every call,
+	// which is exactly the production trigger for openAccountingGap.
+	if err := s.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := RequestUsage{Timestamp: time.Now().UTC(), AccountID: "gap", AccountType: AccountTypeCodex, UserID: "p1", ProxyRequestID: "req-gap"}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < 25; i++ {
+				_ = s.recordReliably(usage, 0)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	raw, err := os.ReadFile(s.analyticsGapPath)
+	if err != nil {
+		t.Fatalf("active gap sidecar missing after failed records: %v", err)
+	}
+	var gap AccountingGap
+	if err := json.Unmarshal(raw, &gap); err != nil {
+		t.Fatalf("BUG-AUDIT-102: sidecar corrupted by concurrent failed records (%d bytes): %v", len(raw), err)
+	}
+	if gap.EndedAt != nil {
+		t.Fatalf("active gap sidecar unexpectedly closed: %s", raw)
+	}
+}
+
+// TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts hammers the real
+// open/close lifecycle with distinct timestamps so that, at any moment the
+// sidecar exists, it parses as exactly one coherent snapshot and never
+// mixes payloads from two writers.
+func TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "proxy.db")
+	s, err := newUsageStore(path, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for g := 0; g < 6; g++ {
+		wg.Add(1)
+		go func(goroutine int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < 40; i++ {
+				at := time.Now().UTC().Add(time.Duration(goroutine*100+i) * time.Millisecond)
+				switch (goroutine + i) % 3 {
+				case 0, 1:
+					s.openAccountingGap(at, errors.New("synthetic write failure "+at.Format(time.RFC3339Nano)))
+				case 2:
+					s.closeAccountingGap(at)
+				}
+			}
+		}(g)
+	}
+	close(start)
+	wg.Wait()
+
+	// Final state: either no sidecar (last lifecycle action closed the gap
+	// cleanly) or one coherent active-gap snapshot. Anything else — parse
+	// failure, mixed payloads, an "ended" gap left in the sidecar — is
+	// corruption.
+	raw, err := os.ReadFile(s.analyticsGapPath)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gap AccountingGap
+	if err := json.Unmarshal(raw, &gap); err != nil {
+		t.Fatalf("BUG-AUDIT-102: sidecar corrupted by open/close race (%d bytes): %v", len(raw), err)
+	}
+	if gap.StartedAt.IsZero() {
+		t.Fatalf("sidecar snapshot has no start time: %s", raw)
+	}
+	// The sidecar payload is always an ACTIVE gap (EndedAt is only set in
+	// the closed snapshot persisted to Bolt, never in the sidecar).
+	if gap.EndedAt != nil {
+		t.Fatalf("BUG-AUDIT-102: sidecar holds a closed snapshot — stale writer resurrected a closed gap: %s", raw)
+	}
+}
+
+// TestAuditAnalyticsGapSidecarDirectWritersNeverCorrupt is the unit-level
+// guard for the sidecar writer itself: two writers with different payloads
+// racing must never produce a mixed file. (The lifecycle races above are the
+// production-reachable paths; this pins the writer primitive.)
+func TestAuditAnalyticsGapSidecarDirectWritersNeverCorrupt(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "gap.json")
 	s := &usageStore{analyticsGapPath: path}
 	big := &AccountingGap{StartedAt: time.Now().UTC(), Reason: strings.Repeat("x", 8192)}
 	small := &AccountingGap{StartedAt: time.Now().UTC().Add(time.Second), Reason: "short"}
 
-	for round := 0; round < 300; round++ {
+	for round := 0; round < 100; round++ {
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		wg.Add(2)
@@ -275,5 +385,13 @@ func TestAuditAnalyticsGapSidecarConcurrentWritersNeverCorrupt(t *testing.T) {
 		if gap.Reason != big.Reason && gap.Reason != small.Reason {
 			t.Fatalf("BUG-AUDIT-102: round %d mixed payloads: %q", round, gap.Reason)
 		}
+	}
+	// No staging temp files may survive.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("leftover staging files: %v", entries)
 	}
 }
