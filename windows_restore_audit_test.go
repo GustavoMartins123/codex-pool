@@ -22,7 +22,12 @@ func TestAuditRestorePairedBackupRollsBackWhenDuckHeldOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle, err := syscall.CreateFile(p, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	// Share read/write so the pre-restore aside snapshot can still READ the
+	// file, but withhold FILE_SHARE_DELETE so the swap rename fails — the
+	// exact production shape (indexer/AV holding usage.duckdb open). With
+	// share mode 0 the aside copy would fail first and the test would pass
+	// or fail for the wrong reason (no swap, no rollback exercised).
+	handle, err := syscall.CreateFile(p, syscall.GENERIC_READ, syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		t.Skipf("cannot hold the DuckDB file exclusively: %v", err)
 	}
