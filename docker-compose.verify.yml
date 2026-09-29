@@ -1,0 +1,36 @@
+services:
+  codex-pool:
+    image: codex-pool:m0-verify
+    environment:
+      POOL_DIR: /app/pool
+      PROXY_DB_PATH: /app/data/proxy.db
+      DUCKDB_PATH: /app/data/usage.duckdb
+      PROXY_LISTEN_ADDR: 0.0.0.0:8989
+      PROXY_DISABLE_REFRESH: "true"
+      POOL_JWT_SECRET: ${M0_JWT_SECRET:?verification key required}
+      POOL_AUTH_ENCRYPTION_KEY: ${M0_AUTH_KEY:?verification key required}
+      POOL_CREDENTIAL_KEY: ${M0_VAULT_KEY:?verification key required}
+      POOL_CREDENTIAL_KEY_VERSION: ${M0_VAULT_VERSION:?verification version required}
+      POOL_CREDENTIAL_KEY_PREVIOUS: ${M0_VAULT_PREVIOUS-}
+      POOL_CREDENTIAL_KEY_PREVIOUS_VERSION: "1"
+      ADMIN_TOKEN: ${M0_ADMIN_TOKEN:?verification key required}
+      PROXY_USAGE_REFRESH_SECONDS: "86400"
+    volumes:
+      - data:/app/data
+      - pool:/app/pool
+    cap_drop: [ALL]
+    mem_limit: 2g
+    networks: [isolated]
+    healthcheck:
+      test: [CMD, curl, -fsS, "http://127.0.0.1:8989/healthz"]
+      interval: 2s
+      timeout: 3s
+      start_period: 5s
+      retries: 15
+
+networks:
+  isolated:
+    internal: true
+volumes:
+  data:
+  pool:

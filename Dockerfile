@@ -19,6 +19,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build go build -trimpath -ldflags=
 FROM scratch AS binary
 COPY --from=build /out/codex-pool /codex-pool
 
+FROM build AS verify
+RUN useradd -u 1001 -m verify && chown -R verify:verify /src
+USER verify
+ENV GOCACHE=/home/verify/.cache/go-build
+RUN --mount=type=cache,target=/home/verify/.cache/go-build,uid=1001,gid=1001 go vet ./... && go test -race -count=1 ./...
+
 FROM debian:12.15-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 1000 codex && useradd -u 1000 -g codex --home-dir /app codex
