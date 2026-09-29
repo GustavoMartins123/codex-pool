@@ -5,20 +5,23 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.26.8"
           cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "24"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -32,6 +35,21 @@ jobs:
         run: |
           cd web
           npm test
+
+      - name: Dependency audits and CycloneDX SBOMs
+        run: bash scripts/check-dependencies.sh
+
+      - name: Upload dependency evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-evidence
+          path: |
+            tmp/supply-chain/npm-audit.json
+            tmp/supply-chain/govulncheck.json
+            tmp/supply-chain/go-sbom.json
+            tmp/supply-chain/web-sbom.json
+          if-no-files-found: error
 
       - name: Vet
         run: go vet ./...
@@ -47,3 +65,35 @@ jobs:
       # target before treating a comparison as a perf gate.
       - name: Bench harness and baseline integrity
         run: go test -count=1 -v ./bench/runner/
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.26.8"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.21.0"
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Build embedded frontend
+        shell: pwsh
+        run: |
+          npm --prefix web ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm --prefix web run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Vet and race tests on Windows
+        shell: msys2 {0}
+        env:
+          CGO_ENABLED: "1"
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go test -race -count=1 ./...
