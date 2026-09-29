@@ -76,13 +76,11 @@ func ParseKey(version int, raw string) (Key, error) {
 }
 
 // Store transforms credential payloads between plaintext (in memory) and
-// their at-rest representation. PlainStore keeps files as-is for backwards
-// compatibility; KeyedStore wraps them in authenticated envelopes.
+// their at-rest representation. KeyedStore requires authenticated envelopes.
 type Store interface {
 	// Encode converts plaintext bytes into their at-rest form.
 	Encode(data []byte) ([]byte, error)
-	// Decode converts at-rest bytes back into plaintext. Plaintext input is
-	// passed through unchanged so mixed fleets migrate incrementally.
+	// Decode converts at-rest bytes back into plaintext.
 	Decode(data []byte) ([]byte, error)
 	// Enabled reports whether the store encrypts at rest.
 	Enabled() bool
@@ -157,7 +155,7 @@ func (s *KeyedStore) Encode(data []byte) ([]byte, error) {
 
 func (s *KeyedStore) Decode(data []byte) ([]byte, error) {
 	if !IsEncrypted(data) {
-		return data, nil
+		return nil, ErrNotEncrypted
 	}
 	var env envelope
 	if err := json.Unmarshal(data, &env); err != nil {

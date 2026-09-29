@@ -157,6 +157,13 @@ func migrateCredentialFiles(poolDir string) (int, int, error) {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
 		if !credstore.IsEncrypted(raw) {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+				return fmt.Errorf("invalid credential JSON %s", path)
+			}
+			if _, exists := fields["cpvault"]; exists {
+				return fmt.Errorf("malformed credential envelope %s", path)
+			}
 			atRest, err := keyed.Encode(raw)
 			if err != nil {
 				return fmt.Errorf("encrypt %s: %w", path, err)
@@ -170,12 +177,15 @@ func migrateCredentialFiles(poolDir string) (int, int, error) {
 		var probe struct {
 			KV int `json:"kv"`
 		}
-		if json.Unmarshal(raw, &probe) != nil || probe.KV == keyed.CurrentVersion() {
-			return nil
-		}
 		plain, err := keyed.Decode(raw)
 		if err != nil {
-			return fmt.Errorf("rotate %s: %w", path, err)
+			return fmt.Errorf("authenticate %s: %w", path, err)
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return fmt.Errorf("inspect %s: %w", path, err)
+		}
+		if probe.KV == keyed.CurrentVersion() {
+			return nil
 		}
 		atRest, err := keyed.Encode(plain)
 		if err != nil {

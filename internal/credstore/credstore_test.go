@@ -128,18 +128,15 @@ func TestRotationPreviousKeyDecrypts(t *testing.T) {
 	}
 }
 
-func TestPlaintextPassesThrough(t *testing.T) {
+func TestKeyedStoreRejectsPlaintext(t *testing.T) {
 	store, _ := NewKeyedStore(mustKey(t, 1, strings.Repeat("dd", 32)), nil)
 	plain := []byte(`{"tokens":{"access_token":"x"}}`)
 	if IsEncrypted(plain) {
 		t.Fatal("account JSON must not be misdetected as an envelope")
 	}
 	back, err := store.Decode(plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(back, plain) {
-		t.Fatalf("plaintext must round-trip unchanged: %s", back)
+	if err != ErrNotEncrypted || back != nil {
+		t.Fatalf("plaintext must fail closed: data=%q err=%v", back, err)
 	}
 	var p PlainStore
 	enc, _ := p.Encode(plain)

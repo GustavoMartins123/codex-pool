@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -9,6 +10,50 @@ import (
 
 	"codex-pool-proxy/internal/credstore"
 )
+
+func TestVaultMigrationRejectsUnauthenticatedFiles(t *testing.T) {
+	good, _ := credstore.NewKeyedStore(hexKey(t, 1, 'a'), nil)
+	encrypted, err := good.Encode([]byte(`{"api_key":"synthetic"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"wrong_current_key", encrypted},
+		{"malformed_envelope", []byte(`{"cpvault":1,"kv":1}`)},
+		{"unsupported_format", []byte(`{"cpvault":2,"kv":1,"nonce":"x","ct":"x"}`)},
+		{"invalid_json", []byte(`{"cpvault":`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useKeyedVault(t, hexKey(t, 1, 'b'), nil)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "account.json")
+			if err := os.WriteFile(path, tc.raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := migrateCredentialFiles(dir); err == nil {
+				t.Fatal("unauthenticated file accepted")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, tc.raw) {
+				t.Fatal("rejected file was modified")
+			}
+		})
+	}
+}
+
+func TestVaultRuntimeRejectsIntroducedPlaintext(t *testing.T) {
+	useKeyedVault(t, hexKey(t, 1, 'a'), nil)
+	path := filepath.Join(t.TempDir(), "account.json")
+	if err := os.WriteFile(path, []byte(`{"api_key":"synthetic"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readAccountFile(path); err == nil {
+		t.Fatal("runtime accepted plaintext")
+	}
+}
 
 func useKeyedVault(t *testing.T, current credstore.Key, previous *credstore.Key) {
 	t.Helper()
