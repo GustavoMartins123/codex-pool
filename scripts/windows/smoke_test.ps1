@@ -1,7 +1,13 @@
 # Adversarial smoke test for the built Windows executable.
-# Runs codex-pool.exe from a throwaway directory, probes health endpoints,
-# verifies storage files are created, then terminates the process and
-# confirms no orphan remains. Test-scoped infrastructure only.
+# Runs codex-pool.exe from a throwaway directory, probes the health endpoint,
+# verifies storage files are created, then terminates the process it started.
+#
+# Safety rules (this script must never touch unrelated processes):
+#   - only the exact $proc object started below is ever signaled;
+#   - no Get-Process/Stop-Process by name;
+#   - the child inherits the console (no redirected pipes that an undrained
+#     buffer could block on);
+#   - the temporary run directory is always cleaned up.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -9,11 +15,18 @@ $exe = Join-Path $PSScriptRoot '..\..\dist\windows-amd64\codex-pool.exe' | Resol
 $runDir = Join-Path $env:TEMP ("codex-pool-smoke-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
-$port = 18923
+# Pick a free dynamic port instead of a fixed one: a fixed port collides
+# with any real codex-pool already running on the machine.
+$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$listener.Start()
+$port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+$listener.Stop()
+
 $envs = @{
     'PROXY_LISTEN_ADDR' = "127.0.0.1:$port"
     'POOL_DIR'          = 'pool'
-    'DATA_DIR'          = 'data'
+    'PROXY_DB_PATH'     = 'data/proxy.db'
+    'DUCKDB_PATH'       = 'data/usage.duckdb'
     'PROXY_DEBUG'       = '1'
 }
 
@@ -21,11 +34,12 @@ $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $exe.Path
 $psi.WorkingDirectory = $runDir
 $psi.UseShellExecute = $false
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
+$psi.RedirectStandardOutput = $false
+$psi.RedirectStandardError = $false
 foreach ($kv in $envs.GetEnumerator()) { $psi.EnvironmentVariables[$kv.Key] = $kv.Value }
 
 $proc = [System.Diagnostics.Process]::Start($psi)
+$finished = $false
 try {
     $healthy = $false
     $deadline = (Get-Date).AddSeconds(25)
@@ -42,25 +56,33 @@ try {
         if ($proc.HasExited) { Write-Output "exit code: $($proc.ExitCode)" }
         exit 1
     }
-    Write-Output "SMOKE-OK: /livez returned 200"
+    Write-Output "SMOKE-OK: /livez returned 200 on dynamic port $port"
 
     $bolt = Test-Path (Join-Path $runDir 'data\proxy.db')
     Write-Output ("SMOKE-BOLT: data\proxy.db present = {0}" -f $bolt)
+    if (-not $bolt) {
+        Write-Output 'SMOKE-FAIL: usage store file not created'
+        exit 1
+    }
     $duck = Test-Path (Join-Path $runDir 'data\usage.duckdb')
     Write-Output ("SMOKE-DUCK: data\usage.duckdb present = {0}" -f $duck)
     if (-not $duck) { Write-Output 'SMOKE-WARN: duckdb file not created' }
+    $finished = $true
 } finally {
-    if (-not $proc.HasExited) {
+    # Kill ONLY the process this script started, by its own object. Never
+    # enumerate or stop processes by name.
+    if ($null -ne $proc -and -not $proc.HasExited) {
         $proc.Kill()
-        $proc.WaitForExit(10000) | Out-Null
+        $null = $proc.WaitForExit(10000)
     }
-    Start-Sleep -Milliseconds 800
-    $orphan = Get-Process -Name codex-pool -ErrorAction SilentlyContinue
-    if ($orphan) {
-        Write-Output "SMOKE-FAIL: orphan process(es) remain"
-        $orphan | Stop-Process -Force
-        exit 1
+    if ($null -ne $proc) {
+        if ($proc.HasExited) {
+            Write-Output ("SMOKE-EXIT: own process pid={0} terminated (exit={1})" -f $proc.Id, $proc.ExitCode)
+        } else {
+            Write-Output ("SMOKE-EXIT: own process pid={0} did not exit after kill" -f $proc.Id)
+        }
     }
-    Write-Output "SMOKE-EXIT: process terminated, no orphans"
+    Start-Sleep -Milliseconds 300
     Remove-Item -Recurse -Force -LiteralPath $runDir -ErrorAction SilentlyContinue
+    if (-not $finished) { exit 1 }
 }
