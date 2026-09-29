@@ -14,10 +14,11 @@ import (
 // its directory entry. Sharing DELETE avoids blocking the rename or a reader
 // opening the replacement while the old snapshot is pending deletion.
 func openCredentialFile(path string) (*os.File, error) {
-	absolute, err := filepath.Abs(path)
+	absolute, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
+	absolute = strings.ReplaceAll(absolute, "/", `\`)
 	if !strings.HasPrefix(absolute, `\\?\`) {
 		if strings.HasPrefix(absolute, `\\`) {
 			absolute = `\\?\UNC\` + strings.TrimPrefix(absolute, `\\`)

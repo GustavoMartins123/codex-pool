@@ -19,10 +19,11 @@ type renameInfo struct {
 }
 
 func extendedPath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", err
 	}
+	abs = strings.ReplaceAll(abs, "/", `\`)
 	if strings.HasPrefix(abs, `\\?\`) {
 		return abs, nil
 	}
@@ -70,7 +71,9 @@ func replace(source, destination string) error {
 	}
 	name = name[:len(name)-1]
 	var layout renameInfo
-	buffer := make([]byte, int(unsafe.Offsetof(layout.FileName))+2*len(name))
+	// Keep a trailing UTF-16 NUL for the Win32 path conversion, while the
+	// native FileNameLength excludes it. Do not depend on allocator padding.
+	buffer := make([]byte, int(unsafe.Offsetof(layout.FileName))+2*(len(name)+1))
 	info := (*renameInfo)(unsafe.Pointer(&buffer[0]))
 	info.Flags = windows.FILE_RENAME_REPLACE_IF_EXISTS | windows.FILE_RENAME_POSIX_SEMANTICS
 	info.FileNameLength = uint32(2 * len(name))
