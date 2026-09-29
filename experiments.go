@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -325,6 +324,11 @@ func requestObjectUsesTools(object map[string]any) bool {
 	return true
 }
 
+// maybeStartShadow records a ROUTING shadow: it evaluates what the candidate
+// model of the canary rule would resolve to — provider metadata and whether
+// the pool currently has a usable account for it — without any upstream
+// call, quota consumption, or runtime mutation. Sending real traffic as an
+// experiment requires the separate traffic-shadow configuration.
 func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, reqID string) {
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
 		r.Header.Get("X-Pool-Shadow") != "" || !shadowSafeRequest(r, body) {
@@ -334,34 +338,36 @@ func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment
 	if shadowBody == nil {
 		return
 	}
-	request := r.Clone(contextWithoutCancel(r.Context()))
-	request.Body = ioNopCloserBytes(shadowBody)
-	request.ContentLength = int64(len(shadowBody))
-	request.Header = r.Header.Clone()
-	request.Header.Set("X-Pool-Shadow", assignment.Name)
-	request.Header.Set("X-Pool-Canary-Bypass", "1")
-	request.Header.Del("Content-Length")
-	go func() {
-		started := time.Now()
-		writer := &shadowResponseWriter{}
-		h.proxyRequest(writer, request, reqID+"-shadow")
-		status := writer.status
-		if status == 0 {
-			status = http.StatusServiceUnavailable
-		}
-		ttft := time.Duration(0)
-		if !writer.firstWrite.IsZero() {
-			ttft = writer.firstWrite.Sub(started)
-		}
-		h.experiments.Record(assignment.Name, "shadow", ExperimentObservation{
-			Status: status, Duration: time.Since(started), TTFT: ttft,
-			ResponseBytes: writer.bytes, StreamError: status >= 500,
-		})
-	}()
+	status := http.StatusOK
+	if !h.poolHasAccountForModel(assignment.Rule.Candidate) {
+		status = http.StatusServiceUnavailable
+	}
+	h.experiments.Record(assignment.Name, "shadow", ExperimentObservation{
+			Status:      status,
+		ToolRequest: requestUsesTools(shadowBody),
+	})
 }
 
-func contextWithoutCancel(ctx context.Context) context.Context {
-	return context.WithoutCancel(ctx)
+func (h *proxyHandler) poolHasAccountForModel(model string) bool {
+	meta, ok := lookupModelMetadata(model, h.pool)
+	if !ok || meta.Provider == "" {
+		return false
+	}
+	h.pool.mu.RLock()
+	defer h.pool.mu.RUnlock()
+	now := time.Now()
+	for _, a := range h.pool.accounts {
+		if a.Type != meta.Provider || a.Dead || a.Disabled {
+			continue
+		}
+		a.mu.Lock()
+		usable := !a.RateLimitUntil.After(now) && accountPrimaryUsageLocked(a) < primaryHardExcludeThreshold && accountSecondaryUsageLocked(a) < secondaryHardExcludeThreshold
+		a.mu.Unlock()
+		if usable {
+			return true
+		}
+	}
+	return false
 }
 
 func ioNopCloserBytes(body []byte) io.ReadCloser {
