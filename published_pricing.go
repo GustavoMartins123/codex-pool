@@ -3,7 +3,7 @@ package main
 import "time"
 
 var forcePublishedPricing = map[string]bool{
-	"gpt-6-astra":              true,
+	"gpt-6-astra":               true,
 	"claude-fable-5-1":          true,
 	"claude-sonnet-5":           true,
 	"k3":                        true,
@@ -39,7 +39,10 @@ var forcePublishedPricing = map[string]bool{
 func publishedModelPricing(now time.Time) map[string]ModelPricing {
 	prices := map[string]ModelPricing{
 		// OpenAI GPT-6 Astra model page, verified 2026-09-04; long rates cover the full request.
-		"gpt-6-astra":         tieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25),
+		"gpt-6-astra": tieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25),
+		// GPT-6.1-Sol has no published API rate yet (2026-09); mirror GPT-5.6-Sol
+		// until LiteLLM lists one (not in forcePublishedPricing).
+		"gpt-6.1-sol":         tieredPricing(5, 30, 0.5, 6.25, 272000, 10, 45, 1, 12.5),
 		"gpt-5.6-sol":         tieredPricing(5, 30, 0.5, 6.25, 272000, 10, 45, 1, 12.5),
 		"gpt-5.6-terra":       tieredPricing(2, 12, 0.2, 2.5, 272000, 4, 18, 0.4, 5),
 		"gpt-5.6-luna":        tieredPricing(0.2, 1.2, 0.02, 0.25, 272000, 0.4, 1.8, 0.04, 0.5),
@@ -91,7 +94,7 @@ func publishedModelPricing(now time.Time) map[string]ModelPricing {
 		"gemini-3.6-flash":       flatPricing(1.5, 7.5, 0.15, 0),
 		"gemini-3.7-flash":       flatPricing(0.75, 3.75, 0.075, 0),
 		// Gemini 3.8 Flash has no published API rate yet (2026-09); mirror 3.7 Flash.
-		"gemini-3.8-flash":       flatPricing(0.75, 3.75, 0.075, 0),
+		"gemini-3.8-flash": flatPricing(0.75, 3.75, 0.075, 0),
 	}
 
 	prices["claude-sonnet-5"] = flatPricing(2, 10, 0.2, 2.5)

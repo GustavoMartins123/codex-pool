@@ -224,7 +224,7 @@ func (pd *PricingData) fetchAndUpdate() {
 func (pd *PricingData) startPricingRefresh(ctx ...context.Context) {
 	c := context.Background()
 	if len(ctx) > 0 && ctx[0] != nil {
-	c = ctx[0]
+		c = ctx[0]
 	}
 	// Fetch fresh data on startup (in background)
 	go pd.fetchAndUpdate()
@@ -247,6 +247,8 @@ var pricingModelAliases = map[string]string{
 	"gpt-6-astra[1m]":            "gpt-6-astra",
 	"gpt-6-astra [1m]":           "gpt-6-astra",
 	"gpt-6-astra-none":           "gpt-6-astra",
+	"gpt-6.1-sol[1m]":            "gpt-6.1-sol",
+	"gpt-6.1-sol [1m]":           "gpt-6.1-sol",
 	"claude-opus-5 [1m]":         "claude-opus-5",
 	"claude-opus-5[1m]":          "claude-opus-5",
 	"claude-sonnet-5 [1m]":       "claude-sonnet-5",
