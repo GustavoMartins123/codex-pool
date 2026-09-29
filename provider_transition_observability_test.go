@@ -10,11 +10,11 @@ import (
 func TestTransitionDiagnosticsRedactNativeState(t *testing.T) {
 	h := &proxyHandler{cfg: &config{adminToken: "operator-token"}}
 	store := h.getContextHandoff()
-	if _, _, err := store.Prepare("conversation-1", AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "conversation-1"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
 		t.Fatal(err)
 	}
 	request := []byte(`{"model":"gemini","previous_response_id":"secret-response","prompt_cache_key":"secret-cache","input":[{"role":"user","content":"second"}]}`)
-	_, result, err := store.Prepare("conversation-1", AccountTypeAntigravity, "/v1/responses", request)
+	_, result, err := store.Prepare(conversationScopedKey("user", "conversation-1"), AccountTypeAntigravity, "/v1/responses", request)
 	if err != nil || !result.Switched {
 		t.Fatalf("handoff: %+v %v", result, err)
 	}
@@ -42,12 +42,12 @@ func TestTransitionDiagnosticsRedactNativeState(t *testing.T) {
 			t.Fatalf("missing diagnostics: %s", w.Body.String())
 		}
 	}
-	trace := h.transitionForTrace("conversation-1", AccountTypeAntigravity, make(http.Header))
+	trace := h.transitionForTrace("user", "conversation-1", AccountTypeAntigravity, make(http.Header))
 	if trace == nil || !trace.FreshSession || trace.Epoch != 1 {
 		t.Fatalf("trace=%+v", trace)
 	}
-	store.MarkTransitionOutcome("conversation-1", 1, 429, ProviderErrorContext, false)
-	events := store.TransitionDiagnostics("conversation-1")
+	store.MarkTransitionOutcome(conversationScopedKey("user", "conversation-1"), 1, 429, ProviderErrorContext, false)
+	events := store.TransitionDiagnostics(conversationScopedKey("user", "conversation-1"))
 	if len(events) != 1 || events[0].ErrorClass != ProviderErrorContext || events[0].StatusCode != 429 {
 		t.Fatalf("events=%+v", events)
 	}

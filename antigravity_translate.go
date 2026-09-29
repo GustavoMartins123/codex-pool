@@ -1503,7 +1503,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		}
 		trace := &RouteTrace{
 			RequestID:      reqID,
-			Transition:     h.transitionForTrace(conversationID, AccountTypeAntigravity, w.Header()),
+			Transition:     h.transitionForTrace(userID, conversationID, AccountTypeAntigravity, w.Header()),
 			Timestamp:      time.Now().UTC(),
 			Policy:         policy,
 			Selected:       RouteTarget{Provider: "antigravity", Model: canonical},
@@ -1528,7 +1528,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		nativeSeed := conversationID
 		freshSession := false
 		if conversationID != "" {
-			nativeSeed, freshSession = h.getContextHandoff().NativeSessionSeed(conversationID, AccountTypeAntigravity)
+			nativeSeed, freshSession = h.getContextHandoff().NativeSessionSeed(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
 		}
 		prepared, err := prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, nativeSeed)
 		if err != nil {
@@ -1538,7 +1538,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		var replayScope antigravityReplayScope
 		var transitionEpoch uint64
 		if conversationID != "" {
-			state, _ := h.getContextHandoff().State(conversationID)
+			state, _ := h.getContextHandoff().State(conversationScopedKey(userID, conversationID))
 			transitionEpoch = state.TransitionEpoch
 		}
 		prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transitionEpoch, freshSession)
@@ -1547,7 +1547,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			var envelope map[string]any
 			if json.Unmarshal(prepared.Body, &envelope) == nil {
 				request, _ := envelope["request"].(map[string]any)
-				h.getContextHandoff().BindNativeSession(conversationID, AccountTypeAntigravity, stringValue(request["sessionId"]))
+				h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, stringValue(request["sessionId"]))
 			}
 		}
 		attemptStarted := time.Now()
@@ -1562,7 +1562,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		trace.DurationMs = float64(time.Since(attemptStarted).Milliseconds())
 		trace.StatusCode = resp.StatusCode
 		if trace.Transition != nil {
-			h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, "", false)
+			h.getContextHandoff().MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, "", false)
 			trace.Transition.StatusCode = resp.StatusCode
 		}
 		h.getRouteTraces().Record(trace)
@@ -1579,12 +1579,12 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
 			if trace.Transition != nil {
 				trace.Transition.ErrorClass = providerErr.Class
-				h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, providerErr.Class, false)
+				h.getContextHandoff().MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, providerErr.Class, false)
 			}
-			state, ok := h.getContextHandoff().State(conversationID)
+			state, ok := h.getContextHandoff().State(conversationScopedKey(userID, conversationID))
 			if ok && (providerErr.Class == ProviderErrorSession || providerErr.Class == ProviderErrorContext || providerErr.Class == ProviderErrorUnknown) {
 				transition := &TransitionAttempt{
-					ConversationID: conversationID, Epoch: state.TransitionEpoch,
+					Owner: userID, ConversationID: conversationID, Epoch: state.TransitionEpoch,
 					From: state.LastTransitionFrom, To: AccountTypeAntigravity,
 				}
 				if h.getContextHandoff().RecoverNativeSession(transition) {
@@ -1593,7 +1593,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 						trace.Transition.RecoveryRetry = true
 					}
 					_ = resp.Body.Close()
-					nativeSeed, _ = h.getContextHandoff().NativeSessionSeed(conversationID, AccountTypeAntigravity)
+					nativeSeed, _ = h.getContextHandoff().NativeSessionSeed(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
 					prepared, err = prepareAntigravityRequest(r.URL.Path, body, requestedModel, projectID, nativeSeed)
 					if err != nil {
 						antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusBadRequest, []byte(err.Error()))
@@ -1604,7 +1604,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 					var envelope map[string]any
 					if json.Unmarshal(prepared.Body, &envelope) == nil {
 						request, _ := envelope["request"].(map[string]any)
-						h.getContextHandoff().BindNativeSession(conversationID, AccountTypeAntigravity, stringValue(request["sessionId"]))
+						h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, stringValue(request["sessionId"]))
 					}
 					log.Printf("conversation=%s transition=%s->antigravity epoch=%d recovery_retry=true error_class=%s", conversationID, transition.From, transition.Epoch, providerErr.Class)
 					atomic.AddInt64(&account.Inflight, 1)
@@ -1617,7 +1617,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 					trace.StatusCode = resp.StatusCode
 					if trace.Transition != nil {
 						trace.Transition.StatusCode = resp.StatusCode
-						h.getContextHandoff().MarkTransitionOutcome(conversationID, transition.Epoch, resp.StatusCode, "", true)
+						h.getContextHandoff().MarkTransitionOutcome(conversationScopedKey(userID, conversationID), transition.Epoch, resp.StatusCode, "", true)
 					}
 					h.getRouteTraces().Record(trace)
 					h.pool.recordRoutingOutcome(account.ID, time.Since(attemptStarted), 0, resp.StatusCode, time.Now())
@@ -1999,9 +1999,9 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 		if conversationID != "" {
-			h.getContextHandoff().MarkNativeSessionEstablished(conversationID, AccountTypeAntigravity)
+			h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
 			if text := responseTextFromObject(result); text != "" {
-				h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, text)
+				h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, text)
 			}
 		}
 		h.recordAntigravityTokenDrift(reqID, prepared, usage)
@@ -2054,10 +2054,10 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		flusher.Flush()
 	}
 	if conversationID != "" && validResponseSeen && scanner.Err() == nil {
-		h.getContextHandoff().MarkNativeSessionEstablished(conversationID, AccountTypeAntigravity)
+		h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
 	}
 	if conversationID != "" {
-		h.getContextHandoff().RecordAssistantText(conversationID, AccountTypeAntigravity, assistantText.String())
+		h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, assistantText.String())
 	}
 	h.recordAntigravityTokenDrift(reqID, prepared, usage)
 	h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)

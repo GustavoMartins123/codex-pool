@@ -18,11 +18,11 @@ func TestProviderTransitionStreamingModes(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/stream=%t", pair.name, streaming), func(t *testing.T) {
 				store := newConversationHandoffStore()
 				fromFormat, toFormat := transitionFormat(pair.from), transitionFormat(pair.to)
-				if _, _, err := store.Prepare("stream-matrix", pair.from, contextTestPath(fromFormat), contextTestBody(fromFormat, "prior", streaming)); err != nil {
+				if _, _, err := store.Prepare(conversationScopedKey("user", "stream-matrix"), pair.from, contextTestPath(fromFormat), contextTestBody(fromFormat, "prior", streaming)); err != nil {
 					t.Fatal(err)
 				}
-				store.RecordAssistantText("stream-matrix", pair.from, "answer")
-				out, result, err := store.Prepare("stream-matrix", pair.to, contextTestPath(toFormat), addContextOpaqueState(t, contextTestBody(toFormat, "current", streaming)))
+				store.RecordAssistantText(conversationScopedKey("user", "stream-matrix"), pair.from, "answer")
+				out, result, err := store.Prepare(conversationScopedKey("user", "stream-matrix"), pair.to, contextTestPath(toFormat), addContextOpaqueState(t, contextTestBody(toFormat, "current", streaming)))
 				if err != nil || !result.Switched {
 					t.Fatalf("handoff=%+v err=%v", result, err)
 				}
@@ -62,7 +62,7 @@ func TestProviderTransitionProductionSequences(t *testing.T) {
 				if index > 0 {
 					body = addContextOpaqueState(t, body)
 				}
-				out, result, err := store.Prepare("sequence", provider, contextTestPath(format), body)
+				out, result, err := store.Prepare(conversationScopedKey("user", "sequence"), provider, contextTestPath(format), body)
 				if err != nil || result.Switched != (index > 0) {
 					t.Fatalf("step=%d result=%+v err=%v", index, result, err)
 				}
@@ -82,18 +82,18 @@ func TestProviderTransitionProductionSequences(t *testing.T) {
 						t.Fatalf("step %d orphan tools: calls=%d results=%d", index, calls, results)
 					}
 				}
-				state, _ := store.State("sequence")
+				state, _ := store.State(conversationScopedKey("user", "sequence"))
 				if state.TransitionEpoch != uint64(index) || state.ActiveProvider != provider {
 					t.Fatalf("step %d state=%+v", index, state)
 				}
 				if provider == AccountTypeAntigravity {
-					seed, fresh := store.NativeSessionSeed("sequence", provider)
+					seed, fresh := store.NativeSessionSeed(conversationScopedKey("user", "sequence"), provider)
 					if !fresh || (previousSeed != "" && seed == previousSeed) {
 						t.Fatalf("step %d reused Antigravity seed", index)
 					}
 					previousSeed = seed
 				}
-				store.RecordAssistantText("sequence", provider, fmt.Sprintf("answer_%d", index))
+				store.RecordAssistantText(conversationScopedKey("user", "sequence"), provider, fmt.Sprintf("answer_%d", index))
 			}
 		})
 	}
@@ -138,10 +138,10 @@ func TestAntigravityTransitionHTTPErrorMatrix(t *testing.T) {
 				}),
 			}
 			store := h.getContextHandoff()
-			if _, _, err := store.Prepare("error-matrix", AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior", false)); err != nil {
+			if _, _, err := store.Prepare(conversationScopedKey("user", "error-matrix"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior", false)); err != nil {
 				t.Fatal(err)
 			}
-			body, result, err := store.Prepare("error-matrix", AccountTypeAntigravity, "/v1/responses", addContextOpaqueState(t, contextTestBody(contextFormatResponses, "current", false)))
+			body, result, err := store.Prepare(conversationScopedKey("user", "error-matrix"), AccountTypeAntigravity, "/v1/responses", addContextOpaqueState(t, contextTestBody(contextFormatResponses, "current", false)))
 			if err != nil || !result.Switched {
 				t.Fatalf("handoff=%+v err=%v", result, err)
 			}

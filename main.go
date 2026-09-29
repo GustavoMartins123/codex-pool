@@ -2551,7 +2551,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		profile := parsePoolAutoProfile(requestedModel)
 		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
 		var conversation *ConversationState
-		if state, ok := h.getContextHandoff().State(conversationID); ok {
+		if state, ok := h.getContextHandoff().State(conversationScopedKey(userID, conversationID)); ok {
 			conversation = &state
 		}
 		dec, err := h.getPoolAuto().OrchestrateWithTransition(profile, reqCaps, conversationID, h.pool, h.getCircuitBreakers(), h.pricing, h.metrics, conversation)
@@ -2585,7 +2585,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(AccountTypeAntigravity) }) {
 			return
 		}
-		bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, AccountTypeAntigravity, r.URL.Path, bodyBytes)
+		bodyBytes, err = h.prepareProviderContextHandoff(w, userID, conversationID, AccountTypeAntigravity, r.URL.Path, bodyBytes)
 		if err != nil {
 			http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
 			return
@@ -2659,7 +2659,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	transitionSourceBody := append([]byte(nil), bodyBytes...)
 	transitionSourcePath := r.URL.Path
-	bodyBytes, err = h.prepareProviderContextHandoff(w, conversationID, accountType, r.URL.Path, bodyBytes)
+	bodyBytes, err = h.prepareProviderContextHandoff(w, userID, conversationID, accountType, r.URL.Path, bodyBytes)
 	if err != nil {
 		http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
 		return
@@ -2960,7 +2960,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				trigger = Trigger429
 			}
 			var conversation *ConversationState
-			if state, ok := h.getContextHandoff().State(conversationID); ok {
+			if state, ok := h.getContextHandoff().State(conversationScopedKey(userID, conversationID)); ok {
 				conversation = &state
 			}
 			fallbackModel, fallbackReason, hasFallback := "", "", false
@@ -2985,7 +2985,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					http.Error(w, "fallback model could not be written to request", http.StatusBadRequest)
 					return
 				}
-				fallbackBody, err = h.prepareProviderContextHandoff(w, conversationID, fallbackMeta.Provider, transitionSourcePath, fallbackBody)
+				fallbackBody, err = h.prepareProviderContextHandoff(w, userID, conversationID, fallbackMeta.Provider, transitionSourcePath, fallbackBody)
 				if err != nil {
 					http.Error(w, "fallback context handoff error: "+err.Error(), http.StatusBadRequest)
 					return
@@ -3110,7 +3110,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		circuitState := string(h.getCircuitBreakers().State(providerKey(string(accountType))))
 		trace := &RouteTrace{
 			RequestID:      reqID,
-			Transition:     h.transitionForTrace(conversationID, accountType, w.Header()),
+			Transition:     h.transitionForTrace(userID, conversationID, accountType, w.Header()),
 			Timestamp:      time.Now().UTC(),
 			Policy:         policy,
 			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
@@ -3150,7 +3150,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if resp != nil {
 			trace.StatusCode = resp.StatusCode
 			if trace.Transition != nil {
-				h.getContextHandoff().MarkTransitionOutcome(conversationID, trace.Transition.Epoch, resp.StatusCode, "", false)
+				h.getContextHandoff().MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, "", false)
 				trace.Transition.StatusCode = resp.StatusCode
 			}
 			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, time.Now())
@@ -3927,7 +3927,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if conversationID != "" && sampleBuf != nil && sampleBuf.Len() > 0 {
 				if text := extractAssistantTextFromResponseSample(sampleBuf.Bytes()); text != "" {
-					h.getContextHandoff().RecordAssistantText(conversationID, accountType, text)
+					h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), accountType, text)
 				}
 			}
 			if conversationID == "" {

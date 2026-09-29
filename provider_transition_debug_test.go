@@ -11,10 +11,10 @@ import (
 func TestTransitionDryRunDoesNotMutateConversation(t *testing.T) {
 	h := &proxyHandler{cfg: &config{adminToken: "operator-token"}}
 	store := h.getContextHandoff()
-	if _, _, err := store.Prepare("dry-run", AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "dry-run"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := store.State("dry-run")
+	before, _ := store.State(conversationScopedKey("user", "dry-run"))
 	request := `{"conversation_id":"dry-run","from":"codex","to":"antigravity","model":"gemini","request":{"model":"gemini","previous_response_id":"private-response-id","input":[{"role":"user","content":"next"}]}}`
 	r := httptest.NewRequest(http.MethodPost, "/admin/debug/transition", strings.NewReader(request))
 	r.Header.Set("X-Admin-Token", "operator-token")
@@ -33,8 +33,8 @@ func TestTransitionDryRunDoesNotMutateConversation(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "previous_response_id") || strings.Contains(w.Body.String(), "private-response-id") {
 		t.Fatalf("redaction failed: %s", w.Body.String())
 	}
-	after, _ := store.State("dry-run")
-	if after.TransitionEpoch != before.TransitionEpoch || after.ActiveProvider != before.ActiveProvider || len(after.Messages) != len(before.Messages) || len(store.TransitionDiagnostics("dry-run")) != 0 {
+	after, _ := store.State(conversationScopedKey("user", "dry-run"))
+	if after.TransitionEpoch != before.TransitionEpoch || after.ActiveProvider != before.ActiveProvider || len(after.Messages) != len(before.Messages) || len(store.TransitionDiagnostics(conversationScopedKey("user", "dry-run"))) != 0 {
 		t.Fatalf("dry run mutated conversation: before=%+v after=%+v", before, after)
 	}
 	unauth := httptest.NewRecorder()

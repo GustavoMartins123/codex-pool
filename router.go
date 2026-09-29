@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -340,7 +341,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.URL.Path == "/admin/transitions" {
-			events := h.getContextHandoff().TransitionDiagnostics("")
+			events := h.getContextHandoff().TransitionDiagnostics(conversationKey{})
 			sort.Slice(events, func(i, j int) bool { return events[i].Timestamp.After(events[j].Timestamp) })
 			if len(events) > 100 {
 				events = events[:100]
@@ -353,13 +354,18 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, http.StatusBadRequest, "invalid conversation id")
 			return
 		}
-		state, ok := h.getContextHandoff().State(id)
-		if !ok {
+		key, matches := h.getContextHandoff().resolveConversationKey("", id)
+		if matches == 0 {
 			respondJSONError(w, http.StatusNotFound, "conversation not found")
 			return
 		}
-		respondJSON(w, map[string]any{"conversation_id": id, "active_provider": state.ActiveProvider,
-			"transition_epoch": state.TransitionEpoch, "transitions": h.getContextHandoff().TransitionDiagnostics(id)})
+		if matches > 1 {
+			respondJSONError(w, http.StatusConflict, fmt.Sprintf("conversation id shared by %d owners", matches))
+			return
+		}
+		state, _ := h.getContextHandoff().State(key)
+		respondJSON(w, map[string]any{"conversation_id": id, "owner": key.owner, "active_provider": state.ActiveProvider,
+			"transition_epoch": state.TransitionEpoch, "transitions": h.getContextHandoff().TransitionDiagnostics(key)})
 		return
 	}
 	if h.cfg != nil && h.cfg.debug.Load() {

@@ -32,7 +32,7 @@ func TestAuditProviderTransitionRandomizedLongHops(t *testing.T) {
 		if step > 0 {
 			body = addContextOpaqueState(t, body)
 		}
-		out, result, err := store.Prepare("audit-random-walk", provider, contextTestPath(format), body)
+		out, result, err := store.Prepare(conversationScopedKey("user", "audit-random-walk"), provider, contextTestPath(format), body)
 		if err != nil {
 			t.Fatalf("step %d (%s): %v", step, provider, err)
 		}
@@ -75,7 +75,7 @@ func TestAuditProviderTransitionRandomizedLongHops(t *testing.T) {
 			t.Fatalf("step %d: orphan tool state calls=%d results=%d valid=%v", step, calls, results, valid)
 		}
 
-		state, _ := store.State("audit-random-walk")
+		state, _ := store.State(conversationScopedKey("user", "audit-random-walk"))
 		if state.TransitionEpoch != uint64(switches) {
 			t.Fatalf("step %d: transition epoch %d want %d", step, state.TransitionEpoch, switches)
 		}
@@ -88,12 +88,12 @@ func TestAuditProviderTransitionRandomizedLongHops(t *testing.T) {
 		}
 
 		if provider == AccountTypeAntigravity {
-			if _, fresh := store.NativeSessionSeed("audit-random-walk", provider); !fresh {
+			if _, fresh := store.NativeSessionSeed(conversationScopedKey("user", "audit-random-walk"), provider); !fresh {
 				t.Fatalf("step %d: Antigravity session seed not fresh on reentry", step)
 			}
 		}
 
-		store.RecordAssistantText("audit-random-walk", provider, fmt.Sprintf("answer_%d", step))
+		store.RecordAssistantText(conversationScopedKey("user", "audit-random-walk"), provider, fmt.Sprintf("answer_%d", step))
 		previous = provider
 	}
 }

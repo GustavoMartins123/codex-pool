@@ -14,17 +14,17 @@ func TestTransitionEpochChangesRegeneratedToolIDs(t *testing.T) {
 		{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "foreign-call", Text: "found"}}},
 		transitionText("assistant", "done"),
 	})
-	if _, _, err := store.Prepare("epoch-conversation", AccountTypeAntigravity, "/v1/responses", initial); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "epoch-conversation"), AccountTypeAntigravity, "/v1/responses", initial); err != nil {
 		t.Fatal(err)
 	}
 	toCodex := contextTestBody(contextFormatResponses, "switch to Codex", false)
-	out, result, err := store.Prepare("epoch-conversation", AccountTypeCodex, "/v1/responses", toCodex)
+	out, result, err := store.Prepare(conversationScopedKey("user", "epoch-conversation"), AccountTypeCodex, "/v1/responses", toCodex)
 	if err != nil || !result.Switched {
 		t.Fatalf("first switch: %+v %v", result, err)
 	}
 	firstID := firstTransitionToolID(t, out)
 	toAnti := contextTestBody(contextFormatResponses, "switch back to Antigravity", false)
-	out, result, err = store.Prepare("epoch-conversation", AccountTypeAntigravity, "/v1/responses", toAnti)
+	out, result, err = store.Prepare(conversationScopedKey("user", "epoch-conversation"), AccountTypeAntigravity, "/v1/responses", toAnti)
 	if err != nil || !result.Switched {
 		t.Fatalf("second switch: %+v %v", result, err)
 	}
@@ -32,7 +32,7 @@ func TestTransitionEpochChangesRegeneratedToolIDs(t *testing.T) {
 	if firstID == secondID {
 		t.Fatalf("tool ID reused across epochs: %s", firstID)
 	}
-	state, _ := store.State("epoch-conversation")
+	state, _ := store.State(conversationScopedKey("user", "epoch-conversation"))
 	if state.TransitionEpoch != 2 || state.ProviderSessions[AccountTypeAntigravity].Epoch != 2 {
 		t.Fatalf("epoch state=%+v", state)
 	}

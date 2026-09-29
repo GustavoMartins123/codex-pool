@@ -48,11 +48,11 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 			}
 			store := h.getContextHandoff()
 			conversationID := "recovery-conversation"
-			if _, _, err := store.Prepare(conversationID, AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
+			if _, _, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
 				t.Fatal(err)
 			}
 			body := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "second", false))
-			clean, result, err := store.Prepare(conversationID, AccountTypeAntigravity, "/v1/responses", body)
+			clean, result, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeAntigravity, "/v1/responses", body)
 			if err != nil || !result.Switched {
 				t.Fatalf("handoff: %+v %v", result, err)
 			}
@@ -67,7 +67,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 			if test.alwaysFail && !strings.Contains(w.Body.String(), "invalid session") {
 				t.Fatalf("final error was masked: %s", w.Body.String())
 			}
-			state, _ := store.State(conversationID)
+			state, _ := store.State(conversationScopedKey("user", conversationID))
 			if state.TransitionEpoch != 2 || state.ProviderSessions[AccountTypeAntigravity].Established == test.alwaysFail {
 				t.Fatalf("recovery state=%+v", state.ProviderSessions[AccountTypeAntigravity])
 			}

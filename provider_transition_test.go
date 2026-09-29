@@ -129,17 +129,17 @@ func TestProviderTransitionCompatibilityMatrix(t *testing.T) {
 				if scenario == "reasoning" {
 					initial = addContextOpaqueState(t, initial)
 				}
-				if _, result, err := store.Prepare("transition-probe", pair.from, contextTestPath(fromFormat), initial); err != nil || result.Switched {
+				if _, result, err := store.Prepare(conversationScopedKey("user", "transition-probe"), pair.from, contextTestPath(fromFormat), initial); err != nil || result.Switched {
 					t.Fatalf("initial request: switched=%v err=%v", result.Switched, err)
 				}
 				// Capture the visible answer independently of upstream response IDs.
-				store.RecordAssistantText("transition-probe", pair.from, "provider answer")
+				store.RecordAssistantText(conversationScopedKey("user", "transition-probe"), pair.from, "provider answer")
 				next := addContextOpaqueState(t, transitionBody(t, toFormat, []Message{transitionText("user", "next question")}))
 				var raw map[string]any
 				_ = json.Unmarshal(next, &raw)
 				raw["thoughtSignature"] = "foreign-signature"
 				next, _ = json.Marshal(raw)
-				out, result, err := store.Prepare("transition-probe", pair.to, contextTestPath(toFormat), next)
+				out, result, err := store.Prepare(conversationScopedKey("user", "transition-probe"), pair.to, contextTestPath(toFormat), next)
 				if err != nil || !result.Switched {
 					t.Fatalf("handoff: switched=%v err=%v", result.Switched, err)
 				}
@@ -206,11 +206,11 @@ func strictAntigravityTransitionStatus(body []byte, failure string) (int, string
 func TestProviderTransitionAntigravityStrictUpstream(t *testing.T) {
 	store := newConversationHandoffStore()
 	from := contextTestBody(contextFormatResponses, "hello", true)
-	if _, _, err := store.Prepare("strict-upstream", AccountTypeCodex, "/v1/responses", from); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "strict-upstream"), AccountTypeCodex, "/v1/responses", from); err != nil {
 		t.Fatal(err)
 	}
 	next := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "continue", true))
-	clean, result, err := store.Prepare("strict-upstream", AccountTypeAntigravity, "/v1/responses", next)
+	clean, result, err := store.Prepare(conversationScopedKey("user", "strict-upstream"), AccountTypeAntigravity, "/v1/responses", next)
 	if err != nil || !result.Switched {
 		t.Fatalf("handoff: switched=%v err=%v", result.Switched, err)
 	}

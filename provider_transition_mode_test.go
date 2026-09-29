@@ -45,11 +45,11 @@ func TestTransitionModeAppliedToHandoff(t *testing.T) {
 			initial := transitionBody(t, fromFormat, []Message{
 				transitionText("user", "old request"), transitionText("assistant", "old visible answer"),
 			})
-			if _, _, err := store.Prepare("mode-conversation", test.from, contextTestPath(fromFormat), initial); err != nil {
+			if _, _, err := store.Prepare(conversationScopedKey("user", "mode-conversation"), test.from, contextTestPath(fromFormat), initial); err != nil {
 				t.Fatal(err)
 			}
 			request := addContextOpaqueState(t, transitionBody(t, toFormat, []Message{transitionText("user", "new request")}))
-			out, result, err := store.Prepare("mode-conversation", test.to, contextTestPath(toFormat), request)
+			out, result, err := store.Prepare(conversationScopedKey("user", "mode-conversation"), test.to, contextTestPath(toFormat), request)
 			if err != nil || !result.Switched || result.Mode != test.want || result.From != test.from {
 				t.Fatalf("handoff result=%+v err=%v", result, err)
 			}

@@ -8,11 +8,16 @@ import (
 type TransitionMode string
 
 type TransitionAttempt struct {
+	Owner          string
 	ConversationID string
 	Epoch          uint64
 	From           AccountType
 	To             AccountType
 	RecoveryUsed   bool
+}
+
+func (a TransitionAttempt) Key() conversationKey {
+	return conversationScopedKey(a.Owner, a.ConversationID)
 }
 
 type TransitionCompatibility struct {

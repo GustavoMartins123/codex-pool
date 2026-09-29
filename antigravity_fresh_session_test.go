@@ -44,7 +44,7 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 		if foreign {
 			body = addContextOpaqueState(t, body)
 		}
-		prepared, _, err := store.Prepare(conversationID, AccountTypeAntigravity, "/v1/responses", body)
+		prepared, _, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeAntigravity, "/v1/responses", body)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,12 +55,12 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 		}
 	}
 	sendAnti("first direct turn", false)
-	firstState, _ := store.State(conversationID)
+	firstState, _ := store.State(conversationScopedKey("user", conversationID))
 	if !firstState.ProviderSessions[AccountTypeAntigravity].Established {
 		t.Fatal("valid first response did not establish native session")
 	}
 	codex := providerSessionRequest(t, contextFormatResponses, "Codex turn", nil)
-	if _, result, err := store.Prepare(conversationID, AccountTypeCodex, "/v1/responses", codex); err != nil || !result.Switched {
+	if _, result, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeCodex, "/v1/responses", codex); err != nil || !result.Switched {
 		t.Fatalf("Antigravity -> Codex: %+v %v", result, err)
 	}
 	sendAnti("return to Antigravity", true)
@@ -84,7 +84,7 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 			t.Fatalf("previous epoch replay reached fresh session: %s", encoded)
 		}
 	}
-	state, _ := store.State(conversationID)
+	state, _ := store.State(conversationScopedKey("user", conversationID))
 	if state.TransitionEpoch != 2 || state.ProviderSessions[AccountTypeAntigravity].Epoch != 2 || !state.ProviderSessions[AccountTypeAntigravity].Established {
 		t.Fatalf("new native epoch not established: %+v", state.ProviderSessions[AccountTypeAntigravity])
 	}

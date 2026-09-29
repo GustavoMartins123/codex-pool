@@ -48,11 +48,11 @@ func TestConversationIRPreservesImagesAcrossSupportedProviders(t *testing.T) {
 			fromFormat, toFormat := transitionFormat(pair.from), transitionFormat(pair.to)
 			image := Message{Role: "user", Parts: []MessagePart{{Type: "text", Text: "describe image"}, {Type: "image", ImageURL: "data:image/png;base64,aGVsbG8=", MimeType: "image/png", Data: "aGVsbG8="}}}
 			first := transitionBody(t, fromFormat, []Message{image, transitionText("assistant", "it is an image")})
-			if _, _, err := store.Prepare("image-conversation", pair.from, contextTestPath(fromFormat), first); err != nil {
+			if _, _, err := store.Prepare(conversationScopedKey("user", "image-conversation"), pair.from, contextTestPath(fromFormat), first); err != nil {
 				t.Fatal(err)
 			}
 			next := transitionBody(t, toFormat, []Message{transitionText("user", "continue")})
-			out, result, err := store.Prepare("image-conversation", pair.to, contextTestPath(toFormat), next)
+			out, result, err := store.Prepare(conversationScopedKey("user", "image-conversation"), pair.to, contextTestPath(toFormat), next)
 			if err != nil || !result.Switched {
 				t.Fatalf("handoff=%+v err=%v", result, err)
 			}

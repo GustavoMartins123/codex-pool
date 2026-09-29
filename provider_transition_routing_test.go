@@ -70,12 +70,12 @@ func TestFallbackGraphSkipsPreviouslyVisitedModel(t *testing.T) {
 func TestFallbackPayloadRebuiltForTargetProtocol(t *testing.T) {
 	store := newConversationHandoffStore()
 	initial := contextTestBody(contextFormatResponses, "prior turn", false)
-	if _, _, err := store.Prepare("fallback-conversation", AccountTypeCodex, "/v1/responses", initial); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "fallback-conversation"), AccountTypeCodex, "/v1/responses", initial); err != nil {
 		t.Fatal(err)
 	}
-	store.RecordAssistantText("fallback-conversation", AccountTypeCodex, "prior answer")
+	store.RecordAssistantText(conversationScopedKey("user", "fallback-conversation"), AccountTypeCodex, "prior answer")
 	source := addContextOpaqueState(t, []byte(`{"model":"claude-sonnet-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"current request"}]}]}`))
-	clean, result, err := store.Prepare("fallback-conversation", AccountTypeClaude, "/v1/responses", source)
+	clean, result, err := store.Prepare(conversationScopedKey("user", "fallback-conversation"), AccountTypeClaude, "/v1/responses", source)
 	if err != nil || !result.Switched {
 		t.Fatalf("handoff=%+v err=%v", result, err)
 	}
@@ -128,10 +128,10 @@ func TestFailedCodexRequestFallsBackWithSafeHistory(t *testing.T) {
 		}),
 	}
 	store := h.getContextHandoff()
-	if _, _, err := store.Prepare("fallback-live", AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior request", false)); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "fallback-live"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior request", false)); err != nil {
 		t.Fatal(err)
 	}
-	store.RecordAssistantText("fallback-live", AccountTypeCodex, "prior answer")
+	store.RecordAssistantText(conversationScopedKey("user", "fallback-live"), AccountTypeCodex, "prior answer")
 	body := `{"model":"gpt-5.6-sol","conversation_id":"fallback-live","previous_response_id":"resp_codex_foreign","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"current request"}]}],"stream":false}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("transition-fallback-secret", "user"))

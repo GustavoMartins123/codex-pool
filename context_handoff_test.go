@@ -119,14 +119,14 @@ func TestUniversalContextHandoffProviderMatrix(t *testing.T) {
 			store := newConversationHandoffStore()
 			conversationID := "conversation-" + strings.ReplaceAll(test.name, " ", "-")
 			first := contextTestBody(test.firstFormat, "first-provider-turn", true)
-			if _, result, err := store.Prepare(conversationID, test.from, contextTestPath(test.firstFormat), first); err != nil {
+			if _, result, err := store.Prepare(conversationScopedKey("user", conversationID), test.from, contextTestPath(test.firstFormat), first); err != nil {
 				t.Fatalf("prepare first provider: %v", err)
 			} else if result.Switched {
 				t.Fatal("first request must not be marked as a switch")
 			}
 
 			second := addContextOpaqueState(t, contextTestBody(test.secondFormat, "second-provider-turn", true))
-			rewritten, result, err := store.Prepare(conversationID, test.to, contextTestPath(test.secondFormat), second)
+			rewritten, result, err := store.Prepare(conversationScopedKey("user", conversationID), test.to, contextTestPath(test.secondFormat), second)
 			if err != nil {
 				t.Fatalf("prepare provider switch: %v", err)
 			}
@@ -147,7 +147,7 @@ func TestUniversalContextHandoffProviderMatrix(t *testing.T) {
 			if !strings.Contains(text, "first-provider-turn") || !strings.Contains(text, "second-provider-turn") {
 				t.Fatalf("normalized history was not transported: %q", text)
 			}
-			state, ok := store.State(conversationID)
+			state, ok := store.State(conversationScopedKey("user", conversationID))
 			if !ok || len(state.Messages) < 2 {
 				t.Fatalf("missing normalized state: %+v", state)
 			}
@@ -168,11 +168,11 @@ func TestUniversalContextHandoffRegeneratesToolCallIDs(t *testing.T) {
 			{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_old","content":"sunny"}]}
 		]
 	}`)
-	if _, _, err := store.Prepare("tools-conversation", AccountTypeClaude, "/v1/messages", first); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "tools-conversation"), AccountTypeClaude, "/v1/messages", first); err != nil {
 		t.Fatal(err)
 	}
 	second := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "continue after tool", true))
-	rewritten, result, err := store.Prepare("tools-conversation", AccountTypeCodex, "/v1/responses", second)
+	rewritten, result, err := store.Prepare(conversationScopedKey("user", "tools-conversation"), AccountTypeCodex, "/v1/responses", second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	store := newConversationHandoffStore()
 	large := strings.Repeat("context-data-", 50_000)
 	body := contextTestBody(contextFormatResponses, large, true)
-	rewritten, result, err := store.Prepare("large-conversation", AccountTypeCodex, "/v1/responses", body)
+	rewritten, result, err := store.Prepare(conversationScopedKey("user", "large-conversation"), AccountTypeCodex, "/v1/responses", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	if string(rewritten) != string(body) {
 		t.Fatal("same-provider large request was mutated")
 	}
-	state, ok := store.State("large-conversation")
+	state, ok := store.State(conversationScopedKey("user", "large-conversation"))
 	if !ok || state.Summary == "" {
 		t.Fatalf("internally compacted state missing summary: %+v", state)
 	}
@@ -252,7 +252,7 @@ func TestUniversalContextHandoffCompactsLargeConversation(t *testing.T) {
 	}
 
 	next := addContextOpaqueState(t, contextTestBody(contextFormatClaude, "after compaction", true))
-	rewritten, result, err = store.Prepare("large-conversation", AccountTypeClaude, "/v1/messages", next)
+	rewritten, result, err = store.Prepare(conversationScopedKey("user", "large-conversation"), AccountTypeClaude, "/v1/messages", next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestAntigravitySameProviderLargeRequestIsCompacted(t *testing.T) {
 
 	h := &proxyHandler{}
 	w := httptest.NewRecorder()
-	rewritten, err := h.prepareProviderContextHandoff(w, "antigravity-large", AccountTypeAntigravity, "/v1/responses", body)
+	rewritten, err := h.prepareProviderContextHandoff(w, "user", "antigravity-large", AccountTypeAntigravity, "/v1/responses", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,7 +503,7 @@ func TestSameProviderLargeToolHistoryIsNotRewritten(t *testing.T) {
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
 		]
 	}`)
-	rewritten, result, err := store.Prepare("same-provider-large-tools", AccountTypeCodex, "/v1/responses", body)
+	rewritten, result, err := store.Prepare(conversationScopedKey("user", "same-provider-large-tools"), AccountTypeCodex, "/v1/responses", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,11 +518,11 @@ func TestSameProviderLargeToolHistoryIsNotRewritten(t *testing.T) {
 func TestUniversalContextHandoffPreservesStreamingFlag(t *testing.T) {
 	store := newConversationHandoffStore()
 	first := contextTestBody(contextFormatResponses, "first", true)
-	if _, _, err := store.Prepare("stream-conversation", AccountTypeCodex, "/v1/responses", first); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "stream-conversation"), AccountTypeCodex, "/v1/responses", first); err != nil {
 		t.Fatal(err)
 	}
 	second := addContextOpaqueState(t, contextTestBody(contextFormatClaude, "second", true))
-	rewritten, _, err := store.Prepare("stream-conversation", AccountTypeClaude, "/v1/messages", second)
+	rewritten, _, err := store.Prepare(conversationScopedKey("user", "stream-conversation"), AccountTypeClaude, "/v1/messages", second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,7 @@ func TestUniversalContextHandoffPreservesStreamingFlag(t *testing.T) {
 func TestUniversalContextHandoffWebSocketFrame(t *testing.T) {
 	store := newConversationHandoffStore()
 	first := contextTestBody(contextFormatClaude, "claude websocket predecessor", true)
-	if _, _, err := store.Prepare("ws-conversation", AccountTypeClaude, "/v1/messages", first); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "ws-conversation"), AccountTypeClaude, "/v1/messages", first); err != nil {
 		t.Fatal(err)
 	}
 	frame := []byte(`{
@@ -550,7 +550,7 @@ func TestUniversalContextHandoffWebSocketFrame(t *testing.T) {
 			"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"websocket turn"}]}]
 		}
 	}`)
-	rewritten, result, err := store.Prepare("ws-conversation", AccountTypeCodex, "/v1/responses", frame)
+	rewritten, result, err := store.Prepare(conversationScopedKey("user", "ws-conversation"), AccountTypeCodex, "/v1/responses", frame)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestUniversalContextHandoffWebSocketFrame(t *testing.T) {
 func TestUniversalContextHandoffKeepsProviderLocalStateOnSameProvider(t *testing.T) {
 	store := newConversationHandoffStore()
 	body := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "same provider", true))
-	rewritten, result, err := store.Prepare("same-provider", AccountTypeCodex, "/v1/responses", body)
+	rewritten, result, err := store.Prepare(conversationScopedKey("user", "same-provider"), AccountTypeCodex, "/v1/responses", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,7 @@ func TestUniversalContextHandoffKeepsProviderLocalStateOnSameProvider(t *testing
 func TestUniversalContextHandoffCapturesAssistantResponse(t *testing.T) {
 	store := newConversationHandoffStore()
 	first := contextTestBody(contextFormatResponses, "first user turn", true)
-	if _, _, err := store.Prepare("response-capture", AccountTypeCodex, "/v1/responses", first); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", "response-capture"), AccountTypeCodex, "/v1/responses", first); err != nil {
 		t.Fatal(err)
 	}
 	sample := []byte(
@@ -599,10 +599,10 @@ func TestUniversalContextHandoffCapturesAssistantResponse(t *testing.T) {
 	if text != "assistant answer" {
 		t.Fatalf("captured assistant text = %q", text)
 	}
-	store.RecordAssistantText("response-capture", AccountTypeCodex, text)
+	store.RecordAssistantText(conversationScopedKey("user", "response-capture"), AccountTypeCodex, text)
 
 	next := addContextOpaqueState(t, contextTestBody(contextFormatClaude, "next provider turn", true))
-	rewritten, _, err := store.Prepare("response-capture", AccountTypeClaude, "/v1/messages", next)
+	rewritten, _, err := store.Prepare(conversationScopedKey("user", "response-capture"), AccountTypeClaude, "/v1/messages", next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,24 +619,24 @@ func TestFailedTransitionRetriesAsSwitch(t *testing.T) {
 	convID := "failed-transition-retry"
 
 	first := contextTestBody(contextFormatResponses, "first user turn", true)
-	if _, _, err := store.Prepare(convID, AccountTypeCodex, "/v1/responses", first); err != nil {
+	if _, _, err := store.Prepare(conversationScopedKey("user", convID), AccountTypeCodex, "/v1/responses", first); err != nil {
 		t.Fatal(err)
 	}
-	store.RecordAssistantText(convID, AccountTypeCodex, "first answer")
-	store.MarkNativeSessionEstablished(convID, AccountTypeCodex)
+	store.RecordAssistantText(conversationScopedKey("user", convID), AccountTypeCodex, "first answer")
+	store.MarkNativeSessionEstablished(conversationScopedKey("user", convID), AccountTypeCodex)
 
 	second := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "second turn on gemini", true))
-	out2, result2, err := store.Prepare(convID, AccountTypeAntigravity, "/v1/responses", second)
+	out2, result2, err := store.Prepare(conversationScopedKey("user", convID), AccountTypeAntigravity, "/v1/responses", second)
 	if err != nil || !result2.Switched {
 		t.Fatalf("turn 2 should switch: switched=%v err=%v", result2.Switched, err)
 	}
 
 	// Turn 2 fails with 429
-	store.MarkTransitionOutcome(convID, result2.Epoch, 429, ProviderErrorQuota, false)
+	store.MarkTransitionOutcome(conversationScopedKey("user", convID), result2.Epoch, 429, ProviderErrorQuota, false)
 
 	// Turn 3 retries or continues with the same client state
 	third := addContextOpaqueState(t, contextTestBody(contextFormatResponses, "third turn retry", true))
-	out3, result3, err := store.Prepare(convID, AccountTypeAntigravity, "/v1/responses", third)
+	out3, result3, err := store.Prepare(conversationScopedKey("user", convID), AccountTypeAntigravity, "/v1/responses", third)
 	if err != nil {
 		t.Fatal(err)
 	}

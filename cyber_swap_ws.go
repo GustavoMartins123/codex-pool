@@ -176,6 +176,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 	state := &codexRelayState{
 		h:                    h,
 		opts:                 opts,
+		owner:                opts.UserID,
 		ctx:                  relayCtx,
 		clientConn:           clientConn,
 		clientWriter:         &webSocketWriter{conn: clientConn},
@@ -208,6 +209,7 @@ type codexRelayTurn struct {
 }
 
 type codexRelayState struct {
+	owner string
 	// Both pumps transition turns under this lock; response IDs bind to the
 	// request snapshot, never to the most recently received client frame.
 	turnMu sync.Mutex
@@ -452,7 +454,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			turn.assistantText.WriteString(text)
 		}
 		if isTerminalCodexWebSocketEvent(data) && turn.conversationID != "" && s.h != nil {
-			s.h.getContextHandoff().RecordAssistantText(turn.conversationID, AccountTypeCodex, turn.assistantText.String())
+			s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
 	filtered, drop, changed := filterHostedMCPResponseJSON(data)
@@ -526,7 +528,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	}
 	if s.h != nil && conversationID != "" {
 		rewritten, result, err := s.h.getContextHandoff().Prepare(
-			conversationID,
+			conversationScopedKey(s.owner, conversationID),
 			AccountTypeCodex,
 			s.opts.RequestPath,
 			data,

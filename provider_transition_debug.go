@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 )
 
 type transitionDryRunRequest struct {
+	Owner          string          `json:"owner,omitempty"`
 	ConversationID string          `json:"conversation_id"`
 	From           AccountType     `json:"from"`
 	To             AccountType     `json:"to"`
@@ -87,9 +89,18 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 		return
 	}
 	store := h.getContextHandoff()
+	key, matches := store.resolveConversationKey(input.Owner, input.ConversationID)
+	if matches == 0 {
+		respondJSONError(w, http.StatusNotFound, "conversation or source provider not found")
+		return
+	}
+	if matches > 1 {
+		respondJSONError(w, http.StatusConflict, fmt.Sprintf("conversation id shared by %d owners; set \"owner\" to disambiguate", matches))
+		return
+	}
 	store.mu.Lock()
-	record, ok := store.records[input.ConversationID]
-	if !ok || record.LastProvider != input.From {
+	record := store.records[key]
+	if record.LastProvider != input.From {
 		store.mu.Unlock()
 		respondJSONError(w, http.StatusNotFound, "conversation or source provider not found")
 		return
@@ -108,7 +119,7 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 		return
 	}
 	clone := newConversationHandoffStore()
-	clone.records[input.ConversationID] = copied
+	clone.records[key] = copied
 	path := input.Path
 	if path == "" {
 		path = defaultPath
@@ -123,12 +134,12 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	_, result, err := clone.Prepare(input.ConversationID, input.To, path, body)
+	_, result, err := clone.Prepare(key, input.To, path, body)
 	if err != nil {
 		respondJSONError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	after, _ := clone.State(input.ConversationID)
+	after, _ := clone.State(key)
 	pairs, valid := countTransitionToolPairs(after.Messages)
 	removed := append([]string(nil), result.RemovedState...)
 	if input.From != input.To {
