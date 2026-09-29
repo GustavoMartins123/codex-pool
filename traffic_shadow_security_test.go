@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"go.etcd.io/bbolt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +14,76 @@ import (
 	"testing"
 	"time"
 )
+
+func TestTrafficShadowCancellationDeadlineAndRelease(t *testing.T) {
+	for _, mode := range []string{"client_cancel", "deadline", "detached_deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := enabledTraffic()
+			cfg.MaxInflight, cfg.TimeoutSeconds = 1, 1
+			cfg.DetachFromClient = mode == "detached_deadline"
+			h, _, _, _ := trafficShadowFixture(t, cfg, trafficShadowAccounts())
+			started := make(chan struct{}, 1)
+			finished := make(chan error, 1)
+			h.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if _, shadow := trafficShadowFromRequest(r); shadow {
+					started <- struct{}{}
+					<-r.Context().Done()
+					finished <- r.Context().Err()
+					return nil, r.Context().Err()
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"id":"real","output":[]}`)), Request: r}, nil
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"probe","stream":false}`)).WithContext(ctx)
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "user"))
+			w := httptest.NewRecorder()
+			testPoolServeHTTP(t, h, w, r)
+			if w.Code != 200 {
+				t.Fatalf("real request: %d %s", w.Code, w.Body.String())
+			}
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("shadow did not reach transport")
+			}
+			expected := context.DeadlineExceeded
+			if mode != "deadline" {
+				cancel()
+			}
+			if mode == "client_cancel" {
+				expected = context.Canceled
+			}
+			if mode == "detached_deadline" {
+				select {
+				case err := <-finished:
+					t.Fatalf("detached leg canceled with client: %v", err)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+			select {
+			case err := <-finished:
+				if !errors.Is(err, expected) {
+					t.Fatalf("shadow termination: %v want %v", err, expected)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("shadow exceeded its deadline")
+			}
+			end := time.Now().Add(time.Second)
+			for time.Now().Before(end) {
+				h.trafficShadow.mu.Lock()
+				n := h.trafficShadow.inflight
+				h.trafficShadow.mu.Unlock()
+				if n == 0 {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("canceled shadow retained concurrency slot")
+		})
+	}
+}
 
 func TestTrafficShadowForgedHeaderCannotBypassQuota(t *testing.T) {
 	traffic := enabledTraffic()
