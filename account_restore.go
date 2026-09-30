@@ -26,6 +26,54 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 	defer staged.Close()
 	return current.View(func(source *bbolt.Tx) error {
 		return staged.Update(func(target *bbolt.Tx) error {
+			if sourceBucket := source.Bucket([]byte(bucketClientCredentials)); sourceBucket != nil {
+				destination, err := target.CreateBucketIfNotExists([]byte(bucketClientCredentials))
+				if err != nil {
+					return err
+				}
+				if err := sourceBucket.ForEach(func(k, v []byte) error {
+					raw := destination.Get(k)
+					if raw == nil {
+						return nil
+					}
+					var current, previous ClientCredential
+					if err := json.Unmarshal(v, &current); err != nil {
+						return err
+					}
+					if err := json.Unmarshal(raw, &previous); err != nil {
+						return err
+					}
+					if current.ID != previous.ID || current.PrincipalID != previous.PrincipalID {
+						return errors.New("backup client ownership conflicts with current authority")
+					}
+					previous.Policy = current.Policy
+					previous.ExpiresAt = current.ExpiresAt
+					previous.DownloadDigest = current.DownloadDigest
+					previous.DownloadCiphertext = current.DownloadCiphertext
+					if current.Status != "active" {
+						previous.Status = current.Status
+					}
+					if current.ValidAfter.After(previous.ValidAfter) {
+						previous.ValidAfter = current.ValidAfter
+					}
+					return putJSON(destination, string(k), previous)
+				}); err != nil {
+					return err
+				}
+			}
+			for _, name := range []string{bucketContributionAttempts, bucketPassportAudit} {
+				sourceBucket := source.Bucket([]byte(name))
+				if sourceBucket == nil {
+					continue
+				}
+				destination, err := target.CreateBucketIfNotExists([]byte(name))
+				if err != nil {
+					return err
+				}
+				if err := sourceBucket.ForEach(func(k, v []byte) error { return destination.Put(k, v) }); err != nil {
+					return err
+				}
+			}
 			if sourceBucket := source.Bucket([]byte(bucketAccountResources)); sourceBucket != nil {
 				destination, err := target.CreateBucketIfNotExists([]byte(bucketAccountResources))
 				if err != nil {
@@ -106,6 +154,14 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 					}
 					previous.Budget = current.Budget
 					previous.CanContribute = current.CanContribute
+					if previous.Kind != current.Kind {
+						return errors.New("backup principal authority conflicts with current authority")
+					}
+					previous.ExpiresAt = current.ExpiresAt
+					if current.PasswordChangedAt.After(previous.PasswordChangedAt) {
+						previous.PasswordHash = current.PasswordHash
+						previous.PasswordChangedAt = current.PasswordChangedAt
+					}
 					if current.Status == PrincipalSuspended {
 						previous.Status = current.Status
 					}

@@ -3050,7 +3050,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				conversation = &state
 			}
 			fallbackModel, fallbackReason, hasFallback := "", "", false
-			if fallbackTransitions < 4 {
+			if h.pool.accountAuthority == nil && fallbackTransitions < 4 {
 				fallbackModel, fallbackReason, hasFallback = h.getFallbackGraph().ResolveFallbackWithTransitionExcluding(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers(), conversation, fallbackVisited)
 			}
 			if hasFallback {
