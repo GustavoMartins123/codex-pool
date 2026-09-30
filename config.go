@@ -176,8 +176,8 @@ func validateConfigFile(cfg *ConfigFile) error {
 			return fmt.Errorf("empty client policy key")
 		}
 		l := p.Limits
-		if l.RequestsPerMinute < 0 || l.ConcurrentRequests < 0 || l.DailyRequests < 0 || l.MonthlyRequests < 0 || l.DailyTokens < 0 || l.MonthlyTokens < 0 {
-			return fmt.Errorf("client policy %q has negative limits", key)
+		if err := validatePolicyLimits(l); err != nil {
+			return fmt.Errorf("client policy %q: %w", key, err)
 		}
 		if p.Routing.Profile != "" {
 			if err := validateRoutingConfig(RoutingConfigFile{DefaultProfile: p.Routing.Profile}); err != nil {

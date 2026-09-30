@@ -487,6 +487,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/passes":
 		h.handlePasses(w, r)
 		return
+	case "/api/me/accounts":
+		h.handleMyAccounts(w, r)
+		return
 	case "/api/me/clients":
 		h.handlePassportClients(w, r)
 		return
@@ -567,6 +570,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.handleSignalAnalytics(w, r)
+		return
+	case "/api/console/principal-budget":
+		h.handlePrincipalBudget(w, r)
 		return
 	case "/api/console/account-contribution":
 		h.handleContributionPolicy(w, r)
@@ -945,6 +951,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/me/passkeys/") {
 		h.handlePasskeys(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/me/accounts/") {
+		h.handleMyAccountItem(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/me/clients/") {

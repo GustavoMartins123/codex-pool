@@ -169,6 +169,7 @@ const (
 )
 
 type Principal struct {
+	Budget                PolicyLimits    `json:"budget,omitempty"`
 	CanContribute         bool            `json:"can_contribute"`
 	ID                    string          `json:"id"`
 	Kind                  PrincipalKind   `json:"kind"`
@@ -322,6 +323,9 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 		return nil, err
 	}
 	if err := p.load(); err != nil {
+		return nil, err
+	}
+	if err := p.migratePrincipalPolicyUsage(); err != nil {
 		return nil, err
 	}
 	return p, nil

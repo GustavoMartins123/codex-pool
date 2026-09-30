@@ -20,6 +20,7 @@ type PolicySelector struct {
 }
 
 type PolicyLimits struct {
+	TokenReservation   int64 `toml:"token_reservation" json:"token_reservation,omitempty"`
 	RequestsPerMinute  int   `toml:"requests_per_minute" json:"requests_per_minute,omitempty"`
 	ConcurrentRequests int   `toml:"concurrent_requests" json:"concurrent_requests,omitempty"`
 	DailyRequests      int64 `toml:"daily_requests" json:"daily_requests,omitempty"`
@@ -57,8 +58,9 @@ func defaultPolicyPriority(kind PrincipalKind) int {
 }
 
 type policyUsageCounter struct {
-	Requests int64 `json:"requests"`
-	Tokens   int64 `json:"tokens"`
+	ReservedTokens int64 `json:"reserved_tokens,omitempty"`
+	Requests       int64 `json:"requests"`
+	Tokens         int64 `json:"tokens"`
 }
 
 type policyError struct {
@@ -70,6 +72,7 @@ type policyError struct {
 func (e *policyError) Error() string { return e.Message }
 
 type policyAdmission struct {
+	holds       []policyBudgetHold
 	store       *PassportStore
 	readOnly    bool
 	principalID string
@@ -98,22 +101,7 @@ func (a *policyAdmission) Release() {
 	if a == nil || a.store == nil || a.readOnly {
 		return
 	}
-	a.releaseOnce.Do(func() {
-		a.store.policyMu.Lock()
-		if a.store.policyInflight[a.clientID] <= 1 {
-			delete(a.store.policyInflight, a.clientID)
-		} else {
-			a.store.policyInflight[a.clientID]--
-		}
-		if a.reservedTokens > 0 {
-			if a.store.policyReserved[a.clientID] <= a.reservedTokens {
-				delete(a.store.policyReserved, a.clientID)
-			} else {
-				a.store.policyReserved[a.clientID] -= a.reservedTokens
-			}
-		}
-		a.store.policyMu.Unlock()
-	})
+	a.releaseOnce.Do(a.releaseBudgetHolds)
 }
 
 func normalizePolicyValue(value string) string {
@@ -164,10 +152,16 @@ func (a *policyAdmission) CheckProvider(provider AccountType) error {
 
 func readPolicyCounter(bucket *bbolt.Bucket, key string) (policyUsageCounter, error) {
 	var counter policyUsageCounter
+	if bucket == nil {
+		return counter, errors.New("policy usage unavailable")
+	}
 	if raw := bucket.Get([]byte(key)); raw != nil {
 		if err := json.Unmarshal(raw, &counter); err != nil {
 			return counter, err
 		}
+	}
+	if counter.Requests < 0 || counter.Tokens < 0 || counter.ReservedTokens < 0 {
+		return counter, errors.New("invalid policy usage counter")
 	}
 	return counter, nil
 }
@@ -197,6 +191,7 @@ func (p *PassportStore) resolveClientPolicy(principalID, clientID string, config
 	}
 	p.mu.RLock()
 	client := p.clients[clientID]
+	if client != nil && client.PrincipalID != principalID { p.mu.RUnlock(); return nil,ClientPolicy{},false,false }
 	var policy ClientPolicy
 	if client != nil {
 		policy = client.Policy
@@ -242,125 +237,28 @@ func (p *PassportStore) beginPolicyRequestReadOnly(principalID, clientID string,
 }
 
 func (p *PassportStore) beginPolicyRequest(principalID, clientID string, configured map[string]ClientPolicy, now time.Time) (*policyAdmission, error) {
-	principal, policy, _, ok := p.resolveClientPolicy(principalID, clientID, configured)
-	if !ok {
-		return nil, nil
-	}
-	if principal == nil {
-		return nil, &policyError{Status: http.StatusForbidden, Code: "policy_identity_missing", Message: "client policy identity is unavailable"}
-	}
-	priority := policy.Priority
-	explicitPolicy := policy.configured()
-	if priority == 0 {
-		priority = defaultPolicyPriority(principal.Kind)
-	}
-
-	admission := &policyAdmission{store: p, principalID: principalID, clientID: clientID, policy: policy, priority: priority, configured: explicitPolicy}
-	minuteKey, dayKey, monthKey := policyUsageKeys(clientID, now)
-
-	// Admission must be one critical section: the concurrency slot, the
-	// token-budget check against committed usage plus the reservations held
-	// by in-flight requests, and this request's own reservation. policyMu
-	// also guards policyReserved, so the check-and-reserve cannot interleave
-	// with another admission or with a Release. Lock order is always
-	// policyMu -> bolt write transaction.
-	p.policyMu.Lock()
-	if limit := policy.Limits.ConcurrentRequests; limit > 0 && p.policyInflight[clientID] >= limit {
-		p.policyMu.Unlock()
-		return nil, &policyError{Status: http.StatusTooManyRequests, Code: "policy_concurrency_exceeded", Message: fmt.Sprintf("client concurrency limit of %d requests exceeded", limit)}
-	}
-	p.policyInflight[clientID]++
-	reserved := p.policyReserved[clientID]
-	var reservation int64
-	err := p.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketPassportPolicyUsage))
-		minute, err := readPolicyCounter(bucket, minuteKey)
-		if err != nil {
-			return err
-		}
-		day, err := readPolicyCounter(bucket, dayKey)
-		if err != nil {
-			return err
-		}
-		month, err := readPolicyCounter(bucket, monthKey)
-		if err != nil {
-			return err
-		}
-		reservation = policyTokenReservation(policy.Limits, day, month, reserved)
-		switch {
-		case policy.Limits.RequestsPerMinute > 0 && minute.Requests >= int64(policy.Limits.RequestsPerMinute):
-			return &policyError{Status: http.StatusTooManyRequests, Code: "policy_rate_limit_exceeded", Message: fmt.Sprintf("client rate limit of %d requests per minute exceeded", policy.Limits.RequestsPerMinute)}
-		case policy.Limits.DailyRequests > 0 && day.Requests >= policy.Limits.DailyRequests:
-			return &policyError{Status: http.StatusTooManyRequests, Code: "policy_daily_requests_exceeded", Message: fmt.Sprintf("client daily request budget of %d exhausted", policy.Limits.DailyRequests)}
-		case policy.Limits.MonthlyRequests > 0 && month.Requests >= policy.Limits.MonthlyRequests:
-			return &policyError{Status: http.StatusTooManyRequests, Code: "policy_monthly_requests_exceeded", Message: fmt.Sprintf("client monthly request budget of %d exhausted", policy.Limits.MonthlyRequests)}
-		case policy.Limits.DailyTokens > 0 && day.Tokens+reserved >= policy.Limits.DailyTokens:
-			return &policyError{Status: http.StatusTooManyRequests, Code: "policy_daily_tokens_exceeded", Message: fmt.Sprintf("client daily token budget of %d exhausted (including %d tokens reserved by in-flight requests)", policy.Limits.DailyTokens, reserved)}
-		case policy.Limits.MonthlyTokens > 0 && month.Tokens+reserved >= policy.Limits.MonthlyTokens:
-			return &policyError{Status: http.StatusTooManyRequests, Code: "policy_monthly_tokens_exceeded", Message: fmt.Sprintf("client monthly token budget of %d exhausted (including %d tokens reserved by in-flight requests)", policy.Limits.MonthlyTokens, reserved)}
-		}
-		minute.Requests++
-		day.Requests++
-		month.Requests++
-		if err := writePolicyCounter(bucket, minuteKey, minute); err != nil {
-			return err
-		}
-		if err := writePolicyCounter(bucket, dayKey, day); err != nil {
-			return err
-		}
-		return writePolicyCounter(bucket, monthKey, month)
-	})
-	if err != nil {
-		p.policyMu.Unlock()
-		admission.Release()
-		return nil, err
-	}
-	if reservation > 0 {
-		p.policyReserved[clientID] = reserved + reservation
-		admission.reservedTokens = reservation
-	}
-	p.policyMu.Unlock()
-	return admission, nil
+	return p.reservePolicyRequest(principalID, clientID, configured, now)
 }
 
-// defaultPolicyTokenReservation bounds how far the first requests of a
-// window — before the client's own per-request average exists — can push
-// usage past a configured token budget. It trades a little premature
-// blocking for a hard bound on concurrent overshoot.
-const defaultPolicyTokenReservation int64 = 8192
-
-// policyTokenReservation returns the token budget to hold for one in-flight
-// request: the client's observed per-request average (falling back to
-// defaultPolicyTokenReservation), capped by the headroom left under the
-// configured limits. No token limits configured means no reservation.
 func policyTokenReservation(limits PolicyLimits, day, month policyUsageCounter, reserved int64) int64 {
 	if limits.DailyTokens <= 0 && limits.MonthlyTokens <= 0 {
 		return 0
 	}
-	estimate := defaultPolicyTokenReservation
-	if day.Requests > 0 && day.Tokens > 0 {
-		estimate = (day.Tokens + day.Requests - 1) / day.Requests
-	} else if month.Requests > 0 && month.Tokens > 0 {
-		estimate = (month.Tokens + month.Requests - 1) / month.Requests
-	}
-	if estimate < 1 {
-		estimate = 1
-	}
-	headroom := int64(-1)
+	estimate := limits.TokenReservation
 	if limits.DailyTokens > 0 {
-		headroom = limits.DailyTokens - day.Tokens - reserved
-	}
-	if limits.MonthlyTokens > 0 {
-		monthly := limits.MonthlyTokens - month.Tokens - reserved
-		if headroom < 0 || monthly < headroom {
-			headroom = monthly
+		headroom := limits.DailyTokens - day.Tokens - day.ReservedTokens - reserved
+		if estimate > headroom {
+			estimate = headroom
 		}
 	}
-	if headroom < 0 {
-		headroom = 0
+	if limits.MonthlyTokens > 0 {
+		headroom := limits.MonthlyTokens - month.Tokens - month.ReservedTokens - reserved
+		if estimate > headroom {
+			estimate = headroom
+		}
 	}
-	if estimate > headroom {
-		return headroom
+	if estimate < 0 {
+		return 0
 	}
 	return estimate
 }
@@ -369,10 +267,21 @@ func (p *PassportStore) recordPolicyTokens(clientID string, tokens int64, now ti
 	if p == nil || clientID == "" || tokens <= 0 {
 		return nil
 	}
+	p.mu.RLock()
+	client := p.clients[clientID]
+	var principalID string
+	if client != nil {
+		principalID = client.PrincipalID
+	}
+	p.mu.RUnlock()
+	if principalID == "" {
+		return errors.New("policy token usage references an unknown client")
+	}
 	_, dayKey, monthKey := policyUsageKeys(clientID, now)
+	_, principalDay, principalMonth := policyUsageKeys("principal:"+principalID, now)
 	return p.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketPassportPolicyUsage))
-		for _, key := range []string{dayKey, monthKey} {
+		for _, key := range []string{dayKey, monthKey, principalDay, principalMonth} {
 			counter, err := readPolicyCounter(bucket, key)
 			if err != nil {
 				return err

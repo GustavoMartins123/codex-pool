@@ -115,6 +115,7 @@ concurrent_requests = 3
 daily_requests = 1000
 daily_tokens = 3000000
 monthly_tokens = 60000000
+token_reservation = 8192
 
 [client_policies.workstation.routing]
 profile = "balanced"

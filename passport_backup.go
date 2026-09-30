@@ -195,6 +195,11 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 	// a crash. A journaling restart-recovery protocol would be needed for
 	// that; until then, run restores with the service stopped and verify
 	// startup logs afterwards.
+	if err := preserveAccountSecurityOnRestore(boltPath, boltTemp); err != nil {
+		_ = os.Remove(boltTemp)
+		_ = os.Remove(duckTemp)
+		return fmt.Errorf("preserve account security: %w", err)
+	}
 	boltAside, duckAside := boltPath+".prerestore", duckPath+".prerestore"
 	_ = os.Remove(boltAside)
 	_ = os.Remove(duckAside)

@@ -49,6 +49,8 @@ func requirePolicyCode(t *testing.T, err error, code string) {
 	}
 }
 
+const defaultPolicyTokenReservation int64 = 8192
+
 func TestClientPolicyModelProviderAndPriority(t *testing.T) {
 	passport, client := testPolicyPassport(t)
 	admission, err := passport.beginPolicyRequest("policy-user", client.ID, map[string]ClientPolicy{
@@ -110,7 +112,7 @@ func TestClientPolicyPersistentTokenBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := passport.beginPolicyRequest("policy-user", client.ID, map[string]ClientPolicy{
-		client.ID: {Limits: PolicyLimits{DailyTokens: 300}},
+		client.ID: {Limits: PolicyLimits{TokenReservation: defaultPolicyTokenReservation, DailyTokens: 300}},
 	}, now)
 	requirePolicyCode(t, err, "policy_daily_tokens_exceeded")
 }
@@ -123,7 +125,7 @@ func TestClientPolicyPersistentTokenBudget(t *testing.T) {
 func TestClientPolicyTokenBudgetBlocksConcurrentOvershoot(t *testing.T) {
 	passport, client := testPolicyPassport(t)
 	policies := map[string]ClientPolicy{client.ID: {
-		Limits: PolicyLimits{DailyTokens: 3 * defaultPolicyTokenReservation},
+		Limits: PolicyLimits{TokenReservation: defaultPolicyTokenReservation, DailyTokens: 3 * defaultPolicyTokenReservation},
 	}}
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
@@ -157,7 +159,7 @@ func TestClientPolicyTokenBudgetBlocksConcurrentOvershoot(t *testing.T) {
 func TestClientPolicyTokenBudgetConcurrentAdmissionsRace(t *testing.T) {
 	passport, client := testPolicyPassport(t)
 	policies := map[string]ClientPolicy{client.ID: {
-		Limits: PolicyLimits{DailyTokens: 3 * defaultPolicyTokenReservation},
+		Limits: PolicyLimits{TokenReservation: defaultPolicyTokenReservation, DailyTokens: 3 * defaultPolicyTokenReservation},
 	}}
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
@@ -195,7 +197,7 @@ func TestClientPolicyTokenBudgetConcurrentAdmissionsRace(t *testing.T) {
 func TestClientPolicyTokenBudgetSequentialDebitFlow(t *testing.T) {
 	passport, client := testPolicyPassport(t)
 	policies := map[string]ClientPolicy{client.ID: {
-		Limits: PolicyLimits{DailyTokens: 500},
+		Limits: PolicyLimits{TokenReservation: defaultPolicyTokenReservation, DailyTokens: 500},
 	}}
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
@@ -224,11 +226,11 @@ func TestClientPolicyTokenBudgetSequentialDebitFlow(t *testing.T) {
 	requirePolicyCode(t, err, "policy_daily_tokens_exceeded")
 }
 
-func TestPolicyTokenReservationEstimate(t *testing.T) {
-	limits := PolicyLimits{DailyTokens: 100_000}
+func TestPolicyTokenReservationUsesExplicitHold(t *testing.T) {
+	limits := PolicyLimits{TokenReservation: 10000, DailyTokens: 100_000}
 	day := policyUsageCounter{Requests: 4, Tokens: 40_000}
 	if got := policyTokenReservation(limits, day, policyUsageCounter{}, 0); got != 10_000 {
-		t.Fatalf("reservation = %d, want the observed average 10000", got)
+		t.Fatalf("reservation = %d, want the configured reservation 10000", got)
 	}
 	capped := policyTokenReservation(limits, policyUsageCounter{Requests: 4, Tokens: 95_000}, policyUsageCounter{}, 0)
 	if capped != 5_000 {
@@ -237,12 +239,12 @@ func TestPolicyTokenReservationEstimate(t *testing.T) {
 	if got := policyTokenReservation(PolicyLimits{}, day, policyUsageCounter{}, 0); got != 0 {
 		t.Fatalf("reservation = %d without token limits, want 0", got)
 	}
-	if got := policyTokenReservation(limits, policyUsageCounter{}, policyUsageCounter{}, 0); got != defaultPolicyTokenReservation {
-		t.Fatalf("reservation = %d without history, want the default %d", got, defaultPolicyTokenReservation)
+	if got := policyTokenReservation(limits, policyUsageCounter{}, policyUsageCounter{}, 0); got != limits.TokenReservation {
+		t.Fatalf("reservation = %d without history, want the configured reservation %d", got, limits.TokenReservation)
 	}
-	monthly := policyTokenReservation(PolicyLimits{MonthlyTokens: 30_000}, policyUsageCounter{}, policyUsageCounter{Requests: 3, Tokens: 21_000}, 0)
+	monthly := policyTokenReservation(PolicyLimits{TokenReservation: 7000, MonthlyTokens: 30_000}, policyUsageCounter{}, policyUsageCounter{Requests: 3, Tokens: 21_000}, 0)
 	if monthly != 7_000 {
-		t.Fatalf("monthly reservation = %d, want the observed average 7000", monthly)
+		t.Fatalf("monthly reservation = %d, want the configured reservation 7000", monthly)
 	}
 }
 
