@@ -46,6 +46,7 @@ func TestZAILoginInitPollAndActor(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/zai/login/init", strings.NewReader("{}"))
 	request = request.WithContext(context.WithValue(request.Context(), providerContributionActorKey{}, "member-a"))
 	recorder := httptest.NewRecorder()
+	attachContributionFixture(t,h,"member-a")
 	h.handleZAILoginInit(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("init status %d: %s", recorder.Code, recorder.Body.String())

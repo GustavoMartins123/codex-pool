@@ -30,6 +30,7 @@ func TestRetiredFriendCodeNeverAuthenticates(t *testing.T) {
 
 func TestBreakGlassAdminCanStartAccountContribution(t *testing.T) {
 	h := &proxyHandler{cfg: &config{adminToken: "admin"}}
+	attachContributionFixture(t, h, "operator")
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/codex/add", nil)
 	request.Header.Set("X-Admin-Token", "admin")
 	response := httptest.NewRecorder()

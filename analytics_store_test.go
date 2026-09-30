@@ -17,7 +17,7 @@ func TestAnalyticsSchemaAddsCacheCreationColumnsToExistingDatabase(t *testing.T)
 	}
 	_, err = db.Exec(`
 		CREATE TABLE request_costs (id INTEGER PRIMARY KEY, timestamp TEXT, account_id TEXT, account_type TEXT, cached_tokens INTEGER);
-		CREATE TABLE daily_costs (date TEXT, account_id TEXT, account_type TEXT, model TEXT, cached_tokens INTEGER, cost_usd REAL DEFAULT 0, PRIMARY KEY(date, account_id, model));
+		CREATE TABLE daily_costs (date TEXT, account_id TEXT, account_type TEXT, model TEXT NOT NULL DEFAULT '', input_tokens INTEGER DEFAULT 0, cached_tokens INTEGER, output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0, request_count INTEGER DEFAULT 0, cost_usd REAL DEFAULT 0, PRIMARY KEY(date, account_id, model));
 	`)
 	if err != nil {
 		t.Fatal(err)
