@@ -116,6 +116,54 @@ func TestGeneric429SessionErrorDoesNotConsumeQuota(t *testing.T) {
 	}
 }
 
+func TestCodexItemReference404DoesNotPenalizeAccount(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "item-ref-secret")
+	base, _ := url.Parse("https://codex.mock")
+	account := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "token", PlanType: "pro"}
+	calls := 0
+	h := &proxyHandler{
+		cfg:      &config{maxAttempts: 3, maxInMemoryBodyBytes: 1 << 20, requestTimeout: time.Second, streamTimeout: time.Second},
+		pool:     newPoolState([]*Account{account}, false),
+		registry: NewProviderRegistry(NewCodexProvider(base, base, nil), nil, nil),
+		metrics:  newMetrics(), recent: newRecentErrors(10),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			if calls == 1 {
+				body := `{"detail":"Item with id 'rs_resp_5Qi8asrpEcPO-8YPq6-xiQw_0' not found. Items are not persisted when ` + "`store`" + ` is set to false. Try again with ` + "`store`" + ` set to true, or remove this item from your input."}`
+				return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+			}
+			response := `data: {"type":"response.completed"}` + "\n\n"
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
+		}),
+	}
+	body := `{"model":"gpt-5.6-sol","conversation_id":"resumed-session","input":"hello","stream":false}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("item-ref-secret", "user"))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	testPoolServeHTTP(t, h, w, r)
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "Item with id") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("item-reference 404 retried upstream: calls=%d", calls)
+	}
+	account.mu.Lock()
+	penalty := account.Penalty
+	account.mu.Unlock()
+	if penalty != 0 {
+		t.Fatalf("item-reference 404 penalized account: penalty=%.2f", penalty)
+	}
+	r2 := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r2.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("item-ref-secret", "user"))
+	r2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	testPoolServeHTTP(t, h, w2, r2)
+	if w2.Code != http.StatusOK || calls != 2 {
+		t.Fatalf("follow-up request status=%d calls=%d body=%s", w2.Code, calls, w2.Body.String())
+	}
+}
+
 func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")

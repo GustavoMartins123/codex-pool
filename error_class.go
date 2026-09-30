@@ -157,6 +157,18 @@ func isCodexModelUnavailableError(body []byte) bool {
 		strings.Contains(s, "does not have access to model")
 }
 
+// isCodexItemReferenceError detects the upstream 404 for input items that
+// reference previously stored responses ("Item with id 'rs_...' not found.
+// Items are not persisted when `store` is set to false."). The pool must
+// forward store=false, so these references can never resolve; the failure
+// belongs to the request payload, not to the account, and must not rotate
+// accounts or feed the circuit breaker.
+func isCodexItemReferenceError(body []byte) bool {
+	s := strings.ToLower(string(body))
+	return strings.Contains(s, "item with id") && strings.Contains(s, "not found") ||
+		strings.Contains(s, "items are not persisted")
+}
+
 // Retryable returns true if this class should be retried on another account.
 func (c ErrorClass) Retryable() bool {
 	switch c {

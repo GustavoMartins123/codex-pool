@@ -2346,7 +2346,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	accountType := provider.Type()
 
 	if isWebSocketUpgradeRequest(r) {
-		if admission.hasTokenBudget() { respondPolicyError(w, unboundedPolicyRequest()); return }
+		if admission.hasTokenBudget() {
+			respondPolicyError(w, unboundedPolicyRequest())
+			return
+		}
 		h.proxyRequestWebSocket(w, r, reqID, userID, originID, provider, targetBase)
 		return
 	}
@@ -3294,18 +3297,25 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 		// --- Error classification & handling ---
 		errClass := classifyStatus(resp.StatusCode)
-		if errClass != ErrorClassNone {
-			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass)
-		} else {
+		recordClass := errClass
+		if errClass == ErrorClassNone {
 			h.getCircuitBreakers().RecordSuccess(string(accountType), acc.ID, requestedModel, reqCaps.Modalities)
 		}
-
-		// For classes that need the body, read it now.
 		if errClass != ErrorClassNone {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			resp.Body.Close()
 			errBody = bodyForInspection(nil, errBody)
 			errBodyStr := string(errBody)
+			if accountType == AccountTypeCodex && resp.StatusCode == http.StatusNotFound && isCodexItemReferenceError(errBody) {
+				errClass = ErrorClassInvalid
+				recordClass = ErrorClassNone
+				if h.cfg.debug.Load() {
+					log.Printf("[%s] reclassified codex 404 as item-reference error (invalid input) for account %s", reqID, acc.ID)
+				}
+			}
+			if recordClass != ErrorClassNone {
+				h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass)
+			}
 			if resp.StatusCode == http.StatusTooManyRequests {
 				providerErr := classifyAntigravityError(resp.StatusCode, errBody)
 				if providerErr.Class != ProviderErrorQuota {
@@ -4740,7 +4750,10 @@ func logRelayFrame(logLabel, label string, msgType websocket.MessageType, data [
 }
 
 func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider Provider, targetBase *url.URL) {
-	if policyAdmissionFromRequest(r).hasTokenBudget() { respondPolicyError(w, unboundedPolicyRequest()); return }
+	if policyAdmissionFromRequest(r).hasTokenBudget() {
+		respondPolicyError(w, unboundedPolicyRequest())
+		return
+	}
 	start := time.Now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
