@@ -157,7 +157,10 @@ func createAnalyticsTables(db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_daily_costs_model_usage ON daily_costs(
+		date, account_type, model, input_tokens, cached_tokens, cache_creation_tokens,
+		output_tokens, reasoning_tokens, request_count, cost_usd)`)
+	return err
 }
 
 func ensureAnalyticsColumn(db *sql.DB, table, column, definition string) error {
@@ -390,23 +393,31 @@ func (s *AnalyticsStore) getDailyCosts(days int) ([]DailyCostEntry, error) {
 	return result, nil
 }
 
-// getModelDailyUsage returns rolled-up historical rows plus today's live
-// requests. Keeping the date/model/provider grain makes demand anatomy useful
-// without exposing individual accounts or users.
 func (s *AnalyticsStore) getModelDailyUsage(days int) ([]ModelDailyUsageEntry, error) {
+	return s.getModelDailyUsageAt(days, time.Now())
+}
+
+func (s *AnalyticsStore) getModelDailyUsageAt(days int, now time.Time) ([]ModelDailyUsageEntry, error) {
 	if days <= 0 {
-		days = 30
+		return nil, fmt.Errorf("model usage window must be positive")
 	}
-	today := time.Now().UTC().Format("2006-01-02")
-	since := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
+	utc := now.UTC()
+	today := utc.Format("2006-01-02")
+	since := utc.AddDate(0, 0, -days).Format("2006-01-02")
+	tomorrow := utc.AddDate(0, 0, 1).Format("2006-01-02")
 	rows, err := s.db.Query(`
-		SELECT date, account_type, COALESCE(model, ''),
+		SELECT date, account_type, model,
 			SUM(input_tokens), SUM(cached_tokens), SUM(cache_creation_tokens), SUM(output_tokens),
 			SUM(reasoning_tokens), SUM(request_count), SUM(cost_usd)
-		FROM daily_costs
-		WHERE date >= ? AND date < ?
-		GROUP BY date, account_type, COALESCE(model, '')
-		ORDER BY date, account_type, model`, since, today)
+		FROM daily_costs WHERE date >= ? AND date < ?
+		GROUP BY date, account_type, model
+		UNION ALL
+		SELECT ?, account_type, COALESCE(model, ''),
+			SUM(input_tokens), SUM(cached_tokens), SUM(cache_creation_tokens), SUM(output_tokens),
+			SUM(reasoning_tokens), COUNT(*), SUM(cost_usd)
+		FROM request_costs WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY account_type, COALESCE(model, '')
+		ORDER BY 1, 2, 3`, since, today, today, today+"T00:00:00Z", tomorrow+"T00:00:00Z")
 	if err != nil {
 		return nil, err
 	}
@@ -417,35 +428,14 @@ func (s *AnalyticsStore) getModelDailyUsage(days int) ([]ModelDailyUsageEntry, e
 		if err := rows.Scan(&entry.Date, &entry.AccountType, &entry.Model,
 			&entry.InputTokens, &entry.CachedTokens, &entry.CacheCreationTokens, &entry.OutputTokens,
 			&entry.ReasoningTokens, &entry.RequestCount, &entry.CostUSD); err != nil {
-			continue
+			return nil, err
+		}
+		if _, err := time.Parse("2006-01-02", entry.Date); err != nil {
+			return nil, fmt.Errorf("invalid model usage date: %w", err)
 		}
 		result = append(result, entry)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	live, err := s.db.Query(`
-		SELECT account_type, COALESCE(model, ''),
-			SUM(input_tokens), SUM(cached_tokens), SUM(cache_creation_tokens), SUM(output_tokens),
-			SUM(reasoning_tokens), COUNT(*), SUM(cost_usd)
-		FROM request_costs
-		WHERE timestamp >= ?
-		GROUP BY account_type, COALESCE(model, '')
-		ORDER BY account_type, model`, today+"T00:00:00Z")
-	if err != nil {
-		return nil, err
-	}
-	defer live.Close()
-	for live.Next() {
-		entry := ModelDailyUsageEntry{Date: today}
-		if err := live.Scan(&entry.AccountType, &entry.Model,
-			&entry.InputTokens, &entry.CachedTokens, &entry.CacheCreationTokens, &entry.OutputTokens,
-			&entry.ReasoningTokens, &entry.RequestCount, &entry.CostUSD); err == nil {
-			result = append(result, entry)
-		}
-	}
-	if err := live.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
