@@ -35,4 +35,4 @@ USER codex
 ENV DUCKDB_PATH=/app/data/usage.duckdb
 EXPOSE 8989
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD curl -fsS http://127.0.0.1:8989/healthz || exit 1
-ENTRYPOINT ["/app/codex-pool"]
+ENTRYPOINT ["/app/codex-pool", "-env-file="]

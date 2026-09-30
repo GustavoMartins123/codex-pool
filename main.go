@@ -376,12 +376,7 @@ func buildConfig() *config {
 		log.Fatalf("invalid routing config: %v", err)
 	}
 
-	flag.StringVar(&cfg.listenAddr, "listen", cfg.listenAddr, "listen address")
-	flag.StringVar(&cfg.backupDir, "backup-dir", "", "create an offline paired Bolt/DuckDB backup in this directory, then exit")
-	flag.StringVar(&cfg.restoreManifest, "restore-manifest", "", "restore Bolt/DuckDB from a paired backup manifest, then exit")
-	flag.BoolVar(&cfg.decryptCredentials, "decrypt-credentials", false, "decrypt every encrypted credential file back to plaintext (requires POOL_CREDENTIAL_KEY), then exit")
-	flag.BoolVar(&cfg.checkCredentials, "check-credentials", false, "verify every credential file decodes with POOL_CREDENTIAL_KEY (offline integrity check), then exit")
-	flag.BoolVar(&cfg.rotatePassportKey, "rotate-passport-key", false, "rotate sealed client tokens in the offline Bolt database using POOL_AUTH_ENCRYPTION_KEY_OLD and POOL_AUTH_ENCRYPTION_KEY, then exit")
+	registerStartupFlags(flag.CommandLine, cfg)
 	flag.Parse()
 	return cfg
 }
@@ -402,6 +397,12 @@ func main() {
 	// stdlib logger offers no per-call redaction hook, so the output stream
 	// itself is wrapped. installRedactingLog is idempotent.
 	installRedactingLog()
+	if err := prepareStartupEnvironment(os.Args[1:], os.Stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		log.Fatalf("startup environment: %v", err)
+	}
 	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopShutdownSignals()
 	cfg := buildConfig()
