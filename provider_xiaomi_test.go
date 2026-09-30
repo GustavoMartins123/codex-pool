@@ -450,7 +450,6 @@ func TestXiaomiAdminAddValidatesAndSavesAccount(t *testing.T) {
 }
 
 func TestXiaomiAdminRejectsUnauthorizedKeyWithoutSaving(t *testing.T) {
-	t.Parallel()
 
 	poolDir := t.TempDir()
 	xiaomiBase, _ := url.Parse("https://token-plan-sgp.xiaomimimo.com/anthropic")
@@ -470,7 +469,8 @@ func TestXiaomiAdminRejectsUnauthorizedKeyWithoutSaving(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/xiaomi/add", strings.NewReader(`{"api_key":"tp-bad"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	h.handleXiaomiAdd(rr, req)
+	attachContributionFixture(t,h,"alice")
+	h.handleXiaomiAdd(rr, contributionRequestActor(req,"alice"))
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -481,7 +481,6 @@ func TestXiaomiAdminRejectsUnauthorizedKeyWithoutSaving(t *testing.T) {
 }
 
 func TestXiaomiAdminReportsNonAuthValidationFailureWithoutSaving(t *testing.T) {
-	t.Parallel()
 
 	poolDir := t.TempDir()
 	xiaomiBase, _ := url.Parse("https://token-plan-sgp.xiaomimimo.com/anthropic")
@@ -501,7 +500,8 @@ func TestXiaomiAdminReportsNonAuthValidationFailureWithoutSaving(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/xiaomi/add", strings.NewReader(`{"api_key":"tp-validish"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	h.handleXiaomiAdd(rr, req)
+	attachContributionFixture(t,h,"alice")
+	h.handleXiaomiAdd(rr, contributionRequestActor(req,"alice"))
 
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())

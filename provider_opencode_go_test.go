@@ -585,7 +585,6 @@ func TestOpencodeGoAdminAddValidatesAndSavesAccount(t *testing.T) {
 }
 
 func TestOpencodeGoAdminRejectsKeyWithoutSubscription(t *testing.T) {
-	t.Parallel()
 
 	poolDir := t.TempDir()
 	goBase, _ := url.Parse("https://opencode.ai/zen/go/v1")
@@ -613,9 +612,10 @@ func TestOpencodeGoAdminRejectsKeyWithoutSubscription(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/opencode-go/add", strings.NewReader(`{"api_key":"sk-go-nosub"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	h.handleOpencodeGoAdd(rr, req)
+	attachContributionFixture(t,h,"alice")
+	h.handleOpencodeGoAdd(rr, contributionRequestActor(req,"alice"))
 
-	if rr.Code == http.StatusOK {
+	if rr.Code != http.StatusBadRequest {
 		t.Fatal("expected rejection for key without subscription")
 	}
 	if _, err := os.Stat(filepath.Join(poolDir, "opencode_go")); !os.IsNotExist(err) {
