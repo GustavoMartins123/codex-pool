@@ -1,5 +1,15 @@
 # Contribution Guidelines
 
+## Documentation and Reports
+
+Do not create or modify documentation or reports, including performance reports,
+bug reports, and audits, unless explicitly requested or authorized by the user.
+Ask for authorization before doing so. Authorization for code changes does not
+automatically authorize documentation or reports.
+
+Do not include the user's hardware specifications or private local environment
+details in versioned or published artifacts without explicit authorization.
+
 ## Incremental Commits
 
 Create one commit for each coherent part of a change. Keep commits small and
