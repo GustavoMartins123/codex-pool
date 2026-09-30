@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -70,16 +71,18 @@ func (p *PassportStore) recentAudit(limit int) ([]AuditEntry, error) {
 	}
 	out := make([]AuditEntry, 0, limit)
 	err := p.db.View(func(tx *bbolt.Tx) error {
-		cursor := tx.Bucket([]byte(bucketPassportAudit)).Cursor()
+		bucket := tx.Bucket([]byte(bucketPassportAudit))
+		if bucket == nil { return errors.New("audit storage unavailable") }
+		cursor := bucket.Cursor()
 		for key, value := cursor.Last(); key != nil && len(out) < limit; key, value = cursor.Prev() {
 			var entry AuditEntry
-			if json.Unmarshal(value, &entry) == nil {
-				out = append(out, entry)
-			}
+			if err := json.Unmarshal(value, &entry); err != nil { return err }
+			out = append(out, entry)
 		}
 		return nil
 	})
-	return out, err
+	if err != nil { return nil, err }
+	return out, nil
 }
 
 func (h *proxyHandler) handleConsolePrincipals(w http.ResponseWriter, r *http.Request) {

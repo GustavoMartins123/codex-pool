@@ -75,3 +75,15 @@ func TestMissingAuditRollsBackAccountChanges(t *testing.T) {
 		t.Fatal("failed audit left tombstone")
 	}
 }
+
+func TestAccountAuditRejectsMalformedStorage(t *testing.T) {
+	p, _ := ownershipFixture(t)
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketPassportAudit)).Put([]byte("latest"), []byte("invalid"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := p.recentAudit(100); err == nil || rows != nil {
+		t.Fatalf("audit returned partial data: %+v %v", rows, err)
+	}
+}
