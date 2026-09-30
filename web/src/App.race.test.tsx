@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { loadAnalyticsHealth, loadConsoleAudit, loadConsolePrincipalUsage, loadConsolePrincipals, loadPasses, revokePass } from "./api";
-import { Navigation, Passes, PassportConsole } from "./App";
+import { Navigation } from "./App";
+import { Passes } from "./pages/Passes";
+import { PassportConsole } from "./pages/Console";
 import type { ConsolePrincipal, GuestPass, PassportPrincipal } from "./types";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

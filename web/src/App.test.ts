@@ -2,7 +2,12 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadAdminAccounts, mutateAccount, operatorBootstrap, reloadAccounts, recoverMemberStatus } from "./api";
-import { AccountResetWindows, formatAPIValue, isArmedAccountAction, MemberRecovery, Models, poolSurplus, providerDisplay, RecoveryUnavailable, shouldShowPassFormOnLoad, viewFromSearch } from "./App";
+import { AccountResetWindows, formatAPIValue, poolSurplus, providerDisplay } from "./ui";
+import { isArmedAccountAction } from "./pages/Accounts";
+import { MemberRecovery, RecoveryUnavailable } from "./access";
+import { Models } from "./pages/Models";
+import { shouldShowPassFormOnLoad } from "./pages/Passes";
+import { viewFromSearch } from "./navigation";
 import { recoveryReducer } from "./recovery";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
