@@ -43,7 +43,7 @@ func (h *proxyHandler) serveReadyz(w http.ResponseWriter) {
 	})
 }
 
-func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
+func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		ID                      string      `json:"id"`
 		PublicID                string      `json:"public_id"`
@@ -78,6 +78,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 	h.pool.mu.RLock()
 	out := make([]row, 0, len(h.pool.accounts))
 	for _, a := range h.pool.accounts {
+		if h.passport != nil && h.passport.authorizeAccount(providerContributionActor(r), a, "read") != nil { continue }
 		a.mu.Lock()
 		planType := a.PlanType
 		email := a.Email

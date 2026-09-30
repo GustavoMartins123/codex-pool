@@ -117,7 +117,10 @@ func (p *PassportStore) withdrawAccount(actor string, provider AccountType, id s
 		now := time.Now().UTC()
 		resource.WithdrawnAt = &now
 		resource.Revision++
-		return putJSON(b, resourceKey(provider, id), resource)
+		if err := putJSON(b, resourceKey(provider, id), resource); err != nil {
+			return err
+		}
+		return p.audit(tx, actor, "account.withdrawn", id, string(provider))
 	})
 }
 

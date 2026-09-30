@@ -110,7 +110,7 @@ func TestServeAccountsExposesUnifiedState(t *testing.T) {
 
 	h := &proxyHandler{pool: p}
 	rec := httptest.NewRecorder()
-	h.serveAccounts(rec)
+	h.serveAccounts(rec, httptest.NewRequest("GET", "/admin/accounts", nil))
 
 	var rows []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {

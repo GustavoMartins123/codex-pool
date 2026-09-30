@@ -68,7 +68,9 @@ func (p *PassportStore) audit(tx *bbolt.Tx, actor, action, subject, detail strin
 		return err
 	}
 	e := AuditEntry{ID: id, ActorID: actor, Action: action, SubjectID: subject, At: time.Now().UTC(), Detail: detail}
-	return putJSON(tx.Bucket([]byte(bucketPassportAudit)), e.At.Format(time.RFC3339Nano)+"|"+id, e)
+	bucket := tx.Bucket([]byte(bucketPassportAudit))
+	if bucket == nil { return errors.New("audit storage unavailable") }
+	return putJSON(bucket, e.At.Format(time.RFC3339Nano)+"|"+id, e)
 }
 
 func (p *PassportStore) recordAudit(actor, action, subject, detail string) error {

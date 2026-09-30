@@ -18,13 +18,13 @@ func (h *proxyHandler) serveOpencodeGoAdmin(w http.ResponseWriter, r *http.Reque
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeOpencodeGo)
+		h.handleAPIKeyList(w, r, AccountTypeOpencodeGo)
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleOpencodeGoAdd(w, r)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeOpencodeGo, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeOpencodeGo, id)
 	default:
 		http.NotFound(w, r)
 	}

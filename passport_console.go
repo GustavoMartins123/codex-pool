@@ -161,7 +161,8 @@ func (h *proxyHandler) handleConsoleAnalyticsHealth(w http.ResponseWriter, r *ht
 
 func (h *proxyHandler) handleConsoleAudit(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	if _, _, ok := h.requireOperator(w, r); !ok {
+	operator, _, ok := h.requireOperator(w, r)
+	if !ok {
 		return
 	}
 	entries, err := h.passport.recentAudit(200)
@@ -169,5 +170,12 @@ func (h *proxyHandler) handleConsoleAudit(w http.ResponseWriter, r *http.Request
 		respondJSONError(w, 500, "audit unavailable")
 		return
 	}
-	respondJSON(w, entries)
+	visible := make([]AuditEntry, 0, len(entries))
+	for _, entry := range entries {
+		if (strings.HasPrefix(entry.Action, "account.") || strings.HasPrefix(entry.Action, "provider.account_")) && entry.ActorID != operator.ID {
+			continue
+		}
+		visible = append(visible, entry)
+	}
+	respondJSON(w, visible)
 }

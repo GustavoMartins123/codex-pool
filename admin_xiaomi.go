@@ -19,13 +19,13 @@ func (h *proxyHandler) serveXiaomiAdmin(w http.ResponseWriter, r *http.Request) 
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeXiaomi)
+		h.handleAPIKeyList(w, r, AccountTypeXiaomi)
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleXiaomiAdd(w, r)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeXiaomi, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeXiaomi, id)
 	default:
 		http.NotFound(w, r)
 	}

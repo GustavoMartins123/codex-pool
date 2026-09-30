@@ -20,7 +20,7 @@ func (h *proxyHandler) serveMinimaxAdmin(w http.ResponseWriter, r *http.Request)
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeMinimax)
+		h.handleAPIKeyList(w, r, AccountTypeMinimax)
 
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleMinimaxAdd(w, r)
@@ -28,7 +28,7 @@ func (h *proxyHandler) serveMinimaxAdmin(w http.ResponseWriter, r *http.Request)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeMinimax, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeMinimax, id)
 
 	default:
 		http.NotFound(w, r)

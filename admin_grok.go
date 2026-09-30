@@ -16,13 +16,13 @@ func (h *proxyHandler) serveGrokAdmin(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeGrok)
+		h.handleAPIKeyList(w, r, AccountTypeGrok)
 	case (path == "/import" || path == "/add") && r.Method == http.MethodPost:
 		h.handleGrokImport(w, r)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeGrok, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeGrok, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -119,7 +119,6 @@ func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) 
 		respondPolicyError(w, err)
 		return
 	}
-	h.auditProviderContribution(r, "grok", accountID)
 
 	respondJSON(w, map[string]any{
 		"success":    true,

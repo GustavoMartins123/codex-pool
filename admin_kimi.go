@@ -20,7 +20,7 @@ func (h *proxyHandler) serveKimiAdmin(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeKimi)
+		h.handleAPIKeyList(w, r, AccountTypeKimi)
 
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleKimiAdd(w, r)
@@ -28,7 +28,7 @@ func (h *proxyHandler) serveKimiAdmin(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeKimi, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeKimi, id)
 
 	default:
 		http.NotFound(w, r)
@@ -84,8 +84,8 @@ func (h *proxyHandler) handleKimiAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIKeyList lists all accounts of the given type.
-func (h *proxyHandler) handleAPIKeyList(w http.ResponseWriter, acctType AccountType) {
-	accounts := h.pool.allAccounts()
+func (h *proxyHandler) handleAPIKeyList(w http.ResponseWriter, r *http.Request, acctType AccountType) {
+	accounts := h.requestVisiblePool(r).allAccounts()
 
 	type accountInfo struct {
 		ID       string        `json:"id"`
@@ -119,8 +119,9 @@ func (h *proxyHandler) handleAPIKeyList(w http.ResponseWriter, acctType AccountT
 }
 
 // handleAPIKeyRemove marks an account as dead.
-func (h *proxyHandler) handleAPIKeyRemove(w http.ResponseWriter, acctType AccountType, accountID string) {
-	accounts := h.pool.allAccounts()
+func (h *proxyHandler) handleAPIKeyRemove(w http.ResponseWriter, r *http.Request, acctType AccountType, accountID string) {
+	if !h.authorizeAccountManagement(w, r, accountID) { return }
+	accounts := h.requestVisiblePool(r).allAccounts()
 	var target *Account
 	for _, acc := range accounts {
 		if acc.Type == acctType && acc.ID == accountID {
@@ -161,7 +162,6 @@ func (h *proxyHandler) saveAPIKeyAccountFile(w http.ResponseWriter, r *http.Requ
 		respondPolicyError(w, err)
 		return
 	}
-	h.auditProviderContribution(r, string(acctType), accountID)
 
 	respondJSON(w, map[string]any{
 		"success":    true,

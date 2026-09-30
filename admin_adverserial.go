@@ -19,13 +19,13 @@ func (h *proxyHandler) serveAdverserialAdmin(w http.ResponseWriter, r *http.Requ
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeAdverserial)
+		h.handleAPIKeyList(w, r, AccountTypeAdverserial)
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleAdverserialAdd(w, r)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeAdverserial, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeAdverserial, id)
 	default:
 		http.NotFound(w, r)
 	}

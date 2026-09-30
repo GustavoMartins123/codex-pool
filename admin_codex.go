@@ -82,7 +82,7 @@ func (h *proxyHandler) serveCodexAdmin(w http.ResponseWriter, r *http.Request) {
 
 // GET /admin/codex - list all Codex accounts
 func (h *proxyHandler) handleCodexList(w http.ResponseWriter, r *http.Request) {
-	accounts := h.pool.allAccounts()
+	accounts := h.requestVisiblePool(r).allAccounts()
 
 	type accountInfo struct {
 		ID          string    `json:"id"`
@@ -329,7 +329,6 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	delete(codexOAuthSessions.sessions, verifier)
 	codexOAuthSessions.Unlock()
 
-	h.auditProviderContribution(r, "codex", accountID)
 
 	respondJSON(w, map[string]any{
 		"success":    true,

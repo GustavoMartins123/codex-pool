@@ -57,7 +57,7 @@ func (h *proxyHandler) serveClaudeAdmin(w http.ResponseWriter, r *http.Request) 
 
 // GET /admin/claude - list all Claude accounts
 func (h *proxyHandler) handleClaudeList(w http.ResponseWriter, r *http.Request) {
-	accounts := h.pool.allAccounts()
+	accounts := h.requestVisiblePool(r).allAccounts()
 
 	type accountInfo struct {
 		ID          string    `json:"id"`
@@ -122,7 +122,7 @@ type claudeOAuthFileMetadata struct {
 
 func (h *proxyHandler) handleClaudePlanProbe(w http.ResponseWriter, r *http.Request) {
 	live := r.URL.Query().Get("live") == "1" || strings.EqualFold(r.URL.Query().Get("live"), "true")
-	accounts := h.pool.allAccounts()
+	accounts := h.requestVisiblePool(r).allAccounts()
 
 	var result []claudeOAuthPlanHint
 	for _, acc := range accounts {
@@ -425,7 +425,6 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	delete(claudeOAuthSessions.sessions, verifier)
 	claudeOAuthSessions.Unlock()
 
-	h.auditProviderContribution(r, "claude", session.AccountID)
 
 	respondJSON(w, map[string]any{
 		"success":    true,
@@ -435,7 +434,8 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 
 // POST /admin/claude/:id/refresh - refresh single account tokens
 func (h *proxyHandler) handleClaudeRefresh(w http.ResponseWriter, r *http.Request, accountID string) {
-	accounts := h.pool.allAccounts()
+	if !h.authorizeAccountManagement(w,r,accountID) { return }
+	accounts := h.requestVisiblePool(r).allAccounts()
 	var target *Account
 	for _, acc := range accounts {
 		if acc.Type == AccountTypeClaude && acc.ID == accountID {

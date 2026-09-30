@@ -278,7 +278,6 @@ func (h *proxyHandler) pollZAILogin(r *http.Request, flowID, pollToken string) (
 	if err != nil {
 		return nil, err
 	}
-	h.auditProviderContribution(r, string(AccountTypeZAI), accountID)
 	return &zaiLoginResult{accountID: accountID, email: email}, nil
 }
 

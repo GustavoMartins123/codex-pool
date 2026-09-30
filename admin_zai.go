@@ -18,13 +18,13 @@ func (h *proxyHandler) serveZAIAdmin(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case path == "/" && r.Method == http.MethodGet:
-		h.handleAPIKeyList(w, AccountTypeZAI)
+		h.handleAPIKeyList(w, r, AccountTypeZAI)
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleZAIAdd(w, r)
 	case strings.HasSuffix(path, "/remove") && r.Method == http.MethodPost:
 		id := strings.TrimPrefix(path, "/")
 		id = strings.TrimSuffix(id, "/remove")
-		h.handleAPIKeyRemove(w, AccountTypeZAI, id)
+		h.handleAPIKeyRemove(w, r, AccountTypeZAI, id)
 	default:
 		http.NotFound(w, r)
 	}

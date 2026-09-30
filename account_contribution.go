@@ -87,7 +87,10 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 			}
 			return nil
 		}
-		return putJSON(b, key, &accountResource{Version: 2, ID: id, Provider: provider, OwnerID: actor, AddedBy: actor, OperatorManaged: actor == "break-glass", SecretRef: ref, Identity: fingerprint, Revision: 1, Status: "pending"})
+		if err := putJSON(b, key, &accountResource{Version: 2, ID: id, Provider: provider, OwnerID: actor, AddedBy: actor, OperatorManaged: actor == "break-glass", SecretRef: ref, Identity: fingerprint, Revision: 1, Status: "pending"}); err != nil {
+			return err
+		}
+		return p.audit(tx, actor, "account.contribution_started", id, string(provider))
 	})
 	if err != nil {
 		return "", err
@@ -123,7 +126,10 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 		}
 		r.Status = "active"
 		r.Revision++
-		return putJSON(b, resourceKey(provider, id), r)
+		if err := putJSON(b, resourceKey(provider, id), r); err != nil {
+			return err
+		}
+		return p.audit(tx, actor, "account.contributed", id, string(provider))
 	})
 	if err != nil {
 		return "", err
@@ -145,7 +151,7 @@ func (h *proxyHandler) saveContribution(r *http.Request, provider AccountType, i
 }
 
 func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.Request) {
-	_, session, ok := h.requireOperator(w, r)
+	operator, session, ok := h.requireOperator(w, r)
 	if !ok {
 		return
 	}
@@ -177,7 +183,12 @@ func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.R
 	}
 	updated := *pr
 	updated.CanContribute = q.CanContribute
-	if err := p.db.Update(func(tx *bbolt.Tx) error { return putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated) }); err != nil {
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated); err != nil {
+			return err
+		}
+		return p.audit(tx, operator.ID, "account.contribution_permission_changed", updated.ID, "")
+	}); err != nil {
 		respondJSONError(w, 500, "could not update account contribution permission")
 		return
 	}

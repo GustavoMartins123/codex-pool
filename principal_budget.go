@@ -216,7 +216,7 @@ func (p *PassportStore) migratePrincipalPolicyUsage() error {
 }
 
 func (h *proxyHandler) handlePrincipalBudget(w http.ResponseWriter, r *http.Request) {
-	_, session, ok := h.requireOperator(w, r)
+	operator, session, ok := h.requireOperator(w, r)
 	if !ok {
 		return
 	}
@@ -250,7 +250,12 @@ func (h *proxyHandler) handlePrincipalBudget(w http.ResponseWriter, r *http.Requ
 	}
 	updated := *pr
 	updated.Budget = q.Limits
-	if err := p.db.Update(func(tx *bbolt.Tx) error { return putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, updated) }); err != nil {
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, updated); err != nil {
+			return err
+		}
+		return p.audit(tx, operator.ID, "principal.budget_changed", updated.ID, "")
+	}); err != nil {
 		respondJSONError(w, 500, "could not update principal budget")
 		return
 	}

@@ -2099,7 +2099,7 @@ func quotaPaceRatio(usedPercent float64, resetMinutes, windowMinutes int) float6
 }
 
 func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
-	accounts := h.pool.allAccounts()
+	accounts := h.requestVisiblePool(r).allAccounts()
 
 	stats := PoolStats{
 		TotalAccounts: len(accounts),
