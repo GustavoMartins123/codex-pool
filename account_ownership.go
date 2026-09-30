@@ -1,0 +1,169 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+
+	"go.etcd.io/bbolt"
+)
+
+const bucketAccountResources = "account_resources"
+
+type accountResource struct {
+	Version         int         `json:"version"`
+	ID              string      `json:"id"`
+	Provider        AccountType `json:"provider"`
+	OwnerID         string      `json:"owner_id"`
+	AddedBy         string      `json:"added_by"`
+	OperatorManaged bool        `json:"operator_managed"`
+	SecretRef       string      `json:"secret_ref"`
+	Identity        string      `json:"identity,omitempty"`
+	Revision        uint64      `json:"revision"`
+	WithdrawnAt     *time.Time  `json:"withdrawn_at,omitempty"`
+}
+
+func resourceKey(provider AccountType, id string) string { return string(provider) + "|" + id }
+
+func readAccountResource(b *bbolt.Bucket, provider AccountType, id string) (*accountResource, error) {
+	if b == nil {
+		return nil, errors.New("account authority unavailable")
+	}
+	raw := b.Get([]byte(resourceKey(provider, id)))
+	if raw == nil {
+		return nil, errors.New("account ownership missing")
+	}
+	var resource accountResource
+	if err := json.Unmarshal(raw, &resource); err != nil {
+		return nil, err
+	}
+	if resource.Version != 1 || resource.ID != id || resource.Provider != provider || resource.OwnerID == "" || resource.Revision == 0 {
+		return nil, errors.New("invalid account ownership")
+	}
+	return &resource, nil
+}
+
+func (p *PassportStore) initializeAccountAuthority(accounts []*Account) error {
+	return p.db.Update(func(tx *bbolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists([]byte(bucketAccountResources))
+		if err != nil {
+			return err
+		}
+		state := tx.Bucket([]byte(bucketAnalyticsState))
+		if state.Get([]byte("account_ownership_migrated")) != nil {
+			return nil
+		}
+		for _, a := range accounts {
+			if b.Get([]byte(resourceKey(a.Type, a.ID))) != nil {
+				continue
+			}
+			r := accountResource{Version: 1, ID: a.ID, Provider: a.Type, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, SecretRef: a.File, Revision: 1}
+			if err := putJSON(b, resourceKey(a.Type, a.ID), &r); err != nil {
+				return err
+			}
+		}
+		return state.Put([]byte("account_ownership_migrated"), []byte{1})
+	})
+}
+
+func (p *PassportStore) accountActor(identity string) string {
+	principalID, clientID := splitClientIdentity(identity)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if clientID != "" {
+		if client := p.clients[clientID]; client != nil && client.PrincipalID == principalID {
+			return principalID
+		}
+		return ""
+	}
+	if client := p.clients[identity]; client != nil {
+		return client.PrincipalID
+	}
+	return identity
+}
+
+func (h *proxyHandler) requestVisiblePool(r *http.Request) *poolState {
+	if h.passport != nil {
+		if principal, _ := h.passport.authenticate(r); principal != nil {
+			return h.pool.visiblePool(principal.ID)
+		}
+	}
+	identity, _, _, _, allowed := h.authorizePoolCredentialRequest(r)
+	if allowed {
+		return h.pool.visiblePool(identity)
+	}
+	return h.pool.visiblePool("")
+}
+
+func (p *PassportStore) authorizeAccount(identity string, a *Account, action string) error {
+	if p == nil || a == nil {
+		return errors.New("account authority unavailable")
+	}
+	actor := p.accountActor(identity)
+	principal := p.principal(actor)
+	if identity != "" && (principal == nil || principal.Status != PrincipalActive || principal.ExpiresAt != nil && !principal.ExpiresAt.After(time.Now())) {
+		return errors.New("account actor unavailable")
+	}
+	return p.db.View(func(tx *bbolt.Tx) error {
+		r, err := readAccountResource(tx.Bucket([]byte(bucketAccountResources)), a.Type, a.ID)
+		if err != nil {
+			return err
+		}
+		if r.WithdrawnAt != nil {
+			return errors.New("account withdrawn")
+		}
+		switch action {
+		case "read", "use":
+			if r.OperatorManaged || actor != "" && actor == r.OwnerID {
+				return nil
+			}
+		case "manage", "withdraw":
+			if actor != "" && actor == r.OwnerID || r.OperatorManaged && principal != nil && principal.Kind == PrincipalOperator {
+				return nil
+			}
+		default:
+			return errors.New("unknown account permission")
+		}
+		return errors.New("account access denied")
+	})
+}
+
+func (p *poolState) accountExclusions(identity string, excluded map[string]bool) map[string]bool {
+	result := make(map[string]bool, len(excluded))
+	for id, value := range excluded {
+		result[id] = value
+	}
+	if p.accountAuthority == nil {
+		return result
+	}
+	for _, a := range p.allAccounts() {
+		if p.accountAuthority.authorizeAccount(identity, a, "use") != nil {
+			result[a.ID] = true
+		}
+	}
+	return result
+}
+
+func (p *poolState) visiblePool(identity string) *poolState {
+	accounts := []*Account{}
+	for _, a := range p.allAccounts() {
+		if p.accountAuthority == nil || p.accountAuthority.authorizeAccount(identity, a, "read") == nil {
+			accounts = append(accounts, a)
+		}
+	}
+	visible := newPoolState(accounts, false)
+	visible.catalogScoped = p.accountAuthority != nil
+	return visible
+}
+
+func (h *proxyHandler) checkAccountUse(identity string, a *Account) error {
+	if h.pool == nil || h.pool.accountAuthority == nil {
+		return nil
+	}
+	if err := h.pool.accountAuthority.authorizeAccount(identity, a, "use"); err != nil {
+		return &policyError{Status: http.StatusForbidden, Code: "account_access_denied", Message: fmt.Sprintf("account authorization failed: %v", err)}
+	}
+	return nil
+}

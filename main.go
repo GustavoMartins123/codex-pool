@@ -696,6 +696,10 @@ func main() {
 		log.Fatalf("legacy credential retirement failed: %v", err)
 	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
+	if err := passport.initializeAccountAuthority(pool.allAccounts()); err != nil {
+		log.Fatalf("initialize account ownership: %v", err)
+	}
+	pool.accountAuthority = passport
 	experiments, err := newExperimentTracker(store.db, cfg.experiments)
 	if err != nil {
 		log.Fatalf("initialize experiments: %v", err)
@@ -2281,15 +2285,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/api/pool/models" {
-		serveClientPoolModels(w, h.pool)
+		serveClientPoolModels(w, h.pool.visiblePool(userID))
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1/models" {
-		serveUnifiedOpenAIModels(w, h.pool)
+		serveUnifiedOpenAIModels(w, h.pool.visiblePool(userID))
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1beta/models" {
-		serveUnifiedGeminiModels(w, h.pool)
+		serveUnifiedGeminiModels(w, h.pool.visiblePool(userID))
 		return
 	}
 	var admission *policyAdmission
@@ -2977,6 +2981,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	for attempt := 1; attempt <= attempts; attempt++ {
 		var acc *Account
+		for id, denied := range h.pool.accountExclusions(userID, nil) {
+			hardExclude[id] = denied
+		}
 		candidateExclude := exclude
 		if imageGenerationRequest || len(hardExclude) > 0 {
 			candidateExclude = make(map[string]bool, len(exclude)+len(hardExclude)+h.pool.countByType(accountType))
@@ -2992,7 +2999,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 		}
 		if imageGenerationRequest && attempt == 1 && !imageFanoutChild {
-			acc = h.pool.candidateByID(preferredImageCodexAccountID, accountType, requiredPlan, originIP)
+			acc = h.pool.candidateByIDForUser(userID, preferredImageCodexAccountID, accountType, requiredPlan, originIP)
 			if acc != nil && h.cfg.debug.Load() {
 				log.Printf("[%s] routing image generation request to codex account %s", reqID, acc.ID)
 			}
@@ -3001,7 +3008,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			acc = h.pool.imageFanoutCandidate(imageFanoutIndex, candidateExclude, requiredPlan, originIP)
 		}
 		if acc == nil && cyberAccessRetry {
-			acc = h.pool.candidateWithCyberAccess(candidateExclude, accountType, requiredPlan, originIP)
+			acc = h.pool.candidateWithCyberAccessForUser(userID, candidateExclude, accountType, requiredPlan, originIP)
 			if acc != nil && h.cfg.debug.Load() {
 				log.Printf("[%s] routing cyber_policy retry to %s account %s", reqID, accountType, acc.ID)
 			}
@@ -3216,6 +3223,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 		w.Header().Set("X-Pool-Circuit-State", circuitState)
 
+		if err := h.checkAccountUse(userID, acc); err != nil {
+			respondPolicyError(w, err)
+			return
+		}
 		atomic.AddInt64(&acc.Inflight, 1)
 		atomic.AddInt64(&h.inflight, 1)
 
@@ -4122,6 +4133,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		return
 	}
 
+	if err := h.checkAccountUse(userID, acc); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	atomic.AddInt64(&acc.Inflight, 1)
 	atomic.AddInt64(&h.inflight, 1)
 	// inflightAcc tracks the account that currently owns the inflight
@@ -4267,7 +4282,12 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	}
 
 	relay := relayWebSocket(w, r, outURL, upstreamHeaders, webSocketRelayOptions{
-		OnClientMessage:             func([]byte) error { return h.revalidatePoolCredential(r, userID) },
+		OnClientMessage: func([]byte) error {
+			if err := h.revalidatePoolCredential(r, userID); err != nil {
+				return err
+			}
+			return h.checkAccountUse(userID, acc)
+		},
 		IdleTimeout:                 h.cfg.websocketIdleTimeout,
 		DownstreamHeartbeatInterval: downstreamHeartbeatInterval,
 		ReadLimit:                   readLimit,
@@ -4739,6 +4759,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if err := h.checkAccountUse(userID, acc); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	atomic.AddInt64(&acc.Inflight, 1)
 	atomic.AddInt64(&h.inflight, 1)
 	defer func() {
@@ -6061,6 +6085,9 @@ func (h *proxyHandler) tryOnce(
 	contextObject, _ := in.Context().Value(contextFrameKey{}).(map[string]any)
 
 	buildReq := func() (*http.Request, error) {
+		if err := h.checkAccountUse(userID, acc); err != nil {
+			return nil, err
+		}
 		authAccount := acc
 		if provider.Type() == AccountTypeCodex && isCodexResponsesPath(in.URL.Path) {
 			authAccount = contextAuthSnapshot(acc)

@@ -578,9 +578,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if h.isOperatorRequest(r) {
-			servePoolModels(w, h.pool)
+			servePoolModels(w, h.requestVisiblePool(r))
 		} else {
-			serveClientPoolModels(w, h.pool)
+			serveClientPoolModels(w, h.requestVisiblePool(r))
 		}
 		return
 	case "/api/pool/experiments":

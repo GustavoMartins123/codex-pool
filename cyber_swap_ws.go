@@ -108,7 +108,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 			if attempt+1 >= h.cfg.maxAttempts {
 				break
 			}
-			next := h.pool.candidate(opts.ConversationID, excluded, AccountTypeCodex, opts.RequiredPlan, opts.ClientIP)
+			next := h.pool.candidateForUser(opts.UserID, opts.ConversationID, excluded, AccountTypeCodex, opts.RequiredPlan, opts.ClientIP)
 			if next == nil {
 				break
 			}
@@ -311,6 +311,9 @@ func (s *codexRelayState) relayOnce() error {
 	go func() {
 		clientErrCh <- pumpFrames(roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
 			if err := s.h.revalidatePoolCredential(s.credentialRequest, s.opts.UserID); err != nil {
+				return nil, err
+			}
+			if err := s.h.checkAccountUse(s.opts.UserID, s.activeAccount); err != nil {
 				return nil, err
 			}
 			return s.inspectClient(data)
@@ -558,7 +561,8 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("cannot change websocket account while responses are pending")
 		}
 		exclude := map[string]bool{s.activeAccount.ID: true}
-		next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTrace(
+		next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTraceForUser(
+			s.opts.UserID,
 			conversationID,
 			exclude,
 			AccountTypeCodex,
@@ -845,7 +849,7 @@ func (s *codexRelayState) pickCyberAccessCandidate() *Account {
 	if s.activeAccount != nil {
 		exclude[s.activeAccount.ID] = true
 	}
-	return s.h.pool.candidateWithCyberAccess(exclude, AccountTypeCodex, s.opts.RequiredPlan, s.opts.ClientIP)
+	return s.h.pool.candidateWithCyberAccessForUser(s.opts.UserID, exclude, AccountTypeCodex, s.opts.RequiredPlan, s.opts.ClientIP)
 }
 
 func (s *codexRelayState) legacyPin(conversationID string) {
@@ -941,6 +945,9 @@ func (h *proxyHandler) dialSwappedUpstream(
 	acc *Account,
 	subprotocols []string,
 ) (*websocket.Conn, *http.Response, *Account, error) {
+	if err := h.checkAccountUse(opts.UserID, acc); err != nil {
+		return nil, nil, nil, err
+	}
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
 		if err := h.refreshAccount(ctx, acc); err != nil {
 			if h.cfg.debug.Load() {

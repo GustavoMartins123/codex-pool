@@ -77,6 +77,9 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 	models := make([]poolModelDescriptor, 0, len(poolModels)+len(grokModelCatalog))
 	for _, model := range poolModels {
 		supportingAccounts, availableAccounts, availableNow := poolModelAvailability(pool, model.AccountType, model.ID)
+		if pool != nil && pool.catalogScoped && supportingAccounts == 0 {
+			continue
+		}
 		protocol := "anthropic"
 		switch model.AccountType {
 		case AccountTypeCodex:
@@ -111,6 +114,9 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 	}
 	for _, model := range grokModelCatalog {
 		supportingAccounts, availableAccounts, availableNow := poolModelAvailability(pool, AccountTypeGrok)
+		if pool != nil && pool.catalogScoped && supportingAccounts == 0 {
+			continue
+		}
 		capabilities := map[string]bool{"reasoning": model.Reasoning, "tools": true}
 		if model.WebSearch {
 			capabilities["web_search"] = true
@@ -307,6 +313,9 @@ func serveUnifiedOpenAIModels(w http.ResponseWriter, pools ...*poolState) {
 func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
 	models := make([]map[string]any, 0)
 	for _, model := range modelsForProvider(AccountTypeGemini) {
+		if pool != nil && pool.catalogScoped && pool.countByType(AccountTypeGemini) == 0 {
+			continue
+		}
 		models = append(models, map[string]any{
 			"name": "models/" + model.ID, "displayName": model.DisplayName,
 			"inputTokenLimit": model.ContextWindow, "outputTokenLimit": model.MaxTokens,

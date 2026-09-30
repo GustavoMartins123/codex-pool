@@ -1833,6 +1833,11 @@ func isAntigravityResponsesPath(path string) bool {
 }
 
 func (h *proxyHandler) doAntigravityRequest(ctx context.Context, incoming http.Header, account *Account, provider *AntigravityProvider, prepared antigravityPreparedRequest) (*http.Response, error) {
+	if admission, ok := ctx.Value(policyAdmissionContextKey{}).(*policyAdmission); ok && admission != nil {
+		if err := h.checkAccountUse(admission.principalID, account); err != nil {
+			return nil, err
+		}
+	}
 	tryBase := func(base *url.URL) (*http.Response, error) {
 		u := *base
 		operation := prepared.Operation

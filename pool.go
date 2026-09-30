@@ -470,6 +470,8 @@ const (
 )
 
 type poolState struct {
+	accountAuthority *PassportStore
+	catalogScoped    bool
 	mu               sync.RWMutex
 	accounts         []*Account
 	convPin          map[string]string // conversation_id -> account ID
@@ -704,6 +706,13 @@ func (p *poolState) usageResetWithinBudget(accountType AccountType, budget time.
 //  7. If all non-codex candidates are rate-limited, pick the best rate-limited account as fallback
 //     to avoid hard 503 failures during transient exhaustion.
 func (p *poolState) candidateByID(id string, accountType AccountType, requiredPlan string, clientIP string) *Account {
+	return p.candidateByIDForUser("", id, accountType, requiredPlan, clientIP)
+}
+
+func (p *poolState) candidateByIDForUser(userID, id string, accountType AccountType, requiredPlan, clientIP string) *Account {
+	if p.accountExclusions(userID, nil)[id] {
+		return nil
+	}
 	if id == "" {
 		return nil
 	}
@@ -730,6 +739,11 @@ func (p *poolState) candidateByID(id string, accountType AccountType, requiredPl
 }
 
 func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
+	return p.candidateWithCyberAccessForUser("", exclude, accountType, requiredPlan, clientIP)
+}
+
+func (p *poolState) candidateWithCyberAccessForUser(userID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP string) *Account {
+	exclude = p.accountExclusions(userID, exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -773,6 +787,10 @@ func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountTyp
 }
 
 func (p *poolState) candidateForModel(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) *Account {
+	return p.candidateForModelForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model)
+}
+
+func (p *poolState) candidateForModelForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) *Account {
 	filtered := make(map[string]bool, len(exclude)+p.countByType(accountType))
 	for id, blocked := range exclude {
 		filtered[id] = blocked
@@ -799,7 +817,7 @@ func (p *poolState) candidateForModel(conversationID string, exclude map[string]
 			}
 		}
 	}
-	acc := p.candidate(conversationID, filtered, accountType, requiredPlan, clientIP)
+	acc := p.candidateForUser(userID, conversationID, filtered, accountType, requiredPlan, clientIP)
 	if acc != nil && p.circuitBreakers != nil && model != "" {
 		if allowed, _ := p.circuitBreakers.AllowAccountModel(acc.ID, model); !allowed {
 			return nil
@@ -869,6 +887,7 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 }
 
 func (p *poolState) candidateForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
+	exclude = p.accountExclusions(userID, exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -2666,7 +2685,11 @@ func (p *poolState) debugf(format string, args ...any) {
 }
 
 func (p *poolState) candidateWithTrace(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string, model string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	acc := p.candidateForModel(conversationID, exclude, accountType, requiredPlan, clientIP, model)
+	return p.candidateWithTraceForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model)
+}
+
+func (p *poolState) candidateWithTraceForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string, model string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	acc := p.candidateForModelForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model)
 	if acc == nil {
 		return nil, "none", nil, 0, nil, nil
 	}

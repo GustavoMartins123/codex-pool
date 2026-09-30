@@ -491,6 +491,7 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 	if p == nil {
 		return smartRouteDecision{Profile: profile}
 	}
+	exclude = p.accountExclusions(userID, exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	weights, ok := p.routing.weights(profile)
@@ -596,8 +597,9 @@ func (p *poolState) candidateWithRoutingTrace(conversationID string, exclude map
 }
 
 func (p *poolState) candidateWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	exclude = p.accountExclusions(userID, exclude)
 	if profile == RoutingLegacy {
-		return p.candidateWithTrace(conversationID, exclude, accountType, requiredPlan, clientIP, model)
+		return p.candidateWithTraceForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model)
 	}
 	decision := p.smartCandidateForModelForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
 	if decision.Account == nil {
@@ -611,6 +613,7 @@ func (p *poolState) candidateForAntigravityModelWithRoutingTrace(conversationID 
 }
 
 func (p *poolState) candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, model, clientIP string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
+	exclude = p.accountExclusions(userID, exclude)
 	if profile == RoutingLegacy {
 		return p.candidateForAntigravityModelWithTrace(conversationID, exclude, model, clientIP)
 	}

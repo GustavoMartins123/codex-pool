@@ -295,7 +295,7 @@ func TestServePoolModelsIncludesNativeGeminiProtocol(t *testing.T) {
 
 func TestPoolModelsEndpointRequiresPoolToken(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
-	handler := &proxyHandler{cfg: &config{}}
+	handler := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false)}
 
 	request := httptest.NewRequest(http.MethodGet, "http://pool.example/api/pool/models", nil)
 	recorder := httptest.NewRecorder()
