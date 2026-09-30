@@ -165,7 +165,7 @@ To use another file, run `bash setup.sh /path/to/.env` or
 keys across restarts. Key rotation remains an explicit operation.
 
 The server requires the vault key and encrypts existing plaintext credentials
-on first start. Development scripts manage their own `.dev-vault-key`.
+on first start. Development scripts use the same `.env` as native binaries.
 
 ### 3. Run it
 
@@ -179,9 +179,18 @@ bash scripts/deploy.sh
 .\scripts\windows\deploy.ps1
 ```
 
-For native binaries, supply the generated keys through the process environment
-and change the container storage paths to local paths. Native binaries do not
-load `.env` automatically.
+Native binaries load `.env` from the working directory before configuration.
+Change `POOL_DIR`, `PROXY_DB_PATH`, and `DUCKDB_PATH` to local paths before
+starting natively. Use `-env-file /path/to/.env` to select another file, or
+`-env-file=` to explicitly use only the process environment. Docker uses this
+process-only mode with the variables injected by Compose.
+
+Existing process variables take priority, including empty values. Missing,
+unreadable, invalid, or duplicate assignments stop startup before storage opens.
+The file supports UTF-8, CRLF, `export`, quoted values, and inline comments;
+variable interpolation, shell commands, and multiline values are rejected.
+For Windows paths, use unquoted or single-quoted values. In double quotes,
+only `\\`, `\"`, `\n`, `\r`, and `\t` escapes are supported.
 
 Builds include the dashboard. Run the binary from a directory where you want
 `pool/`, `data/`, and optional `config.toml` to live.
