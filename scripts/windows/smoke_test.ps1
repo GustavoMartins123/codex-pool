@@ -38,6 +38,7 @@ $envs = @{
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $exe.Path
+$psi.Arguments = '-env-file='
 $psi.WorkingDirectory = $runDir
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $false
