@@ -80,7 +80,6 @@ jobs:
         with:
           msystem: UCRT64
           path-type: inherit
-          install: mingw-w64-ucrt-x86_64-gcc
       - name: Pin DuckDB-compatible compiler
         shell: msys2 {0}
         run: |
