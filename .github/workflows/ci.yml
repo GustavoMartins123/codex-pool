@@ -81,6 +81,15 @@ jobs:
           msystem: UCRT64
           path-type: inherit
           install: mingw-w64-ucrt-x86_64-gcc
+      - name: Pin DuckDB-compatible compiler
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          pacman --noconfirm -U \
+            https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-libs-15.2.0-14-any.pkg.tar.zst \
+            https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gcc-15.2.0-14-any.pkg.tar.zst
+          test "$(gcc -dumpfullversion)" = "15.2.0"
+          test "$(pacman -Q mingw-w64-ucrt-x86_64-gcc-libs)" = "mingw-w64-ucrt-x86_64-gcc-libs 15.2.0-14"
       - name: Build embedded frontend
         shell: pwsh
         run: |
@@ -92,6 +101,7 @@ jobs:
         shell: msys2 {0}
         env:
           CGO_ENABLED: "1"
+          CC: gcc
           GOTOOLCHAIN: local
         run: |
           set -euo pipefail

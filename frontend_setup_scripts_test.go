@@ -271,7 +271,7 @@ trust_level = "trusted"
 }
 
 func TestSetupExamplesUseAstra(t *testing.T) {
-	for _, path := range []string{"web/src/App.tsx"} {
+       for _, path := range []string{"web/src/pages/Setup.tsx"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

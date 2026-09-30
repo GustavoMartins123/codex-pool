@@ -176,13 +176,13 @@ directory to change the install location.
 
 Run `.\scripts\windows\install.ps1` to build and install into
 `$env:LOCALAPPDATA\Programs\codex-pool`, or pass `-InstallDir` to choose a
-directory. The build scripts automatically detect MSYS2 UCRT64 from workspace-local
-toolchains (`.toolchains\msys64\ucrt64\bin`) or standard installation (`C:\msys64\ucrt64\bin`),
-or you can pass a custom path with `-CompilerBin`.
+directory. The build script uses `C:\msys64\ucrt64\bin`; pass `-CompilerBin`
+to select a custom compiler directory.
 
-Both GCC 15 and modern GCC 16+ are fully supported out-of-the-box thanks to our
-built-in DuckDB C++ runtime shim (`duckdb_windows_shim.go`) which bridges emulated
-TLS and `std::call_once` linkage.
+MSYS2 UCRT64 GCC 15.2.0 is required by the pinned DuckDB bindings. CI installs
+the compiler and runtime packages at version `15.2.0-14`; GCC 16 cannot link
+these bindings because its C++ runtime no longer provides the required emulated
+TLS symbols.
 Windows builds target `amd64`; DuckDB's pinned bindings do not
 include a Windows ARM64 target. Installation copies only the executable and
 does not change `PATH` or create a service.
