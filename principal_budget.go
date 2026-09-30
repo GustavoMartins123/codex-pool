@@ -15,6 +15,7 @@ type policyBudgetHold struct {
 	Day    string
 	Month  string
 	Tokens int64
+	Limits PolicyLimits
 }
 
 func validatePolicyLimits(l PolicyLimits) error {
@@ -114,7 +115,7 @@ func (p *PassportStore) reservePolicyRequest(principalID, clientID string, confi
 					return err
 				}
 			}
-			a.holds = append(a.holds, policyBudgetHold{Scope: s.id, Day: dayKey, Month: monthKey, Tokens: reserved})
+			a.holds = append(a.holds, policyBudgetHold{Scope: s.id, Day: dayKey, Month: monthKey, Tokens: reserved, Limits: s.limits})
 			if s.id == clientID {
 				a.reservedTokens = reserved
 			}

@@ -314,7 +314,7 @@ func parseTokenCountEvent(obj map[string]any) *RequestUsage {
 	return ru
 }
 
-func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage) {
+func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*policyAdmission) {
 	if a == nil {
 		return
 	}
@@ -352,14 +352,24 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage) {
 			a.mu.Unlock()
 		}
 	}
+	durable := false
 	if h.store != nil {
 		if err := h.store.recordReliably(ru, costUSD); err != nil {
 			log.Printf("analytics: durable usage write failed: %v", err)
-		} else if h.duckAnalytics != nil {
-			h.duckAnalytics.Notify()
+		} else {
+			durable = true
+			if h.duckAnalytics != nil {
+				h.duckAnalytics.Notify()
+			}
 		}
 	}
-	if h.passport != nil && ru.ClientCredentialID != "" && ru.BillableTokens > 0 {
+	var admission *policyAdmission
+	if len(admissions) > 0 {
+		admission = admissions[0]
+	}
+	if admission.hasTokenBudget() {
+		admission.recordAttemptUsage(ru.BillableTokens, durable)
+	} else if h.passport != nil && ru.ClientCredentialID != "" && ru.BillableTokens > 0 {
 		if err := h.passport.recordPolicyTokens(ru.ClientCredentialID, ru.BillableTokens, ru.Timestamp); err != nil {
 			log.Printf("passport policy: record token usage: %v", err)
 		}

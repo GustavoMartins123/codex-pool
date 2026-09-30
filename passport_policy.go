@@ -72,19 +72,18 @@ type policyError struct {
 func (e *policyError) Error() string { return e.Message }
 
 type policyAdmission struct {
-	holds       []policyBudgetHold
-	store       *PassportStore
-	readOnly    bool
-	principalID string
-	clientID    string
-	policy      ClientPolicy
-	priority    int
-	configured  bool
-	// reservedTokens is the in-flight token-budget hold taken at admission
-	// and returned when the request finishes (Release). Token usage itself
-	// is debited durably by recordPolicyTokens once known.
+	holds          []policyBudgetHold
+	store          *PassportStore
+	readOnly       bool
+	principalID    string
+	clientID       string
+	policy         ClientPolicy
+	priority       int
+	configured     bool
 	reservedTokens int64
 	releaseOnce    sync.Once
+	attemptMu      sync.Mutex
+	attempt        *policyTokenAttempt
 }
 
 type policyAdmissionContextKey struct{}
@@ -140,6 +139,9 @@ func (a *policyAdmission) CheckModel(model string) error {
 }
 
 func (a *policyAdmission) CheckProvider(provider AccountType) error {
+	if a.hasTokenBudget() && provider != AccountTypeCodex && provider != AccountTypeClaude {
+		return unboundedPolicyRequest()
+	}
 	if a == nil || provider == "" || policyAllows(a.policy.Providers, string(provider)) {
 		return nil
 	}

@@ -421,8 +421,6 @@ func main() {
 	if err := validateSecretStrength(cfg); err != nil {
 		log.Fatalf("insecure configuration: %v", err)
 	}
-	duckPath := getenv("DUCKDB_PATH", "./data/usage.duckdb")
-	cfg.duckPath = duckPath
 	if cfg.backupDir != "" && cfg.restoreManifest != "" {
 		log.Fatal("choose only one of -backup-dir or -restore-manifest")
 	}
@@ -2348,6 +2346,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	accountType := provider.Type()
 
 	if isWebSocketUpgradeRequest(r) {
+		if admission.hasTokenBudget() { respondPolicyError(w, unboundedPolicyRequest()); return }
 		h.proxyRequestWebSocket(w, r, reqID, userID, originID, provider, targetBase)
 		return
 	}
@@ -3240,6 +3239,12 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		atomic.AddInt64(&acc.Inflight, -1)
 		atomic.AddInt64(&h.inflight, -1)
 
+		var policyBlocked *policyError
+		if errors.As(err, &policyBlocked) {
+			h.auditPolicyDecision(admission, "policy.request_blocked", policyBlocked)
+			respondPolicyError(w, policyBlocked)
+			return
+		}
 		reqDuration := time.Since(start)
 		trace.DurationMs = float64(reqDuration.Milliseconds())
 		if resp != nil {
@@ -3552,7 +3557,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 						ru.UserID = userID
 						ru.OriginID = originID
 						ru.AccountType = acc.Type
-						h.recordUsage(acc, *ru)
+						h.recordUsage(acc, *ru, admission)
 					}
 				}
 			}
@@ -3642,7 +3647,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 						ru.UserID = userID
 						ru.OriginID = originID
 						ru.AccountType = acc.Type
-						h.recordUsage(acc, *ru)
+						h.recordUsage(acc, *ru, admission)
 					}
 				}
 			}
@@ -3698,7 +3703,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 						ru.UserID = userID
 						ru.OriginID = originID
 						ru.AccountType = acc.Type
-						h.recordUsage(acc, *ru)
+						h.recordUsage(acc, *ru, admission)
 					}
 				}
 			}
@@ -3744,7 +3749,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if sampleBuf != nil {
 				sampleBuf.Write(respBody)
 			}
-			h.updateUsageFromBody(acc, respBody, userID, originID)
+			h.updateUsageFromBody(acc, respBody, userID, originID, admission)
 
 			var translated []byte
 			if resp.StatusCode >= 400 {
@@ -3825,7 +3830,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				writer = hw
 			}
 
-			usageWriter := &streamUsageWriter{record: func(usage RequestUsage) { h.recordUsage(acc, usage) }}
+			usageWriter := &streamUsageWriter{record: func(usage RequestUsage) { h.recordUsage(acc, usage, admission) }}
 			var claudeAccum *RequestUsage
 
 			usageCallback := func(data []byte) {
@@ -3989,7 +3994,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if claudeAccum.Model == "" {
 					claudeAccum.Model = requestedModel
 				}
-				h.recordUsage(acc, *claudeAccum)
+				h.recordUsage(acc, *claudeAccum, admission)
 			}
 
 			if copyErr != nil {
@@ -4015,7 +4020,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
 			}
 			if !isSSE && len(respSample) > 0 {
-				h.updateUsageFromBody(acc, respSample, userID, originID)
+				h.updateUsageFromBody(acc, respSample, userID, originID, admission)
 			}
 		}
 
@@ -4735,6 +4740,7 @@ func logRelayFrame(logLabel, label string, msgType websocket.MessageType, data [
 }
 
 func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider Provider, targetBase *url.URL) {
+	if policyAdmissionFromRequest(r).hasTokenBudget() { respondPolicyError(w, unboundedPolicyRequest()); return }
 	start := time.Now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
@@ -6370,7 +6376,7 @@ func (h *proxyHandler) tryOnce(
 		acc.mu.Unlock()
 	}
 
-	resp, err := h.transport.RoundTrip(outReq)
+	resp, err := h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(in))
 	captureCodexResponseState(acc, resp, reqID)
 	if resp != nil && len(claudeToolNameMapper) > 0 {
 		resp.Header.Del("Content-Length")
@@ -6417,7 +6423,7 @@ func (h *proxyHandler) tryOnce(
 					log.Printf("[%s] retry after refresh -> %s %s (account=%s account_id=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID, acc.AccountID)
 					acc.mu.Unlock()
 				}
-				resp, err = h.transport.RoundTrip(outReq)
+				resp, err = h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(in))
 				captureCodexResponseState(acc, resp, reqID)
 				if resp != nil && len(claudeToolNameMapper) > 0 {
 					resp.Header.Del("Content-Length")
@@ -6728,7 +6734,7 @@ func (h *proxyHandler) waitForRefreshSlot(ctx context.Context) error {
 	}
 }
 
-func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, originID string) {
+func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, originID string, admissions ...*policyAdmission) {
 	if a == nil || len(sample) == 0 {
 		return
 	}
@@ -6760,7 +6766,7 @@ func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, or
 				a.mu.Lock()
 				ru.PlanType = a.PlanType
 				a.mu.Unlock()
-				h.recordUsage(a, *ru)
+				h.recordUsage(a, *ru, admissions...)
 			}
 			// Also apply rate limits from token_count
 			if rl, ok := obj["rate_limits"].(map[string]any); ok {
@@ -6787,7 +6793,7 @@ func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, or
 				a.mu.Lock()
 				ru.PlanType = a.PlanType
 				a.mu.Unlock()
-				h.recordUsage(a, *ru)
+				h.recordUsage(a, *ru, admissions...)
 			}
 		}
 
@@ -6800,7 +6806,7 @@ func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, or
 			a.mu.Lock()
 			ru.PlanType = a.PlanType
 			a.mu.Unlock()
-			h.recordUsage(a, *ru)
+			h.recordUsage(a, *ru, admissions...)
 		}
 	}
 }
