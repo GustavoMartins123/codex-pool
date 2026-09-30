@@ -14,6 +14,10 @@ func BenchmarkSignalAnalytics(b *testing.B) {
 	for _, accounts := range []int{10, 100} {
 		b.Run(fmt.Sprintf("%d_accounts", accounts), func(b *testing.B) {
 			h, now := newSignalBenchmark(b, accounts)
+			accountIDs := make([]string, 0)
+			for _, account := range h.pool.allAccounts() {
+				accountIDs = append(accountIDs, account.ID)
+			}
 			hourly, err := h.store.getGlobalHourlyUsage(24 * 14)
 			if err != nil || len(hourly) != 24*14 {
 				b.Fatalf("unexpected hourly fixture: rows=%d, err=%v", len(hourly), err)
@@ -30,7 +34,7 @@ func BenchmarkSignalAnalytics(b *testing.B) {
 				name string
 				run  func() error
 			}{
-				{"account_daily", func() error { _, err := h.analyticsStore.getAllAccountDailyCosts(); return err }},
+				{"economics_query", func() error { _, err := h.analyticsStore.getSignalEconomics(accountIDs, now); return err }},
 				{"account_totals", func() error { _, err := h.analyticsStore.getAllTimeAccountCostStats(); return err }},
 				{"model_daily", func() error { _, err := h.analyticsStore.getModelDailyUsage(42); return err }},
 				{"origin_weekly", func() error { _, err := h.store.getOriginWeeklyUsage(6); return err }},

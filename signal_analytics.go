@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 )
@@ -93,41 +92,36 @@ func (h *proxyHandler) handleSignalAnalytics(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoint, error) {
-	rows, err := h.analyticsStore.getAllAccountDailyCosts()
-	if err != nil {
-		return nil, err
-	}
-	costStats, err := h.analyticsStore.getAllTimeAccountCostStats()
-	if err != nil {
-		return nil, err
-	}
-
+	now = now.UTC()
 	type subscription struct {
 		monthly   float64
 		firstSeen time.Time
 	}
 	currentAccounts := make(map[string]subscription)
+	accountIDs := make([]string, 0)
 	for _, account := range h.pool.allAccounts() {
 		account.mu.Lock()
 		monthly, _ := getSubscriptionCost(account.Type, accountPlanForSubscription(account.PlanType))
-		firstSeen := costStats[account.ID].FirstSeen
-		if firstSeen.IsZero() {
-			firstSeen = now
-		}
-		currentAccounts[account.ID] = subscription{monthly: monthly, firstSeen: firstSeen.UTC()}
+		currentAccounts[account.ID] = subscription{monthly: monthly}
+		accountIDs = append(accountIDs, account.ID)
 		account.mu.Unlock()
+	}
+	snapshot, err := h.analyticsStore.getSignalEconomics(accountIDs, now)
+	if err != nil {
+		return nil, err
+	}
+	for id, sub := range currentAccounts {
+		sub.firstSeen = snapshot.firstSeen[id]
+		currentAccounts[id] = sub
 	}
 
 	dailyValue := make(map[string]float64)
 	dailyProviders := make(map[string]map[string]float64)
 	var firstDate time.Time
-	for _, row := range rows {
-		if _, ok := currentAccounts[row.AccountID]; !ok {
-			continue
-		}
+	for _, row := range snapshot.dailyCosts {
 		date, err := time.Parse("2006-01-02", row.Date)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		if firstDate.IsZero() || date.Before(firstDate) {
 			firstDate = date
@@ -139,13 +133,19 @@ func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoi
 		dailyProviders[row.Date][row.AccountType] += row.CostUSD
 	}
 	for _, sub := range currentAccounts {
+		if sub.firstSeen.IsZero() {
+			continue
+		}
 		date := time.Date(sub.firstSeen.Year(), sub.firstSeen.Month(), sub.firstSeen.Day(), 0, 0, 0, 0, time.UTC)
 		if firstDate.IsZero() || date.Before(firstDate) {
 			firstDate = date
 		}
 	}
 	if firstDate.IsZero() {
-		return nil, nil
+		if len(currentAccounts) == 0 {
+			return nil, nil
+		}
+		firstDate = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	}
 
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -157,7 +157,10 @@ func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoi
 		cumulativeSpend := 0.0
 		endOfDay := date.Add(24*time.Hour - time.Nanosecond)
 		for _, sub := range currentAccounts {
-			spend, _ := estimateSubscriptionSpend(sub.monthly, sub.firstSeen, endOfDay)
+			spend := sub.monthly
+			if !sub.firstSeen.IsZero() {
+				spend, _ = estimateSubscriptionSpend(sub.monthly, sub.firstSeen, endOfDay)
+			}
 			cumulativeSpend += spend
 		}
 		providerValues := dailyProviders[dateKey]
@@ -173,6 +176,5 @@ func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoi
 		})
 	}
 
-	sort.Slice(points, func(i, j int) bool { return points[i].Date < points[j].Date })
 	return points, nil
 }

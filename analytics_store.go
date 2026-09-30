@@ -56,14 +56,9 @@ type ModelDailyUsageEntry struct {
 	CostUSD             float64 `json:"cost_usd"`
 }
 
-// AccountDailyCostEntry keeps account attribution so cumulative value charts
-// can compare the current pool's API-equivalent value with matching spend.
-type AccountDailyCostEntry struct {
-	Date         string  `json:"date"`
-	AccountID    string  `json:"account_id"`
-	AccountType  string  `json:"account_type"`
-	CostUSD      float64 `json:"cost_usd"`
-	RequestCount int64   `json:"request_count"`
+type signalEconomicsSnapshot struct {
+	dailyCosts []DailyCostEntry
+	firstSeen  map[string]time.Time
 }
 
 // AccountCostSummary holds cost totals for a single account.
@@ -152,6 +147,7 @@ func createAnalyticsTables(db *sql.DB) error {
 		cost_usd REAL DEFAULT 0,
 		PRIMARY KEY (date, account_id, model)
 	);
+	CREATE INDEX IF NOT EXISTS idx_daily_costs_economics ON daily_costs(account_id, date, account_type, cost_usd);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -455,48 +451,57 @@ func (s *AnalyticsStore) getModelDailyUsage(days int) ([]ModelDailyUsageEntry, e
 	return result, nil
 }
 
-// getAllAccountDailyCosts returns all rolled-up history plus today's live rows.
-// Callers filter to the current account set before calculating pool ROI.
-func (s *AnalyticsStore) getAllAccountDailyCosts() ([]AccountDailyCostEntry, error) {
-	rows, err := s.db.Query(`
-		SELECT date, account_id, MAX(account_type), SUM(cost_usd), SUM(request_count)
-		FROM daily_costs
-		GROUP BY date, account_id
-		ORDER BY date, account_id`)
+func (s *AnalyticsStore) getSignalEconomics(accountIDs []string, now time.Time) (signalEconomicsSnapshot, error) {
+	result := signalEconomicsSnapshot{firstSeen: make(map[string]time.Time, len(accountIDs))}
+	encodedIDs, err := json.Marshal(accountIDs)
 	if err != nil {
-		return nil, err
+		return result, err
+	}
+	today := now.UTC().Format("2006-01-02")
+	rows, err := s.db.Query(`
+		WITH current_accounts AS (SELECT value AS id FROM json_each(?)),
+		account_daily AS MATERIALIZED (
+			SELECT date, account_id, MAX(account_type) AS provider, SUM(cost_usd) AS cost,
+				date || 'T00:00:00Z' AS first_seen
+			FROM daily_costs
+			WHERE account_id IN (SELECT id FROM current_accounts)
+			GROUP BY account_id, date
+			UNION ALL
+			SELECT ?, account_id, account_type, SUM(cost_usd), MIN(timestamp)
+			FROM request_costs
+			WHERE timestamp >= ? AND timestamp < ? AND account_id IN (SELECT id FROM current_accounts)
+			GROUP BY account_id, account_type
+		)
+		SELECT 0, account_id, MIN(first_seen), 0 FROM account_daily GROUP BY account_id
+		UNION ALL
+		SELECT 1, date, provider, SUM(cost) FROM account_daily GROUP BY date, provider`,
+		string(encodedIDs), today, today+"T00:00:00Z", now.UTC().AddDate(0, 0, 1).Format("2006-01-02")+"T00:00:00Z")
+	if err != nil {
+		return result, err
 	}
 	defer rows.Close()
-
-	var result []AccountDailyCostEntry
 	for rows.Next() {
-		var entry AccountDailyCostEntry
-		if err := rows.Scan(&entry.Date, &entry.AccountID, &entry.AccountType, &entry.CostUSD, &entry.RequestCount); err == nil {
-			result = append(result, entry)
+		var kind int
+		var key, value string
+		var cost float64
+		if err := rows.Scan(&kind, &key, &value, &cost); err != nil {
+			return signalEconomicsSnapshot{}, err
+		}
+		if kind == 0 {
+			firstSeen, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				return signalEconomicsSnapshot{}, fmt.Errorf("invalid economics measurement date: %w", err)
+			}
+			result.firstSeen[key] = firstSeen.UTC()
+		} else {
+			if _, err := time.Parse("2006-01-02", key); err != nil {
+				return signalEconomicsSnapshot{}, fmt.Errorf("invalid economics cost date: %w", err)
+			}
+			result.dailyCosts = append(result.dailyCosts, DailyCostEntry{Date: key, AccountType: value, CostUSD: cost})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	today := time.Now().UTC().Format("2006-01-02")
-	liveRows, err := s.db.Query(`
-		SELECT account_id, account_type, SUM(cost_usd), COUNT(*)
-		FROM request_costs
-		WHERE timestamp >= ?
-		GROUP BY account_id, account_type`, today+"T00:00:00Z")
-	if err != nil {
-		return nil, err
-	}
-	defer liveRows.Close()
-	for liveRows.Next() {
-		entry := AccountDailyCostEntry{Date: today}
-		if err := liveRows.Scan(&entry.AccountID, &entry.AccountType, &entry.CostUSD, &entry.RequestCount); err == nil {
-			result = append(result, entry)
-		}
-	}
-	if err := liveRows.Err(); err != nil {
-		return nil, err
+		return signalEconomicsSnapshot{}, err
 	}
 	return result, nil
 }
