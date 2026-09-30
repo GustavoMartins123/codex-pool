@@ -131,7 +131,6 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 	session.ReloginAccountID = strings.TrimSpace(reloginAccountID)
 	loginHint := ""
 	if session.ReloginAccountID != "" {
-		session.ActorID = ""
 		for _, account := range h.pool.allAccounts() {
 			if account.ID != session.ReloginAccountID {
 				continue
@@ -173,9 +172,11 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 	callbackMode := "public"
 	if isAntigravityLoopbackRedirect(redirectURI) {
 		callbackMode = "manual"
-		if err := ensureAntigravityLoopbackListener(h, redirectURI); err == nil {
-			callbackMode = "automatic"
+		if err := ensureAntigravityLoopbackListener(h, redirectURI); err != nil {
+			respondJSONError(w, 503, "could not start OAuth callback listener")
+			return
 		}
+		callbackMode = "automatic"
 	}
 	respondJSON(w, map[string]any{"oauth_url": u.String(), "session_id": session.ID, "state": session.State, "callback_mode": callbackMode, "replaced": session.ReloginAccountID != "", "login_hint": loginHint != ""})
 }
@@ -234,7 +235,7 @@ func (h *proxyHandler) handleAntigravityStatus(w http.ResponseWriter, r *http.Re
 		respondJSONError(w, http.StatusNotFound, "OAuth session expired")
 		return
 	}
-	if session.ActorID != "" && session.ActorID != providerContributionActor(r) {
+	if session.ActorID != providerContributionActor(r) {
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
@@ -263,7 +264,7 @@ func (h *proxyHandler) handleAntigravityExchange(w http.ResponseWriter, r *http.
 		respondJSONError(w, http.StatusForbidden, "relogin session requires operator access")
 		return
 	}
-	if session.ActorID != "" && session.ActorID != providerContributionActor(r) {
+	if session.ActorID != providerContributionActor(r) {
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
@@ -488,7 +489,7 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		antigravityOAuthSessions.Unlock()
 		return accountID, nil
 	}
-	if session.Status == "exchanging" {
+	if session.Status != "pending" || time.Since(session.CreatedAt) > 30*time.Minute {
 		antigravityOAuthSessions.Unlock()
 		return "", errors.New("OAuth session is already being exchanged")
 	}
@@ -569,16 +570,16 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		antigravityOAuthSessions.Unlock()
 		return target.ID, nil
 	}
-	antigravityModels.ReplaceAccount(account.ID, snapshot)
-	if err := saveAntigravityAccount(account); err != nil {
-		return fail(fmt.Errorf("save Antigravity account: %w", err))
+	accountID, err = h.persistContribution(session.ActorID, AccountTypeAntigravity, email, func(path string) error {
+		account.File = path
+		account.ID = strings.TrimSuffix(filepath.Base(path), ".json")
+		antigravityModels.ReplaceAccount(account.ID, snapshot)
+		return saveAntigravityAccount(account)
+	})
+	if err != nil {
+		return fail(err)
 	}
-	h.reloadAccounts()
-	if h.passport != nil {
-		if err := h.passport.recordAudit(session.ActorID, "provider.account_added", accountID, "antigravity"); err != nil {
-			log.Printf("record provider contribution audit: %v", err)
-		}
-	}
+
 	antigravityOAuthSessions.Lock()
 	session.Status, session.AccountID, session.Error = "complete", accountID, ""
 	antigravityOAuthSessions.Unlock()

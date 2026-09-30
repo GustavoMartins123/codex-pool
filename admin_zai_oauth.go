@@ -11,8 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -272,7 +270,7 @@ func (h *proxyHandler) pollZAILogin(r *http.Request, flowID, pollToken string) (
 		label = "Z.ai (" + email + ")"
 	}
 	linkedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	accountID, err := h.saveZAIOAuthAccount(ZAIAuthJSON{
+	accountID, err := h.saveContribution(r, AccountTypeZAI, data.User.ID, ZAIAuthJSON{
 		APIKey: apiKey, AuthType: "oauth", UserID: data.User.ID, Email: email,
 		Label: label, PlanType: "coding_plan", BusinessToken: business.AccessToken,
 		ZCodeJWT: data.Token, LinkedAt: linkedAt, AddedAt: linkedAt,
@@ -402,37 +400,4 @@ func (h *proxyHandler) validateZAICodingPlanKey(ctx context.Context, apiKey stri
 		return fmt.Errorf("Z.ai Coding Plan model request returned HTTP %d", resp.StatusCode)
 	}
 	return nil
-}
-
-func (h *proxyHandler) saveZAIOAuthAccount(account ZAIAuthJSON) (string, error) {
-	accountID, err := zaiRandomHex(12)
-	if err != nil {
-		return "", err
-	}
-	accountID = "zai_" + accountID
-	dir := filepath.Join(h.cfg.poolDir, "zai")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, accountID+".json")
-	data, err := json.MarshalIndent(account, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := writeAccountFile(path, data); err != nil {
-		return "", err
-	}
-	h.reloadAccounts()
-	loaded := false
-	for _, current := range h.pool.allAccounts() {
-		if current.Type == AccountTypeZAI && current.ID == accountID {
-			loaded = true
-			break
-		}
-	}
-	if !loaded {
-		os.Remove(path)
-		return "", errors.New("Z.ai account was saved but could not be loaded")
-	}
-	return accountID, nil
 }

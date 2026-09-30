@@ -386,7 +386,6 @@ func TestXiaomiUsagePollerSkipsGenericFetch(t *testing.T) {
 }
 
 func TestXiaomiAdminAddValidatesAndSavesAccount(t *testing.T) {
-	t.Parallel()
 
 	poolDir := t.TempDir()
 	xiaomiBase, _ := url.Parse("https://token-plan-sgp.xiaomimimo.com/anthropic")
@@ -428,6 +427,8 @@ func TestXiaomiAdminAddValidatesAndSavesAccount(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/xiaomi/add", strings.NewReader(`{"api_key":"tp-valid"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
+	attachContributionFixture(t, h, "fixture")
+	req = contributionRequestActor(req, "fixture")
 	h.handleXiaomiAdd(rr, req)
 
 	if rr.Code != http.StatusOK {

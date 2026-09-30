@@ -25,6 +25,8 @@ func TestGrokAdminImportAddsAccount(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
+	attachContributionFixture(t, h, "fixture")
+	req = contributionRequestActor(req, "fixture")
 	h.handleGrokImport(rr, req)
 
 	if rr.Code != http.StatusOK {

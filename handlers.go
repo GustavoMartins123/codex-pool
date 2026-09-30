@@ -154,7 +154,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter) {
 	respondJSON(w, out)
 }
 
-func (h *proxyHandler) reloadAccounts() {
+func (h *proxyHandler) reloadAccounts() error {
 	// A usage poll works on account pointers copied from the pool. Serialize reloads
 	// with the poller so a completed fetch cannot update an account after it has
 	// been replaced, then carry the latest snapshot onto the reloaded account.
@@ -165,7 +165,8 @@ func (h *proxyHandler) reloadAccounts() {
 	accs, err := loadPool(h.cfg.poolDir, h.registry)
 	if err != nil {
 		log.Printf("load pool: %v", err)
-		return
+		h.pool.replace(nil)
+		return err
 	}
 	accs = append(accs, configuredGenericAccounts(h.registry)...)
 	accs = append(accs, configuredFederatedAccounts(h.registry)...)
@@ -188,6 +189,7 @@ func (h *proxyHandler) reloadAccounts() {
 			h.pool.mu.RUnlock()
 		}
 	}
+	return nil
 }
 
 // mergeReloadedAccounts reuses existing account objects for accounts that

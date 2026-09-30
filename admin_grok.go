@@ -2,9 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -107,28 +105,22 @@ func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := os.MkdirAll(poolDir, 0o700); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to create pool dir: "+err.Error())
+	if acc.AccountID != grokDefaultTokenURL {
+		respondJSONError(w, 400, "unsupported Grok token endpoint")
 		return
 	}
-	if _, err := os.Stat(filePath); err == nil {
-		for i := 2; i <= 99; i++ {
-			candidateID := fmt.Sprintf("%s_%d", accountID, i)
-			candidatePath := filepath.Join(poolDir, candidateID+".json")
-			if _, err := os.Stat(candidatePath); os.IsNotExist(err) {
-				accountID = candidateID
-				filePath = candidatePath
-				break
-			}
-		}
-	}
-	if err := writeAccountFile(filePath, data); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to write account: "+err.Error())
+	identity := strings.TrimSpace(acc.RefreshToken)
+	if identity == "" {
+		respondJSONError(w, 400, "Grok refresh token is required")
 		return
 	}
-
-	h.reloadAccounts()
+	accountID, err = h.saveContribution(r, AccountTypeGrok, identity, root)
+	if err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	h.auditProviderContribution(r, "grok", accountID)
+
 	respondJSON(w, map[string]any{
 		"success":    true,
 		"account_id": accountID,

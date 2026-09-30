@@ -169,6 +169,7 @@ const (
 )
 
 type Principal struct {
+	CanContribute         bool            `json:"can_contribute"`
 	ID                    string          `json:"id"`
 	Kind                  PrincipalKind   `json:"kind"`
 	Status                PrincipalStatus `json:"status"`
@@ -211,6 +212,7 @@ type passportSession struct {
 }
 
 type PassportStore struct {
+	contributionMu sync.Mutex
 	db             *bbolt.DB
 	mu             sync.RWMutex
 	principals     map[string]*Principal
@@ -257,6 +259,9 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
+		}
+		if err := migrateAccountResources(tx); err != nil {
+			return err
 		}
 		joinLinks := tx.Bucket([]byte(bucketJoinLinks))
 		joinLinksByToken := tx.Bucket([]byte(bucketJoinLinksByToken))

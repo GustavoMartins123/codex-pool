@@ -384,15 +384,18 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Look up session
-	claudeOAuthSessions.RLock()
+	claudeOAuthSessions.Lock()
 	session, ok := claudeOAuthSessions.sessions[verifier]
-	claudeOAuthSessions.RUnlock()
+	if ok && session.ActorID == providerContributionActor(r) {
+		delete(claudeOAuthSessions.sessions, verifier)
+	}
+	claudeOAuthSessions.Unlock()
 
-	if !ok {
+	if !ok || time.Since(session.CreatedAt) > 10*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired session")
 		return
 	}
-	if session.ActorID != "" && session.ActorID != providerContributionActor(r) {
+	if session.ActorID != providerContributionActor(r) {
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
@@ -405,19 +408,23 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Save the account
-	if err := SaveClaudeAccount(h.cfg.poolDir, session.AccountID, tokens); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to save account: "+err.Error())
+	uuid, err := FetchClaudeAccountUUIDWithContext(r.Context(), tokens.AccessToken, h.transport)
+	if err != nil || uuid == "" {
+		respondJSONError(w, 502, "could not identify Claude account")
 		return
 	}
+	accountID, err := h.saveContribution(r, AccountTypeClaude, uuid, map[string]any{"account_uuid": uuid, "added_at": time.Now().UTC().Format(time.RFC3339Nano), "claudeAiOauth": &ClaudeOAuthData{AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second).UnixMilli(), Scopes: parseScopes(tokens.Scope)}})
+	if err != nil {
+		respondPolicyError(w, err)
+		return
+	}
+	session.AccountID = accountID
 
 	// Remove session
 	claudeOAuthSessions.Lock()
 	delete(claudeOAuthSessions.sessions, verifier)
 	claudeOAuthSessions.Unlock()
 
-	// Reload accounts
-	h.reloadAccounts()
 	h.auditProviderContribution(r, "claude", session.AccountID)
 
 	respondJSON(w, map[string]any{

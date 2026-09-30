@@ -203,6 +203,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 		if h.bruteForce != nil {
 			h.bruteForce.recordSuccess(getClientIP(r))
 		}
+		*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
 		return true
 	}
 	if h.passport != nil {
@@ -215,6 +216,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 				http.Error(w, "invalid CSRF token", http.StatusForbidden)
 				return false
 			}
+			*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, principal.ID))
 			return true
 		}
 	}
@@ -287,7 +289,7 @@ func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *h
 	}
 	if h.passport != nil {
 		if principal, session := h.passport.authenticate(r); principal != nil {
-			if principal.Kind != PrincipalOperator {
+			if principal.Kind != PrincipalOperator && (principal.Kind != PrincipalMember || !principal.CanContribute) {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return false
 			}
@@ -308,9 +310,6 @@ func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *h
 
 func providerContributionActor(r *http.Request) string {
 	actor, _ := r.Context().Value(providerContributionActorKey{}).(string)
-	if actor == "" {
-		return "unknown"
-	}
 	return actor
 }
 
@@ -569,6 +568,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleSignalAnalytics(w, r)
 		return
+	case "/api/console/account-contribution":
+		h.handleContributionPolicy(w, r)
+		return
 	case "/api/pool/catalog":
 		if !h.checkMemberOrAdminAuth(w, r) {
 			return
@@ -784,7 +786,6 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider accounts are managed only by operators or break-glass admins.
 	if strings.HasPrefix(r.URL.Path, "/api/pool/accounts/") {
 		if !h.checkProviderContributionAuth(w, r) {
 			return

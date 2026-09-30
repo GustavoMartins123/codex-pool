@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,37 @@ import (
 
 const bucketAccountResources = "account_resources"
 
+func migrateAccountResources(tx *bbolt.Tx) error {
+	b := tx.Bucket([]byte(bucketAccountResources))
+	var updates []accountResource
+	if err := b.ForEach(func(k, v []byte) error {
+		var r accountResource
+		if err := json.Unmarshal(v, &r); err != nil {
+			return err
+		}
+		if r.Version == 1 {
+			r.Version = 2
+			r.Status = "active"
+			r.Revision++
+			updates = append(updates, r)
+		} else if r.Version != 2 {
+			return errors.New("unsupported account resource version")
+		}
+		if r.ID == "" || r.OwnerID == "" || r.Revision == 0 || resourceKey(r.Provider, r.ID) != string(k) || (r.Status != "pending" && r.Status != "active") {
+			return errors.New("invalid account resource")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, r := range updates {
+		if err := putJSON(b, resourceKey(r.Provider, r.ID), r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type accountResource struct {
 	Version         int         `json:"version"`
 	ID              string      `json:"id"`
@@ -22,6 +55,7 @@ type accountResource struct {
 	SecretRef       string      `json:"secret_ref"`
 	Identity        string      `json:"identity,omitempty"`
 	Revision        uint64      `json:"revision"`
+	Status          string      `json:"status"`
 	WithdrawnAt     *time.Time  `json:"withdrawn_at,omitempty"`
 }
 
@@ -39,7 +73,7 @@ func readAccountResource(b *bbolt.Bucket, provider AccountType, id string) (*acc
 	if err := json.Unmarshal(raw, &resource); err != nil {
 		return nil, err
 	}
-	if resource.Version != 1 || resource.ID != id || resource.Provider != provider || resource.OwnerID == "" || resource.Revision == 0 {
+	if resource.Version != 2 || resource.ID != id || resource.Provider != provider || resource.OwnerID == "" || resource.Revision == 0 {
 		return nil, errors.New("invalid account ownership")
 	}
 	return &resource, nil
@@ -59,7 +93,22 @@ func (p *PassportStore) initializeAccountAuthority(accounts []*Account) error {
 			if b.Get([]byte(resourceKey(a.Type, a.ID))) != nil {
 				continue
 			}
-			r := accountResource{Version: 1, ID: a.ID, Provider: a.Type, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, SecretRef: a.File, Revision: 1}
+			r := accountResource{Version: 2, ID: a.ID, Provider: a.Type, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, SecretRef: a.File, Revision: 1, Status: "active"}
+			identity := a.AccessToken
+			switch a.Type {
+			case AccountTypeCodex:
+				identity = a.AccountID
+			case AccountTypeClaude:
+				identity = a.AccountUUID
+			case AccountTypeAntigravity:
+				identity = a.Email
+			case AccountTypeGrok:
+				identity = a.RefreshToken
+			}
+			if identity != "" {
+				hash := sha256.Sum256([]byte(string(a.Type) + "|" + identity))
+				r.Identity = hex.EncodeToString(hash[:])
+			}
 			if err := putJSON(b, resourceKey(a.Type, a.ID), &r); err != nil {
 				return err
 			}
@@ -103,7 +152,7 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 	}
 	actor := p.accountActor(identity)
 	principal := p.principal(actor)
-	if identity != "" && (principal == nil || principal.Status != PrincipalActive || principal.ExpiresAt != nil && !principal.ExpiresAt.After(time.Now())) {
+	if identity != "" && identity != "break-glass" && (principal == nil || principal.Status != PrincipalActive || principal.ExpiresAt != nil && !principal.ExpiresAt.After(time.Now())) {
 		return errors.New("account actor unavailable")
 	}
 	return p.db.View(func(tx *bbolt.Tx) error {
@@ -114,13 +163,16 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 		if r.WithdrawnAt != nil {
 			return errors.New("account withdrawn")
 		}
+		if r.Status != "active" {
+			return errors.New("account is not active")
+		}
 		switch action {
 		case "read", "use":
 			if r.OperatorManaged || actor != "" && actor == r.OwnerID {
 				return nil
 			}
 		case "manage", "withdraw":
-			if actor != "" && actor == r.OwnerID || r.OperatorManaged && principal != nil && principal.Kind == PrincipalOperator {
+			if actor != "" && actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
 				return nil
 			}
 		default:

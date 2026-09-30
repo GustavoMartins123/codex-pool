@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +17,7 @@ import (
 // motivated this test was the Codex re-login and Z.ai OAuth paths writing
 // raw JSON through os.WriteFile/os.OpenFile while the vault was enabled.
 func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'p'), nil)
+	useKeyedVault(t, hexKey(t, 1, 'c'), nil)
 	dir := t.TempDir()
 
 	codexFile := filepath.Join(dir, "codex-relogin.json")
@@ -41,17 +43,12 @@ func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
 	assertEncryptedCredentialFile(t, codexFile, "new-access", "new-refresh")
 
 	zaiDir := filepath.Join(dir, "zai")
-	// saveZAIOAuthAccount reloads the pool, which needs a registry; the file is
-	// written before that call, so recover and assert on the file.
-	func() {
-		defer func() { _ = recover() }()
-		zaiHandler := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false)}
-		_, _ = zaiHandler.saveZAIOAuthAccount(ZAIAuthJSON{
-			APIKey:        "zai-api-key",
-			ZCodeJWT:      "zai-jwt",
-			BusinessToken: "zai-business-token",
-		})
-	}()
+	base, _ := url.Parse("https://provider.example")
+	zaiHandler := &proxyHandler{cfg: &config{poolDir: dir}, registry: NewProviderRegistry(nil, nil, nil, NewZAIProvider(base)), pool: newPoolState(nil, false)}
+	attachContributionFixture(t, zaiHandler, "fixture")
+	if _, err := zaiHandler.saveContribution(contributionRequestActor(httptest.NewRequest("POST", "/", nil), "fixture"), AccountTypeZAI, "user-1", ZAIAuthJSON{APIKey: "zai-api-key", ZCodeJWT: "zai-jwt", BusinessToken: "zai-business-token"}); err != nil {
+		t.Fatal(err)
+	}
 	entries, err := os.ReadDir(zaiDir)
 	if err != nil {
 		t.Fatalf("zai account file was not written: %v", err)

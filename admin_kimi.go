@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -158,45 +156,11 @@ func (h *proxyHandler) handleAPIKeyRemove(w http.ResponseWriter, acctType Accoun
 
 // saveAPIKeyAccountFile creates a new API key account file and reloads accounts.
 func (h *proxyHandler) saveAPIKeyAccountFile(w http.ResponseWriter, r *http.Request, acctType AccountType, subdir, apiKey string) {
-	accountID := subdir + "_" + randomHex(4)
-
-	poolDir := filepath.Join(h.cfg.poolDir, subdir)
-	if err := os.MkdirAll(poolDir, 0o700); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to create pool dir: "+err.Error())
-		return
-	}
-
-	filePath := filepath.Join(poolDir, accountID+".json")
-
-	if _, err := os.Stat(filePath); err == nil {
-		for i := 2; i <= 99; i++ {
-			newPath := filepath.Join(poolDir, fmt.Sprintf("%s_%d.json", accountID, i))
-			if _, err := os.Stat(newPath); os.IsNotExist(err) {
-				filePath = newPath
-				accountID = fmt.Sprintf("%s_%d", accountID, i)
-				break
-			}
-		}
-	}
-
-	authJSON := map[string]any{
-		"api_key":  apiKey,
-		"added_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
-
-	data, err := json.MarshalIndent(authJSON, "", "  ")
+	accountID, err := h.saveContribution(r, acctType, apiKey, map[string]any{"api_key": apiKey, "added_at": time.Now().UTC().Format(time.RFC3339Nano)})
 	if err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to marshal json: "+err.Error())
+		respondPolicyError(w, err)
 		return
 	}
-	if err := writeAccountFile(filePath, data); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to write file: "+err.Error())
-		return
-	}
-
-	log.Printf("saved new %s account: %s -> %s", acctType, accountID, filePath)
-
-	h.reloadAccounts()
 	h.auditProviderContribution(r, string(acctType), accountID)
 
 	respondJSON(w, map[string]any{

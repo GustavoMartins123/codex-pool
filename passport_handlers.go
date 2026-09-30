@@ -169,7 +169,7 @@ func publicPrincipal(p *Principal) map[string]any {
 	if p.AvatarUpdatedAt != nil {
 		avatarURL = "/api/avatars/" + p.ID + "?v=" + p.AvatarUpdatedAt.UTC().Format("20060102T150405.000000000")
 	}
-	return map[string]any{"id": p.ID, "kind": p.Kind, "status": p.Status, "display_name": p.DisplayName, "username": p.Username, "email": p.Email, "expires_at": p.ExpiresAt, "avatar_url": avatarURL, "max_reasoning_effort": p.MaxReasoningEffort}
+	return map[string]any{"id": p.ID, "kind": p.Kind, "status": p.Status, "display_name": p.DisplayName, "username": p.Username, "email": p.Email, "expires_at": p.ExpiresAt, "avatar_url": avatarURL, "max_reasoning_effort": p.MaxReasoningEffort, "can_contribute": p.Kind == PrincipalOperator || p.CanContribute}
 }
 func (h *proxyHandler) handlePassportLogout(w http.ResponseWriter, r *http.Request) {
 	noStore(w)

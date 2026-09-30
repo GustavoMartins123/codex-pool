@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -167,6 +166,7 @@ func TestZAIOAuthPersistsLinkedCodingPlanAccount(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/zai/login/poll", nil)
 	request = request.WithContext(context.WithValue(request.Context(), providerContributionActorKey{}, "member-a"))
+	attachContributionFixture(t, h, "member-a")
 	result, err := h.pollZAILogin(request, "flow-123", "poll-token")
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestZAIOAuthPersistsLinkedCodingPlanAccount(t *testing.T) {
 	if result == nil || result.accountID == "" || result.email != "user@example.com" {
 		t.Fatalf("unexpected login result: %+v", result)
 	}
-	data, err := os.ReadFile(filepath.Join(h.cfg.poolDir, "zai", result.accountID+".json"))
+	data, err := readAccountFile(filepath.Join(h.cfg.poolDir, "zai", result.accountID+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}

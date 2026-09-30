@@ -11,16 +11,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
 // Codex OAuth constants (from codex-rs/login/src/server.rs)
-var codexLocalPartRegex = regexp.MustCompile(`^([a-zA-Z]{1,4})[a-zA-Z]*(_\d+)?$`)
 
 const (
 	CodexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -226,12 +222,18 @@ func (h *proxyHandler) handleCodexRelogin(w http.ResponseWriter, r *http.Request
 		respondJSONError(w, http.StatusNotFound, "codex account not found: "+accountID)
 		return
 	}
+	if h.pool.accountAuthority != nil {
+		if err := h.pool.accountAuthority.authorizeAccount(providerContributionActor(r), target, "manage"); err != nil {
+			respondJSONError(w, 403, "account management denied")
+			return
+		}
+	}
 	if target.Type != AccountTypeCodex {
 		respondJSONError(w, http.StatusBadRequest, "account "+accountID+" is a "+string(target.Type)+" account, not codex")
 		return
 	}
 
-	oauthURL, verifier, state := startCodexOAuthSession("", accountID)
+	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), accountID)
 	if oauthURL == "" {
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
 		return
@@ -272,15 +274,18 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Look up session
-	codexOAuthSessions.RLock()
+	codexOAuthSessions.Lock()
 	session, ok := codexOAuthSessions.sessions[verifier]
-	codexOAuthSessions.RUnlock()
+	if ok && session.ActorID == providerContributionActor(r) {
+		delete(codexOAuthSessions.sessions, verifier)
+	}
+	codexOAuthSessions.Unlock()
 
-	if !ok {
+	if !ok || time.Since(session.CreatedAt) > 10*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired session")
 		return
 	}
-	if session.ActorID != "" && session.ActorID != providerContributionActor(r) {
+	if session.ActorID != providerContributionActor(r) {
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
@@ -312,13 +317,10 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Generate account ID from email in id_token
-	accountID := generateCodexAccountID(tokens.IDToken)
-
-	// Save the account
-	poolDir := filepath.Join(h.cfg.poolDir, "codex")
-	if err := saveNewCodexAccount(poolDir, accountID, tokens); err != nil {
-		respondJSONError(w, http.StatusInternalServerError, "failed to save account: "+err.Error())
+	claims := parseCodexClaims(tokens.IDToken)
+	accountID, err := h.saveContribution(r, AccountTypeCodex, claims.ChatGPTAccountID, map[string]any{"tokens": map[string]any{"id_token": tokens.IDToken, "access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "account_id": claims.ChatGPTAccountID}, "added_at": time.Now().UTC().Format(time.RFC3339Nano)})
+	if err != nil {
+		respondPolicyError(w, err)
 		return
 	}
 
@@ -327,8 +329,6 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	delete(codexOAuthSessions.sessions, verifier)
 	codexOAuthSessions.Unlock()
 
-	// Reload accounts
-	h.reloadAccounts()
 	h.auditProviderContribution(r, "codex", accountID)
 
 	respondJSON(w, map[string]any{
@@ -440,109 +440,6 @@ func codexExchangeCodeWithClient(code, verifier string, client *http.Client) (*C
 	}
 
 	return &tokens, nil
-}
-
-// generateCodexAccountID generates an account ID from the id_token email
-func generateCodexAccountID(idToken string) string {
-	// Parse JWT to get email
-	parts := strings.Split(idToken, ".")
-	if len(parts) < 2 {
-		return fmt.Sprintf("codex_%d", time.Now().Unix())
-	}
-
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return fmt.Sprintf("codex_%d", time.Now().Unix())
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return fmt.Sprintf("codex_%d", time.Now().Unix())
-	}
-
-	// Try to get email from profile claim
-	email := ""
-	if profile, ok := payload["https://api.openai.com/profile"].(map[string]any); ok {
-		if e, ok := profile["email"].(string); ok {
-			email = e
-		}
-	}
-	if email == "" {
-		if e, ok := payload["email"].(string); ok {
-			email = e
-		}
-	}
-
-	if email == "" {
-		return fmt.Sprintf("codex_%d", time.Now().Unix())
-	}
-
-	// Extract meaningful part from email
-	// e.g., "dlssnetsec+1@gmail.com" -> "dlss_1"
-	// e.g., "foo@bar.com" -> "foo"
-	localPart := strings.Split(email, "@")[0]
-
-	// Handle plus aliases: user+alias -> user_alias
-	localPart = strings.ReplaceAll(localPart, "+", "_")
-
-	// Truncate long prefixes, keep suffix
-	// e.g., "dlssnetsec_1" -> "dlss_1"
-	if matches := codexLocalPartRegex.FindStringSubmatch(localPart); len(matches) > 0 {
-		result := matches[1]
-		if len(matches) > 2 && matches[2] != "" {
-			result += matches[2]
-		}
-		return result
-	}
-
-	// Fallback: just use first 8 chars of local part
-	if len(localPart) > 8 {
-		localPart = localPart[:8]
-	}
-	return localPart
-}
-
-// saveNewCodexAccount saves a new Codex account to the pool directory
-func saveNewCodexAccount(poolDir, accountID string, tokens *CodexTokenResponse) error {
-	// Ensure pool directory exists
-	if err := os.MkdirAll(poolDir, 0o700); err != nil {
-		return fmt.Errorf("create pool dir: %w", err)
-	}
-
-	filePath := filepath.Join(poolDir, accountID+".json")
-
-	// Check if file already exists
-	if _, err := os.Stat(filePath); err == nil {
-		// File exists, append a number
-		for i := 2; i <= 99; i++ {
-			newPath := filepath.Join(poolDir, fmt.Sprintf("%s_%d.json", accountID, i))
-			if _, err := os.Stat(newPath); os.IsNotExist(err) {
-				filePath = newPath
-				accountID = fmt.Sprintf("%s_%d", accountID, i)
-				break
-			}
-		}
-	}
-
-	authJSON := map[string]any{
-		"added_at": time.Now().UTC().Format(time.RFC3339Nano),
-		"tokens": map[string]any{
-			"id_token":      tokens.IDToken,
-			"access_token":  tokens.AccessToken,
-			"refresh_token": tokens.RefreshToken,
-		},
-	}
-
-	data, err := json.MarshalIndent(authJSON, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal json: %w", err)
-	}
-	if err := writeAccountFile(filePath, data); err != nil {
-		return err
-	}
-
-	log.Printf("Saved new Codex account: %s -> %s", accountID, filePath)
-	return nil
 }
 
 func cleanupOldCodexSessions() {

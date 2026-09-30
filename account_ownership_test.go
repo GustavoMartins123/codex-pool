@@ -21,7 +21,7 @@ func ownershipFixture(t *testing.T) (*PassportStore, *poolState) {
 		t.Fatal(err)
 	}
 	if err := p.db.Update(func(tx *bbolt.Tx) error {
-		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, "private"), &accountResource{Version: 1, ID: "private", Provider: AccountTypeCodex, OwnerID: "alice", AddedBy: "alice", Revision: 1})
+		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, "private"), &accountResource{Version: 2, ID: "private", Provider: AccountTypeCodex, OwnerID: "alice", AddedBy: "alice", Revision: 1, Status: "active"})
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -527,7 +527,6 @@ func TestProxyRequestStampsOpencodeGoSession(t *testing.T) {
 }
 
 func TestOpencodeGoAdminAddValidatesAndSavesAccount(t *testing.T) {
-	t.Parallel()
 
 	poolDir := t.TempDir()
 	goBase, _ := url.Parse("https://opencode.ai/zen/go/v1")
@@ -563,6 +562,8 @@ func TestOpencodeGoAdminAddValidatesAndSavesAccount(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/opencode-go/add", strings.NewReader(`{"api_key":"sk-go-valid"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
+	attachContributionFixture(t, h, "fixture")
+	req = contributionRequestActor(req, "fixture")
 	h.handleOpencodeGoAdd(rr, req)
 
 	if rr.Code != http.StatusOK {

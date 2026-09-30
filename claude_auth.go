@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -116,14 +115,15 @@ type ClaudeTokenResponse struct {
 
 // ClaudeExchange exchanges an authorization code for tokens.
 func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) {
-	// Manual copy/paste can still provide code#state; prefer the explicit
-	// session state from ClaudeAuthorize, but preserve compatibility.
+	if state == "" {
+		return nil, errors.New("OAuth session state is required")
+	}
 	codeOnly := code
 	if idx := indexOf(code, '#'); idx >= 0 {
-		codeOnly = code[:idx]
-		if state == "" {
-			state = code[idx+1:]
+		if code[idx+1:] != state {
+			return nil, errors.New("OAuth state does not match session")
 		}
+		codeOnly = code[:idx]
 	}
 
 	body := map[string]string{
@@ -363,40 +363,6 @@ func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, 
 	}
 
 	return "", fmt.Errorf("account_uuid not found in bootstrap response")
-}
-
-// SaveClaudeAccount saves a Claude OAuth account to the pool directory.
-func SaveClaudeAccount(poolDir, accountID string, tokens *ClaudeTokenResponse) error {
-	claudeDir := filepath.Join(poolDir, "claude")
-	if err := os.MkdirAll(claudeDir, 0700); err != nil {
-		return fmt.Errorf("create claude dir: %w", err)
-	}
-
-	filename := accountID + ".json"
-	path := filepath.Join(claudeDir, filename)
-
-	oauthData := &ClaudeOAuthData{
-		AccessToken:  tokens.AccessToken,
-		RefreshToken: tokens.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second).UnixMilli(),
-		Scopes:       parseScopes(tokens.Scope),
-	}
-
-	// Fetch plan info from the profile API
-	if profile, err := FetchClaudeProfile(tokens.AccessToken); err == nil && profile != nil {
-		oauthData.SubscriptionType = profile.SubscriptionType
-		oauthData.RateLimitTier = profile.RateLimitTier
-		log.Printf("claude account %s: detected plan=%s tier=%s", accountID, profile.SubscriptionType, profile.RateLimitTier)
-	} else if err != nil {
-		log.Printf("claude account %s: failed to fetch profile: %v", accountID, err)
-	}
-
-	data := ClaudeAuthJSON{
-		ClaudeAiOauth: oauthData,
-		AddedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}
-
-	return atomicWriteJSON(path, data)
 }
 
 // saveClaudeAccount persists a Claude OAuth account back to its JSON file.
