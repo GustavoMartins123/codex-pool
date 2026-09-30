@@ -1392,7 +1392,7 @@ func claudeModelEntry(slug, displayName string, contextWindow int) map[string]an
 		"visibility":                           "list",
 		"availability_nux":                     nil,
 		"available_in_plans":                   []string{"plus", "pro", "team", "enterprise", "business"},
-		"available_access_programs":            map[string]any{},
+		"available_access_programs":            map[string]any{"cyber": []string{"standard"}},
 		"minimal_client_version":               "0.1.0",
 		"reasoning_summary_format":             "none",
 		"model_messages":                       nil,

@@ -1301,6 +1301,36 @@ func TestInjectClaudeModelsDoesNotDuplicateExistingCodexFallbackModels(t *testin
 	}
 }
 
+func TestInjectClaudeModelsAccessProgramsIncludeCyber(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"models":[{"slug":"gpt-5.5","display_name":"gpt-5.5","available_access_programs":{"cyber":["standard"]}}]}`)
+	out := injectClaudeModels(body)
+
+	var catalog map[string]any
+	if err := json.Unmarshal(out, &catalog); err != nil {
+		t.Fatalf("unmarshal injected catalog: %v", err)
+	}
+	models := catalog["models"].([]any)
+	for _, model := range models {
+		m, ok := model.(map[string]any)
+		if !ok {
+			continue
+		}
+		slug, _ := m["slug"].(string)
+		if slug == "gpt-5.5" {
+			continue
+		}
+		programs, ok := m["available_access_programs"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s available_access_programs = %#v, want object", slug, m["available_access_programs"])
+		}
+		if _, ok := programs["cyber"]; !ok {
+			t.Fatalf("%s available_access_programs missing cyber key: %#v", slug, programs)
+		}
+	}
+}
+
 func TestCodexProviderParseUsageHeaders(t *testing.T) {
 	acc := &Account{Type: AccountTypeCodex}
 	provider := &CodexProvider{}
