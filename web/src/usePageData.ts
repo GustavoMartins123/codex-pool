@@ -65,10 +65,27 @@ export function usePageData(view: View, principal: PassportPrincipal | null, ena
   useEffect(() => {
     activeScope.current = scope;
     if (scope) {
-      void refresh();
-      const timer = window.setInterval(() => { void refresh(); }, 30_000);
+      let timer: number | null = null;
+      const stopPolling = () => {
+        if (timer !== null) window.clearInterval(timer);
+        timer = null;
+      };
+      const syncVisibility = () => {
+        if (document.visibilityState !== "visible") {
+          stopPolling();
+          return;
+        }
+        if (timer !== null) return;
+        if (!request.current) void refresh();
+        timer = window.setInterval(() => {
+          if (document.visibilityState === "visible" && !request.current) void refresh();
+        }, 30_000);
+      };
+      document.addEventListener("visibilitychange", syncVisibility);
+      syncVisibility();
       return () => {
-        window.clearInterval(timer);
+        document.removeEventListener("visibilitychange", syncVisibility);
+        stopPolling();
         activeScope.current = null;
         guard.invalidate();
         request.current?.abort();

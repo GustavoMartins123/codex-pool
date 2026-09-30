@@ -24,6 +24,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   vi.mocked(loadPoolStats).mockResolvedValue(stats);
   vi.mocked(loadSignalAnalytics).mockResolvedValue(analytics);
   vi.mocked(loadAdminAccounts).mockResolvedValue([]);
@@ -32,7 +33,13 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
+
+async function setVisibility(state: DocumentVisibilityState) {
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue(state);
+  await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+}
 
 describe("page data requests", () => {
   it.each([
@@ -77,6 +84,78 @@ describe("page data requests", () => {
     expect(loadModelCatalog).toHaveBeenCalledTimes(2);
     expect(loadAdminAccounts).not.toHaveBeenCalled();
     expect(result.current.data).toBeNull();
+  });
+
+  it("pauses hidden polling and resumes immediately with one timer", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { result } = renderHook(() => usePageData("models", operator, true));
+    await act(async () => { await Promise.resolve(); });
+    await setVisibility("hidden");
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000); });
+    expect(loadModelCatalog).toHaveBeenCalledOnce();
+    expect(result.current.data?.view).toBe("models");
+    expect(vi.getTimerCount()).toBe(0);
+    await setVisibility("visible");
+    expect(loadModelCatalog).toHaveBeenCalledTimes(2);
+    await setVisibility("visible");
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(loadModelCatalog).toHaveBeenCalledTimes(3);
+  });
+
+  it("defers hidden initial loading and resumes only the current page", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    await setVisibility("hidden");
+    const { result, rerender } = renderHook(({ view }: { view: View }) => usePageData(view, operator, true), { initialProps: { view: "pulse" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    endpoints.forEach(endpoint => expect(endpoint).not.toHaveBeenCalled());
+    rerender({ view: "accounts" });
+    await setVisibility("visible");
+    expect(result.current.data?.view).toBe("accounts");
+    expect(loadPoolStats).toHaveBeenCalledOnce();
+    expect(loadAdminAccounts).toHaveBeenCalledOnce();
+    expect(loadSignalAnalytics).not.toHaveBeenCalled();
+    expect(loadModelCatalog).not.toHaveBeenCalled();
+  });
+
+  it("allows hidden manual refresh and preserves it through visibility changes and polling", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { result } = renderHook(() => usePageData("models", operator, true));
+    await act(async () => { await Promise.resolve(); });
+    await setVisibility("hidden");
+    const pending = deferred<{ models: ModelDescriptor[] }>();
+    vi.mocked(loadModelCatalog).mockReturnValueOnce(pending.promise);
+    let refresh!: Promise<boolean>;
+    act(() => { refresh = result.current.refresh(); });
+    const signal = vi.mocked(loadModelCatalog).mock.calls[1][0];
+    await setVisibility("visible");
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await setVisibility("hidden");
+    expect(signal?.aborted).toBe(false);
+    expect(loadModelCatalog).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      pending.resolve({ models: [model("updated")] });
+      expect(await refresh).toBe(true);
+    });
+    expect(result.current.data).toEqual({ view: "models", models: [model("updated")] });
+    await setVisibility("visible");
+    expect(loadModelCatalog).toHaveBeenCalledTimes(3);
+  });
+
+  it("removes visibility listeners and polling on unmount", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const pending = deferred<{ models: ModelDescriptor[] }>();
+    vi.mocked(loadModelCatalog).mockReturnValueOnce(pending.promise);
+    const { unmount } = renderHook(() => usePageData("models", operator, true));
+    const signal = vi.mocked(loadModelCatalog).mock.calls[0][0];
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    await setVisibility("hidden");
+    await setVisibility("visible");
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(loadModelCatalog).toHaveBeenCalledOnce();
+    await act(async () => { pending.resolve({ models: [] }); });
   });
 
   it("aborts a page request and ignores its late answer after navigation", async () => {
