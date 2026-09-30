@@ -137,28 +137,22 @@ async function decode<T>(response: Response): Promise<T> {
 }
 
 
-export async function loadPoolStats(): Promise<PoolStats> {
-  return decode(await fetch("/api/pool/stats", { credentials: "same-origin", cache: "no-store" }));
+export async function loadPoolStats(signal?: AbortSignal): Promise<PoolStats> {
+  return decode(await fetch("/api/pool/stats", { credentials: "same-origin", cache: "no-store", signal }));
 }
 
-export async function loadSignalAnalytics(): Promise<SignalAnalytics> {
-  const signal = await decode<SignalAnalytics>(await fetch("/api/pool/signal?weeks=6", { credentials: "same-origin", cache: "no-store" }));
-  return {
-    ...signal,
-    economics: signal.economics ?? [],
-    hourly: signal.hourly ?? [],
-    origin_weekly: signal.origin_weekly ?? [],
-    model_daily: signal.model_daily ?? [],
-    quota_capacity: signal.quota_capacity ?? [],
-    model_efficiency: signal.model_efficiency ?? [],
-    reset_observations: signal.reset_observations ?? [],
-    quota_generated_at: signal.quota_generated_at,
-  };
+export async function loadSignalAnalytics(signal?: AbortSignal): Promise<SignalAnalytics> {
+  const analytics = await decode<SignalAnalytics>(await fetch("/api/pool/signal?weeks=6", { credentials: "same-origin", cache: "no-store", signal }));
+  for (const field of ["economics", "hourly", "origin_weekly", "model_daily", "quota_capacity", "model_efficiency", "reset_observations"] as const) {
+    if (!Array.isArray(analytics[field])) throw new Error(`Invalid analytics response: ${field} must be an array`);
+  }
+  return analytics;
 }
 
-export async function loadModelCatalog(): Promise<ModelCatalog> {
-  const catalog = await decode<ModelCatalog>(await fetch("/api/pool/catalog", { credentials: "same-origin", cache: "no-store" }));
-  return { models: catalog.models ?? [] };
+export async function loadModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {
+  const catalog = await decode<ModelCatalog>(await fetch("/api/pool/catalog", { credentials: "same-origin", cache: "no-store", signal }));
+  if (!Array.isArray(catalog.models)) throw new Error("Invalid catalog response: models must be an array");
+  return catalog;
 }
 
 export async function loadLivePiModels(downloadToken: string): Promise<string> {
@@ -171,8 +165,8 @@ export async function loadLiveCuteCodeSettings(downloadToken: string): Promise<s
   return JSON.stringify(config, null, 2);
 }
 
-export async function loadAdminAccounts(): Promise<AdminAccount[]> {
-  return decode(await fetch("/admin/accounts", { credentials: "same-origin", cache: "no-store" }));
+export async function loadAdminAccounts(signal?: AbortSignal): Promise<AdminAccount[]> {
+  return decode(await fetch("/admin/accounts", { credentials: "same-origin", cache: "no-store", signal }));
 }
 
 export async function mutateAccount(accountID: string, action: "enable" | "disable" | "resurrect" | "refresh") {
