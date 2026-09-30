@@ -1,19 +1,19 @@
 services:
   codex-pool:
-    image: codex-pool:m0-verify
+    image: codex-pool:verify
     environment:
       POOL_DIR: /app/pool
       PROXY_DB_PATH: /app/data/proxy.db
       DUCKDB_PATH: /app/data/usage.duckdb
       PROXY_LISTEN_ADDR: 0.0.0.0:8989
       PROXY_DISABLE_REFRESH: "true"
-      POOL_JWT_SECRET: ${M0_JWT_SECRET:?verification key required}
-      POOL_AUTH_ENCRYPTION_KEY: ${M0_AUTH_KEY:?verification key required}
-      POOL_CREDENTIAL_KEY: ${M0_VAULT_KEY:?verification key required}
-      POOL_CREDENTIAL_KEY_VERSION: ${M0_VAULT_VERSION:?verification version required}
-      POOL_CREDENTIAL_KEY_PREVIOUS: ${M0_VAULT_PREVIOUS-}
+      POOL_JWT_SECRET: ${VERIFY_JWT_SECRET:?verification key required}
+      POOL_AUTH_ENCRYPTION_KEY: ${VERIFY_AUTH_KEY:?verification key required}
+      POOL_CREDENTIAL_KEY: ${VERIFY_VAULT_KEY:?verification key required}
+      POOL_CREDENTIAL_KEY_VERSION: ${VERIFY_VAULT_VERSION:?verification version required}
+      POOL_CREDENTIAL_KEY_PREVIOUS: ${VERIFY_VAULT_PREVIOUS-}
       POOL_CREDENTIAL_KEY_PREVIOUS_VERSION: "1"
-      ADMIN_TOKEN: ${M0_ADMIN_TOKEN:?verification key required}
+      ADMIN_TOKEN: ${VERIFY_ADMIN_TOKEN:?verification key required}
       PROXY_USAGE_REFRESH_SECONDS: "86400"
     volumes:
       - data:/app/data

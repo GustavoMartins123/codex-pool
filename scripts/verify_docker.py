@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Homologate a disposable, network-isolated M0 stack with synthetic credentials.
+"""Homologate a disposable, network-isolated stack with synthetic credentials.
 
-Build the runtime image first: docker build -t codex-pool:m0-verify .
+Build the runtime image first: docker build -t codex-pool:verify .
 Never uses the production Compose project, bind mounts, or credentials.
 """
 import hashlib
@@ -13,15 +13,15 @@ import secrets
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-PROJECT = "codex-pool-m0-" + secrets.token_hex(4)
+PROJECT = "codex-pool-verify-" + secrets.token_hex(4)
 ENV = dict(os.environ)
 ENV.update({name: secrets.token_hex(32) for name in (
-    "M0_JWT_SECRET", "M0_AUTH_KEY", "M0_VAULT_KEY", "M0_ADMIN_TOKEN")})
-ENV.update(M0_VAULT_VERSION="1", M0_VAULT_PREVIOUS="")
+    "VERIFY_JWT_SECRET", "VERIFY_AUTH_KEY", "VERIFY_VAULT_KEY", "VERIFY_ADMIN_TOKEN")})
+ENV.update(VERIFY_VAULT_VERSION="1", VERIFY_VAULT_PREVIOUS="")
 COMPOSE = ["docker", "compose", "--project-name", PROJECT, "--file",
            str(ROOT / "docker-compose.verify.yml")]
-REPORT = ROOT / "tmp/p0p1-validation/docker-homologation.json"
-SENTINEL = "m0_TEST_UPSTREAM_SENTINEL"
+REPORT = ROOT / "tmp/verification/docker-homologation.json"
+SENTINEL = "VERIFY_TEST_UPSTREAM_SENTINEL"
 RESULTS = []
 
 
@@ -58,7 +58,7 @@ class Client:
     def request(self, path, body=None, admin=False, status=200):
         headers = {"Content-Type": "application/json"}
         if admin:
-            headers["X-Admin-Token"] = ENV["M0_ADMIN_TOKEN"]
+            headers["X-Admin-Token"] = ENV["VERIFY_ADMIN_TOKEN"]
         if self.cookies:
             headers["Cookie"] = "; ".join(k + "=" + v for k, v in self.cookies.items())
         if self.csrf:
@@ -92,10 +92,9 @@ def main():
     failure = None
     try:
         compose("create")
-        # This helper touches only the two volumes of the unique verification project.
         run(["docker", "run", "--rm", "--network", "none", "--user", "0",
              "--entrypoint", "sh", "-v", PROJECT + "_pool:/app/pool",
-             "-v", PROJECT + "_data:/app/data", "codex-pool:m0-verify", "-c",
+             "-v", PROJECT + "_data:/app/data", "codex-pool:verify", "-c",
              "mkdir -p /app/pool/codex; printf '%s' '{\"tokens\":{\"access_token\":\""
              + SENTINEL + "\"}}' > /app/pool/codex/one.json; "
              "chown -R 1000:1000 /app/pool /app/data; chmod 700 /app/pool /app/pool/codex /app/data; "
@@ -114,8 +113,8 @@ def main():
         passed("plaintext_migration_at_rest")
         client = Client(base)
         password = secrets.token_urlsafe(32)
-        client.request("/api/setup/operator", {"username": "m0operator", "email": "m0@example.test",
-                       "password": password, "display_name": "M0 Operator"}, admin=True)
+        client.request("/api/setup/operator", {"username": "verifyoperator", "email": "verify@example.test",
+                       "password": password, "display_name": "Verification Operator"}, admin=True)
         client.request("/api/auth/me")
         accounts = client.request("/admin/accounts")
         if not any(entry["id"] == "one" for entry in accounts):
@@ -123,7 +122,7 @@ def main():
         for path in ("/api/pool/stats", "/api/console/principals", "/api/console/audit",
                      "/api/console/analytics-health", "/admin/transitions"):
             client.request(path)
-        client.request("/admin/debug/conversations/m0-empty", status=404)
+        client.request("/admin/debug/conversations/verify-empty", status=404)
         before = client.request("/api/me/clients", {"label": "before-backup"})["id"]
         passed("operator_authenticated_surfaces_no_secret_leak")
         compose("stop")
@@ -145,7 +144,7 @@ def main():
         compose("stop")
         compose("run", "--rm", "codex-pool", "-restore-manifest", manifest_path)
         client.base = start()
-        client.request("/api/auth/login", {"email": "m0@example.test", "password": password})
+        client.request("/api/auth/login", {"email": "verify@example.test", "password": password})
         ids = {entry["id"] for entry in client.request("/api/me/clients")}
         if before not in ids or after in ids:
             raise RuntimeError("Restore did not recover the exact backed-up client state")
@@ -163,14 +162,14 @@ def main():
         start()
         passed("healthy_restart_after_rejected_keys")
         compose("stop")
-        ENV.update(M0_VAULT_PREVIOUS=ENV["M0_VAULT_KEY"],
-                   M0_VAULT_KEY=secrets.token_hex(32), M0_VAULT_VERSION="2")
+        ENV.update(VERIFY_VAULT_PREVIOUS=ENV["VERIFY_VAULT_KEY"],
+                   VERIFY_VAULT_KEY=secrets.token_hex(32), VERIFY_VAULT_VERSION="2")
         start()
         rotated = compose("exec", "-T", "codex-pool", "cat", "/app/pool/codex/one.json")
         if json.loads(rotated).get("kv") != 2 or SENTINEL in rotated:
             raise RuntimeError("Previous-key credential did not rotate to the current key")
         compose("stop")
-        ENV["M0_VAULT_PREVIOUS"] = ""
+        ENV["VERIFY_VAULT_PREVIOUS"] = ""
         compose("run", "--rm", "codex-pool", "-check-credentials")
         start()
         passed("key_rotation_restart_without_previous_key")
