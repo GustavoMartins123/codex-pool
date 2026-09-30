@@ -139,19 +139,49 @@ pool/
     └── main.json
 ```
 
-### 2. Generate the vault key (required)
+### 2. Generate the local environment
 
-The server refuses to start without `POOL_CREDENTIAL_KEY`; plaintext pool
-files are encrypted automatically on the first start with a key.
+On Linux/macOS (Bash 4.4+ and OpenSSL):
 
 ```bash
-openssl rand -hex 32   # export as POOL_CREDENTIAL_KEY (hex or 32+ char passphrase)
+bash setup.sh
 ```
 
-The dev scripts (`scripts/dev_proxy.sh`, `scripts/windows/dev_proxy.ps1`)
-generate and reuse a local `.dev-vault-key` automatically.
+On Windows (PowerShell):
+
+```powershell
+.\setup.ps1
+```
+
+The scripts create `.env` from `.env.example` and generate `ADMIN_TOKEN`,
+`POOL_AUTH_ENCRYPTION_KEY`, `POOL_JWT_SECRET`, and `POOL_CREDENTIAL_KEY` with
+cryptographically secure randomness. Reruns fill only missing or empty secrets;
+existing values, rotation keys, provider credentials, and other settings stay
+unchanged. Duplicate or invalid secret assignments cause an error before writing.
+Secrets are never printed, and the file is restricted to the current user.
+
+To use another file, run `bash setup.sh /path/to/.env` or
+`.\setup.ps1 -EnvPath C:\path\to\.env`. Keep this file private and retain its
+keys across restarts. Key rotation remains an explicit operation.
+
+The server requires the vault key and encrypts existing plaintext credentials
+on first start. Development scripts manage their own `.dev-vault-key`.
 
 ### 3. Run it
+
+Docker Compose reads the generated `.env` automatically:
+
+```bash
+bash scripts/deploy.sh
+```
+
+```powershell
+.\scripts\windows\deploy.ps1
+```
+
+For native binaries, supply the generated keys through the process environment
+and change the container storage paths to local paths. Native binaries do not
+load `.env` automatically.
 
 Builds include the dashboard. Run the binary from a directory where you want
 `pool/`, `data/`, and optional `config.toml` to live.
@@ -268,7 +298,7 @@ public_url = "https://pool.example.com"
 storage_path = "./data/pool_users.json"
 ```
 
-Set `POOL_AUTH_ENCRYPTION_KEY` to a stable 32-byte secret (hex or base64) before starting Passport. `ADMIN_TOKEN` remains the break-glass operator credential. `POOL_CREDENTIAL_KEY` is required (see Credential vault below).
+Run `setup.sh` or `setup.ps1` to generate the stable Passport, signing, administrative, and vault secrets in `.env` (see Quick Start). `ADMIN_TOKEN` remains the break-glass operator credential.
 
 Environment variable `PROXY_MAX_INMEM_BODY_BYTES` controls how large a request body can be before the proxy streams it directly (no retries). Default is 16777216 (16 MiB).
 
