@@ -1,5 +1,5 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
-import type { AdminAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
+import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
 
 function csrfToken() {
   return document.cookie.split("; ").find((part) => part.startsWith("pool_csrf="))?.split("=").slice(1).join("=") ?? "";
@@ -128,14 +128,18 @@ export async function setPrincipalReasoningEffort(id: string, maxReasoningEffort
 }
 
 async function decode<T>(response: Response): Promise<T> {
-  const data = (await response.json().catch(() => null)) as T | { error?: string } | null;
+  let data: unknown;
+  try { data = await response.json(); } catch { throw new Error(`Invalid JSON response (${response.status})`); }
   if (!response.ok) {
-    const message = data && typeof data === "object" && "error" in data ? data.error : null;
-    throw new Error(message || `${response.status} ${response.statusText}`);
+    if (data && typeof data === "object" && "error" in data) {
+      const error = data.error;
+      if (typeof error === "string" && error) throw new Error(error);
+      if (error && typeof error === "object" && "message" in error && typeof error.message === "string") throw new Error(error.message);
+    }
+    throw new Error(`Request failed (${response.status} ${response.statusText})`);
   }
   return data as T;
 }
-
 
 export async function loadPoolStats(signal?: AbortSignal): Promise<PoolStats> {
   return decode(await fetch("/api/pool/stats", { credentials: "same-origin", cache: "no-store", signal }));
@@ -302,4 +306,16 @@ export async function exchangeAntigravityOAuth(sessionID: string, value: string,
 export async function reloadAccounts() {
   const response = await fetch("/admin/reload", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+}
+
+export async function loadMyAccounts(): Promise<MyAccount[]> {
+  const accounts = await decode<MyAccount[]>(await fetch("/api/me/accounts", { credentials: "same-origin", cache: "no-store" }));
+  if (!Array.isArray(accounts) || accounts.some((account) => !account || typeof account.id !== "string" || typeof account.provider !== "string" || !["active", "pending", "withdrawn"].includes(account.status) || !Number.isSafeInteger(account.revision) || account.revision < 1 || typeof account.state !== "string")) throw new Error("Invalid account response");
+  return accounts;
+}
+
+export async function withdrawMyAccount(account: MyAccount): Promise<void> {
+  await decode(await fetch(`/api/me/accounts/${encodeURIComponent(account.provider)}/${encodeURIComponent(account.id)}/withdraw`, {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ revision: account.revision }),
+  }));
 }

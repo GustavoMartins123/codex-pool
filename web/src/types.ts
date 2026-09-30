@@ -8,7 +8,17 @@ export interface ResetWindowPolicy {
   secondary: ResetWindowKind;
 }
 
+export interface MyAccount {
+  id: string;
+  provider: Provider;
+  status: "pending" | "active" | "withdrawn";
+  state: string;
+  revision: number;
+  withdrawn_at?: string;
+}
+
 export interface PassportPrincipal {
+  can_contribute?: boolean;
   id: string;
   kind: "operator" | "member" | "guest";
   status: "active" | "suspended" | "expired";

@@ -156,7 +156,7 @@ export function SetupPage() {
     <section className="setup-client-bar" aria-labelledby="setup-client-title">
       <div><span id="setup-client-title">Client</span></div>
       <div className="setup-clients">
-      {clients.map((client) => <button key={client.id} className={classNames("client-pill", selected === client.id && "active", client.status !== "active" && "inactive")} disabled={client.status !== "active" || creating} aria-pressed={selected === client.id} onClick={() => { setSelected(client.id); setSetupLinks(null); }}>{client.label}</button>)}
+      {clients.map((client) => <button key={client.id} className={classNames("client-pill", selected === client.id && "active", client.status !== "active" && "inactive")} disabled={client.status !== "active" || creating} aria-pressed={selected === client.id} onClick={() => { revealVersion.current++; setSelected(client.id); setSetupLinks(null); setRevealing(false); setError(""); }}>{client.label}</button>)}
       {!showMint && clients.length > 0 && <button className="client-pill add" onClick={() => setShowMint(true)}>Add client</button>}
         {showMint && <form className="setup-client-create" onSubmit={create}>
           <input aria-label="Client name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Work laptop" maxLength={80} required autoFocus />

@@ -36,6 +36,12 @@ jobs:
           cd web
           npm test
 
+      - name: Test account flows in Chrome
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+          BROWSER_NO_SANDBOX: "1"
+        run: npm --prefix web run test:browser
+
       - name: Dependency audits and CycloneDX SBOMs
         run: bash scripts/check-dependencies.sh
 

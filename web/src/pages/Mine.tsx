@@ -1,3 +1,4 @@
+import { MyAccounts } from "../components/MyAccounts";
 import { beginPasskeyRegistration, createMyClient, finishPasskeyRegistration, loadMyClients, loadMyUsage, loadPasskeys, loadPassportMe, removePasskey, revokeMyClient, rotateMyClient, setupLinkMyClient, updateMyProfile, uploadMyAvatar } from "../api";
 import { Bar, BarChart, Grid, Tooltip, XAxis, YAxis } from "../components/dither-kit";
 import { ResponseVersion } from "../response-version";
@@ -268,6 +269,8 @@ export function PassportMine({ principal, onPrincipal }: { principal: PassportPr
         </section>}
       </div>
     </SignalPanel>}
+
+    <MyAccounts key={principal.id} principal={principal} />
 
     <section className="mine-clients" aria-labelledby="client-heading">
       <header className="section-heading">
