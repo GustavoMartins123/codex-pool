@@ -37,6 +37,7 @@ func (h *proxyHandler) serveMinimaxAdmin(w http.ResponseWriter, r *http.Request)
 
 // POST /admin/minimax/add - add a MiniMax API key
 func (h *proxyHandler) handleMinimaxAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		APIKey string `json:"api_key"`
 	}

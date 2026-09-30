@@ -31,6 +31,7 @@ func (h *proxyHandler) serveOpencodeGoAdmin(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *proxyHandler) handleOpencodeGoAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		APIKey string `json:"api_key"`
 	}

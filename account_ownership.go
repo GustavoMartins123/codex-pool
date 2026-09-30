@@ -30,6 +30,11 @@ func migrateAccountResources(tx *bbolt.Tx) error {
 		} else if r.Version != 2 {
 			return errors.New("unsupported account resource version")
 		}
+		if r.Status == "pending" && r.PendingExpiresAt == nil {
+			expires := time.Now().UTC().Add(contributionPendingTTL)
+			r.PendingExpiresAt = &expires
+			updates = append(updates, r)
+		}
 		if r.ID == "" || r.OwnerID == "" || r.Revision == 0 || resourceKey(r.Provider, r.ID) != string(k) || (r.Status != "pending" && r.Status != "active") {
 			return errors.New("invalid account resource")
 		}
@@ -46,17 +51,18 @@ func migrateAccountResources(tx *bbolt.Tx) error {
 }
 
 type accountResource struct {
-	Version         int         `json:"version"`
-	ID              string      `json:"id"`
-	Provider        AccountType `json:"provider"`
-	OwnerID         string      `json:"owner_id"`
-	AddedBy         string      `json:"added_by"`
-	OperatorManaged bool        `json:"operator_managed"`
-	SecretRef       string      `json:"secret_ref"`
-	Identity        string      `json:"identity,omitempty"`
-	Revision        uint64      `json:"revision"`
-	Status          string      `json:"status"`
-	WithdrawnAt     *time.Time  `json:"withdrawn_at,omitempty"`
+	Version          int         `json:"version"`
+	ID               string      `json:"id"`
+	Provider         AccountType `json:"provider"`
+	OwnerID          string      `json:"owner_id"`
+	AddedBy          string      `json:"added_by"`
+	OperatorManaged  bool        `json:"operator_managed"`
+	SecretRef        string      `json:"secret_ref"`
+	Identity         string      `json:"identity,omitempty"`
+	Revision         uint64      `json:"revision"`
+	Status           string      `json:"status"`
+	PendingExpiresAt *time.Time  `json:"pending_expires_at,omitempty"`
+	WithdrawnAt      *time.Time  `json:"withdrawn_at,omitempty"`
 }
 
 func resourceKey(provider AccountType, id string) string { return string(provider) + "|" + id }

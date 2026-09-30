@@ -174,6 +174,7 @@ func startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier,
 
 // POST /admin/codex/add - start OAuth flow
 func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), "")
 	if oauthURL == "" {
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")

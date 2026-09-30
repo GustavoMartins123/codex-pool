@@ -37,6 +37,7 @@ func (h *proxyHandler) serveKimiAdmin(w http.ResponseWriter, r *http.Request) {
 
 // POST /admin/kimi/add - add a Kimi API key
 func (h *proxyHandler) handleKimiAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		APIKey string `json:"api_key"`
 	}

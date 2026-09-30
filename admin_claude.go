@@ -305,6 +305,7 @@ func normalizeString(v any) string {
 
 // POST /admin/claude/add - start OAuth flow
 func (h *proxyHandler) handleClaudeAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		AccountID string `json:"account_id"`
 	}

@@ -65,10 +65,14 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 			return errors.New("account authority unavailable")
 		}
 		key := resourceKey(provider, id)
+		count := 0
 		if err := b.ForEach(func(k, v []byte) error {
 			var existing accountResource
 			if err := json.Unmarshal(v, &existing); err != nil {
 				return err
+			}
+			if existing.OwnerID == actor && existing.WithdrawnAt == nil && (existing.Status == "active" || existing.Status == "pending" && existing.PendingExpiresAt != nil && existing.PendingExpiresAt.After(time.Now())) {
+				count++
 			}
 			if existing.Provider == provider && existing.Identity == fingerprint && string(k) != key {
 				return &policyError{Status: 409, Code: "account_duplicate", Message: "provider account already registered"}
@@ -85,9 +89,16 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 			if r.OwnerID != actor || r.Identity != fingerprint || r.WithdrawnAt != nil || r.Status != "pending" {
 				return &policyError{Status: http.StatusConflict, Code: "account_duplicate", Message: "provider account already registered"}
 			}
+			if r.PendingExpiresAt == nil || !r.PendingExpiresAt.After(time.Now()) {
+				return &policyError{Status: 409, Code: "contribution_expired", Message: "pending account registration expired"}
+			}
 			return nil
 		}
-		if err := putJSON(b, key, &accountResource{Version: 2, ID: id, Provider: provider, OwnerID: actor, AddedBy: actor, OperatorManaged: actor == "break-glass", SecretRef: ref, Identity: fingerprint, Revision: 1, Status: "pending"}); err != nil {
+		if count >= contributionAccountsPerPrincipal {
+			return &policyError{Status: 429, Code: "contribution_account_limit", Message: "private account limit reached"}
+		}
+		expires := time.Now().UTC().Add(contributionPendingTTL)
+		if err := putJSON(b, key, &accountResource{Version: 2, ID: id, Provider: provider, OwnerID: actor, AddedBy: actor, OperatorManaged: actor == "break-glass", SecretRef: ref, Identity: fingerprint, Revision: 1, Status: "pending", PendingExpiresAt: &expires}); err != nil {
 			return err
 		}
 		return p.audit(tx, actor, "account.contribution_started", id, string(provider))
@@ -121,10 +132,11 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 		if err != nil {
 			return err
 		}
-		if r.Status != "pending" || r.WithdrawnAt != nil {
+		if r.Status != "pending" || r.WithdrawnAt != nil || r.PendingExpiresAt == nil || !r.PendingExpiresAt.After(time.Now()) {
 			return errors.New("account contribution no longer authorized")
 		}
 		r.Status = "active"
+		r.PendingExpiresAt = nil
 		r.Revision++
 		if err := putJSON(b, resourceKey(provider, id), r); err != nil {
 			return err

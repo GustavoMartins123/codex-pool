@@ -182,6 +182,7 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	h.startAntigravityOAuth(w, r, "")
 }
 

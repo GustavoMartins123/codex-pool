@@ -32,6 +32,7 @@ func (h *proxyHandler) serveXiaomiAdmin(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *proxyHandler) handleXiaomiAdd(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		APIKey string `json:"api_key"`
 	}

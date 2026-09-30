@@ -114,6 +114,7 @@ func (h *proxyHandler) zaiRequest(ctx context.Context, method, target, authoriza
 }
 
 func (h *proxyHandler) handleZAILoginInit(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	pollToken, err := zaiRandomHex(32)
 	if err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "could not create OAuth token")

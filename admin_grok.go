@@ -29,6 +29,7 @@ func (h *proxyHandler) serveGrokAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) {
+	if !h.checkContributionAttempt(w,r) { return }
 	var req struct {
 		AuthJSON      string `json:"auth_json"`
 		AccessToken   string `json:"access_token"`

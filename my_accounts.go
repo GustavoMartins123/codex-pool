@@ -78,6 +78,9 @@ func (h *proxyHandler) handleMyAccounts(w http.ResponseWriter, r *http.Request) 
 	views := []myAccountView{}
 	for _, resource := range resources {
 		view := myAccountView{ID: resource.ID, Provider: resource.Provider, Revision: resource.Revision, Status: resource.Status, State: resource.Status, WithdrawnAt: resource.WithdrawnAt}
+		if resource.Status == "pending" && resource.PendingExpiresAt != nil && !resource.PendingExpiresAt.After(time.Now()) {
+			view.State = "expired"
+		}
 		if resource.WithdrawnAt != nil {
 			view.Status = "withdrawn"
 			view.State = "withdrawn"
