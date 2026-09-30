@@ -405,6 +405,11 @@ func main() {
 	shutdownCtx, stopShutdownSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopShutdownSignals()
 	cfg := buildConfig()
+	duckPath := getenv("DUCKDB_PATH", "./data/usage.duckdb")
+	cfg.duckPath = duckPath
+	if err := recoverPairedRestore(cfg.storePath, duckPath); err != nil {
+		log.Fatalf("recover paired restore: %v", err)
+	}
 	if cfg.rotatePassportKey {
 		count, err := rotatePassportKey(cfg.storePath, os.Getenv("POOL_AUTH_ENCRYPTION_KEY_OLD"), os.Getenv("POOL_AUTH_ENCRYPTION_KEY"))
 		if err != nil {

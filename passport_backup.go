@@ -146,6 +146,9 @@ func verifyBackupFile(path string, expected backupFileManifest) error {
 var restoreRename = os.Rename
 
 func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
+	if err := recoverPairedRestore(boltPath, duckPath); err != nil {
+		return err
+	}
 	encoded, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return err
@@ -180,21 +183,6 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 		return err
 	}
 
-	// The paired invariant: both stores move to the backup snapshot, or
-	// neither does. Before the first swap, keep aside COPIES of the current
-	// stores (copies, not renames: the originals must stay live until each
-	// swap succeeds so a mid-restore crash never leaves both stores
-	// missing). If the DuckDB swap fails after the Bolt swap succeeded, the
-	// aside copy rolls Bolt back to its pre-restore state.
-	//
-	// Crash-atomicity limits, stated precisely: this rollback covers
-	// RETURNED errors, not power loss. A process death between the Bolt and
-	// DuckDB swaps still leaves the pair inconsistent (Bolt on the backup
-	// snapshot, DuckDB current); the surviving .prerestore copies enable
-	// manual recovery, but no two-file rename sequence can be atomic across
-	// a crash. A journaling restart-recovery protocol would be needed for
-	// that; until then, run restores with the service stopped and verify
-	// startup logs afterwards.
 	if err := preserveAccountSecurityOnRestore(boltPath, boltTemp); err != nil {
 		_ = os.Remove(boltTemp)
 		_ = os.Remove(duckTemp)
@@ -203,14 +191,12 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 	boltAside, duckAside := boltPath+".prerestore", duckPath+".prerestore"
 	_ = os.Remove(boltAside)
 	_ = os.Remove(duckAside)
-	boltHadStore := true
 	if err := copyFile(boltPath, boltAside, 0o600); err != nil {
 		if !os.IsNotExist(err) {
 			_ = os.Remove(boltTemp)
 			_ = os.Remove(duckTemp)
 			return fmt.Errorf("snapshot current Bolt store before restore: %w", err)
 		}
-		boltHadStore = false
 	}
 	if err := copyFile(duckPath, duckAside, 0o600); err != nil {
 		if !os.IsNotExist(err) {
@@ -227,23 +213,35 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 		_ = os.Remove(duckAside)
 	}
 
-	if err := restoreRename(boltTemp, boltPath); err != nil {
+	journal, err := prepareRestoreJournal(boltPath, duckPath)
+	if err != nil {
 		cleanupStaging()
+		return err
+	}
+	journalPath := boltPath + ".restore-journal"
+	if err := writeRestoreJournal(journalPath, journal); err != nil {
+		cleanupStaging()
+		return err
+	}
+	restoreCheckpoint("prepared")
+	if err := restoreRename(boltTemp, boltPath); err != nil {
+		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
+			return fmt.Errorf("restore Bolt: %v; recovery: %w", err, recoveryErr)
+		}
 		return fmt.Errorf("restore Bolt store: %w", err)
 	}
+	restoreCheckpoint("bolt-swapped")
 	if err := restoreRename(duckTemp, duckPath); err != nil {
-		// Roll the Bolt swap back so the stores stay a matched pair.
-		if boltHadStore {
-			if rollbackErr := restoreRename(boltAside, boltPath); rollbackErr != nil {
-				return fmt.Errorf("restore DuckDB store failed (%v) AND rolling back the Bolt swap failed (%v); "+
-					"the previous Bolt store is preserved at %s — restore it manually before restarting", err, rollbackErr, boltAside)
-			}
-		} else {
-			_ = os.Remove(boltPath)
+		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
+			return fmt.Errorf("restore DuckDB: %v; recovery: %w", err, recoveryErr)
 		}
-		cleanupStaging()
-		return fmt.Errorf("restore DuckDB store: %w (Bolt rolled back to its pre-restore state)", err)
+		return fmt.Errorf("restore DuckDB store: %w (stores rolled back)", err)
 	}
-	cleanupStaging()
-	return nil
+	restoreCheckpoint("duck-swapped")
+	journal.Committed = true
+	if err := writeRestoreJournal(journalPath, journal); err != nil {
+		return err
+	}
+	restoreCheckpoint("committed")
+	return recoverPairedRestore(boltPath, duckPath)
 }
