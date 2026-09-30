@@ -2,11 +2,41 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestSignalAnalyticsEmptyStoresReturnArrays(t *testing.T) {
+	usage, err := newUsageStore(filepath.Join(t.TempDir(), "usage.db"), 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer usage.Close()
+	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer analytics.Close()
+	h := &proxyHandler{pool: newPoolState(nil, false), store: usage, analyticsStore: analytics}
+	recorder := httptest.NewRecorder()
+	h.handleSignalAnalytics(recorder, httptest.NewRequest("GET", "/api/pool/signal", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"economics", "hourly", "origin_weekly", "model_daily", "quota_capacity", "model_efficiency", "reset_observations"} {
+		rows, ok := response[field].([]any)
+		if !ok || len(rows) != 0 {
+			t.Errorf("%s=%v: expected an empty array", field, response[field])
+		}
+	}
+}
 
 func TestSignalAnalyticsLinksWeeklyOriginDrainAndCurrentAccountEconomics(t *testing.T) {
 	usage, err := newUsageStore(filepath.Join(t.TempDir(), "usage.db"), 30)

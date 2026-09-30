@@ -57,19 +57,19 @@ func (h *proxyHandler) handleSignalAnalytics(w http.ResponseWriter, r *http.Requ
 			respondJSONError(w, http.StatusInternalServerError, "failed to build origin drain matrix")
 			return
 		}
-		response.OriginWeekly = originWeekly
+		response.OriginWeekly = append(response.OriginWeekly, originWeekly...)
 
 		hourly, err := h.store.getGlobalHourlyUsage(24 * 14)
 		if err != nil {
 			respondJSONError(w, http.StatusInternalServerError, "failed to load burn velocity")
 			return
 		}
-		response.Hourly = hourly
+		response.Hourly = append(response.Hourly, hourly...)
 
 		quota := h.quotaIntelligenceSnapshot()
-		response.QuotaCapacity = quota.capacity
-		response.ModelEfficiency = quota.modelEfficiency
-		response.ResetObservations = quota.resetEvents
+		response.QuotaCapacity = append(response.QuotaCapacity, quota.capacity...)
+		response.ModelEfficiency = append(response.ModelEfficiency, quota.modelEfficiency...)
+		response.ResetObservations = append(response.ResetObservations, quota.resetEvents...)
 		response.QuotaGeneratedAt = quota.updatedAt
 	}
 
@@ -79,13 +79,13 @@ func (h *proxyHandler) handleSignalAnalytics(w http.ResponseWriter, r *http.Requ
 			respondJSONError(w, http.StatusInternalServerError, "failed to build subscription economics")
 			return
 		}
-		response.Economics = economics
+		response.Economics = append(response.Economics, economics...)
 		modelDaily, err := h.analyticsStore.getModelDailyUsage(42)
 		if err != nil {
 			respondJSONError(w, http.StatusInternalServerError, "failed to build model demand mix")
 			return
 		}
-		response.ModelDaily = modelDaily
+		response.ModelDaily = append(response.ModelDaily, modelDaily...)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
