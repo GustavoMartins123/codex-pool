@@ -43,6 +43,14 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 					return err
 				}
 			}
+			if target.Bucket([]byte(bucketAccountGrantIndex)) != nil {
+				if err := target.DeleteBucket([]byte(bucketAccountGrantIndex)); err != nil {
+					return err
+				}
+			}
+			if err := initializeAccountGrantIndex(target); err != nil {
+				return err
+			}
 			if sourceBucket := source.Bucket([]byte(bucketClientCredentials)); sourceBucket != nil {
 				destination, err := target.CreateBucketIfNotExists([]byte(bucketClientCredentials))
 				if err != nil {

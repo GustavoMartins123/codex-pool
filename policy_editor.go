@@ -150,7 +150,7 @@ func (p *PassportStore) evaluateClientPolicy(principalID, clientID string, confi
 		credential = &cp
 	}
 	p.mu.RUnlock()
-	policy, err := combinePolicySources(policySourcesFor(&principal, credential, configured), principal.Kind)
+	policy, err := p.cachedEffectivePolicy(&principal, credential, configured)
 	return &principal, policy, credential != nil, err
 }
 

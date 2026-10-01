@@ -74,7 +74,7 @@ func grantActive(g accountGrant, resource *accountResource, actor string, now ti
 }
 
 func findAccountGrant(tx *bbolt.Tx, resource *accountResource, actor, model string) (*accountGrant, error) {
-	grants, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants)))
+	grants, err := accountGrantsByResource(tx, resource.Provider, resource.ID, actor)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func (p *PassportStore) setAccountDelegation(actor string, provider AccountType,
 		}
 		resource.OperatorMayDelegate = allowed
 		if !allowed {
-			grants, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants)))
+			grants, err := accountGrantsByResource(tx, provider, id, "")
 			if err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ func (p *PassportStore) setAccountDelegation(actor string, provider AccountType,
 				if grant.Provider == provider && grant.AccountID == id && grant.CreatedBy != actor && grant.RevokedAt == nil {
 					grant.RevokedAt = &now
 					grant.Revision++
-					if err := putJSON(tx.Bucket([]byte(bucketAccountGrants)), grant.ID, grant); err != nil {
+					if err := putAccountGrant(tx, grant); err != nil {
 						return err
 					}
 				}
@@ -163,7 +163,14 @@ func (p *PassportStore) createAccountGrant(actor string, revision uint64, grant 
 	}
 	err := p.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketAccountGrants))
-		grants, err := readAccountGrants(b)
+		existing, err := readAccountGrant(b, grant.ID)
+		if err != nil {
+			return err
+		}
+		if existing != nil && (existing.Provider != grant.Provider || existing.AccountID != grant.AccountID || existing.RecipientID != grant.RecipientID) {
+			return accountControlError("grant_id_conflict", 409)
+		}
+		grants, err := accountGrantsByResource(tx, grant.Provider, grant.AccountID, grant.RecipientID)
 		if err != nil {
 			return err
 		}
@@ -199,7 +206,7 @@ func (p *PassportStore) createAccountGrant(actor string, revision uint64, grant 
 		if err := putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(resource.Provider, resource.ID), resource); err != nil {
 			return err
 		}
-		if err := putJSON(b, grant.ID, grant); err != nil {
+		if err := putAccountGrant(tx, grant); err != nil {
 			return err
 		}
 		return p.audit(tx, actor, "account.grant_created", grant.ID, string(grant.Provider)+" "+grant.AccountID+" "+grant.RecipientID)
@@ -213,21 +220,14 @@ func (p *PassportStore) revokeAccountGrant(actor, id string, revision uint64) er
 	var grant accountGrant
 	var resource *accountResource
 	err := p.db.View(func(tx *bbolt.Tx) error {
-		grants, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants)))
+		stored, err := readAccountGrant(tx.Bucket([]byte(bucketAccountGrants)), id)
 		if err != nil {
 			return err
 		}
-		found := false
-		for _, g := range grants {
-			if g.ID == id {
-				grant = g
-				found = true
-				break
-			}
-		}
-		if !found {
+		if stored == nil {
 			return accountControlError("grant_not_found", 404)
 		}
+		grant = *stored
 		resource, err = readAccountResource(tx.Bucket([]byte(bucketAccountResources)), grant.Provider, grant.AccountID)
 		return err
 	})
@@ -247,7 +247,7 @@ func (p *PassportStore) revokeAccountGrant(actor, id string, revision uint64) er
 	grant.RevokedAt = &now
 	grant.Revision++
 	return p.db.Update(func(tx *bbolt.Tx) error {
-		if err := putJSON(tx.Bucket([]byte(bucketAccountGrants)), id, grant); err != nil {
+		if err := putAccountGrant(tx, grant); err != nil {
 			return err
 		}
 		return p.audit(tx, actor, "account.grant_revoked", id, string(grant.Provider)+" "+grant.AccountID)

@@ -80,7 +80,7 @@ func (h *proxyHandler) handleAccountSharing(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		grants, err = readAccountGrants(tx.Bucket([]byte(bucketAccountGrants)))
+		grants, err = accountGrantsByResource(tx, provider, id, "")
 		return err
 	}); err != nil {
 		respondJSONError(w, 503, "sharing unavailable")

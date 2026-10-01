@@ -228,6 +228,8 @@ type PassportStore struct {
 	policyMu        sync.Mutex
 	policyInflight  map[string]int
 	policyReserved  map[string]int64
+	policyCacheMu   sync.Mutex
+	policyCache     *policyCache
 }
 
 func passportAEAD() (cipher.AEAD, error) {
@@ -268,7 +270,7 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 		if err := migrateAccountResources(tx); err != nil {
 			return err
 		}
-		if _, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants))); err != nil {
+		if err := initializeAccountGrantIndex(tx); err != nil {
 			return err
 		}
 		joinLinks := tx.Bucket([]byte(bucketJoinLinks))
