@@ -112,6 +112,8 @@ type TransitionDiagnostic struct {
 }
 
 type conversationHandoffRecord struct {
+	Bytes        int    `json:"-"`
+	Fault        string `json:"fault,omitempty"`
 	State        ConversationState
 	LastProvider AccountType
 	Transitions  []TransitionDiagnostic
@@ -1289,24 +1291,12 @@ func renderConversationMessages(format contextWireFormat, object map[string]any,
 	}
 }
 
-func (s *conversationHandoffStore) evictOldestLocked() {
-	if len(s.records) < contextHandoffMaxConversations {
-		return
-	}
-	var oldestKey conversationKey
-	var oldest time.Time
-	for key, record := range s.records {
-		if oldestKey == (conversationKey{}) || record.State.UpdatedAt.Before(oldest) {
-			oldestKey = key
-			oldest = record.State.UpdatedAt
-		}
-	}
-	delete(s.records, oldestKey)
-}
-
 func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountType, path string, body []byte) ([]byte, contextHandoffResult, error) {
 	if s == nil || key.conversationID == "" || target == "" || len(body) == 0 {
 		return body, contextHandoffResult{}, nil
+	}
+	if len(body) > maxContextBytes || len(key.owner)+len(key.conversationID) > maxPinBytes {
+		return nil, contextHandoffResult{}, fmt.Errorf("conversation input exceeds memory limit")
 	}
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
@@ -1322,7 +1312,18 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, exists := s.records[key]
+	if record.Fault != "" {
+		return nil, contextHandoffResult{}, fmt.Errorf("conversation retention failed: %s", record.Fault)
+	}
+	if exists {
+		var err error
+		record, err = cloneHandoffRecord(record)
+		if err != nil {
+			return nil, contextHandoffResult{}, err
+		}
+	}
 	fromProvider := record.LastProvider
 	lastFailedTransition := len(record.Transitions) > 0 && record.Transitions[len(record.Transitions)-1].StatusCode >= 400 && record.Transitions[len(record.Transitions)-1].To == target
 	if lastFailedTransition && record.State.LastTransitionFrom != "" {
@@ -1386,7 +1387,6 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	}
 
 	if !exists {
-		s.evictOldestLocked()
 		record.State = ConversationState{
 			ID: key.conversationID, Metadata: make(map[string]any),
 			ProviderState:    make(map[string]ProviderLocalState),
@@ -1437,7 +1437,9 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	record.State.ActiveProvider = target
 	record.State.UpdatedAt = time.Now().UTC()
 	record.LastProvider = target
-	s.records[key] = record
+	if err := s.saveLocked(key, record); err != nil {
+		return nil, result, err
+	}
 
 	// Same-provider requests are never rewritten by the handoff store. Native
 	// providers already own their context/compaction semantics; the compacted
@@ -1458,8 +1460,13 @@ func (s *conversationHandoffStore) State(key conversationKey) (ConversationState
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
-	return record.State, ok
+	if !ok || record.Fault != "" {
+		return ConversationState{}, false
+	}
+	copy, err := cloneHandoffRecord(record)
+	return copy.State, err == nil
 }
 
 // resolveConversationKey resolves an external conversation ID to its scoped
@@ -1471,6 +1478,7 @@ func (s *conversationHandoffStore) resolveConversationKey(owner, conversationID 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	if owner != "" {
 		key := conversationScopedKey(owner, conversationID)
 		if _, ok := s.records[key]; ok {
@@ -1497,6 +1505,7 @@ func (s *conversationHandoffStore) TransitionDiagnostics(key conversationKey) []
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	if key.conversationID != "" {
 		return append([]TransitionDiagnostic(nil), s.records[key].Transitions...)
 	}
@@ -1538,7 +1547,15 @@ func (s *conversationHandoffStore) MarkTransitionOutcome(key conversationKey, ep
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
+	if ok {
+		copy, err := cloneHandoffRecord(record)
+		if err != nil {
+			return
+		}
+		record = copy
+	}
 	if !ok || len(record.Transitions) == 0 {
 		return
 	}
@@ -1549,7 +1566,7 @@ func (s *conversationHandoffStore) MarkTransitionOutcome(key conversationKey, ep
 				record.Transitions[i].ErrorClass = class
 			}
 			record.Transitions[i].RecoveryRetry = record.Transitions[i].RecoveryRetry || recovery
-			s.records[key] = record
+			s.saveOutcomeLocked(key, record)
 			return
 		}
 	}
@@ -1561,6 +1578,7 @@ func (s *conversationHandoffStore) NativeSessionSeed(key conversationKey, provid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
 	if !ok {
 		return key.conversationID, true
@@ -1584,13 +1602,21 @@ func (s *conversationHandoffStore) BindNativeSession(key conversationKey, provid
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
+	if ok {
+		copy, err := cloneHandoffRecord(record)
+		if err != nil {
+			return
+		}
+		record = copy
+	}
 	if !ok {
 		return
 	}
 	if session := record.State.ProviderSessions[provider]; session != nil {
 		session.NativeSessionID = nativeID
-		s.records[key] = record
+		s.saveOutcomeLocked(key, record)
 	}
 }
 
@@ -1600,13 +1626,21 @@ func (s *conversationHandoffStore) MarkNativeSessionEstablished(key conversation
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
+	if ok {
+		copy, err := cloneHandoffRecord(record)
+		if err != nil {
+			return
+		}
+		record = copy
+	}
 	if !ok {
 		return
 	}
 	if session := record.State.ProviderSessions[provider]; session != nil {
 		session.Established = true
-		s.records[key] = record
+		s.saveOutcomeLocked(key, record)
 	}
 }
 
@@ -1616,7 +1650,15 @@ func (s *conversationHandoffStore) RecoverNativeSession(attempt *TransitionAttem
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[attempt.Key()]
+	if ok {
+		copy, err := cloneHandoffRecord(record)
+		if err != nil {
+			return false
+		}
+		record = copy
+	}
 	if !ok || record.State.ActiveProvider != attempt.To || record.State.LastTransitionFrom != attempt.From ||
 		record.State.TransitionEpoch != attempt.Epoch || attempt.Epoch == 0 {
 		return false
@@ -1632,22 +1674,31 @@ func (s *conversationHandoffStore) RecoverNativeSession(attempt *TransitionAttem
 	}
 	record.State.ProviderSessions[attempt.To] = &ProviderSessionState{Provider: attempt.To, Epoch: record.State.TransitionEpoch}
 	record.State.ProviderState[string(attempt.To)] = ProviderLocalState{}
-	s.records[attempt.Key()] = record
+	if err := s.saveLocked(attempt.Key(), record); err != nil {
+		return false
+	}
 	attempt.Epoch = record.State.TransitionEpoch
 	attempt.RecoveryUsed = true
 	return true
 }
 
-func (s *conversationHandoffStore) RecordAssistantText(key conversationKey, provider AccountType, text string) {
+func (s *conversationHandoffStore) RecordAssistantText(key conversationKey, provider AccountType, text string) error {
 	text = strings.TrimSpace(text)
 	if s == nil || key.conversationID == "" || provider == "" || text == "" {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneLocked(time.Now())
 	record, ok := s.records[key]
+	if ok {
+		copy, err := cloneHandoffRecord(record)
+		if err != nil {
+			return err
+		}
+		record = copy
+	}
 	if !ok {
-		s.evictOldestLocked()
 		record.State = ConversationState{
 			ID: key.conversationID, Metadata: make(map[string]any),
 			ProviderState:    make(map[string]ProviderLocalState),
@@ -1662,8 +1713,7 @@ func (s *conversationHandoffStore) RecordAssistantText(key conversationKey, prov
 		record.State.IR = conversationIRFromMessages(record.State.Messages, key.conversationID, record.State.TransitionEpoch)
 		record.State.ActiveProvider = provider
 		record.LastProvider = provider
-		s.records[key] = record
-		return
+		return s.saveOutcomeLocked(key, record)
 	}
 	record.State.Messages = append(record.State.Messages, message)
 	record.State.Messages, _ = sanitizeConversationToolPairs(record.State.Messages)
@@ -1675,7 +1725,7 @@ func (s *conversationHandoffStore) RecordAssistantText(key conversationKey, prov
 	record.State.UpdatedAt = time.Now().UTC()
 	record.State.ActiveProvider = provider
 	record.LastProvider = provider
-	s.records[key] = record
+	return s.saveOutcomeLocked(key, record)
 }
 
 func responseTextFromObject(object map[string]any) string {

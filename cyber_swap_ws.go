@@ -469,10 +469,15 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 	if turn != nil {
 		text := extractAssistantTextFromResponseSample(data)
 		if text != "" && (!isTerminalCodexWebSocketEvent(data) || turn.assistantText.Len() == 0) {
+			if turn.assistantText.Len()+len(text) > maxContextBytes {
+				return nil, fmt.Errorf("conversation response exceeds memory limit")
+			}
 			turn.assistantText.WriteString(text)
 		}
 		if isTerminalCodexWebSocketEvent(data) && turn.conversationID != "" && s.h != nil {
-			s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
+			if err := s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String()); err != nil {
+				return nil, err
+			}
 		}
 	}
 	filtered, drop, changed := filterHostedMCPResponseJSON(data)
@@ -635,7 +640,9 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	// downstream websocket may carry multiple logical conversations, but every
 	// one of those conversations must remain on this socket's active account so
 	// previous_response_id continues to resolve.
-	s.h.pool.pin(conversationID, s.activeAccount.ID)
+	if err := s.h.pool.pinForUser(s.owner, conversationID, s.activeAccount.ID); err != nil {
+		return nil, err
+	}
 	return data, nil
 }
 

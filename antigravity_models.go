@@ -763,13 +763,14 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 	defer p.mu.Unlock()
 	model = antigravityCanonicalModel(model)
 	now := time.Now()
+	p.evictOldestPinsLocked(now)
 	pinKey := "antigravity:" + model + ":" + conversationID
 	if conversationID != "" {
 		// If conversation was previously pinned to an account of another provider, unpin it
 		if pinnedID := p.convPin[conversationID]; pinnedID != "" {
 			for _, account := range p.accounts {
 				if account.ID == pinnedID && account.Type != AccountTypeAntigravity {
-					delete(p.convPin, conversationID)
+					p.unpinLocked(conversationID)
 					break
 				}
 			}
@@ -788,7 +789,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 					return account
 				}
 			}
-			delete(p.convPin, pinKey)
+			p.unpinLocked(pinKey)
 		} else if pinnedID := p.convPin[conversationID]; pinnedID != "" && (exclude == nil || !exclude[pinnedID]) {
 			for _, account := range p.accounts {
 				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !antigravityModels.Supports(account.ID, model) {
@@ -800,7 +801,9 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
-					p.convPin[pinKey] = account.ID
+					if err := p.pinForUserLocked(p.convOwner[conversationID], pinKey, account.ID, now); err != nil {
+						return nil
+					}
 					return account
 				}
 			}
@@ -831,8 +834,13 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 		_, _, _ = p.circuitBreakers.AllowTarget(string(AccountTypeAntigravity), best.ID, model, nil)
 	}
 	if best != nil && conversationID != "" {
-		p.convPin[pinKey] = best.ID
-		p.convPin[conversationID] = best.ID
+		if err := p.pinForUserLocked(p.convOwner[conversationID], pinKey, best.ID, now); err != nil {
+			return nil
+		}
+		if err := p.pinForUserLocked(p.convOwner[conversationID], conversationID, best.ID, now); err != nil {
+			p.unpinLocked(pinKey)
+			return nil
+		}
 	}
 	return best
 }

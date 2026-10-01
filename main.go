@@ -825,6 +825,8 @@ func main() {
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
 	go h.probeClaudeAccountUUIDs()
 
+	h.startConversationCleanup(shutdownCtx)
+
 	// Background cleanup for request pacer (every 5 minutes)
 	if pacer != nil {
 		pacer.startCleanup(shutdownCtx)

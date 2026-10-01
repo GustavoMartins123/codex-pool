@@ -501,6 +501,7 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 		weights, _ = p.routing.weights(profile)
 	}
 	now := time.Now()
+	p.evictOldestPinsLocked(now)
 	pinnedID := ""
 	if conversationID != "" {
 		owner := p.convOwner[conversationID]
@@ -577,7 +578,9 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 		_, _, _ = p.circuitBreakers.AllowTarget(string(selected.account.Type), selected.account.ID, model, nil)
 	}
 	if conversationID != "" {
-		p.pinForUserLocked(userID, conversationID, selected.account.ID, now)
+		if err := p.pinForUserLocked(userID, conversationID, selected.account.ID, now); err != nil {
+			return smartRouteDecision{Profile: profile, Reasons: []string{err.Error()}}
+		}
 	}
 	alternatives := make([]RouteAlternative, 0, len(candidates)-1)
 	for _, item := range candidates[1:] {
@@ -627,8 +630,11 @@ func (p *poolState) candidateForAntigravityModelWithRoutingTraceForUser(userID, 
 	if conversationID != "" {
 		canonical := antigravityCanonicalModel(model)
 		p.mu.Lock()
-		p.pinForUserLocked(userID, "antigravity:"+canonical+":"+conversationID, decision.Account.ID, time.Now())
+		err := p.pinForUserLocked(userID, "antigravity:"+canonical+":"+conversationID, decision.Account.ID, time.Now())
 		p.mu.Unlock()
+		if err != nil {
+			return nil, string(profile), []string{err.Error()}, 0, nil, nil
+		}
 	}
 	return decision.Account, string(decision.Profile), decision.Reasons, decision.Score.Score, decision.Alternatives, newRoutingBreakdownView(decision.Score)
 }

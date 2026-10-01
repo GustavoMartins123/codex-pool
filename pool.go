@@ -1547,22 +1547,26 @@ func scoreTooltipLocked(a *Account, now time.Time) string {
 	return scoreTooltipFromBreakdownLocked(a, now, scoreAccountBreakdownLocked(a, now))
 }
 
-func (p *poolState) pin(conversationID, accountID string) {
-	p.pinForUser("", conversationID, accountID)
+func (p *poolState) pin(conversationID, accountID string) error {
+	return p.pinForUser("", conversationID, accountID)
 }
 
-func (p *poolState) pinForUser(userID, conversationID, accountID string) {
+func (p *poolState) pinForUser(userID, conversationID, accountID string) error {
 	if conversationID == "" || accountID == "" {
-		return
+		return nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.pinForUserLocked(userID, conversationID, accountID, time.Now())
+	return p.pinForUserLocked(userID, conversationID, accountID, time.Now())
 }
 
-func (p *poolState) pinForUserLocked(userID, conversationID, accountID string, now time.Time) {
+func (p *poolState) pinForUserLocked(userID, conversationID, accountID string, now time.Time) error {
 	if conversationID == "" || accountID == "" {
-		return
+		return nil
+	}
+	userID = pinIdentity(userID, conversationID)
+	if err := p.checkPinLocked(userID, conversationID, accountID, now); err != nil {
+		return err
 	}
 	if p.convPin == nil {
 		p.convPin = make(map[string]string)
@@ -1580,9 +1584,7 @@ func (p *poolState) pinForUserLocked(userID, conversationID, accountID string, n
 		delete(p.convOwner, conversationID)
 	}
 	p.convUpdatedAt[conversationID] = now
-	if len(p.convPin) > maxConversationPins {
-		p.evictOldestPinsLocked(now)
-	}
+	return nil
 }
 
 func (p *poolState) unpinLocked(conversationID string) {
@@ -1595,27 +1597,9 @@ func (p *poolState) unpinLocked(conversationID string) {
 }
 
 func (p *poolState) evictOldestPinsLocked(now time.Time) {
-	cutoff := now.Add(-conversationPinTTL)
 	for id, updated := range p.convUpdatedAt {
-		if updated.Before(cutoff) {
+		if !updated.Add(conversationPinTTL).After(now) {
 			p.unpinLocked(id)
-		}
-	}
-	if len(p.convPin) > maxConversationPins {
-		type pinAge struct {
-			id      string
-			updated time.Time
-		}
-		ages := make([]pinAge, 0, len(p.convUpdatedAt))
-		for id, updated := range p.convUpdatedAt {
-			ages = append(ages, pinAge{id: id, updated: updated})
-		}
-		sort.Slice(ages, func(i, j int) bool {
-			return ages[i].updated.Before(ages[j].updated)
-		})
-		toEvict := len(p.convPin) - maxConversationPins + maxConversationPins/10
-		for i := 0; i < toEvict && i < len(ages); i++ {
-			p.unpinLocked(ages[i].id)
 		}
 	}
 }

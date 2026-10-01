@@ -34,6 +34,11 @@ func (h *proxyHandler) acquireGovernedAccount(r *http.Request, identity, convers
 		return nil, nil, accountControlError("account_unavailable", 503)
 	}
 	if h.pool == nil || h.pool.accountAuthority == nil {
+		if h.pool != nil {
+			if err := h.pool.pinForUser(identity, conversation, a.ID); err != nil {
+				return nil, nil, err
+			}
+		}
 		return r, func() {}, nil
 	}
 	pinned := h.pool.isAccountPinned(identity, conversation, a)
@@ -54,9 +59,6 @@ func (h *proxyHandler) acquireGovernedAccount(r *http.Request, identity, convers
 	if err != nil {
 		return nil, nil, err
 	}
-	if grant == nil {
-		return r, release, nil
-	}
 	rollback := func(err error) (*http.Request, func(), error) {
 		key := resourceKey(a.Type, a.ID)
 		p.accountInflight[key]--
@@ -64,6 +66,12 @@ func (h *proxyHandler) acquireGovernedAccount(r *http.Request, identity, convers
 			delete(p.accountInflight, key)
 		}
 		return nil, nil, err
+	}
+	if err := h.pool.pinForUser(identity, conversation, a.ID); err != nil {
+		return rollback(err)
+	}
+	if grant == nil {
+		return r, release, nil
 	}
 	state, _ := r.Context().Value(grantRequestContextKey{}).(*grantRequestState)
 	if state == nil {
