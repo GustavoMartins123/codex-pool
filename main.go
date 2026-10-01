@@ -73,6 +73,7 @@ type config struct {
 	originRetention            time.Duration // Retain origin metadata at most this long (0 = unlimited)
 	storePath                  string
 	retentionDays              int
+	metricsToken               string
 	adminToken                 string
 	backupDir                  string
 	restoreManifest            string
@@ -151,6 +152,9 @@ func validateSecretStrength(cfg *config) error {
 	}
 	if key := os.Getenv("POOL_AUTH_ENCRYPTION_KEY"); key != "" && len(key) < 32 {
 		return fmt.Errorf("POOL_AUTH_ENCRYPTION_KEY must be at least 32 characters (generate one with: openssl rand -hex 32)")
+	}
+	if cfg != nil && cfg.metricsToken != "" && (len(cfg.metricsToken) < 32 || strings.ContainsAny(cfg.metricsToken, " \t\r\n")) {
+		return fmt.Errorf("MONITORING_METRICS_TOKEN must be at least 32 characters without whitespace")
 	}
 	if cfg != nil && cfg.adminToken != "" && len(cfg.adminToken) < 16 {
 		return fmt.Errorf("ADMIN_TOKEN must be at least 16 characters (generate one with: openssl rand -hex 16)")
@@ -286,6 +290,7 @@ func buildConfig() *config {
 	cfg.originRetention = time.Duration(getConfigInt("PROXY_ORIGIN_RETENTION_DAYS", fileCfg.OriginRetentionDays, 0)) * 24 * time.Hour
 	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
 	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
+	cfg.metricsToken = os.Getenv("MONITORING_METRICS_TOKEN")
 	cfg.retentionDays = 30
 	if v := getenv("PROXY_USAGE_RETENTION_DAYS", ""); v != "" {
 		if n, err := parseInt64(v); err == nil && n > 0 {

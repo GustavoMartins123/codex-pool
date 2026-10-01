@@ -614,7 +614,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveReadyz(w)
 		return
 	case "/metrics":
-		if !h.checkAdminAuth(w, r) {
+		if !h.checkMetricsAuth(w, r) {
 			return
 		}
 		h.serveOperationalMetrics(w, r)
