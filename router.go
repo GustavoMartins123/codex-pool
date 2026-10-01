@@ -956,6 +956,41 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handlePasskeys(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/api/account-grants/") {
+		if h.passport == nil {
+			respondJSONError(w, 503, "account authority unavailable")
+			return
+		}
+		h.handleGrantRevoke(w, r, strings.TrimPrefix(r.URL.Path, "/api/account-grants/"))
+		return
+	}
+	if r.URL.Path == "/api/console/shareable-accounts" {
+		h.handleShareableAccounts(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/console/policies/") {
+		id, preview, ok := policyEditorPath(r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		h.handlePolicyEditor(w, r, id, preview)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/accounts/") {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/accounts/"), "/")
+		if len(parts) == 3 && (parts[2] == "grants" || parts[2] == "delegation") {
+			h.handleAccountSharing(w, r, AccountType(parts[0]), parts[1], parts[2])
+			return
+		}
+		if len(parts) == 3 && parts[2] == "controls" {
+			h.handleAccountControls(w, r, AccountType(parts[0]), parts[1])
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+
 	if strings.HasPrefix(r.URL.Path, "/api/me/accounts/") {
 		h.handleMyAccountItem(w, r)
 		return
