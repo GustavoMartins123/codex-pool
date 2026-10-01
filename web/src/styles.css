@@ -1229,3 +1229,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .mine-accounts .client-header > span { min-width: 0; overflow-wrap: anywhere; }
 .mine-accounts .client-header > span small { display: block; }
+.governance-panel { margin: 1rem 0; border-top: 1px solid var(--line, #45413b); padding-top: 1rem; }
+.governance-form { display: grid; gap: .75rem; margin-top: .75rem; min-width: 0; overflow-wrap: anywhere; }
+.governance-form fieldset { min-width: 0; border: 1px solid var(--line, #45413b); padding: .75rem; }
+.governance-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: .75rem; }
+.governance-fields label { display: grid; gap: .35rem; font-size: .85rem; }
+.governance-fields input, .governance-fields select, .governance-panel > label select { width: 100%; min-width: 0; }
+.governance-fields small { grid-column: 1 / -1; }
+.governance-form pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+.governance-consent { display: flex; align-items: center; gap: .6rem; }
+.governance-form .row-actions { display: flex; flex-wrap: wrap; }
+@media (min-width: 761px) and (max-width: 1100px) {
+  .console-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .console-layout { grid-template-columns: minmax(0, 1fr); }
+  .principal-roster { max-height: 430px; }
+}

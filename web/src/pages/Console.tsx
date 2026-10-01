@@ -1,3 +1,5 @@
+import { PolicyEditor } from "../components/PolicyEditor";
+import { OperatorSharing } from "../components/AccountGovernance";
 import { createMemberLink, loadAnalyticsHealth, loadConsoleAudit, loadConsolePrincipalUsage, loadConsolePrincipals, setPrincipalReasoningEffort, setPrincipalStatus } from "../api";
 import { Area, AreaChart, Grid, Tooltip, XAxis, YAxis } from "../components/dither-kit";
 import { ResponseVersion } from "../response-version";
@@ -235,10 +237,12 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
             </button>}
           </div>}
           <div className="detail-facts"><span>Last seen <b>{selected.last_seen_at ? new Date(selected.last_seen_at).toLocaleDateString() : "Never"}</b></span><span>Requests <b>{selected.request_count.toLocaleString()}</b></span><span>Value <b>{preciseMoney.format(selected.api_equivalent_cost_usd)}</b></span>{selected.expires_at && <span>Expires <b>{new Date(selected.expires_at).toLocaleDateString()}</b></span>}</div>
+          {principal.kind === "operator" && <PolicyEditor key={selected.id} principalID={selected.id} />}
           <SignalPanel title={`Usage · ${windowLabel}`}>{usageLoading ? <div className="empty-state">Loading usage…</div> : chartData.length ? <div className="chart-stage medium"><AreaChart data={chartData} config={{ tokens: { label: "Tokens", color: "orange" } }} margins={{ left: 52, bottom: 34 }}><Grid horizontal /><Area dataKey="tokens" variant="hatched" isClickable /><XAxis dataKey="hour" tickFormatter={(value) => String(value).slice(5, 13)} maxTicks={7} /><YAxis tickFormatter={(value) => compact.format(Number(value))} /><Tooltip /></AreaChart></div> : <div className="empty-state">No usage in this period.</div>}</SignalPanel>
         </>}
       </aside>
     </div>
+    {principal.kind === "operator" && <OperatorSharing />}
     <details className="audit-disclosure">
       <summary>Audit log <span>{audit.length}</span></summary>
       <div className="audit-list" role="log" aria-label="Recent account actions">{audit.length === 0 ? <div className="empty-state">No actions recorded.</div> : audit.slice(0, 50).map((entry) => <div key={entry.id}><time>{new Date(entry.at).toLocaleString()}</time><strong>{auditLabel(entry.action)}</strong><small>{entry.detail || "No additional detail."}</small><details><summary>Technical details</summary><code>Actor {entry.actor_id} · Subject {entry.subject_id}</code></details></div>)}</div>

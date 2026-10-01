@@ -1,5 +1,6 @@
 import { mutateAccount, reloadAccounts } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
+import { AccountGovernance } from "../components/AccountGovernance";
 import { Sparkline } from "../components/dither-kit";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
 import { queryValue, updateURL } from "../navigation";
@@ -236,6 +237,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <Instrument label="Primary" value={selectedAdmin.is_primary ? "Yes" : "No"} />
                     </div>
                     <pre className="score-trace">{selectedAdmin.score_tooltip || "No score detail is available."}</pre>
+                    <AccountGovernance key={`${selectedAccount.type}:${selectedAdmin.id}`} provider={selectedAccount.type} id={selectedAdmin.id} onChanged={onAccountsChanged} />
                     {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}{selectedAccount.type === "antigravity" && selectedVerificationURL ? " · finish the phone verification on this account, then relogin" : ""}</p>}
                     <div className="operator-actions">
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
@@ -267,5 +269,4 @@ function safeVerificationURL(raw: string | undefined) {
     return "";
   }
 }
-
 

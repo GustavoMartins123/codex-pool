@@ -4,6 +4,7 @@ import { ResponseVersion } from "../response-version";
 import type { MyAccount, PassportPrincipal } from "../types";
 import { providerDisplay } from "../ui";
 import { AccountContribution } from "./AccountContribution";
+import { AccountGovernance } from "./AccountGovernance";
 
 export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
   const [accounts, setAccounts] = useState<MyAccount[]>([]);
@@ -72,6 +73,7 @@ export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
         </div>}
       </div>
       {armed === account.id && <p>New requests will stop using this account. Withdrawal is permanent.</p>}
+      {account.status === "active" && <AccountGovernance provider={account.provider} id={account.id} onChanged={load} />}
     </article>)}
     {adding && <AccountContribution onClose={() => setAdding(false)} onAdded={added} />}
   </section>;
