@@ -4,11 +4,53 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
 	"codex-pool-proxy/internal/credstore"
 )
+
+func TestSetupMonitoringSecretsAreOptInIndependentAndStable(t *testing.T) {
+	dir, path := setupFixture(t)
+	if output, err := runSetup(t, dir); err != nil {
+		t.Fatalf("setup failed: %v (%s)", err, output)
+	}
+	before := readSetupEnv(t, path)
+	if regexp.MustCompile(`(?m)^MONITORING_METRICS_TOKEN=`).MatchString(before) {
+		t.Fatal("monitoring enabled without opt-in")
+	}
+	arg := "--monitoring"
+	if runtime.GOOS == "windows" {
+		arg = "-Monitoring"
+	}
+	output, err := runSetup(t, dir, arg)
+	if err != nil {
+		t.Fatalf("monitoring setup failed: %v (%s)", err, output)
+	}
+	content := readSetupEnv(t, path)
+	values := map[string]bool{}
+	for _, key := range []string{"ADMIN_TOKEN", "POOL_AUTH_ENCRYPTION_KEY", "POOL_JWT_SECRET", "POOL_CREDENTIAL_KEY", "MONITORING_METRICS_TOKEN", "GRAFANA_ADMIN_PASSWORD"} {
+		matches := regexp.MustCompile(`(?m)^` + key + `=([0-9a-f]{64})\r?$`).FindStringSubmatch(content)
+		if len(matches) != 2 {
+			t.Fatalf("missing or invalid %s", key)
+		}
+		if values[matches[1]] || strings.Contains(output, matches[1]) {
+			t.Fatal("secrets reused or printed")
+		}
+		values[matches[1]] = true
+		if key != "MONITORING_METRICS_TOKEN" && key != "GRAFANA_ADMIN_PASSWORD" && !strings.Contains(before, key+"="+matches[1]) {
+			t.Fatal("monitoring setup rotated an existing secret")
+		}
+	}
+	if output, err := runSetup(t, dir, arg); err != nil {
+		t.Fatalf("monitoring rerun failed: %v (%s)", err, output)
+	}
+	if readSetupEnv(t, path) != content {
+		t.Fatal("monitoring rerun changed secrets")
+	}
+	checkSetupPermissions(t, path)
+}
 
 func setupFixture(t *testing.T) (string, string) {
 	t.Helper()

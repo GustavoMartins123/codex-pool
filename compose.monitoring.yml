@@ -1,0 +1,63 @@
+services:
+  codex-pool:
+    networks: [default, monitoring]
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    entrypoint: [/bin/sh, /etc/prometheus/start-prometheus.sh]
+    environment:
+      MONITORING_METRICS_TOKEN: ${MONITORING_METRICS_TOKEN:?Run setup with monitoring enabled}
+    ports: [127.0.0.1:9090:9090]
+    networks: [monitoring]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/start-prometheus.sh:/etc/prometheus/start-prometheus.sh:ro
+      - prometheus-data:/prometheus
+    read_only: true
+    tmpfs: ["/tmp:mode=1777,size=1m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:9090/-/ready]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    environment:
+      GF_SECURITY_ADMIN_USER: operator
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Run setup with monitoring enabled}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    ports: [127.0.0.1:3000:3000]
+    networks: [monitoring]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/datasources.yml:/etc/grafana/provisioning/datasources/codex-pool.yml:ro
+      - ./monitoring/dashboards.yml:/etc/grafana/provisioning/dashboards/codex-pool.yml:ro
+      - ./monitoring/dashboard.json:/etc/grafana/dashboards/codex-pool.json:ro
+    read_only: true
+    tmpfs: ["/tmp:mode=1777,size=16m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:3000/api/health]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+networks:
+  monitoring:
+    internal: true
+volumes:
+  prometheus-data:
+  grafana-data:

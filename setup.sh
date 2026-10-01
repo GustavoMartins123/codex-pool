@@ -3,11 +3,18 @@ set -euo pipefail
 umask 077
 
 fail() { printf '%s\n' "Setup failed: $*" >&2; exit 1; }
-[[ $# -le 1 ]] || fail 'Usage: bash setup.sh [env-file]'
+[[ $# -le 2 ]] || fail 'Usage: bash setup.sh [env-file] [--monitoring]'
+monitoring=false
+env_arg=''
+for arg in "$@"; do
+  if [[ $arg == --monitoring ]]; then monitoring=true
+  elif [[ -z $env_arg ]]; then env_arg=$arg
+  else fail 'Only one environment path is allowed.'; fi
+done
 (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || fail 'Bash 4.4 or newer is required.'
 command -v openssl >/dev/null || fail 'OpenSSL is required.'
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-env_path=${1:-"$script_dir/.env"}
+env_path=${env_arg:-"$script_dir/.env"}
 [[ ! -L "$env_path" ]] || fail 'The environment file must not be a symlink.'
 [[ ! -e "$env_path" || -f "$env_path" ]] || fail 'The environment path must be a regular file.'
 [[ -d "$(dirname -- "$env_path")" ]] || fail 'The destination directory does not exist.'
@@ -26,6 +33,7 @@ source_path="$env_path"
 nul_count=$(LC_ALL=C tr -cd '\000' < "$source_path" | wc -c)
 (( nul_count == 0 )) || fail 'The environment file contains NUL bytes; use UTF-8 text.'
 keys=(ADMIN_TOKEN POOL_AUTH_ENCRYPTION_KEY POOL_JWT_SECRET POOL_CREDENTIAL_KEY)
+if $monitoring; then keys+=(MONITORING_METRICS_TOKEN GRAFANA_ADMIN_PASSWORD); fi
 declare -A found=() positions=() values=()
 lines=()
 quoted_double='^"([^"]*)"[[:space:]]*(#.*)?$'
@@ -33,7 +41,7 @@ quoted_single="^'([^']*)'[[:space:]]*(#.*)?$"
 while IFS= read -r line || [[ -n "$line" ]]; do
   line=${line%$'\r'}
   [[ ${#lines[@]} -ne 0 ]] || line=${line#$'\xef\xbb\xbf'}
-  if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY)[[:space:]]*=(.*)$ ]]; then
+  if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY|MONITORING_METRICS_TOKEN|GRAFANA_ADMIN_PASSWORD)[[:space:]]*=(.*)$ ]]; then
     key=${BASH_REMATCH[2]}
     [[ -z ${found[$key]:-} ]] || fail "Duplicate $key assignment."
     found[$key]=1
@@ -56,7 +64,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       [[ ${#value} -ge $minimum && "$value" != *[\$\<\>\"\'\\]* && ! "$value" =~ [[:cntrl:]] ]] || fail "Invalid $key; edit it explicitly before rerunning setup."
     fi
     values[$key]="$value"
-  elif [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY)([[:space:]:]|$) ]]; then
+  elif [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY|MONITORING_METRICS_TOKEN|GRAFANA_ADMIN_PASSWORD)([[:space:]:]|$) ]]; then
     fail 'Malformed secret assignment.'
   fi
   lines+=("$line")

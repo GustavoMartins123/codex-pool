@@ -1,4 +1,4 @@
-param([string]$EnvPath = (Join-Path $PSScriptRoot '.env'))
+param([string]$EnvPath = (Join-Path $PSScriptRoot '.env'), [switch]$Monitoring)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -58,10 +58,11 @@ try {
     $lines.AddRange([string[]]($content -split '\r?\n'))
     if ($lines.Count -gt 0 -and $lines[$lines.Count - 1] -eq '') { $lines.RemoveAt($lines.Count - 1) }
     $keys = @('ADMIN_TOKEN', 'POOL_AUTH_ENCRYPTION_KEY', 'POOL_JWT_SECRET', 'POOL_CREDENTIAL_KEY')
+    if ($Monitoring) { $keys += @('MONITORING_METRICS_TOKEN', 'GRAFANA_ADMIN_PASSWORD') }
     $positions = @{}
     $values = @{}
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -cmatch '^\s*(?:export\s+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY)\s*=(.*)$') {
+        if ($lines[$i] -cmatch '^\s*(?:export\s+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY|MONITORING_METRICS_TOKEN|GRAFANA_ADMIN_PASSWORD)\s*=(.*)$') {
             $key = $Matches[1]
             if ($positions.ContainsKey($key)) { throw "Duplicate $key assignment." }
             $positions[$key] = $i
@@ -80,7 +81,7 @@ try {
                 }
             }
             $values[$key] = $value
-        } elseif ($lines[$i] -cmatch '^\s*(?:export\s+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY)(?:[\s:]|$)') {
+        } elseif ($lines[$i] -cmatch '^\s*(?:export\s+)?(ADMIN_TOKEN|POOL_AUTH_ENCRYPTION_KEY|POOL_JWT_SECRET|POOL_CREDENTIAL_KEY|MONITORING_METRICS_TOKEN|GRAFANA_ADMIN_PASSWORD)(?:[\s:]|$)') {
             throw 'Malformed secret assignment.'
         }
     }
