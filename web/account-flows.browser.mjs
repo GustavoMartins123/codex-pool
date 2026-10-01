@@ -49,7 +49,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
       if (id === 'server') await new Promise(resolve => setTimeout(resolve, 250));
       body = { id, setup_urls: { codex: `${origin}/config/codex/fixture-${id}` }, nonce_expires_at: '2099-01-01T00:00:00Z' };
     }
-    else if (url.pathname === '/api/me/usage' || url.pathname.endsWith('/usage')) body = { hourly: [] };
+    else if (url.pathname === '/api/me/usage' || url.pathname.endsWith('/usage')) body = { hourly: mode === 'chart-data' ? [0, 1, 2].map(i => ({ hour: `2026-09-30T${12+i}:00:00Z`, billable_tokens: (i+1)*100, api_equivalent_cost_usd: .01 })) : [] };
     else if (url.pathname === '/api/me/accounts') {
       body = owned;
       if (mode === 'my-unavailable') { status = 503; body = { error: 'Account authority unavailable' }; }
@@ -303,6 +303,21 @@ try {
     await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.textContent === 'Save policy' && !el.disabled)); await clickText(page, 'button', 'Save policy');
     await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revision 1.'));
     for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Policy editor overflows at ${width}px`); }
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('charts load on scroll and expose keyboard-readable values on mobile', async () => {
+    const { page, errors } = await open('/?view=mine', 'chart-data');
+    await page.setViewport({ width: 390, height: 700 });
+    await page.waitForSelector('.chart-placeholder');
+    assert.equal(await page.$('.chart-stage canvas'), null);
+    await page.$eval('.chart-stage', node => node.scrollIntoView());
+    await page.waitForSelector('.chart-stage canvas');
+    await page.focus('.chart-data summary'); await page.keyboard.press('Enter');
+    await page.waitForSelector('.chart-data[open] table');
+    assert.ok(await page.$eval('.chart-data table', node => node.textContent.includes('100')));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.select('.mobile-nav select', 'setup');
+    await page.waitForFunction(() => document.activeElement?.id === 'main-content');
     assert.deepEqual(errors, []); await page.close();
   });
   await check('sign-in renders and retains input on failure', async () => {

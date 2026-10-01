@@ -1,7 +1,7 @@
 import { PolicyEditor } from "../components/PolicyEditor";
 import { OperatorSharing } from "../components/AccountGovernance";
 import { createMemberLink, loadAnalyticsHealth, loadConsoleAudit, loadConsolePrincipalUsage, loadConsolePrincipals, setPrincipalReasoningEffort, setPrincipalStatus } from "../api";
-import { Area, AreaChart, Grid, Tooltip, XAxis, YAxis } from "../components/dither-kit";
+import { Area, AreaChart, Grid, Tooltip, XAxis, YAxis } from "../charts";
 import { ResponseVersion } from "../response-version";
 import { type ConsolePrincipal, type PassportAuditEntry, type PassportPrincipal, type PassportUsagePoint } from "../types";
 import { queryValue, updateURL } from "../navigation";

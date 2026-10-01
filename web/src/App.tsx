@@ -5,7 +5,7 @@ import { allowedViews, type View, updateURL, viewFromSearch } from "./navigation
 import { usePageData } from "./usePageData";
 import type { PassportPrincipal, PoolStats } from "./types";
 import { classNames, formatTokens } from "./ui";
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 
 const Pulse = lazy(() => import("./pages/Analytics").then(module => ({ default: module.Pulse })));
 const Insights = lazy(() => import("./pages/Analytics").then(module => ({ default: module.Insights })));
@@ -24,6 +24,8 @@ export function App() {
   const [joinBusy, setJoinBusy] = useState(false);
   const [recoveryToken, setRecoveryToken] = useState("");
   const [joinError, setJoinError] = useState("");
+  const mainRef = useRef<HTMLElement>(null);
+  const focusOnNavigation = useRef(false);
   const { managed, data, loading, error, refresh } = usePageData(view, passport, !booting);
   const stats = data && "stats" in data ? data.stats : null;
   const signal = data && "signal" in data ? data.signal : null;
@@ -34,6 +36,7 @@ export function App() {
     if (nextView !== "accounts") cleanup.accounts = null;
     updateURL({ ...cleanup, view: nextView, ...params }, "push");
     setView(nextView);
+    focusOnNavigation.current = true;
   }, []);
 
   useEffect(() => {
@@ -76,10 +79,17 @@ export function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const restoreView = () => setView(viewFromSearch(window.location.search));
+    const restoreView = () => { focusOnNavigation.current = true; setView(viewFromSearch(window.location.search)); };
     window.addEventListener("popstate", restoreView);
     return () => window.removeEventListener("popstate", restoreView);
   }, []);
+
+  useEffect(() => {
+    if (focusOnNavigation.current) {
+      mainRef.current?.focus();
+      focusOnNavigation.current = false;
+    }
+  }, [view]);
 
   useEffect(() => {
     updateURL({ view }, "replace");
@@ -135,7 +145,7 @@ export function App() {
       />
       <div className="app-grid">
         <Navigation view={view} principal={passport} onChange={goToView} onSignOut={signOut} />
-        <main className="signal-main" id="main-content">
+        <main ref={mainRef} className="signal-main" id="main-content" tabIndex={-1} aria-label="Workspace content">
           {error && <div className="signal-error" role="alert"> {error}</div>}
           {allowedViews(passport).includes(view) && !error && <PageBoundary key={view}>
             <Suspense fallback={<p role="status">Loading page…</p>}>

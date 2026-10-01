@@ -44,6 +44,7 @@ it("loads pages when selected and exposes a rejected page import", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: /setup/i }));
   expect(await screen.findByText("Setup loaded")).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("main"));
   expect(imports.setup).toHaveBeenCalledOnce();
   expect(screen.queryByText("Profile loaded")).toBeNull();
 
@@ -56,4 +57,7 @@ it("loads pages when selected and exposes a rejected page import", async () => {
   fireEvent.click(screen.getByRole("button", { name: /setup/i }));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(await screen.findByText("Setup loaded")).toBeTruthy();
+  const skip = screen.getByRole("link", { name: "Skip to content" });
+  expect(skip.getAttribute("href")).toBe("#main-content");
+  expect(screen.getByRole("main").tabIndex).toBe(-1);
 });

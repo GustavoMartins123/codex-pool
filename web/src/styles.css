@@ -44,7 +44,7 @@ html { background: var(--void); color-scheme: dark; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--void); }
 button, input { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-hot); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold-hot); outline-offset: 2px; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 ::selection { background: var(--gold-hot); color: var(--void); }
 
@@ -180,6 +180,16 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .signal-panel > header h2 { margin: 0; color: var(--ink); font: 500 1rem "IBM Plex Sans Condensed", sans-serif; }
 .panel-body { min-width: 0; position: relative; }
 .chart-stage { width: 100%; min-width: 0; color: var(--muted); }
+.chart-with-data { position: relative; display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.deferred-chart { width: 100%; height: 100%; min-height: 0; }
+.chart-with-data > .deferred-chart { flex: 1; }
+.chart-placeholder { display: flex; align-items: center; justify-content: center; height: 100%; font-size: .75rem; }
+.chart-data { flex: none; font-size: .75rem; }
+.chart-data summary { cursor: pointer; padding: 8px; min-height: 32px; }
+.chart-data-scroll { position: absolute; left: 0; right: 0; bottom: 32px; z-index: 5; max-height: 210px; overflow: auto; background: var(--void); border: 1px solid var(--muted); }
+.chart-data table { width: 100%; border-collapse: collapse; }
+.chart-data th, .chart-data td { padding: 6px 10px; text-align: left; white-space: nowrap; }
+@media (max-width: 760px) { .chart-data summary { min-height: 44px; padding: 12px; } .chart-data-scroll { bottom: 44px; } }
 .chart-stage button { min-height: 36px; font-size: .7rem; }
 .chart-stage.large { height: 320px; padding: 18px 8px 2px; }
 .chart-stage.medium { height: 286px; padding: 17px 8px 2px; }

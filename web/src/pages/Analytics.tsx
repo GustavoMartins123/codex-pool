@@ -1,4 +1,4 @@
-import { Area, AreaChart, Bar, BarChart, Grid, Legend, Line, LineChart, Sparkline, Tooltip, XAxis, YAxis, type ChartConfig, type DitherColor } from "../components/dither-kit";
+import { Area, AreaChart, Bar, BarChart, Grid, Legend, Line, LineChart, Sparkline, Tooltip, XAxis, YAxis, type ChartConfig, type DitherColor } from "../charts";
 import { accountFlow, capacityForecasts, dailyDemandSeries, demandSummary, modelMix, originConcentration, peakHeatmap, type AccountFlow, type CapacityForecast } from "../insights";
 import { type AccountStats, type HourlyUsage, type ModelDailyUsage, type ModelQuotaEfficiency, type OriginWeeklyUsage, type PoolStats, type Provider, type QuotaCapacityPoint, type ResetObservation, type SignalAnalytics } from "../types";
 import { INSIGHT_MODES, queryValue, type InsightMode, updateURL } from "../navigation";

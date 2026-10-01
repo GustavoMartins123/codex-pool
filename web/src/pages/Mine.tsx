@@ -1,6 +1,6 @@
 import { MyAccounts } from "../components/MyAccounts";
 import { beginPasskeyRegistration, createMyClient, finishPasskeyRegistration, loadMyClients, loadMyUsage, loadPasskeys, loadPassportMe, removePasskey, revokeMyClient, rotateMyClient, setupLinkMyClient, updateMyProfile, uploadMyAvatar } from "../api";
-import { Bar, BarChart, Grid, Tooltip, XAxis, YAxis } from "../components/dither-kit";
+import { Bar, BarChart, Grid, Tooltip, XAxis, YAxis } from "../charts";
 import { ResponseVersion } from "../response-version";
 import { type ClientCredential, type PasskeyCredential, type PassportPrincipal, type PassportUsagePoint } from "../types";
 import { CopyButton, Instrument, SignalPanel, classNames, compact, formatTokens } from "../ui";

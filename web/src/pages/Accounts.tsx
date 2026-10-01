@@ -1,7 +1,7 @@
 import { mutateAccount, reloadAccounts } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
-import { Sparkline } from "../components/dither-kit";
+import { Sparkline } from "../charts";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
 import { queryValue, updateURL } from "../navigation";
 import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
@@ -74,14 +74,14 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
       }
       if (event.key !== "Tab" || !inspectorRef.current) return;
 
-      const focusable = [...inspectorRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+      const focusable = [...inspectorRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(element => element.getClientRects().length > 0);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!inspectorRef.current.contains(document.activeElement) || !event.shiftKey && document.activeElement === last) {
         event.preventDefault();
         first.focus();
       }
@@ -92,6 +92,16 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
+  }, [closeInspector, mobileInspector, selected]);
+
+  useEffect(() => {
+    if (!selected || mobileInspector) return;
+    const frame = requestAnimationFrame(() => closeRef.current?.focus());
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); closeInspector(); }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("keydown", closeOnEscape); };
   }, [closeInspector, mobileInspector, selected]);
 
   if (!stats) return <SignalSkeleton />;
@@ -269,4 +279,3 @@ function safeVerificationURL(raw: string | undefined) {
     return "";
   }
 }
-
