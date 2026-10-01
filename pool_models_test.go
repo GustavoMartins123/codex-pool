@@ -293,6 +293,60 @@ func TestServePoolModelsIncludesNativeGeminiProtocol(t *testing.T) {
 	}
 }
 
+func TestServeUnifiedOpenAIModelsIncludesAntigravityGemini(t *testing.T) {
+	antigravityModels.Reset()
+	t.Cleanup(antigravityModels.Reset)
+	antigravityModels.ReplaceAccount("ag-1", AntigravityAccountSnapshot{
+		FetchedAt: time.Now().UTC(),
+		Models: map[string]AntigravityModelInfo{
+			"gemini-3.8-flash-tiered": {
+				ID:            "gemini-3.8-flash-tiered",
+				DisplayName:   "Gemini 3.8 Flash (Tiered)",
+				SupportsTools: true,
+			},
+			"claude-sonnet-4-6": {
+				ID:            "claude-sonnet-4-6",
+				DisplayName:   "Claude Sonnet 4.6",
+				SupportsTools: true,
+			},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	serveUnifiedOpenAIModels(recorder)
+
+	var response struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	var foundGemini38, foundClaudeAG, foundGeminiCLI bool
+	for _, model := range response.Data {
+		if model.ID == "antigravity/gemini-3.8-flash-tiered" {
+			foundGemini38 = true
+		}
+		if model.ID == "antigravity/claude-sonnet-4-6" {
+			foundClaudeAG = true
+		}
+		if model.ID == "gemini-3.7-flash" {
+			foundGeminiCLI = true
+		}
+	}
+	if !foundGemini38 {
+		t.Fatal("antigravity/gemini-3.8-flash-tiered missing from unified OpenAI catalog")
+	}
+	if !foundClaudeAG {
+		t.Fatal("antigravity/claude-sonnet-4-6 missing from unified OpenAI catalog")
+	}
+	if foundGeminiCLI {
+		t.Fatal("gemini-3.7-flash should stay hidden from unified OpenAI catalog")
+	}
+}
+
 func TestPoolModelsEndpointRequiresPoolToken(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 	handler := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false)}

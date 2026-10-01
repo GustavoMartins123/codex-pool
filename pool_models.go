@@ -320,13 +320,30 @@ func serveUnifiedOpenAIModels(w http.ResponseWriter, pools ...*poolState) {
 	data := make([]map[string]any, 0, len(descriptors))
 	seen := make(map[string]bool)
 	for _, model := range descriptors {
-		if model.Protocol == "gemini" || seen[model.ID] {
+		if geminiOnlyModel(model) || seen[model.ID] {
 			continue
 		}
 		seen[model.ID] = true
 		data = append(data, map[string]any{"id": model.ID, "object": "model", "created": int64(0), "owned_by": model.Provider})
 	}
 	respondJSON(w, map[string]any{"object": "list", "data": data})
+}
+
+// geminiOnlyModel reports whether the model can only be reached through the
+// native Gemini protocol. Antigravity Gemini models advertise openai,
+// responses, and anthropic protocols as well, so they must stay visible in
+// the unified OpenAI catalog.
+func geminiOnlyModel(model poolModelDescriptor) bool {
+	protocols := model.Protocols
+	if len(protocols) == 0 {
+		protocols = []string{model.Protocol}
+	}
+	for _, protocol := range protocols {
+		if protocol != "gemini" {
+			return false
+		}
+	}
+	return len(protocols) > 0
 }
 
 func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
