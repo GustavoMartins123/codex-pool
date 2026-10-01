@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -128,7 +129,13 @@ func policyAllows(selector PolicySelector, candidate string) bool {
 }
 
 func (a *policyAdmission) CheckModel(model string) error {
-	if a == nil || strings.TrimSpace(model) == "" || policyAllows(a.policy.Models, model) {
+	if a == nil {
+		return nil
+	}
+	if strings.TrimSpace(model) == "" && len(a.policy.Models.Allow)+len(a.policy.Models.Deny) > 0 {
+		return &policyError{Status: 422, Code: "policy_model_required", Message: "model is required by client policy"}
+	}
+	if policyAllows(a.policy.Models, model) {
 		return nil
 	}
 	return &policyError{
@@ -162,13 +169,16 @@ func readPolicyCounter(bucket *bbolt.Bucket, key string) (policyUsageCounter, er
 			return counter, err
 		}
 	}
-	if counter.Requests < 0 || counter.Tokens < 0 || counter.ReservedTokens < 0 {
+	if counter.Requests < 0 || counter.Tokens < 0 || counter.ReservedTokens < 0 || counter.Tokens > math.MaxInt64-counter.ReservedTokens {
 		return counter, errors.New("invalid policy usage counter")
 	}
 	return counter, nil
 }
 
 func writePolicyCounter(bucket *bbolt.Bucket, key string, counter policyUsageCounter) error {
+	if counter.Requests < 0 || counter.Tokens < 0 || counter.ReservedTokens < 0 || counter.Tokens > math.MaxInt64-counter.ReservedTokens {
+		return errors.New("invalid policy usage counter")
+	}
 	raw, err := json.Marshal(counter)
 	if err != nil {
 		return err
@@ -184,38 +194,8 @@ func policyUsageKeys(clientID string, now time.Time) (minute, day, month string)
 }
 
 func (p *PassportStore) resolveClientPolicy(principalID, clientID string, configured map[string]ClientPolicy) (*Principal, ClientPolicy, bool, bool) {
-	if p == nil || clientID == "" {
-		return nil, ClientPolicy{}, false, false
-	}
-	principal := p.principal(principalID)
-	if principal == nil {
-		return nil, ClientPolicy{}, false, false
-	}
-	p.mu.RLock()
-	client := p.clients[clientID]
-	if client != nil && client.PrincipalID != principalID { p.mu.RUnlock(); return nil,ClientPolicy{},false,false }
-	var policy ClientPolicy
-	if client != nil {
-		policy = client.Policy
-	}
-	p.mu.RUnlock()
-	if !policy.configured() && configured != nil {
-		if candidate, ok := configured[clientID]; ok {
-			policy = candidate
-		} else if client != nil {
-			label := strings.ToLower(strings.TrimSpace(client.Label))
-			for key, candidate := range configured {
-				if strings.ToLower(strings.TrimSpace(key)) == label {
-					policy = candidate
-					break
-				}
-			}
-		}
-		if !policy.configured() {
-			policy = configured["*"]
-		}
-	}
-	return principal, policy, client != nil, true
+	principal, policy, exists, err := p.evaluateClientPolicy(principalID, clientID, configured)
+	return principal, policy, exists, err == nil
 }
 
 // beginPolicyRequestReadOnly admits a request for authorization checks
@@ -223,9 +203,9 @@ func (p *PassportStore) resolveClientPolicy(principalID, clientID string, config
 // request counters, no concurrency slot, no token reservation. Used by
 // traffic-experiment legs whose consumption is accounted to the experiment.
 func (p *PassportStore) beginPolicyRequestReadOnly(principalID, clientID string, configured map[string]ClientPolicy) (*policyAdmission, error) {
-	principal, policy, _, ok := p.resolveClientPolicy(principalID, clientID, configured)
-	if !ok {
-		return nil, nil
+	principal, policy, _, err := p.evaluateClientPolicy(principalID, clientID, configured)
+	if err != nil {
+		return nil, &policyError{Status: 403, Code: "policy_unavailable", Message: err.Error()}
 	}
 	if principal == nil {
 		return nil, &policyError{Status: http.StatusForbidden, Code: "policy_identity_missing", Message: "client policy identity is unavailable"}

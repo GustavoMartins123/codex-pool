@@ -55,6 +55,8 @@ func checkBudget(l PolicyLimits, minute, day, month policyUsageCounter) error {
 }
 
 func (p *PassportStore) reservePolicyRequest(principalID, clientID string, configured map[string]ClientPolicy, now time.Time) (*policyAdmission, error) {
+	p.policyMu.Lock()
+	defer p.policyMu.Unlock()
 	principal, policy, exists, ok := p.resolveClientPolicy(principalID, clientID, configured)
 	if !ok || !exists || principal == nil {
 		return nil, &policyError{Status: 403, Code: "policy_identity_missing", Message: "policy identity unavailable"}
@@ -75,8 +77,6 @@ func (p *PassportStore) reservePolicyRequest(principalID, clientID string, confi
 		limits PolicyLimits
 	}
 	scopes := []scope{{clientID, policy.Limits}, {"principal:" + principalID, principal.Budget}}
-	p.policyMu.Lock()
-	defer p.policyMu.Unlock()
 	for _, s := range scopes {
 		if s.limits.ConcurrentRequests > 0 && p.policyInflight[s.id] >= s.limits.ConcurrentRequests {
 			return nil, &policyError{Status: 429, Code: "policy_concurrency_exceeded", Message: "concurrent request limit exhausted"}
@@ -251,6 +251,7 @@ func (h *proxyHandler) handlePrincipalBudget(w http.ResponseWriter, r *http.Requ
 	}
 	updated := *pr
 	updated.Budget = q.Limits
+	updated.PolicyRevision++
 	if err := p.db.Update(func(tx *bbolt.Tx) error {
 		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, updated); err != nil {
 			return err

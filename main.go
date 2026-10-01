@@ -2289,17 +2289,20 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/api/pool/models" {
-		serveClientPoolModels(w, h.pool.visiblePool(userID))
+		serveClientPoolModels(w, h.catalogPool(userID))
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1/models" {
-		serveUnifiedOpenAIModels(w, h.pool.visiblePool(userID))
+		serveUnifiedOpenAIModels(w, h.catalogPool(userID))
 		return
 	}
 	if r.Method == http.MethodGet && normalizeNoopPath(r.URL.Path) == "/v1beta/models" {
-		serveUnifiedGeminiModels(w, h.pool.visiblePool(userID))
+		serveUnifiedGeminiModels(w, h.catalogPool(userID))
 		return
 	}
+	grantState := newGrantRequestState()
+	defer grantState.Release()
+	r = r.WithContext(context.WithValue(r.Context(), grantRequestContextKey{}, grantState))
 	var admission *policyAdmission
 	if h.passport == nil {
 		http.Error(w, "passport unavailable", http.StatusServiceUnavailable)
@@ -4096,8 +4099,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
 	if !h.enforcePolicy(w, admission, func() error {
-		if err := admission.CheckModel(r.URL.Query().Get("model")); err != nil {
-			return err
+		if model := r.URL.Query().Get("model"); model != "" {
+			if err := admission.CheckModel(model); err != nil {
+				return err
+			}
 		}
 		return admission.CheckProvider(accountType)
 	}) {
@@ -4154,10 +4159,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		return
 	}
 
-	if err := h.checkAccountUse(userID, acc); err != nil {
-		respondPolicyError(w, err)
-		return
-	}
+	if err := h.checkWebSocketGrant(userID, acc); err != nil { respondPolicyError(w, err); return }
+	releaseAccount, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), acc)
+	if err != nil { respondPolicyError(w, err); return }
+	defer func() { releaseAccount() }()
 	atomic.AddInt64(&acc.Inflight, 1)
 	atomic.AddInt64(&h.inflight, 1)
 	// inflightAcc tracks the account that currently owns the inflight
@@ -4265,14 +4270,17 @@ func (h *proxyHandler) proxyRequestWebSocket(
 			ReadLimit:                   readLimit,
 			CompressionEnabled:          h.cfg.websocketCompression,
 			LogLabel:                    relayLabel,
-			SetActiveAccount: func(next *Account) {
+			SetActiveAccount: func(next *Account) error {
 				prev := inflightAcc
-				if prev == next || next == nil {
-					return
-				}
+				if prev == next || next == nil { return nil }
+				nextRelease, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), next)
+				if err != nil { return err }
+				releaseAccount()
+				releaseAccount = nextRelease
 				atomic.AddInt64(&next.Inflight, 1)
 				atomic.AddInt64(&prev.Inflight, -1)
 				inflightAcc = next
+				return nil
 			},
 		})
 		finalAcc := acc
@@ -4784,10 +4792,11 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.checkAccountUse(userID, acc); err != nil {
-		respondPolicyError(w, err)
-		return
-	}
+	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil { respondPolicyError(w, err); return }
+	prepared, releaseAccount, err := h.acquireGovernedAccount(r, userID, contextSession, acc, requestedModel)
+	if err != nil { respondPolicyError(w, err); return }
+	r = prepared
+	defer func() { releaseAccount() }()
 	atomic.AddInt64(&acc.Inflight, 1)
 	atomic.AddInt64(&h.inflight, 1)
 	defer func() {
@@ -4925,9 +4934,12 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		log.Printf("[%s] streamed -> %s %s (account=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID)
 	}
 
-	resp, err := h.transport.RoundTrip(outReq)
+	outReq.GetBody = r.GetBody
+	resp, err := h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(r))
 	captureCodexResponseState(acc, resp, reqID)
 	if err != nil {
+		var blocked *policyError
+		if errors.As(err, &blocked) { respondPolicyError(w, err); return }
 		acc.mu.Lock()
 		acc.Penalty += 0.2
 		acc.mu.Unlock()
@@ -4956,7 +4968,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		provider.SetAuthHeaders(retry, authAccount)
-		resp, err = h.transport.RoundTrip(retry)
+		resp, err = h.policyRoundTrip(retry, provider.Type(), policyAdmissionFromRequest(r))
 		captureCodexResponseState(acc, resp, reqID)
 		if err != nil {
 			http.Error(w, "upstream request failed after authentication recovery", http.StatusBadGateway)
@@ -6048,7 +6060,44 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (h *proxyHandler) tryOnce(
+func (h *proxyHandler) tryOnce(ctx context.Context, in *http.Request, bodyBytes []byte, targetBase *url.URL, provider Provider, acc *Account, reqID string, translateDir TranslateDirection, requestedModel, userID, originID, conversationID string) (*http.Response, *bytes.Buffer, bool, error) {
+	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil {
+		return nil, nil, false, err
+	}
+	state, _ := in.Context().Value(grantRequestContextKey{}).(*grantRequestState)
+	ownedState := state == nil
+	if ownedState {
+		state = newGrantRequestState()
+		in = in.WithContext(context.WithValue(in.Context(), grantRequestContextKey{}, state))
+	}
+	prepared, release, err := h.acquireGovernedAccount(in, userID, conversationPinKey(userID, conversationID), acc, requestedModel)
+	if err != nil {
+		if ownedState {
+			state.Release()
+		}
+		return nil, nil, false, err
+	}
+	in = prepared
+	ctx = context.WithValue(ctx, grantAdmissionContextKey{}, in.Context().Value(grantAdmissionContextKey{}))
+	if ownedState {
+		original := release
+		release = func() {
+			if original != nil {
+				original()
+			}
+			state.Release()
+		}
+	}
+	resp, sample, refreshed, err := h.tryOnceWithAccountSlot(ctx, in, bodyBytes, targetBase, provider, acc, reqID, translateDir, requestedModel, userID, originID, conversationID)
+	if resp != nil && resp.Body != nil {
+		resp.Body = &accountLeaseBody{ReadCloser: resp.Body, release: release}
+	} else {
+		release()
+	}
+	return resp, sample, refreshed, err
+}
+
+func (h *proxyHandler) tryOnceWithAccountSlot(
 	ctx context.Context,
 	in *http.Request,
 	bodyBytes []byte,

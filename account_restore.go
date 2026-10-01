@@ -26,6 +26,23 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 	defer staged.Close()
 	return current.View(func(source *bbolt.Tx) error {
 		return staged.Update(func(target *bbolt.Tx) error {
+			if target.Bucket([]byte(bucketAccountGrants)) != nil {
+				if err := target.DeleteBucket([]byte(bucketAccountGrants)); err != nil {
+					return err
+				}
+			}
+			grants, err := target.CreateBucket([]byte(bucketAccountGrants))
+			if err != nil {
+				return err
+			}
+			if sourceGrants := source.Bucket([]byte(bucketAccountGrants)); sourceGrants != nil {
+				if _, err := readAccountGrants(sourceGrants); err != nil {
+					return err
+				}
+				if err := sourceGrants.ForEach(func(k, v []byte) error { return grants.Put(k, v) }); err != nil {
+					return err
+				}
+			}
 			if sourceBucket := source.Bucket([]byte(bucketClientCredentials)); sourceBucket != nil {
 				destination, err := target.CreateBucketIfNotExists([]byte(bucketClientCredentials))
 				if err != nil {
@@ -98,9 +115,6 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 						if previous.OwnerID != current.OwnerID || previous.Identity != current.Identity || previous.OperatorManaged != current.OperatorManaged {
 							return errors.New("backup account ownership conflicts with current authority")
 						}
-						if previous.Revision > current.Revision && current.WithdrawnAt == nil {
-							return nil
-						}
 					}
 					return putJSON(destination, string(k), current)
 				}); err != nil {
@@ -153,6 +167,8 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 						return err
 					}
 					previous.Budget = current.Budget
+					previous.Policy = current.Policy
+					previous.PolicyRevision = current.PolicyRevision
 					previous.CanContribute = current.CanContribute
 					if previous.Kind != current.Kind {
 						return errors.New("backup principal authority conflicts with current authority")

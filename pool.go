@@ -472,6 +472,7 @@ const (
 type poolState struct {
 	accountAuthority *PassportStore
 	catalogScoped    bool
+	catalogAccountAllows func(*Account, string) bool
 	mu               sync.RWMutex
 	accounts         []*Account
 	convPin          map[string]string // conversation_id -> account ID
@@ -744,6 +745,7 @@ func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountTyp
 
 func (p *poolState) candidateWithCyberAccessForUser(userID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP string) *Account {
 	exclude = p.accountExclusions(userID, exclude)
+	exclude = p.controlExclusions(userID, "", exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -888,6 +890,7 @@ func (p *poolState) candidate(conversationID string, exclude map[string]bool, ac
 
 func (p *poolState) candidateForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
 	exclude = p.accountExclusions(userID, exclude)
+	exclude = p.controlExclusions(userID, conversationID, exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 

@@ -54,7 +54,7 @@ const defaultPolicyTokenReservation int64 = 8192
 func TestClientPolicyModelProviderAndPriority(t *testing.T) {
 	passport, client := testPolicyPassport(t)
 	admission, err := passport.beginPolicyRequest("policy-user", client.ID, map[string]ClientPolicy{
-		"workstation": {
+		client.ID: {
 			Models:    PolicySelector{Allow: []string{"gpt-5.6-sol"}},
 			Providers: PolicySelector{Deny: []string{"grok"}},
 			Routing:   PolicyRouting{Profile: "balanced"},
@@ -65,7 +65,7 @@ func TestClientPolicyModelProviderAndPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Release()
-	if admission.priority != 77 || admission.policy.Routing.Profile != "balanced" {
+	if admission.priority != 50 || admission.policy.Routing.Profile != "balanced" {
 		t.Fatalf("admission = %#v", admission)
 	}
 	if err := admission.CheckModel("gpt-5.6-sol"); err != nil {

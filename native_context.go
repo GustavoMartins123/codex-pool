@@ -295,6 +295,10 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 		group.Go(func() error {
 			value, err := s.send(ctx, owner, clientIP, path, headers, body)
 			if err != nil {
+				var blocked *policyError
+				if errors.As(err, &blocked) {
+					return err
+				}
 				return errContextUnavailable
 			}
 			results[i] = contextResult{Account: owner, Value: value}
@@ -302,6 +306,10 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 		})
 	}
 	if err := group.Wait(); err != nil {
+		var blocked *policyError
+		if errors.As(err, &blocked) {
+			return nil, err
+		}
 		return nil, errContextUnavailable
 	}
 	if strings.HasSuffix(path, "/thread_hint") {
@@ -325,6 +333,14 @@ func (s *nativeContext) send(ctx context.Context, owner contextAccount, clientIP
 		if err != nil {
 			return nil, err
 		}
+		release := func() {}
+		if admit, ok := ctx.Value(nativeAccountAdmissionKey{}).(func(*Account) (func(), error)); ok {
+			release, err = admit(acc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		defer release()
 		base := s.provider.UpstreamURL("/responses")
 		outURL := *base
 		outURL.Path = singleJoin(base.Path, path)
@@ -348,6 +364,7 @@ func (s *nativeContext) send(ctx context.Context, owner contextAccount, clientIP
 		}
 		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && s.refresh != nil {
 			resp.Body.Close()
+			release()
 			if err := s.refresh(ctx, acc); err != nil {
 				return nil, errContextUnavailable
 			}
@@ -355,6 +372,7 @@ func (s *nativeContext) send(ctx context.Context, owner contextAccount, clientIP
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, contextRequestLimit+1))
 		resp.Body.Close()
+		release()
 		if err != nil || len(data) > contextRequestLimit || resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || !json.Valid(data) {
 			return nil, errContextUnavailable
 		}

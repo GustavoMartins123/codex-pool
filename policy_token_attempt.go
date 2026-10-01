@@ -219,6 +219,7 @@ type policyCompletionBody struct {
 	json                    bool
 	tail                    []byte
 	terminal                bool
+	settleReported          bool
 	invalid                 bool
 	expected                int64
 	input                   int64
@@ -325,13 +326,17 @@ func (b *policyCompletionBody) Read(p []byte) (int, error) {
 		b.admission.attemptMu.Lock()
 		b.attempt.complete = true
 		b.attempt.expected = b.expected
+		if b.settleReported {
+			b.attempt.known = true
+			b.attempt.tokens = b.expected
+		}
 		b.admission.settleTokenAttempt(b.attempt)
 		b.admission.attemptMu.Unlock()
 	}
 	return n, err
 }
 
-func (h *proxyHandler) policyRoundTrip(r *http.Request, provider AccountType, admission *policyAdmission) (*http.Response, error) {
+func (h *proxyHandler) clientPolicyRoundTrip(r *http.Request, provider AccountType, admission *policyAdmission) (*http.Response, error) {
 	if !admission.hasTokenBudget() {
 		return h.transport.RoundTrip(r)
 	}

@@ -40,7 +40,7 @@ type codexCyberSwapOptions struct {
 	// SetActiveAccount lets the caller follow the swap with bookkeeping
 	// (notably the inflight counter transfer) so deferred cleanup
 	// touches the right account.
-	SetActiveAccount func(next *Account)
+	SetActiveAccount func(next *Account) error
 }
 
 // codexCyberSwapResult tells the caller how the relay finished.
@@ -116,7 +116,10 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 			excluded[next.ID] = true
 			opts.InitialAccount = next
 			if opts.SetActiveAccount != nil {
-				opts.SetActiveAccount(next)
+				if err := opts.SetActiveAccount(next); err != nil {
+					respondPolicyError(w, err)
+					return codexCyberSwapResult{err: err}
+				}
 			}
 			upstreamConn, upstreamResp, opts.InitialContextAccount, err = h.dialSwappedUpstream(ctx, opts, next, subprotocols)
 		}
@@ -201,6 +204,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 }
 
 type codexRelayTurn struct {
+	grantAdmission *policyAdmission
 	request        []byte
 	model          string
 	conversationID string
@@ -251,6 +255,10 @@ func (s *codexRelayState) run() (int, error) {
 		if errors.As(err, &swap) {
 			if swap.next != nil {
 				if doErr := s.doSwap(swap.next); doErr != nil {
+					var blocked *policyError
+					if errors.As(doErr, &blocked) {
+						return 101, doErr
+					}
 					if isContextError(doErr) {
 						if err := s.writeContextError(doErr); err != nil {
 							return http.StatusSwitchingProtocols, err
@@ -553,7 +561,15 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 		}
 	}
 	model := extractCodexWebSocketRequestedModel(data)
+	var grantAdmission *policyAdmission
+	if s.h != nil && s.activeAccount != nil {
+		grantAdmission, err = s.h.reserveWebSocketGrant(s.opts.UserID, s.activeAccount, model)
+		if err != nil {
+			return nil, err
+		}
+	}
 	turn := &codexRelayTurn{request: append([]byte(nil), data...), model: model, conversationID: conversationID, account: s.activeAccount}
+	turn.grantAdmission = grantAdmission
 	s.turns = append(s.turns, turn)
 	if s.h != nil && s.h.pool != nil && s.h.pool.discoveredModelRequiresEntitlement(AccountTypeCodex, model) && !accountSupportsDiscoveredModel(s.activeAccount, model) {
 		if len(s.turns) > 1 {
@@ -666,6 +682,7 @@ func (s *codexRelayState) responseTurn(data []byte) *codexRelayTurn {
 func (s *codexRelayState) finishTurn(done *codexRelayTurn) {
 	for i, turn := range s.turns {
 		if turn == done {
+			turn.grantAdmission.Release()
 			if turn.responseID != "" {
 				if s.recordedResponses == nil {
 					s.recordedResponses = make(map[string]struct{})
@@ -787,7 +804,22 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		return fmt.Errorf("cannot swap websocket account with %d pending responses", len(s.turns))
 	}
 	turn := s.turns[0]
+	grantAdmission, err := s.h.reserveWebSocketGrant(s.opts.UserID, cand, turn.model)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			grantAdmission.Release()
+		}
+	}()
 	s.activeConversationID = turn.conversationID
+	if s.opts.SetActiveAccount != nil {
+		if err := s.opts.SetActiveAccount(cand); err != nil {
+			return err
+		}
+	}
 	newConn, newResp, authAccount, err := s.h.dialSwappedUpstream(s.ctx, s.opts, cand, s.subprotocols)
 	if err != nil {
 		if newResp != nil {
@@ -824,9 +856,6 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		s.h.metrics.incCyberPolicy(cand.ID, "swap_succeeded")
 	}
 
-	if s.opts.SetActiveAccount != nil {
-		s.opts.SetActiveAccount(cand)
-	}
 	if s.activeConversationID != "" {
 		s.h.pool.pin(s.activeConversationID, cand.ID)
 	}
@@ -837,6 +866,9 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	s.activeAccount = cand
 	s.contextAccount = authAccount
 	turn.account = cand
+	turn.grantAdmission.Release()
+	turn.grantAdmission = grantAdmission
+	committed = true
 	turn.responseID = ""
 	return nil
 }
@@ -898,6 +930,12 @@ func (c *cyberPolicyHTTPSuppressor) onEvent(eventData []byte) (drop bool, termin
 }
 
 func (s *codexRelayState) closeAll() {
+	s.turnMu.Lock()
+	for _, turn := range s.turns {
+		turn.grantAdmission.Release()
+	}
+	s.turns = nil
+	s.turnMu.Unlock()
 	if !s.clientClosing {
 		s.clientConn.CloseNow()
 	}

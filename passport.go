@@ -169,6 +169,8 @@ const (
 )
 
 type Principal struct {
+	Policy                ClientPolicy    `json:"policy"`
+	PolicyRevision        uint64          `json:"policy_revision"`
 	Budget                PolicyLimits    `json:"budget,omitempty"`
 	CanContribute         bool            `json:"can_contribute"`
 	ID                    string          `json:"id"`
@@ -213,17 +215,19 @@ type passportSession struct {
 }
 
 type PassportStore struct {
-	contributionMu sync.Mutex
-	db             *bbolt.DB
-	mu             sync.RWMutex
-	principals     map[string]*Principal
-	clients        map[string]*ClientCredential
-	passwordWork   chan struct{}
-	aead           cipher.AEAD
-	analyticsSalt  string
-	policyMu       sync.Mutex
-	policyInflight map[string]int
-	policyReserved map[string]int64
+	contributionMu  sync.Mutex
+	accountMu       sync.Mutex
+	accountInflight map[string]int
+	db              *bbolt.DB
+	mu              sync.RWMutex
+	principals      map[string]*Principal
+	clients         map[string]*ClientCredential
+	passwordWork    chan struct{}
+	aead            cipher.AEAD
+	analyticsSalt   string
+	policyMu        sync.Mutex
+	policyInflight  map[string]int
+	policyReserved  map[string]int64
 }
 
 func passportAEAD() (cipher.AEAD, error) {
@@ -254,14 +258,17 @@ func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
 }
 
 func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, error) {
-	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}}
+	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}, accountInflight: map[string]int{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
-		for _, n := range []string{bucketContributionAttempts, bucketAccountResources, bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketJoinLinksByToken, bucketMemberRecoveryLinks, bucketMemberRecoveryLinksByToken, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
+		for _, n := range []string{bucketAccountGrants, bucketContributionAttempts, bucketAccountResources, bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketJoinLinksByToken, bucketMemberRecoveryLinks, bucketMemberRecoveryLinksByToken, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
 		}
 		if err := migrateAccountResources(tx); err != nil {
+			return err
+		}
+		if _, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants))); err != nil {
 			return err
 		}
 		joinLinks := tx.Bucket([]byte(bucketJoinLinks))

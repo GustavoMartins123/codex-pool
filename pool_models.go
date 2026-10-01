@@ -113,7 +113,7 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 		})
 	}
 	for _, model := range grokModelCatalog {
-		supportingAccounts, availableAccounts, availableNow := poolModelAvailability(pool, AccountTypeGrok)
+		supportingAccounts, availableAccounts, availableNow := poolModelAvailability(pool, AccountTypeGrok, model.ID)
 		if pool != nil && pool.catalogScoped && supportingAccounts == 0 {
 			continue
 		}
@@ -191,6 +191,22 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 	}
 
 	models = append(models, discoveredModelsForPool(pool)...)
+	if pool != nil && pool.catalogAccountAllows != nil {
+		filtered := models[:0]
+		for _, model := range models {
+			allowed := false
+			for _, a := range pool.allAccounts() {
+				if (model.Provider == "pool" || string(a.Type) == model.Provider) && pool.catalogAccountAllows(a, model.ID) {
+					allowed = true
+					break
+				}
+			}
+			if allowed {
+				filtered = append(filtered, model)
+			}
+		}
+		models = filtered
+	}
 	return models
 }
 
@@ -240,6 +256,9 @@ func poolModelAvailability(pool *poolState, accountType AccountType, modelIDs ..
 	availableAccounts := 0
 	for _, account := range pool.allAccounts() {
 		if account.Type != accountType {
+			continue
+		}
+		if len(modelIDs) > 0 && pool.catalogAccountAllows != nil && !pool.catalogAccountAllows(account, modelIDs[0]) {
 			continue
 		}
 		account.mu.Lock()
@@ -316,6 +335,9 @@ func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
 		if pool != nil && pool.catalogScoped && pool.countByType(AccountTypeGemini) == 0 {
 			continue
 		}
+		if !catalogModelAllowed(pool, AccountTypeGemini, model.ID) {
+			continue
+		}
 		models = append(models, map[string]any{
 			"name": "models/" + model.ID, "displayName": model.DisplayName,
 			"inputTokenLimit": model.ContextWindow, "outputTokenLimit": model.MaxTokens,
@@ -323,6 +345,9 @@ func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
 		})
 	}
 	for _, model := range antigravityModels.Models(pool) {
+		if !catalogModelAllowed(pool, AccountTypeAntigravity, model.ID) {
+			continue
+		}
 		methods := []string{"generateContent", "streamGenerateContent", "countTokens"}
 		models = append(models, map[string]any{
 			"name": "models/" + model.ID, "displayName": model.DisplayName,
@@ -331,4 +356,16 @@ func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
 		})
 	}
 	respondJSON(w, map[string]any{"models": models})
+}
+
+func catalogModelAllowed(pool *poolState, provider AccountType, model string) bool {
+	if pool == nil || pool.catalogAccountAllows == nil {
+		return true
+	}
+	for _, a := range pool.allAccounts() {
+		if a.Type == provider && pool.catalogAccountAllows(a, model) {
+			return true
+		}
+	}
+	return false
 }

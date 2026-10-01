@@ -46,6 +46,8 @@ func writeContextError(w http.ResponseWriter, err error) {
 	_, _ = w.Write(contextErrorBody(err))
 }
 
+type nativeAccountAdmissionKey struct{}
+
 func (h *proxyHandler) proxyNativeContext(w http.ResponseWriter, r *http.Request, userID string) {
 	w.Header().Set("Content-Type", "application/json")
 	// Reject unknown operations before any account selection or upstream traffic.
@@ -80,8 +82,34 @@ func (h *proxyHandler) proxyNativeContext(w http.ResponseWriter, r *http.Request
 		writeContextError(w, errContextInvalid)
 		return
 	}
+	session, err := parseContextRequest(body)
+	if err != nil {
+		writeContextError(w, err)
+		return
+	}
+	admit := func(a *Account) (func(), error) {
+		if h.pool.accountAuthority != nil {
+			grant, err := h.pool.accountAuthority.accountGrantForUse(userID, a, "")
+			if err != nil {
+				return nil, err
+			}
+			if grant != nil {
+				return nil, accountControlError("grant_context_unsupported", 422)
+			}
+		}
+		if err := h.checkLivePolicy(userID, "", a.Type); err != nil {
+			return nil, err
+		}
+		return h.acquireAccountSlot(userID, conversationPinKey(userID, session), a)
+	}
+	ctx = context.WithValue(ctx, nativeAccountAdmissionKey{}, admit)
 	result, err := h.nativeContext.relay(ctx, contextScope(userID), getClientIP(r), r.URL.Path, r.Header, body)
 	if err != nil {
+		var blocked *policyError
+		if errors.As(err, &blocked) {
+			respondPolicyError(w, err)
+			return
+		}
 		writeContextError(w, err)
 		return
 	}
