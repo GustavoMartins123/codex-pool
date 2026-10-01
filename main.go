@@ -4270,17 +4270,8 @@ func (h *proxyHandler) proxyRequestWebSocket(
 			ReadLimit:                   readLimit,
 			CompressionEnabled:          h.cfg.websocketCompression,
 			LogLabel:                    relayLabel,
-			SetActiveAccount: func(next *Account) error {
-				prev := inflightAcc
-				if prev == next || next == nil { return nil }
-				nextRelease, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), next)
-				if err != nil { return err }
-				releaseAccount()
-				releaseAccount = nextRelease
-				atomic.AddInt64(&next.Inflight, 1)
-				atomic.AddInt64(&prev.Inflight, -1)
-				inflightAcc = next
-				return nil
+			PrepareAccount: func(next *Account) (func(bool), error) {
+				return h.prepareWebSocketAccountChange(userID, conversationPinKey(userID, conversationID), &inflightAcc, &releaseAccount, next)
 			},
 		})
 		finalAcc := acc

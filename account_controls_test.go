@@ -112,6 +112,55 @@ func TestAccountConcurrencySurvivesReloadAndRaces(t *testing.T) {
 	release()
 }
 
+func TestWebSocketAccountChangeHoldsBothSlotsUntilCommit(t *testing.T) {
+	p, pool := ownershipFixture(t)
+	previous, next := pool.allAccounts()[0], pool.allAccounts()[1]
+	h := &proxyHandler{passport: p, pool: pool}
+	for _, a := range []*Account{previous, next} {
+		if err := p.updateAccountControls("alice", a.Type, a.ID, 1, accountControls{MaxConcurrent: 1}, "limit"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release, err := h.acquireAccountSlot("alice", "", previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { release() }()
+	current := previous
+	atomic.StoreInt64(&previous.Inflight, 1)
+	finish, err := h.prepareWebSocketAccountChange("alice", "", &current, &release, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []*Account{previous, next} {
+		if _, err := h.acquireAccountSlot("alice", "", a); err == nil {
+			t.Fatal("swap released a slot before dialing completed")
+		}
+	}
+	finish(false)
+	finish(true)
+	if current != previous || atomic.LoadInt64(&previous.Inflight) != 1 || atomic.LoadInt64(&next.Inflight) != 0 {
+		t.Fatal("failed swap changed accounting")
+	}
+	finish, err = h.prepareWebSocketAccountChange("alice", "", &current, &release, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(true)
+	finish(false)
+	if current != next || atomic.LoadInt64(&previous.Inflight) != 0 || atomic.LoadInt64(&next.Inflight) != 1 {
+		t.Fatal("successful swap lost accounting")
+	}
+	freed, err := h.acquireAccountSlot("alice", "", previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freed()
+	if _, err := h.acquireAccountSlot("alice", "", next); err == nil {
+		t.Fatal("new account slot not held")
+	}
+}
+
 func TestAccountControlsAPIRequiresOwnershipRevisionAndCSRF(t *testing.T) {
 	p, pool := ownershipFixture(t)
 	h := &proxyHandler{passport: p, pool: pool, cfg: &config{}}

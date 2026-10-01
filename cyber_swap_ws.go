@@ -37,10 +37,7 @@ type codexCyberSwapOptions struct {
 	CompressionEnabled          bool
 	LogLabel                    string
 
-	// SetActiveAccount lets the caller follow the swap with bookkeeping
-	// (notably the inflight counter transfer) so deferred cleanup
-	// touches the right account.
-	SetActiveAccount func(next *Account) error
+	PrepareAccount func(next *Account) (func(bool), error)
 }
 
 // codexCyberSwapResult tells the caller how the relay finished.
@@ -114,14 +111,17 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 			}
 			_ = upstreamResp.Body.Close()
 			excluded[next.ID] = true
-			opts.InitialAccount = next
-			if opts.SetActiveAccount != nil {
-				if err := opts.SetActiveAccount(next); err != nil {
+			finish := func(bool) {}
+			if opts.PrepareAccount != nil {
+				finish, err = opts.PrepareAccount(next)
+				if err != nil {
 					respondPolicyError(w, err)
 					return codexCyberSwapResult{err: err}
 				}
 			}
+			opts.InitialAccount = next
 			upstreamConn, upstreamResp, opts.InitialContextAccount, err = h.dialSwappedUpstream(ctx, opts, next, subprotocols)
+			finish(err == nil)
 		}
 		if err != nil {
 			if upstreamResp != nil {
@@ -804,6 +804,15 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		return fmt.Errorf("cannot swap websocket account with %d pending responses", len(s.turns))
 	}
 	turn := s.turns[0]
+	finish := func(bool) {}
+	if s.opts.PrepareAccount != nil {
+		var err error
+		finish, err = s.opts.PrepareAccount(cand)
+		if err != nil {
+			return err
+		}
+	}
+	defer finish(false)
 	grantAdmission, err := s.h.reserveWebSocketGrant(s.opts.UserID, cand, turn.model)
 	if err != nil {
 		return err
@@ -815,11 +824,6 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		}
 	}()
 	s.activeConversationID = turn.conversationID
-	if s.opts.SetActiveAccount != nil {
-		if err := s.opts.SetActiveAccount(cand); err != nil {
-			return err
-		}
-	}
 	newConn, newResp, authAccount, err := s.h.dialSwappedUpstream(s.ctx, s.opts, cand, s.subprotocols)
 	if err != nil {
 		if newResp != nil {
@@ -861,6 +865,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	}
 
 	s.upstreamConn.CloseNow()
+	finish(true)
 	s.upstreamConn = newConn
 	s.upstreamCh = startWebSocketReader(s.ctx, newConn)
 	s.activeAccount = cand

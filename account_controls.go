@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -210,6 +211,37 @@ func (h *proxyHandler) acquireAccountSlot(identity, conversation string, a *Acco
 type accountLeaseBody struct {
 	io.ReadCloser
 	release func()
+}
+
+func (h *proxyHandler) prepareWebSocketAccountChange(identity, conversation string, current **Account, release *func(), next *Account) (func(bool), error) {
+	if next == nil {
+		return nil, accountControlError("account_unavailable", 503)
+	}
+	previous := *current
+	if previous == next {
+		return func(bool) {}, nil
+	}
+	if err := h.checkWebSocketGrant(identity, next); err != nil {
+		return nil, err
+	}
+	nextRelease, err := h.acquireAccountSlot(identity, conversation, next)
+	if err != nil {
+		return nil, err
+	}
+	var once sync.Once
+	return func(commit bool) {
+		once.Do(func() {
+			if !commit {
+				nextRelease()
+				return
+			}
+			(*release)()
+			*release = nextRelease
+			atomic.AddInt64(&next.Inflight, 1)
+			atomic.AddInt64(&previous.Inflight, -1)
+			*current = next
+		})
+	}, nil
 }
 
 func (b *accountLeaseBody) Close() error {
