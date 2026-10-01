@@ -15,9 +15,9 @@ const (
 	maxPinBytes                 = 4096
 	maxPinBytesPerPrincipal     = 64 << 10
 	maxPinBytesTotal            = 4 << 20
-	maxContextBytes             = 4 << 20
-	maxContextBytesPerPrincipal = 16 << 20
-	maxContextBytesTotal        = 128 << 20
+	maxContextBytes             = 20 << 20
+	maxContextBytesPerPrincipal = 80 << 20
+	maxContextBytesTotal        = 512 << 20
 	maxContextsPerPrincipal     = 64
 )
 

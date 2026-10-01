@@ -104,14 +104,17 @@ func TestContextCountQuotaTTLAndReadIsolation(t *testing.T) {
 
 func TestContextBytesRefuseWritesAndFaultAsyncRetention(t *testing.T) {
 	s := newConversationHandoffStore()
-	for i := 0; i < 5; i++ {
-		record := conversationHandoffRecord{State: ConversationState{UpdatedAt: time.Now(), Summary: strings.Repeat("a", 3<<20)}}
+	// Four max-size conversations fill the per-principal quota
+	// (maxContextBytesPerPrincipal = 4 * maxContextBytes).
+	fill := maxContextBytes - 8192
+	for i := 0; i < 4; i++ {
+		record := conversationHandoffRecord{State: ConversationState{UpdatedAt: time.Now(), Summary: strings.Repeat("a", fill)}}
 		if err := s.saveLocked(conversationScopedKey("alice", fmt.Sprint(i)), record); err != nil {
 			t.Fatal(err)
 		}
 	}
-	record := conversationHandoffRecord{State: ConversationState{UpdatedAt: time.Now(), Summary: strings.Repeat("b", 3<<20)}}
-	if err := s.saveLocked(conversationScopedKey("alice", "sixth"), record); err == nil {
+	record := conversationHandoffRecord{State: ConversationState{UpdatedAt: time.Now(), Summary: strings.Repeat("b", fill)}}
+	if err := s.saveLocked(conversationScopedKey("alice", "fifth"), record); err == nil {
 		t.Fatal("byte quota bypassed")
 	}
 	if err := s.saveLocked(conversationScopedKey("bob", "first"), record); err != nil {
