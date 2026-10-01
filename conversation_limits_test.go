@@ -59,8 +59,20 @@ func TestContextCountQuotaTTLAndReadIsolation(t *testing.T) {
 		}
 	}
 	key := conversationScopedKey("alice-c-third", "extra")
-	if _, _, err := s.Prepare(key, AccountTypeCodex, "/v1/responses", body); err == nil {
-		t.Fatal("quota bypassed by third credential")
+	out, result, err := s.Prepare(key, AccountTypeCodex, "/v1/responses", body)
+	if err != nil {
+		t.Fatalf("quota must degrade the request, got: %v", err)
+	}
+	if string(out) != string(body) || len(result.Warnings) == 0 {
+		t.Fatal("quota overflow must pass through with a warning")
+	}
+	if _, retained := func() (conversationHandoffRecord, bool) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		r, ok := s.records[key]
+		return r, ok
+	}(); retained {
+		t.Fatal("quota bypassed by third credential: record retained anyway")
 	}
 	bob := conversationScopedKey("bob", "safe")
 	if _, _, err := s.Prepare(bob, AccountTypeCodex, "/v1/responses", body); err != nil {
@@ -111,11 +123,19 @@ func TestContextBytesRefuseWritesAndFaultAsyncRetention(t *testing.T) {
 		t.Fatal("oversize outcome accepted")
 	}
 	body := contextTestBody(contextFormatResponses, "next", false)
-	if _, _, err := s.Prepare(key, AccountTypeCodex, "/v1/responses", body); err == nil {
-		t.Fatal("failed retention silently continued")
+	if out, _, err := s.Prepare(key, AccountTypeCodex, "/v1/responses", body); err != nil || string(out) != string(body) {
+		t.Fatalf("failed retention must degrade to pass-through, got err=%v", err)
 	}
-	if _, _, err := s.Prepare(conversationScopedKey("other", "huge"), AccountTypeCodex, "/v1/responses", []byte(strings.Repeat("x", maxContextBytes+1))); err == nil {
-		t.Fatal("oversize input accepted")
+	s.mu.Lock()
+	fault := s.records[key].Fault
+	s.mu.Unlock()
+	if fault != "" {
+		t.Fatal("faulted record must self-heal on the next request")
+	}
+	if out, result, err := s.Prepare(conversationScopedKey("other", "huge"), AccountTypeCodex, "/v1/responses", []byte(strings.Repeat("x", maxContextBytes+1))); err != nil || len(result.Warnings) == 0 {
+		t.Fatalf("oversize input must pass through with a warning, got err=%v", err)
+	} else if string(out) != strings.Repeat("x", maxContextBytes+1) {
+		t.Fatal("oversize input must be returned unrewritten")
 	}
 }
 

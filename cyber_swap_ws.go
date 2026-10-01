@@ -469,15 +469,14 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 	if turn != nil {
 		text := extractAssistantTextFromResponseSample(data)
 		if text != "" && (!isTerminalCodexWebSocketEvent(data) || turn.assistantText.Len() == 0) {
-			if turn.assistantText.Len()+len(text) > maxContextBytes {
-				return nil, fmt.Errorf("conversation response exceeds memory limit")
+			if turn.assistantText.Len()+len(text) <= maxContextBytes {
+				turn.assistantText.WriteString(text)
 			}
-			turn.assistantText.WriteString(text)
 		}
 		if isTerminalCodexWebSocketEvent(data) && turn.conversationID != "" && s.h != nil {
-			if err := s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String()); err != nil {
-				return nil, err
-			}
+			// Retention is best-effort; a retention failure must never
+			// kill the live relay.
+			_ = s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
 	filtered, drop, changed := filterHostedMCPResponseJSON(data)

@@ -64,3 +64,66 @@ func TestConversationScopedKeyCollisionSafety(t *testing.T) {
 		t.Fatal("empty external id must yield the zero key")
 	}
 }
+
+// Handoff retention is best-effort: memory limits must degrade to
+// pass-through, never fail the user's request or kill a live session.
+func TestHandoffMemoryLimitsDegradeInsteadOfFailing(t *testing.T) {
+	store := newConversationHandoffStore()
+	key := conversationScopedKey("user", "big-session")
+	small := contextTestBody(contextFormatResponses, "turn one", false)
+	if _, _, err := store.Prepare(key, AccountTypeCodex, "/v1/responses", small); err != nil {
+		t.Fatal(err)
+	}
+	oversized := contextTestBody(contextFormatResponses, strings.Repeat("x", (maxContextBytes)+1), false)
+	if len(oversized) <= maxContextBytes {
+		t.Skipf("fixture cannot exceed the limit: %d", len(oversized))
+	}
+	out, result, err := store.Prepare(key, AccountTypeClaude, "/v1/messages", oversized)
+	if err != nil {
+		t.Fatalf("oversized input must pass through, got: %v", err)
+	}
+	if string(out) != string(oversized) {
+		t.Fatal("oversized input must be returned unrewritten")
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("oversize degradation must be observable in warnings")
+	}
+
+	// A faulted retention record must self-heal instead of bricking the
+	// conversation forever.
+	store.mu.Lock()
+	faulted := store.records[key]
+	faulted.Fault = "conversation exceeds byte limit"
+	store.records[key] = faulted
+	store.mu.Unlock()
+	out, _, err = store.Prepare(key, AccountTypeCodex, "/v1/responses", small)
+	if err != nil {
+		t.Fatalf("faulted retention must degrade, got: %v", err)
+	}
+	if string(out) != string(small) {
+		t.Fatal("same-provider input must be returned unrewritten")
+	}
+	store.mu.Lock()
+	_, healed := store.records[key]
+	fault := store.records[key].Fault
+	store.mu.Unlock()
+	if !healed || fault != "" {
+		t.Fatalf("faulted record must be dropped and rebuilt: healed=%v fault=%q", healed, fault)
+	}
+
+	// Retention quota overflow (record larger than the per-conversation
+	// limit) must skip retention, not fail the request.
+	bigTurn := contextTestBody(contextFormatResponses, strings.Repeat("y", maxContextBytes), false)
+	if len(bigTurn) > maxContextBytes {
+		out, result, err = store.Prepare(key, AccountTypeCodex, "/v1/responses", bigTurn)
+		if err != nil {
+			t.Fatalf("retention overflow must degrade, got: %v", err)
+		}
+		if string(out) != string(bigTurn) {
+			t.Fatal("unrewritten body expected on retention overflow")
+		}
+		if len(result.Warnings) == 0 {
+			t.Fatal("retention skip must be observable in warnings")
+		}
+	}
+}

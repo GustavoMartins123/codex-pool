@@ -1295,8 +1295,11 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	if s == nil || key.conversationID == "" || target == "" || len(body) == 0 {
 		return body, contextHandoffResult{}, nil
 	}
+	// The handoff store is best-effort retention for provider switches;
+	// its memory limits protect the process, not the user. Oversized input
+	// passes through unrewritten instead of failing the request.
 	if len(body) > maxContextBytes || len(key.owner)+len(key.conversationID) > maxPinBytes {
-		return nil, contextHandoffResult{}, fmt.Errorf("conversation input exceeds memory limit")
+		return body, contextHandoffResult{Warnings: []string{"handoff_input_oversize"}}, nil
 	}
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
@@ -1314,8 +1317,9 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	defer s.mu.Unlock()
 	s.pruneLocked(time.Now())
 	record, exists := s.records[key]
-	if record.Fault != "" {
-		return nil, contextHandoffResult{}, fmt.Errorf("conversation retention failed: %s", record.Fault)
+	if exists && record.Fault != "" {
+		delete(s.records, key)
+		record, exists = conversationHandoffRecord{}, false
 	}
 	if exists {
 		var err error
@@ -1438,7 +1442,8 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	record.State.UpdatedAt = time.Now().UTC()
 	record.LastProvider = target
 	if err := s.saveLocked(key, record); err != nil {
-		return nil, result, err
+		log.Printf("handoff retention skipped for conversation %s: %v", key.conversationID, err)
+		result.Warnings = appendUniqueString(result.Warnings, "handoff_retention_skipped")
 	}
 
 	// Same-provider requests are never rewritten by the handoff store. Native
