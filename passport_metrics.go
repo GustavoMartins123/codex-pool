@@ -38,6 +38,11 @@ func fileBytes(path string) int64 {
 
 func (h *proxyHandler) serveOperationalMetrics(w http.ResponseWriter, r *http.Request) {
 	h.metrics.serve(w, r)
+	h.queueOnce.Do(func() { h.requestQueue = newFairQueue() })
+	h.requestQueue.mu.Lock()
+	active, waiting := h.requestQueue.active, h.requestQueue.waiting
+	h.requestQueue.mu.Unlock()
+	fmt.Fprintf(w, "codexpool_queue_active %d\ncodexpool_queue_waiting %d\n", active, waiting)
 	fmt.Fprintf(w, "codexpool_active_sessions %d\n", activePassportSessions(h.passport))
 	if h.duckAnalytics != nil {
 		health := h.duckAnalytics.Health()

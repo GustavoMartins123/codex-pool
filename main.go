@@ -924,6 +924,8 @@ func serveUntilShutdown(srv *http.Server, h *proxyHandler, shutdown <-chan struc
 }
 
 type proxyHandler struct {
+	queueOnce    sync.Once
+	requestQueue *fairQueue
 	cfg                  *config
 	transport            http.RoundTripper
 	antigravityTransport http.RoundTripper
@@ -2283,6 +2285,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if internalShadow && shadow.principal != userID {
 		http.Error(w, "traffic shadow principal mismatch", http.StatusForbidden)
 		return
+	}
+	if r.Method != http.MethodGet || isWebSocketUpgradeRequest(r) {
+		release, err := h.admitQueuedRequest(r, principalID)
+		if err != nil {
+			respondPolicyError(w, err)
+			return
+		}
+		defer release()
 	}
 	if isContextRequestPath(r.URL.Path) {
 		h.proxyNativeContext(w, r, userID)
