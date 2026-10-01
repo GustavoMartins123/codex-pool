@@ -18,6 +18,10 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
   const ownMode = mode.startsWith('my-');
   let owned = ownMode ? [{ id: 'private-kimi', provider: 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
   let createdClient;
+  let accountControls = { provider: 'kimi', id: 'private-kimi', revision: 2, inflight: 1, controls: { state: 'enabled', max_concurrent: 2 } };
+  let sharing = { provider: 'kimi', id: 'private-kimi', revision: 2, owner: true, operator_may_delegate: false, grants: [] };
+  const emptyPolicy = () => ({ models: {}, providers: {}, limits: {}, routing: {} });
+  let policyView = { principal_id: principal.id, revision: 0, principal_policy: emptyPolicy(), clients: [{ id: 'laptop', label: 'Laptop', status: 'active', policy: emptyPolicy() }], sources: [{ source: 'global', policy: emptyPolicy() }], effective: emptyPolicy(), allowed: true, reasons: [], usage: [{ scope: `principal:${principal.id}`, limits: {}, minute: { requests: 0, tokens: 0 }, day: { requests: 1, tokens: 5, reserved_tokens: 2 }, month: { requests: 1, tokens: 5 }, inflight: 1 }] };
   await page.browserContext().setCookie({ name: 'pool_csrf', value: 'browser-fixture', domain: '127.0.0.1', path: '/' });
   page.on('pageerror', e => errors.push(e.message));
   await page.setRequestInterception(true);
@@ -60,6 +64,21 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
       assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
       owned.push({ id: 'new-private-kimi', provider: 'kimi', status: 'active', state: 'ready', revision: 2 });
       body = { success: true, account_id: 'new-private-kimi' };
+    }
+    else if (url.pathname === '/api/accounts/kimi/private-kimi/controls') {
+      if (request.method() === 'PUT') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, accountControls.revision); accountControls = { ...accountControls, revision: accountControls.revision + 1, controls: value.controls }; owned = owned.map(item => ({ ...item, revision: accountControls.revision })); }
+      body = accountControls;
+    }
+    else if (url.pathname === '/api/accounts/kimi/private-kimi/grants') {
+      if (request.method() === 'POST') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, sharing.revision); sharing = { ...sharing, revision: sharing.revision + 1, grants: [...sharing.grants, { ...value, revision: 1 }] }; }
+      body = sharing;
+    }
+    else if (url.pathname.startsWith('/api/account-grants/')) {
+      assert.equal(request.method(), 'DELETE'); assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const id = url.pathname.split('/').at(-1); sharing = { ...sharing, grants: sharing.grants.map(grant => grant.id === id ? { ...grant, revision: 2, revoked_at: new Date().toISOString() } : grant) }; body = { id, revoked: true };
+    }
+    else if (url.pathname.startsWith('/api/console/policies/')) {
+      if (request.method() !== 'GET') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, policyView.revision); body = { ...policyView, effective: value.policy }; if (request.method() === 'PUT') { policyView = { ...body, revision: policyView.revision + 1, principal_policy: value.policy }; body = policyView; } }
+      else body = policyView;
     }
     else if (url.pathname === '/api/me/passkeys') body = [];
     else if (url.pathname === '/api/passes') body = [pass];
@@ -241,6 +260,50 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `My accounts overflows at ${width}px`);
     }
     await page.close();
+  });
+  await check('persistent controls save and fit mobile', async () => {
+    const { page, errors } = await open('/?view=mine', 'my-controls');
+    await clickText(page, 'button', 'Controls and sharing');
+    await page.waitForSelector('.governance-form select');
+    await page.select('.governance-form select', 'draining');
+    await page.type('.governance-form input[maxlength="240"]', 'Finish active conversations');
+    await clickText(page, 'button', 'Save account controls');
+    await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
+    await clickText(page, 'button', 'Controls and sharing');
+    await page.waitForSelector('.governance-form select');
+    assert.equal(await page.$eval('.governance-form select', el => el.value), 'draining');
+    for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Controls overflow at ${width}px`); }
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('sharing creates a scoped grant and requires confirmation to revoke', async () => {
+    const { page, errors } = await open('/?view=mine', 'my-sharing');
+    await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
+    await page.waitForSelector('.governance-form input[type="datetime-local"]');
+    await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Granted models': 'kimi-k2.5', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
+    await clickText(page, 'button', 'Create grant');
+    await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
+    await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
+    await clickText(page, 'button', 'Revoke grant');
+    assert.equal(await page.$$eval('.governance-form span', nodes => nodes.some(el => el.textContent === 'Revoked')), false);
+    await clickText(page, 'button', 'Confirm revoke');
+    await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
+    await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revoked'));
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('policy preview is required again after an edit', async () => {
+    const { page, errors } = await open('/?view=console');
+    await clickText(page, 'button', 'Effective policy'); await page.waitForSelector('.governance-form');
+    await page.waitForFunction(() => [...document.querySelectorAll('label')].some(el => el.textContent.includes('Allowed models')));
+    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), true);
+    await page.evaluate(() => { const label = [...document.querySelectorAll('label')].find(el => el.textContent.startsWith('Allowed models')); const input = label.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'gpt-5.5'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.textContent === 'Save policy' && !el.disabled));
+    await page.evaluate(() => { const label = [...document.querySelectorAll('label')].find(el => el.textContent.startsWith('Sample model')); const input = label.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'gpt-5.5'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), true);
+    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.textContent === 'Save policy' && !el.disabled)); await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revision 1.'));
+    for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Policy editor overflows at ${width}px`); }
+    assert.deepEqual(errors, []); await page.close();
   });
   await check('sign-in renders and retains input on failure', async () => {
     const { page } = await open('/', 'signed-out');
