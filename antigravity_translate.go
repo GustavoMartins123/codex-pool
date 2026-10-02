@@ -55,15 +55,17 @@ func (format antigravityClientFormat) String() string {
 }
 
 type antigravityPreparedRequest struct {
-	Body                   []byte
-	Format                 antigravityClientFormat
-	ClientStream           bool
-	PublicModel            string
-	UpstreamModel          string
-	Operation              string
-	ResponsesRequest       map[string]any
-	ResponsesFunctionNames map[string]string
-	EstimatedInputTokens   int
+	Body                     []byte
+	Format                   antigravityClientFormat
+	ClientStream             bool
+	PublicModel              string
+	UpstreamModel            string
+	Operation                string
+	ResponsesRequest         map[string]any
+	ResponsesFunctionNames   map[string]string
+	ResponsesNamespacedTools map[string]bool
+	ResponsesCustomTools     map[string]bool
+	EstimatedInputTokens     int
 }
 
 func shouldRouteAntigravityModel(model string) bool {
@@ -133,6 +135,10 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 	if err := json.Unmarshal(body, &root); err != nil {
 		return antigravityPreparedRequest{}, fmt.Errorf("invalid JSON request: %w", err)
 	}
+	var namespacedTools, customTools map[string]bool
+	if format == antigravityFormatResponses {
+		namespacedTools, customTools = antigravityInlineAdditionalTools(root)
+	}
 	clientStream, _ := root["stream"].(bool)
 	operation := "streamGenerateContent"
 	if strings.Contains(path, "countTokens") {
@@ -192,7 +198,7 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 		responsesRequest = cloneAnyMap(root)
 		responsesFunctionNames = reverseAntigravityFunctionNameMap(antigravityResponsesFunctionNameMap(root))
 	}
-	return antigravityPreparedRequest{Body: encoded, Format: format, ClientStream: clientStream, PublicModel: publicModel, UpstreamModel: upstreamModel, Operation: operation, ResponsesRequest: responsesRequest, ResponsesFunctionNames: responsesFunctionNames}, err
+	return antigravityPreparedRequest{Body: encoded, Format: format, ClientStream: clientStream, PublicModel: publicModel, UpstreamModel: upstreamModel, Operation: operation, ResponsesRequest: responsesRequest, ResponsesFunctionNames: responsesFunctionNames, ResponsesNamespacedTools: namespacedTools, ResponsesCustomTools: customTools}, err
 }
 
 func antigravitySessionID(request map[string]any) string {
@@ -480,8 +486,9 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 		callNames := make(map[string]string)
 		for index := 0; index < len(items); index++ {
 			item, _ := items[index].(map[string]any)
-			if stringValue(item["type"]) == "function_call" {
-				callNames[firstAntigravityString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, stringValue(item["name"]))
+			switch stringValue(item["type"]) {
+			case "function_call", "custom_tool_call":
+				callNames[firstAntigravityString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"])))
 			}
 		}
 		for index := 0; index < len(items); index++ {
@@ -496,9 +503,12 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 				} else if item["arguments"] != nil {
 					arguments = item["arguments"]
 				}
-				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, stringValue(item["name"])), "id": firstAntigravityString(item, "call_id", "id"), "args": arguments}
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": arguments}
 				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
-			case "function_call_output":
+			case "custom_tool_call":
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": map[string]any{"input": stringValue(item["input"])}}
+				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
+			case "function_call_output", "custom_tool_call_output":
 				response := map[string]any{"result": antigravityJSONValue(item["output"])}
 				callID := stringValue(item["call_id"])
 				functionResponse := map[string]any{"id": callID, "response": response}
@@ -1155,6 +1165,148 @@ func reverseAntigravityFunctionNameMap(nameMap map[string]string) map[string]str
 		reversed[mapped] = original
 	}
 	return reversed
+}
+
+// antigravityInlineAdditionalTools flattens Codex 0.155+ `additional_tools`
+// input items into top-level function tools so the Antigravity upstream
+// receives real tool declarations. Namespaced tools are encoded upstream as
+// "<namespace>.<name>" and decoded back into the `namespace` field on
+// returned tool calls. Freeform custom tools become functions with a single
+// string `input` parameter and are returned as `custom_tool_call` items. It
+// returns the set of namespaced tool names and the subset that are freeform
+// custom tools.
+func antigravityInlineAdditionalTools(root map[string]any) (namespaced, custom map[string]bool) {
+	items := anySlice(root["input"])
+	if len(items) == 0 {
+		return nil, nil
+	}
+	namespaced = map[string]bool{}
+	custom = map[string]bool{}
+	flattened := make([]any, 0, 8)
+	kept := make([]any, 0, len(items))
+	changed := false
+	for _, raw := range items {
+		item := mapValue(raw)
+		if item == nil || stringValue(item["type"]) != "additional_tools" {
+			kept = append(kept, raw)
+			continue
+		}
+		changed = true
+		flattened = append(flattened, antigravityFlattenToolDeclarations(anySlice(item["tools"]), "", namespaced, custom)...)
+	}
+	if !changed {
+		return nil, nil
+	}
+	if len(flattened) > 0 {
+		root["tools"] = append(anySlice(root["tools"]), flattened...)
+	}
+	root["input"] = kept
+	return namespaced, custom
+}
+
+func antigravityFlattenToolDeclarations(tools []any, namespace string, namespaced, custom map[string]bool) []any {
+	flattened := make([]any, 0, len(tools))
+	for _, raw := range tools {
+		tool := mapValue(raw)
+		if tool == nil {
+			continue
+		}
+		switch stringValue(tool["type"]) {
+		case "namespace":
+			name := sanitizeAntigravityNamespaceComponent(stringValue(tool["name"]))
+			if name == "" {
+				continue
+			}
+			if namespace != "" {
+				name = namespace + "_" + name
+			}
+			flattened = append(flattened, antigravityFlattenToolDeclarations(anySlice(tool["tools"]), name, namespaced, custom)...)
+		case "function":
+			definition := tool
+			if function := mapValue(tool["function"]); function != nil {
+				definition = function
+			}
+			name := antigravityNamespacedToolName(namespace, stringValue(definition["name"]))
+			if name == "" {
+				continue
+			}
+			if namespace != "" {
+				namespaced[name] = true
+			}
+			converted := map[string]any{"type": "function", "name": name}
+			if description := strings.TrimSpace(stringValue(definition["description"])); description != "" {
+				converted["description"] = description
+			}
+			if parameters := mapValue(definition["parameters"]); parameters != nil {
+				converted["parameters"] = parameters
+			} else if parameters := mapValue(definition["input_schema"]); parameters != nil {
+				converted["parameters"] = parameters
+			}
+			flattened = append(flattened, converted)
+		case "custom":
+			name := antigravityNamespacedToolName(namespace, stringValue(tool["name"]))
+			if name == "" {
+				continue
+			}
+			if namespace != "" {
+				namespaced[name] = true
+			}
+			custom[name] = true
+			description := strings.TrimSpace(stringValue(tool["description"]))
+			if description == "" {
+				description = "Freeform tool."
+			}
+			description += "\n\nThis is a FREEFORM tool: provide the raw tool input as the `input` string, not JSON."
+			flattened = append(flattened, map[string]any{
+				"type":        "function",
+				"name":        name,
+				"description": description,
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"input": map[string]any{"type": "string", "description": "Raw freeform tool input."}},
+					"required":   []any{"input"},
+				},
+			})
+		}
+	}
+	return flattened
+}
+
+// antigravityNamespacedToolName encodes a client tool name and optional
+// namespace as the upstream function name.
+func antigravityNamespacedToolName(namespace, name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if namespace = strings.TrimSpace(namespace); namespace == "" {
+		return name
+	}
+	return namespace + "." + name
+}
+
+// antigravitySplitToolCallName splits a resolved tool name that came from an
+// `additional_tools` namespace back into the bare tool name and namespace.
+func antigravitySplitToolCallName(name string, namespaced map[string]bool) (bare, namespace string) {
+	if len(namespaced) == 0 || !namespaced[name] {
+		return name, ""
+	}
+	if idx := strings.Index(name, "."); idx > 0 {
+		return name[idx+1:], name[:idx]
+	}
+	return name, ""
+}
+
+func sanitizeAntigravityNamespaceComponent(namespace string) string {
+	var builder strings.Builder
+	for _, char := range strings.TrimSpace(namespace) {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-' {
+			builder.WriteRune(char)
+		} else {
+			builder.WriteByte('_')
+		}
+	}
+	return builder.String()
 }
 
 func cleanAntigravityFunctionParameters(schema map[string]any) map[string]any {
@@ -1996,7 +2148,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 			return
 		}
 		antigravityCaptureNativeReplay(replayScope, prepared.Body, wrapped)
-		body, err := translateAntigravityResponseWithRequest(wrapped, prepared.Format, prepared.PublicModel, prepared.ResponsesRequest, prepared.ResponsesFunctionNames)
+		body, err := translateAntigravityResponseWithRequest(wrapped, prepared.Format, prepared.PublicModel, prepared.ResponsesRequest, prepared.ResponsesFunctionNames, prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
 		if err != nil {
 			antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(err.Error()))
 			return
@@ -2022,6 +2174,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	translator := newAntigravityStreamWriter(w, prepared.Format, prepared.PublicModel)
 	translator.setResponsesRequest(prepared.ResponsesRequest)
 	translator.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
+	translator.setResponsesToolMetadata(prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
 	var usage *RequestUsage
 	var assistantText strings.Builder
 	validResponseSeen := false

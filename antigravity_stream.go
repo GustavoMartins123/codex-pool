@@ -15,31 +15,33 @@ import (
 )
 
 type antigravityStreamWriter struct {
-	w                       io.Writer
-	format                  antigravityClientFormat
-	model                   string
-	buf                     []byte
-	started                 bool
-	finished                bool
-	contentIndex            int
-	responseID              string
-	messageID               string
-	sequence                int
-	usage                   antigravityResult
-	responsesMessageStarted bool
-	responsesMessageIndex   int
-	responsesText           strings.Builder
-	responsesOutput         map[int]any
-	responsesCreatedAt      int64
-	responsesReasoningOpen  bool
-	responsesReasoningDone  bool
-	responsesReasoningID    string
-	responsesReasoningIndex int
-	responsesReasoningText  strings.Builder
-	responsesReasoningSig   string
-	responsesMessageCount   int
-	responsesRequest        map[string]any
-	responsesFunctionNames  map[string]string
+	w                        io.Writer
+	format                   antigravityClientFormat
+	model                    string
+	buf                      []byte
+	started                  bool
+	finished                 bool
+	contentIndex             int
+	responseID               string
+	messageID                string
+	sequence                 int
+	usage                    antigravityResult
+	responsesMessageStarted  bool
+	responsesMessageIndex    int
+	responsesText            strings.Builder
+	responsesOutput          map[int]any
+	responsesCreatedAt       int64
+	responsesReasoningOpen   bool
+	responsesReasoningDone   bool
+	responsesReasoningID     string
+	responsesReasoningIndex  int
+	responsesReasoningText   strings.Builder
+	responsesReasoningSig    string
+	responsesMessageCount    int
+	responsesRequest         map[string]any
+	responsesFunctionNames   map[string]string
+	responsesNamespacedTools map[string]bool
+	responsesCustomTools     map[string]bool
 }
 
 func newAntigravityStreamWriter(w io.Writer, format antigravityClientFormat, model string) *antigravityStreamWriter {
@@ -54,6 +56,11 @@ func (sw *antigravityStreamWriter) setResponsesRequest(request map[string]any) {
 
 func (sw *antigravityStreamWriter) setResponsesFunctionNames(functionNames map[string]string) {
 	sw.responsesFunctionNames = functionNames
+}
+
+func (sw *antigravityStreamWriter) setResponsesToolMetadata(namespaced, custom map[string]bool) {
+	sw.responsesNamespacedTools = namespaced
+	sw.responsesCustomTools = custom
 }
 
 func (sw *antigravityStreamWriter) Write(p []byte) (int, error) {
@@ -285,7 +292,14 @@ func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error 
 	if original := sw.responsesFunctionNames[name]; original != "" {
 		name = original
 	}
-	item := map[string]any{"id": itemID, "type": "function_call", "status": "in_progress", "call_id": callID, "name": name, "arguments": ""}
+	bareName, namespace := antigravitySplitToolCallName(name, sw.responsesNamespacedTools)
+	if sw.responsesCustomTools[name] {
+		return sw.emitResponsesCustomTool(callID, bareName, namespace, string(args))
+	}
+	item := map[string]any{"id": itemID, "type": "function_call", "status": "in_progress", "call_id": callID, "name": bareName, "arguments": ""}
+	if namespace != "" {
+		item["namespace"] = namespace
+	}
 	if err := sw.emitResponsesEvent("response.output_item.added", map[string]any{"type": "response.output_item.added", "sequence_number": sw.nextSequence(), "output_index": sw.contentIndex, "item": item}); err != nil {
 		return err
 	}
@@ -297,6 +311,36 @@ func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error 
 	}
 	item["status"] = "completed"
 	item["arguments"] = string(args)
+	if err := sw.emitResponsesEvent("response.output_item.done", map[string]any{"type": "response.output_item.done", "sequence_number": sw.nextSequence(), "output_index": sw.contentIndex, "item": item}); err != nil {
+		return err
+	}
+	sw.responsesOutput[sw.contentIndex] = item
+	sw.contentIndex++
+	return nil
+}
+
+func (sw *antigravityStreamWriter) emitResponsesCustomTool(callID, name, namespace, args string) error {
+	input := ""
+	var envelope map[string]any
+	if json.Unmarshal([]byte(args), &envelope) == nil {
+		input = stringValue(envelope["input"])
+	}
+	itemID := "ctc_" + uuid.NewString()
+	item := map[string]any{"id": itemID, "type": "custom_tool_call", "status": "in_progress", "call_id": callID, "name": name, "input": ""}
+	if namespace != "" {
+		item["namespace"] = namespace
+	}
+	if err := sw.emitResponsesEvent("response.output_item.added", map[string]any{"type": "response.output_item.added", "sequence_number": sw.nextSequence(), "output_index": sw.contentIndex, "item": item}); err != nil {
+		return err
+	}
+	if err := sw.emitResponsesEvent("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "sequence_number": sw.nextSequence(), "item_id": itemID, "output_index": sw.contentIndex, "delta": input}); err != nil {
+		return err
+	}
+	if err := sw.emitResponsesEvent("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "sequence_number": sw.nextSequence(), "item_id": itemID, "output_index": sw.contentIndex, "input": input}); err != nil {
+		return err
+	}
+	item["status"] = "completed"
+	item["input"] = input
 	if err := sw.emitResponsesEvent("response.output_item.done", map[string]any{"type": "response.output_item.done", "sequence_number": sw.nextSequence(), "output_index": sw.contentIndex, "item": item}); err != nil {
 		return err
 	}

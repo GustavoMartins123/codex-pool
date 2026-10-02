@@ -183,7 +183,7 @@ func TestAntigravityResponsesRestoresMappedFunctionNames(t *testing.T) {
 		}},
 	}
 	reverseNames := map[string]string{"default_api_Read_123456789abc": "default_api:Read/with a very long original name"}
-	got := antigravityGeminiToResponsesWithRequest(response, "gemini-3.5-flash", nil, reverseNames)
+	got := antigravityGeminiToResponsesWithRequest(response, "gemini-3.5-flash", nil, reverseNames, nil, nil)
 	call := got["output"].([]any)[0].(map[string]any)
 	if call["name"] != "default_api:Read/with a very long original name" {
 		t.Fatalf("function name = %#v", call["name"])

@@ -25,10 +25,10 @@ func unwrapAntigravityResponse(body []byte) ([]byte, error) {
 }
 
 func translateAntigravityResponse(body []byte, format antigravityClientFormat, requestModel string) ([]byte, error) {
-	return translateAntigravityResponseWithRequest(body, format, requestModel, nil, nil)
+	return translateAntigravityResponseWithRequest(body, format, requestModel, nil, nil, nil, nil)
 }
 
-func translateAntigravityResponseWithRequest(body []byte, format antigravityClientFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string) ([]byte, error) {
+func translateAntigravityResponseWithRequest(body []byte, format antigravityClientFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string, responsesNamespacedTools, responsesCustomTools map[string]bool) ([]byte, error) {
 	gemini, err := unwrapAntigravityResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap antigravity response: %w", err)
@@ -44,7 +44,7 @@ func translateAntigravityResponseWithRequest(body []byte, format antigravityClie
 	case antigravityFormatChat:
 		return json.Marshal(antigravityGeminiToOpenAI(response, requestModel))
 	case antigravityFormatResponses:
-		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, responsesRequest, responsesFunctionNames))
+		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, responsesRequest, responsesFunctionNames, responsesNamespacedTools, responsesCustomTools))
 	case antigravityFormatAnthropic:
 		return json.Marshal(antigravityGeminiToClaude(response, requestModel))
 	default:
@@ -164,10 +164,10 @@ func antigravityGeminiToOpenAI(response map[string]any, model string) map[string
 }
 
 func antigravityGeminiToResponses(response map[string]any, model string) map[string]any {
-	return antigravityGeminiToResponsesWithRequest(response, model, nil, nil)
+	return antigravityGeminiToResponsesWithRequest(response, model, nil, nil, nil, nil)
 }
 
-func antigravityGeminiToResponsesWithRequest(response map[string]any, model string, request map[string]any, functionNames map[string]string) map[string]any {
+func antigravityGeminiToResponsesWithRequest(response map[string]any, model string, request map[string]any, functionNames map[string]string, namespacedTools, customTools map[string]bool) map[string]any {
 	r := parseAntigravityGeminiResponse(response)
 	id := r.ResponseID
 	if id == "" {
@@ -180,7 +180,7 @@ func antigravityGeminiToResponsesWithRequest(response map[string]any, model stri
 	if !r.CreateTime.IsZero() {
 		createdAt = r.CreateTime.Unix()
 	}
-	output := antigravityResponsesOutput(r, functionNames)
+	output := antigravityResponsesOutput(r, functionNames, namespacedTools, customTools)
 	result := map[string]any{"id": id, "object": "response", "created_at": createdAt, "status": "completed", "background": false, "error": nil, "incomplete_details": nil, "model": model, "output": output, "usage": map[string]any{"input_tokens": r.PromptTokens, "output_tokens": r.OutputTokens, "total_tokens": r.TotalTokens, "input_tokens_details": map[string]any{"cached_tokens": r.CachedTokens}, "output_tokens_details": map[string]any{"reasoning_tokens": r.ReasoningTokens}}}
 	for _, field := range []string{"instructions", "max_output_tokens", "max_tool_calls", "parallel_tool_calls", "previous_response_id", "prompt_cache_key", "reasoning", "safety_identifier", "service_tier", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "user", "metadata"} {
 		if value, exists := request[field]; exists {
@@ -190,7 +190,7 @@ func antigravityGeminiToResponsesWithRequest(response map[string]any, model stri
 	return result
 }
 
-func antigravityResponsesOutput(r antigravityResult, functionNames map[string]string) []any {
+func antigravityResponsesOutput(r antigravityResult, functionNames map[string]string, namespacedTools, customTools map[string]bool) []any {
 	parts := r.Parts
 	if len(parts) == 0 {
 		if r.Reasoning != "" || r.ReasoningSignature != "" {
@@ -259,7 +259,25 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 			if original := functionNames[name]; original != "" {
 				name = original
 			}
-			output = append(output, map[string]any{"id": "fc_" + uuid.NewString(), "type": "function_call", "status": "completed", "call_id": callID, "name": name, "arguments": string(args)})
+			bareName, namespace := antigravitySplitToolCallName(name, namespacedTools)
+			if customTools[name] {
+				input := ""
+				if args := mapValue(part.Tool["args"]); args != nil {
+					input = stringValue(args["input"])
+				}
+				item := map[string]any{"id": "ctc_" + uuid.NewString(), "type": "custom_tool_call", "status": "completed", "call_id": callID, "name": bareName, "input": input}
+				if namespace != "" {
+					item["namespace"] = namespace
+				}
+				output = append(output, item)
+				toolIndex++
+				continue
+			}
+			item := map[string]any{"id": "fc_" + uuid.NewString(), "type": "function_call", "status": "completed", "call_id": callID, "name": bareName, "arguments": string(args)}
+			if namespace != "" {
+				item["namespace"] = namespace
+			}
+			output = append(output, item)
 			toolIndex++
 		}
 	}
