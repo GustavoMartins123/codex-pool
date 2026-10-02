@@ -31,8 +31,8 @@ web/.impeccable/
 # Local notes (deployment docs, personal notes)
 .localnotes/
 
-# Local roadmap (kept out of the repo on purpose)
-codex-pool-roadmap.md
+# Local roadmaps / audit / execution reports (kept out of the repo on purpose)
+/codex-pool-*.md
 
 # Security audit iteration logs (working files)
 security-audit-results.tsv
