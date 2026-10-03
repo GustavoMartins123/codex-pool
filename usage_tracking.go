@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-const resetCreditAutoRedeemWindow = 15 * time.Minute
 const resetCreditPollInterval = 5 * time.Minute
 
 func (h *proxyHandler) startUsagePoller(ctx ...context.Context) {
@@ -86,19 +85,9 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		}
 		if accType == AccountTypeCodex {
 			resetCreditsFresh := !resetCreditsRetrievedAt.IsZero() && now.Sub(resetCreditsRetrievedAt) < resetCreditPollInterval
-			resetCreditsReady := resetCreditsFresh
 			if !resetCreditsFresh {
-				if err := h.fetchCodexResetCredits(a); err != nil {
-					if h.cfg.debug.Load() {
-						log.Printf("reset credit fetch %s failed: %v", a.ID, err)
-					}
-				} else {
-					resetCreditsReady = true
-				}
-			}
-			if resetCreditsReady {
-				if err := h.autoRedeemExpiringCodexResetCredit(now, a); err != nil {
-					log.Printf("reset credit auto-redeem %s failed: %v", a.ID, err)
+				if err := h.fetchCodexResetCredits(a); err != nil && h.cfg.debug.Load() {
+					log.Printf("reset credit fetch %s failed: %v", a.ID, err)
 				}
 			}
 		}
@@ -486,14 +475,6 @@ func buildWhamResetCreditsURL(base *url.URL) string {
 	return copy.String()
 }
 
-func buildWhamConsumeResetCreditURL(base *url.URL) string {
-	joined := singleJoin(base.Path, "/wham/rate-limit-reset-credits/consume")
-	copy := *base
-	copy.Path = joined
-	copy.RawQuery = ""
-	return copy.String()
-}
-
 func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -561,115 +542,6 @@ func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 	a.ResetCreditsRetrievedAt = time.Now()
 	a.mu.Unlock()
 	return nil
-}
-
-func (h *proxyHandler) autoRedeemExpiringCodexResetCredit(now time.Time, a *Account) error {
-	a.mu.Lock()
-	if a.ResetCreditRedeeming {
-		a.mu.Unlock()
-		return nil
-	}
-	exhausted := accountUsageExhaustedLocked(a)
-	var due *RateLimitResetCredit
-	for _, credit := range a.RateLimitResetCredits {
-		untilExpiry := credit.ExpiresAt.Sub(now)
-		if credit.ID == "" || untilExpiry <= 0 {
-			continue
-		}
-		if untilExpiry <= resetCreditAutoRedeemWindow || exhausted {
-			copy := credit
-			due = &copy
-			break
-		}
-	}
-	if due != nil {
-		a.ResetCreditRedeeming = true
-	}
-	a.mu.Unlock()
-	if due == nil {
-		return nil
-	}
-	defer func() {
-		a.mu.Lock()
-		a.ResetCreditRedeeming = false
-		a.mu.Unlock()
-	}()
-
-	code, windowsReset, err := h.consumeCodexResetCredit(a, *due)
-	if err != nil {
-		return err
-	}
-	log.Printf(
-		"reset credit auto-redeem %s: credit=%s expires_in=%s code=%s windows_reset=%d",
-		a.ID,
-		due.ID,
-		formatDuration(due.ExpiresAt.Sub(now)),
-		code,
-		windowsReset,
-	)
-
-	creditsErr := h.fetchCodexResetCredits(a)
-	usageErr := h.fetchUsage(time.Now(), a)
-	switch {
-	case creditsErr != nil && usageErr != nil:
-		return fmt.Errorf("refresh reset credits: %v; refresh usage: %v", creditsErr, usageErr)
-	case creditsErr != nil:
-		return fmt.Errorf("refresh reset credits: %w", creditsErr)
-	case usageErr != nil:
-		return fmt.Errorf("refresh usage: %w", usageErr)
-	default:
-		return nil
-	}
-}
-
-func (h *proxyHandler) consumeCodexResetCredit(a *Account, credit RateLimitResetCredit) (string, int, error) {
-	body, err := json.Marshal(map[string]string{
-		"redeem_request_id": "codex-pool:" + credit.ID,
-		"credit_id":         credit.ID,
-	})
-	if err != nil {
-		return "", 0, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildWhamConsumeResetCreditURL(h.cfg.whamBase), bytes.NewReader(body))
-	if err != nil {
-		return "", 0, err
-	}
-
-	a.mu.Lock()
-	access := a.AccessToken
-	accountID := a.AccountID
-	if accountID == "" {
-		accountID = a.IDTokenChatGPTAccountID
-	}
-	a.mu.Unlock()
-
-	req.Header.Set("Authorization", "Bearer "+access)
-	req.Header.Set("Content-Type", "application/json")
-	if accountID != "" {
-		req.Header.Set("ChatGPT-Account-ID", accountID)
-	}
-
-	resp, err := h.transport.RoundTrip(req)
-	if err != nil {
-		return "", 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", 0, fmt.Errorf("consume reset credit bad status: %s", resp.Status)
-	}
-
-	var payload struct {
-		Code         string `json:"code"`
-		WindowsReset int    `json:"windows_reset"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return "", 0, err
-	}
-	return payload.Code, payload.WindowsReset, nil
 }
 
 func parseClaudeResetAt(value any) (time.Time, bool) {

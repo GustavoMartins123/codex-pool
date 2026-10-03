@@ -86,7 +86,6 @@ type Account struct {
 	RateLimitResetCredits   []RateLimitResetCredit
 	ResetCreditsAvailable   int
 	ResetCreditsRetrievedAt time.Time
-	ResetCreditRedeeming    bool
 	Email                   string
 	ProjectID               string
 	ModelRateLimits         map[string]time.Time
