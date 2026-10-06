@@ -18,7 +18,7 @@ const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; 
 ];
 
 
-function oauthCode(value: string, expectedState: string | undefined) {
+function oauthCode(value: string, expectedState: string | undefined, provider: ContributableProvider) {
   const text = value.trim();
   if (!text) throw new Error("Authorization code is required");
   if (/^https?:/.test(text)) {
@@ -26,6 +26,10 @@ function oauthCode(value: string, expectedState: string | undefined) {
     const code = callback.searchParams.get("code");
     if (!code || !expectedState || callback.searchParams.get("state") !== expectedState) throw new Error("Callback does not match this sign-in session");
     return code;
+  }
+  if (provider === "claude" && text.includes("#")) {
+    const separator = text.indexOf("#");
+    if (!text.slice(0, separator) || !expectedState || text.slice(separator + 1) !== expectedState) throw new Error("Authorization code does not match this sign-in session. Copy the code from the Claude page opened here.");
   }
   return text;
 }
@@ -148,7 +152,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	            await exchangeAntigravityOAuth(oauth.sessionID, credential, oauth.state!);
 	          }
 	        } else {
-	          const code = oauthCode(credential, oauth.state);
+	          const code = oauthCode(credential, oauth.state, provider);
 	          if (!code || !oauth.verifier) throw new Error("Paste the authorization code or callback URL");
 	          if (reloginAccountID) {
 	            await exchangeCodexRelogin(code, oauth.verifier);
@@ -187,7 +191,8 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
             ) : (
               <>
                 <a href={oauth.url} target="_blank" rel="noreferrer">Open sign-in page</a>
-                {provider === "zai" ? <p>Finish signing in on the Z.ai page. Your Coding Plan will be checked automatically.</p> : <label className="contribution-field"><span>Authorization code or callback URL</span><input value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>}
+                {provider === "claude" && <p id="claude-code-help">After signing in, copy the full authentication code shown by Claude (including the # and everything after it) and paste it here.</p>}
+                {provider === "zai" ? <p>Finish signing in on the Z.ai page. Your Coding Plan will be checked automatically.</p> : <label className="contribution-field"><span>{provider === "claude" ? "Claude authentication code" : "Authorization code or callback URL"}</span><input value={credential} onChange={(event) => setCredential(event.target.value)} aria-describedby={provider === "claude" ? "claude-code-help" : undefined} placeholder={provider === "claude" ? "code#state" : undefined} autoFocus autoComplete="off" spellCheck={false} required /></label>}
               </>
             )}
           </div>
