@@ -3054,6 +3054,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTraceForUser(userID, candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
 		}
 		if acc == nil {
+			if err := h.checkAccountRoutingAccess(userID, accountType, requestedModel); err != nil {
+				respondPolicyError(w, err)
+				return
+			}
 			// Prefer holding the request for the original provider when its
 			// usage window resets within the exhaustion wait budget, instead
 			// of switching to a fallback model mid-conversation.
@@ -4171,6 +4175,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		routingProfile,
 	)
 	if acc == nil {
+		if err := h.checkAccountRoutingAccess(userID, accountType, ""); err != nil {
+			respondPolicyError(w, err)
+			return
+		}
 		http.Error(w, fmt.Sprintf("no live %s accounts", accountType), http.StatusServiceUnavailable)
 		return
 	}
@@ -4795,6 +4803,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	}
 	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTraceForUser(userID, contextSession, map[string]bool{}, accountType, requiredPlan, clientIP, requestedModel, routingProfile)
 	if acc == nil {
+		if err := h.checkAccountRoutingAccess(userID, accountType, requestedModel); err != nil {
+			respondPolicyError(w, err)
+			return
+		}
 		http.Error(w, fmt.Sprintf("no live %s accounts", accountType), http.StatusServiceUnavailable)
 		return
 	}

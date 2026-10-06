@@ -277,3 +277,20 @@ func (h *proxyHandler) checkAccountUse(identity string, a *Account) error {
 	}
 	return nil
 }
+
+// Check access independently of health and capacity so a missing grant does
+// not look like an upstream outage or trigger capacity retries.
+func (h *proxyHandler) checkAccountRoutingAccess(identity string, provider AccountType, model string) error {
+	if h.pool == nil || h.pool.accountAuthority == nil {
+		return nil
+	}
+	for _, a := range h.pool.allAccounts() {
+		if a.Type != provider || h.pool.accountAuthority.authorizeAccount(identity, a, "read") != nil {
+			continue
+		}
+		if _, err := h.pool.accountAuthority.accountGrantForUse(identity, a, model); err == nil {
+			return nil
+		}
+	}
+	return &policyError{Status: http.StatusForbidden, Code: "account_access_denied", Message: "This client has no account access for the requested provider and model. Add an account or ask its owner to grant access in the site's sharing settings, and check the granted models. A setup token does not grant account access."}
+}

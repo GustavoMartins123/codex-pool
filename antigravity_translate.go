@@ -1647,6 +1647,10 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	for attempt := 0; attempt < attempts; attempt++ {
 		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID, exclude, canonical, clientIP, routingProfile)
 		if account == nil {
+			if err := h.checkAccountRoutingAccess(userID, AccountTypeAntigravity, canonical); err != nil {
+				respondPolicyError(w, err)
+				return true
+			}
 			break
 		}
 		primaryReason := "quota_headroom"
