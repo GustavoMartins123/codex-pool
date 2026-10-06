@@ -344,6 +344,7 @@ func (h *proxyHandler) handleClaudeAdd(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, map[string]any{
 		"oauth_url":  authURL,
 		"verifier":   session.PKCE.Verifier,
+		"state":      session.State,
 		"account_id": accountID,
 	})
 }
