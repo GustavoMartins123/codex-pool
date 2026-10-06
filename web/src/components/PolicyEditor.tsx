@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { emptyPolicy, loadPolicies, previewPolicy, savePolicy, type Policy, type PolicyDraft, type PolicyView } from "../governance-api";
 import { PolicyFields, validLimits } from "./PolicyFields";
+import { loadModelCatalog } from "../api";
+import type { ModelDescriptor } from "../types";
 
 export function PolicyEditor({ principalID }: { principalID: string }) {
   const [open, setOpen] = useState(false);
@@ -19,6 +21,10 @@ export function PolicyEditorForm({ principalID }: { principalID: string }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [models, setModels] = useState<ModelDescriptor[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState("");
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const version = useRef(0);
   const invalidate = () => { version.current++; setPreview(null); setNotice(""); };
   const load = async (credential = client, scope = target) => {
@@ -35,6 +41,18 @@ export function PolicyEditorForm({ principalID }: { principalID: string }) {
     finally { if (epoch === version.current) setBusy(""); }
   };
   useEffect(() => { void load(""); return () => { version.current++; }; }, [principalID]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setModelsLoading(true); setModelsError("");
+    loadModelCatalog(controller.signal).then((catalog) => {
+      if (!controller.signal.aborted) setModels(catalog.models);
+    }).catch((cause) => {
+      if (!controller.signal.aborted) setModelsError(cause instanceof Error ? cause.message : "Could not load models");
+    }).finally(() => {
+      if (!controller.signal.aborted) setModelsLoading(false);
+    });
+    return () => controller.abort();
+  }, [catalogAttempt, principalID]);
   const payload = (save: boolean): PolicyDraft => ({ revision: view!.revision, target, client_id: client, policy: draft, model: save ? "" : model, provider: save ? "" : provider, account_id: save ? "" : account, tokens: save ? 0 : tokens });
   const valid = view !== null && validLimits(draft.limits) && Number.isSafeInteger(draft.priority ?? 0) && (draft.priority ?? 0) >= 0 && (draft.priority ?? 0) <= 100 && (target !== "client" || client !== "");
   const validPreview = valid && Number.isSafeInteger(tokens) && tokens >= 0;
@@ -58,7 +76,8 @@ export function PolicyEditorForm({ principalID }: { principalID: string }) {
     {!view ? <p>{busy === "load" ? "Loading policy..." : "Policy unavailable."}</p> : <>
       <p>Revision {view.revision}. Restrictions from every source apply together.</p>
       <div className="governance-fields"><label>Edit scope<select disabled={Boolean(busy)} value={target} onChange={(event) => { invalidate(); const value = event.target.value as "principal" | "client"; setTarget(value); setDraft(value === "principal" ? view.principal_policy : view.clients.find((item) => item.id === client)?.policy ?? emptyPolicy()); }}><option value="principal">Principal</option><option value="client" disabled={!client}>Credential</option></select></label><label>{target === "client" ? "Credential to edit" : "Credential for preview"}<select value={client} disabled={Boolean(busy)} onChange={(event) => { const credential = event.target.value; const scope = credential ? target : "principal"; setClient(credential); setTarget(scope); void load(credential, scope); }}><option value="">Principal only</option>{view.clients.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.status})</option>)}</select></label></div>
-      <PolicyFields value={draft} onChange={change} disabled={busy === "save" || busy === "load"} />
+      {modelsError && <div><p role="alert">Could not load the model catalog: {modelsError}. Saved selections are preserved.</p><button type="button" className="quiet-button" disabled={busy === "save"} onClick={() => setCatalogAttempt((attempt) => attempt + 1)}>Retry models</button></div>}
+      <PolicyFields value={draft} onChange={change} disabled={busy === "save" || busy === "load"} models={models} modelsLoading={modelsLoading} />
       <label>Sample account ID (optional)<input disabled={busy === "save"} value={account} onChange={(event) => { invalidate(); setAccount(event.target.value); if (busy === "preview") setBusy(""); }} /></label>
       {!valid && <p role="alert">Use nonnegative integers. Token budgets require a reservation.</p>}
       {!validPreview && valid && <p role="alert">Estimated tokens must be a nonnegative integer.</p>}

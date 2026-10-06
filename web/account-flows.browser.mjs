@@ -88,7 +88,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
     else if (url.pathname === '/api/pool/stats') body = stats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
-    else if (url.pathname === '/api/pool/catalog') body = { models: [] };
+    else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }] };
     else { status = 503; body = { error: 'Request failed. Try again.' }; }
     await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -291,17 +291,21 @@ try {
     await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revoked'));
     assert.deepEqual(errors, []); await page.close();
   });
-  await check('policy preview is required again after an edit', async () => {
+  await check('policy models use checkboxes and save directly with optional preview', async () => {
     const { page, errors } = await open('/?view=console');
     await clickText(page, 'button', 'Effective policy'); await page.waitForSelector('.governance-form');
-    await page.waitForFunction(() => [...document.querySelectorAll('label')].some(el => el.textContent.includes('Allowed models')));
-    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), true);
-    await page.evaluate(() => { const label = [...document.querySelectorAll('label')].find(el => el.textContent.startsWith('Allowed models')); const input = label.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'gpt-5.5'); input.dispatchEvent(new Event('input', { bubbles: true })); });
-    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.textContent === 'Save policy' && !el.disabled));
+    await page.waitForSelector('fieldset[aria-label="Allowed models"] input[type="checkbox"]');
+    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), false);
+    await page.click('fieldset[aria-label="Allowed models"] input[aria-label="gpt-5.5"]');
+    await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Policy saved'));
+    assert.equal(await page.$eval('fieldset[aria-label="Allowed models"] input[aria-label="gpt-5.5"]', el => el.checked), true);
+    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Sample request allowed'));
     await page.evaluate(() => { const label = [...document.querySelectorAll('label')].find(el => el.textContent.startsWith('Sample model')); const input = label.querySelector('input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'gpt-5.5'); input.dispatchEvent(new Event('input', { bubbles: true })); });
-    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), true);
-    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => [...document.querySelectorAll('button')].some(el => el.textContent === 'Save policy' && !el.disabled)); await clickText(page, 'button', 'Save policy');
-    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revision 1.'));
+    assert.equal(await page.$$eval('button', nodes => nodes.find(el => el.textContent === 'Save policy').disabled), false);
+    assert.equal(await page.$eval('.governance-form', el => el.textContent.includes('Sample request allowed')), false);
+    await clickText(page, 'button', 'Preview policy'); await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Sample request allowed')); await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revision 2.'));
     for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Policy editor overflows at ${width}px`); }
     assert.deepEqual(errors, []); await page.close();
   });

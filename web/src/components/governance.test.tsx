@@ -1,18 +1,27 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, act, within } from "@testing-library/react";
 import { AccountGovernance, AccountGovernanceForm } from "./AccountGovernance";
 import { PolicyEditorForm } from "./PolicyEditor";
 import * as api from "../governance-api";
+import { loadModelCatalog } from "../api";
+import type { ModelDescriptor } from "../types";
 
 vi.mock("../governance-api", async (original) => ({ ...await original<typeof import("../governance-api")>(), loadControls: vi.fn(), saveControls: vi.fn(), loadSharing: vi.fn(), setDelegation: vi.fn(), createGrant: vi.fn(), revokeGrant: vi.fn(), loadPolicies: vi.fn(), previewPolicy: vi.fn(), savePolicy: vi.fn() }));
+vi.mock("../api", async (original) => ({ ...await original<typeof import("../api")>(), loadModelCatalog: vi.fn() }));
+const models: ModelDescriptor[] = [
+  { id: "gpt-5.5", name: "GPT 5.5", provider: "codex", protocol: "responses", available_now: true, aliases: ["gpt-latest"] },
+  { id: "gpt-6-astra", provider: "codex", protocol: "responses", available_now: false },
+  { id: "claude-opus-5", provider: "claude", protocol: "messages", available_now: true },
+];
 const controls: api.ControlView = { provider: "codex", id: "private", revision: 3, inflight: 1, controls: { state: "enabled", max_concurrent: 2 } };
 const sharing: api.SharingView = { provider: "codex", id: "private", revision: 3, owner: true, operator_may_delegate: false, grants: [{ id: "grant-one", recipient_id: "bob", models: ["gpt-5.5"], budget: { daily_requests: 5 }, expires_at: "2099-01-01T00:00:00Z", revision: 1, reason: "Team access" }] };
 const view: api.PolicyView = { principal_id: "bob", revision: 2, principal_policy: api.emptyPolicy(), clients: [{ id: "client", label: "Laptop", status: "active", policy: api.emptyPolicy() }], sources: [{ source: "global", policy: api.emptyPolicy() }], effective: api.emptyPolicy(), allowed: true, reasons: [], usage: [{ scope: "principal:bob", limits: {}, minute: { requests: 1, tokens: 2 }, day: { requests: 5, tokens: 10, reserved_tokens: 20 }, month: { requests: 5, tokens: 10 }, inflight: 1 }] };
-beforeEach(() => { vi.mocked(api.loadControls).mockResolvedValue(controls); vi.mocked(api.loadSharing).mockResolvedValue(sharing); vi.mocked(api.loadPolicies).mockResolvedValue(view); vi.mocked(api.previewPolicy).mockResolvedValue(view); });
+beforeEach(() => { vi.mocked(api.loadControls).mockResolvedValue(controls); vi.mocked(api.loadSharing).mockResolvedValue(sharing); vi.mocked(api.loadPolicies).mockResolvedValue(view); vi.mocked(api.previewPolicy).mockResolvedValue(view); vi.mocked(loadModelCatalog).mockResolvedValue({ models }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 const change = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const enabled = (name: string) => !(screen.getByRole("button", { name }) as HTMLButtonElement).disabled;
+const checkModel = (id: string, group = "Allowed models") => fireEvent.click(within(screen.getByRole("group", { name: group })).getByRole("checkbox", { name: id }));
 
 it("loads account controls lazily and retains a failed revision change", async () => {
   vi.mocked(api.saveControls).mockRejectedValue(new Error("Revision conflict. Reload before trying again."));
@@ -37,12 +46,11 @@ it("shows persisted controls only after a successful save", async () => {
 });
 
 it("allows saving without preview and discards a slow preview after an edit", async () => {
-  render(<PolicyEditorForm principalID="bob" />); await screen.findByLabelText("Allowed models");
-  expect(enabled("Save policy")).toBe(true); change("Allowed models", "gpt-5.5,"); change("Allowed models", "gpt-5.5, gpt-6-astra");
-  expect((screen.getByLabelText("Allowed models") as HTMLInputElement).value).toBe("gpt-5.5, gpt-6-astra");
+  render(<PolicyEditorForm principalID="bob" />); await screen.findByRole("group", { name: "Allowed models" });
+  expect(enabled("Save policy")).toBe(true); checkModel("gpt-5.5"); checkModel("gpt-6-astra");
   let complete!: (value: api.PolicyView) => void; vi.mocked(api.previewPolicy).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
   fireEvent.click(screen.getByRole("button", { name: "Preview policy" }));
-  change("Allowed models", "gpt-5.5");
+  checkModel("gpt-6-astra");
   await act(async () => complete(view)); expect(enabled("Save policy")).toBe(true); expect(screen.queryByText("Sample request allowed")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Preview policy" })); await screen.findByText("Sample request allowed"); expect(enabled("Save policy")).toBe(true);
   change("Sample model", "gpt-6-astra"); expect(enabled("Save policy")).toBe(true);
@@ -51,7 +59,7 @@ it("allows saving without preview and discards a slow preview after an edit", as
 it("displays sources and usage and never claims success after rejected save", async () => {
   vi.mocked(api.previewPolicy).mockResolvedValue({ ...view, allowed: false, reasons: ["daily request budget exhausted"] });
   vi.mocked(api.savePolicy).mockRejectedValue(new Error("Policy changed; reload"));
-  render(<PolicyEditorForm principalID="bob" />); await screen.findByLabelText("Allowed models");
+  render(<PolicyEditorForm principalID="bob" />); await screen.findByRole("group", { name: "Allowed models" });
   expect(screen.getByText("global")).toBeTruthy(); expect(screen.getByLabelText("Policy budget usage").textContent).toContain("20 reserved");
   change("Daily requests", "5"); fireEvent.click(screen.getByRole("button", { name: "Preview policy" })); await screen.findByText(/Sample request denied/);
   fireEvent.click(screen.getByRole("button", { name: "Save policy" })); expect((await screen.findByRole("alert")).textContent).toContain("Policy changed"); expect(enabled("Save policy")).toBe(true); expect(screen.queryByText("Policy saved")).toBeNull();
@@ -60,21 +68,21 @@ it("displays sources and usage and never claims success after rejected save", as
 it("saves the selected principal directly without sending optional preview inputs", async () => {
   const policy = { ...api.emptyPolicy(), models: { allow: ["gpt-5.5"] } };
   vi.mocked(api.savePolicy).mockResolvedValue({ ...view, revision: 3, principal_policy: policy });
-  render(<PolicyEditorForm principalID="bob" />); await screen.findByLabelText("Allowed models");
-  change("Allowed models", "gpt-5.5"); change("Sample account ID (optional)", "preview-only-account"); change("Estimated tokens", "-1");
+  render(<PolicyEditorForm principalID="bob" />); await screen.findByRole("group", { name: "Allowed models" });
+  checkModel("gpt-5.5"); change("Sample account ID (optional)", "preview-only-account"); change("Estimated tokens", "-1");
   expect(enabled("Preview policy")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
   await screen.findByText("Policy saved");
   expect(api.previewPolicy).not.toHaveBeenCalled();
   expect(api.savePolicy).toHaveBeenCalledWith("bob", { revision: 2, target: "principal", client_id: "", policy, model: "", provider: "", account_id: "", tokens: 0 });
   expect(screen.getByText(/Revision 3/)).toBeTruthy();
-  change("Allowed models", "gpt-6-astra"); expect(screen.queryByText("Policy saved")).toBeNull();
+  checkModel("gpt-6-astra"); expect(screen.queryByText("Policy saved")).toBeNull();
 });
 
 it("saves credential restrictions and returns to principal scope when the credential is cleared", async () => {
   const policy = { ...api.emptyPolicy(), limits: { daily_requests: 8 } };
   vi.mocked(api.savePolicy).mockResolvedValue({ ...view, revision: 3, clients: [{ ...view.clients[0], policy }] });
-  render(<PolicyEditorForm principalID="bob" />); await screen.findByLabelText("Allowed models");
+  render(<PolicyEditorForm principalID="bob" />); await screen.findByRole("group", { name: "Allowed models" });
   change("Credential for preview", "client"); await waitFor(() => expect(enabled("Save policy")).toBe(true));
   change("Edit scope", "client"); change("Daily requests", "8");
   fireEvent.click(screen.getByRole("button", { name: "Save policy" })); await screen.findByText("Policy saved");
@@ -90,6 +98,59 @@ it("rejects invalid token budgets before preview", async () => {
   render(<PolicyEditorForm principalID="bob" />); await screen.findByLabelText("Daily tokens"); change("Daily tokens", "1000");
   expect(enabled("Preview policy")).toBe(false); expect(api.previewPolicy).not.toHaveBeenCalled();
   change("Token reservation", "100"); expect(enabled("Preview policy")).toBe(true);
+});
+
+it("selects catalog models and aliases using checkboxes, keeping selections through search and provider filters", async () => {
+  vi.mocked(api.savePolicy).mockImplementation(async (_id, draft) => ({ ...view, revision: 3, principal_policy: draft.policy }));
+  render(<PolicyEditorForm principalID="bob" />);
+  const allowed = within(await screen.findByRole("group", { name: "Allowed models" }));
+  expect(loadModelCatalog).toHaveBeenCalledOnce();
+  checkModel("gpt-6-astra"); // A temporarily unavailable model is still a policy option.
+  change("Search allowed models", "GPT 5.5");
+  expect(allowed.queryByRole("checkbox", { name: "claude-opus-5" })).toBeNull();
+  checkModel("gpt-latest");
+  change("Search allowed models", ""); change("Filter allowed models by provider", "claude");
+  expect(allowed.queryByRole("checkbox", { name: "gpt-6-astra" })).toBeNull();
+  checkModel("claude-opus-5"); checkModel("gpt-5.5", "Denied models");
+  change("Filter allowed models by provider", "");
+  expect((allowed.getByRole("checkbox", { name: "gpt-6-astra" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save policy" })); await screen.findByText("Policy saved");
+  expect(api.savePolicy).toHaveBeenCalledWith("bob", expect.objectContaining({ policy: expect.objectContaining({ models: { allow: ["gpt-6-astra", "gpt-latest", "claude-opus-5"], deny: ["gpt-5.5"] } }) }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear allowed models" }));
+  expect(allowed.getByText(/All models are allowed by this policy/)).toBeTruthy();
+});
+
+it("preserves existing selectors on a catalog failure and offers a retry", async () => {
+  const policy = { ...api.emptyPolicy(), models: { allow: ["retired-model", "claude-*"], deny: ["blocked-model"] } };
+  vi.mocked(api.loadPolicies).mockResolvedValue({ ...view, principal_policy: policy });
+  vi.mocked(loadModelCatalog).mockRejectedValueOnce(new Error("Catalog unavailable"));
+  vi.mocked(api.savePolicy).mockResolvedValue({ ...view, revision: 3, principal_policy: policy });
+  render(<PolicyEditorForm principalID="bob" />);
+  expect((await screen.findByRole("alert")).textContent).toContain("Saved selections are preserved");
+  const allowed = within(screen.getByRole("group", { name: "Allowed models" }));
+  expect((allowed.getByRole("checkbox", { name: "retired-model" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save policy" })); await screen.findByText("Policy saved");
+  expect(api.savePolicy).toHaveBeenCalledWith("bob", expect.objectContaining({ policy }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry models" }));
+  await waitFor(() => expect(allowed.getByRole("checkbox", { name: "gpt-5.5" })).toBeTruthy());
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect((allowed.getByRole("checkbox", { name: "claude-*" }) as HTMLInputElement).checked).toBe(true);
+  checkModel("retired-model");
+  expect(allowed.queryByRole("checkbox", { name: "retired-model" })).toBeNull();
+});
+
+it("resets model restrictions when a different principal is selected and drops the previous pending save", async () => {
+  let complete!: (value: api.PolicyView) => void;
+  vi.mocked(api.savePolicy).mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+  const { rerender } = render(<PolicyEditorForm key="bob" principalID="bob" />);
+  await screen.findByRole("group", { name: "Allowed models" }); checkModel("gpt-5.5");
+  fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
+  vi.mocked(api.loadPolicies).mockResolvedValue({ ...view, principal_id: "alice" });
+  rerender(<PolicyEditorForm key="alice" principalID="alice" />);
+  const allowed = within(await screen.findByRole("group", { name: "Allowed models" }));
+  await act(async () => complete({ ...view, revision: 3 }));
+  expect(screen.queryByText("Policy saved")).toBeNull();
+  expect((allowed.getByRole("checkbox", { name: "gpt-5.5" }) as HTMLInputElement).checked).toBe(false);
 });
 
 it("requires revoke confirmation and preserves the grant on failure", async () => {
