@@ -129,7 +129,10 @@ export async function setPrincipalReasoningEffort(id: string, maxReasoningEffort
 
 async function decode<T>(response: Response): Promise<T> {
   let data: unknown;
-  try { data = await response.json(); } catch { throw new Error(`Invalid JSON response (${response.status})`); }
+  try { data = await response.json(); } catch {
+    if ([502, 503, 504].includes(response.status)) throw new Error(`Pool service is temporarily unavailable (${response.status}). Please try again shortly.`);
+    throw new Error(`Invalid JSON response (${response.status})`);
+  }
   if (!response.ok) {
     if (data && typeof data === "object" && "error" in data) {
       const error = data.error;
