@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, act, within } from "@testing-library/react";
-import { AccountGovernance, AccountGovernanceForm } from "./AccountGovernance";
+import { AccountGovernance, AccountGovernanceForm, OperatorSharing } from "./AccountGovernance";
 import { PolicyEditorForm } from "./PolicyEditor";
 import * as api from "../governance-api";
 import { loadModelCatalog } from "../api";
-import type { ModelDescriptor } from "../types";
+import type { ConsolePrincipal, ModelDescriptor } from "../types";
 
-vi.mock("../governance-api", async (original) => ({ ...await original<typeof import("../governance-api")>(), loadControls: vi.fn(), saveControls: vi.fn(), loadSharing: vi.fn(), setDelegation: vi.fn(), createGrant: vi.fn(), revokeGrant: vi.fn(), loadPolicies: vi.fn(), previewPolicy: vi.fn(), savePolicy: vi.fn() }));
+vi.mock("../governance-api", async (original) => ({ ...await original<typeof import("../governance-api")>(), loadControls: vi.fn(), saveControls: vi.fn(), loadSharing: vi.fn(), loadShareableAccounts: vi.fn(), setDelegation: vi.fn(), createGrant: vi.fn(), revokeGrant: vi.fn(), loadPolicies: vi.fn(), previewPolicy: vi.fn(), savePolicy: vi.fn() }));
 vi.mock("../api", async (original) => ({ ...await original<typeof import("../api")>(), loadModelCatalog: vi.fn() }));
 const models: ModelDescriptor[] = [
   { id: "gpt-5.5", name: "GPT 5.5", provider: "codex", protocol: "responses", available_now: true, aliases: ["gpt-latest"] },
@@ -164,10 +164,43 @@ it("requires revoke confirmation and preserves the grant on failure", async () =
 it("uses explicit recipient, models, expiry and budget, preserving a retry ID", async () => {
   vi.mocked(api.createGrant).mockRejectedValue(new Error("Account unavailable"));
   render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />); await screen.findByLabelText("Recipient principal ID");
-  change("Recipient principal ID", "bob"); change("Granted models", "gpt-5.5"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
+  change("Recipient principal ID", "bob"); checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
   fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await screen.findByText("Account unavailable");
   const first = vi.mocked(api.createGrant).mock.calls[0][2]; expect(first.recipient_id).toBe("bob"); expect(first.models).toEqual(["gpt-5.5"]); expect(first.budget.daily_requests).toBe(100);
   fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await waitFor(() => expect(api.createGrant).toHaveBeenCalledTimes(2)); expect(vi.mocked(api.createGrant).mock.calls[1][2].id).toBe(first.id);
+});
+
+it("selects a shareable account and named recipient with canonical model checkboxes", async () => {
+  const recipient: ConsolePrincipal = { id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
+  vi.mocked(api.loadShareableAccounts).mockResolvedValue([{ id: "private", provider: "codex", owner_id: "alice" }]);
+  vi.mocked(api.createGrant).mockResolvedValue({ ...sharing, revision: 4 });
+  render(<OperatorSharing recipients={[recipient, { ...recipient, id: "suspended", display_name: "Suspended", status: "suspended" }]} recipientID="bob" />);
+  expect(api.loadShareableAccounts).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Share provider accounts" }));
+  await screen.findByRole("option", { name: /codex.*private/ });
+  change("Shareable account", "codex:private");
+  const users = await screen.findByLabelText("Recipient user");
+  expect((users as HTMLSelectElement).value).toBe("bob");
+  expect(within(users).getByRole("option", { name: "Bob · bob@example.test" })).toBeTruthy();
+  expect(within(users).queryByRole("option", { name: /Suspended/ })).toBeNull();
+  const choices = within(await screen.findByRole("group", { name: "Granted models" }));
+  await choices.findByRole("checkbox", { name: "gpt-5.5" });
+  expect(choices.queryByRole("checkbox", { name: "claude-opus-5" })).toBeNull();
+  expect(choices.queryByRole("checkbox", { name: "gpt-latest" })).toBeNull();
+  expect(api.createGrant).not.toHaveBeenCalled();
+  checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
+  fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await screen.findByText("Account grant created");
+  expect(api.createGrant).toHaveBeenCalledWith("codex", "private", expect.objectContaining({ recipient_id: "bob", models: ["gpt-5.5"], budget: { daily_requests: 100 }, revision: 3 }));
+});
+
+it("retries a failed sharing catalog without allowing an empty grant", async () => {
+  vi.mocked(loadModelCatalog).mockRejectedValueOnce(new Error("Catalog unavailable"));
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
+  await screen.findByText("Catalog unavailable");
+  expect(enabled("Create grant")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Retry models" }));
+  await screen.findByRole("checkbox", { name: "gpt-5.5" });
+  expect(screen.queryByText("Catalog unavailable")).toBeNull();
 });
 
 it("shows sharing denial without displaying grant creation", async () => {

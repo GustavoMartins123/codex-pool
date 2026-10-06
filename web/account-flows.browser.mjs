@@ -88,7 +88,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
     else if (url.pathname === '/api/pool/stats') body = stats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
-    else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }] };
+    else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }, { id: 'kimi-k2.5', provider: 'kimi', protocol: 'messages', available_now: true }] };
     else { status = 503; body = { error: 'Request failed. Try again.' }; }
     await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -279,7 +279,9 @@ try {
     const { page, errors } = await open('/?view=mine', 'my-sharing');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await page.waitForSelector('.governance-form input[type="datetime-local"]');
-    await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Granted models': 'kimi-k2.5', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
+    await page.waitForSelector('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
+    await page.click('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
+    await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
     await clickText(page, 'button', 'Create grant');
     await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');

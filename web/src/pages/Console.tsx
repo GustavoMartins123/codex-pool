@@ -242,7 +242,7 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
         </>}
       </aside>
     </div>
-    {principal.kind === "operator" && <OperatorSharing />}
+    {principal.kind === "operator" && <OperatorSharing recipients={principals} recipientID={selected?.id} />}
     <details className="audit-disclosure">
       <summary>Audit log <span>{audit.length}</span></summary>
       <div className="audit-list" role="log" aria-label="Recent account actions">{audit.length === 0 ? <div className="empty-state">No actions recorded.</div> : audit.slice(0, 50).map((entry) => <div key={entry.id}><time>{new Date(entry.at).toLocaleString()}</time><strong>{auditLabel(entry.action)}</strong><small>{entry.detail || "No additional detail."}</small><details><summary>Technical details</summary><code>Actor {entry.actor_id} · Subject {entry.subject_id}</code></details></div>)}</div>
