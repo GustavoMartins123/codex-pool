@@ -1723,13 +1723,6 @@ func requiredPlanForRequest(accountType AccountType, r *http.Request, requestedM
 	return ""
 }
 
-func isCodexToClaudeModelOverridePath(path string) bool {
-	if detectRequestFormat(path) == FormatOpenAI {
-		return true
-	}
-	return strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/responses")
-}
-
 // modelRouteOverride checks if the requested model should be routed to an external
 // provider (Kimi, MiniMax, etc.) instead of the path-detected provider.
 // Returns (provider, baseURL, rewrittenBody) or (nil, nil, nil) if no override.
@@ -1807,7 +1800,7 @@ func (h *proxyHandler) modelRouteOverride(path, model string, body []byte) (Prov
 			return p, p.UpstreamURL(path), nil
 		}
 	}
-	if isClaudeModel(model) && !isCodexToClaudeModelOverridePath(path) {
+	if isClaudeModel(model) {
 		p := h.registry.ForType(AccountTypeClaude)
 		if p != nil {
 			canonical := claudeCanonicalModel(model)
@@ -1911,6 +1904,7 @@ func (h *proxyHandler) resolveStreamedModelRoute(path, model string) (Provider, 
 		canonical   func(string) string
 	}
 	routes := []route{
+		{AccountTypeClaude, isClaudeModel, claudeCanonicalModel},
 		{AccountTypeKimi, isKimiModel, func(model string) string { return model }},
 		{AccountTypeMinimax, isMinimaxModel, minimaxCanonicalModel},
 		{AccountTypeZAI, isZAIModel, zaiCanonicalModel},
@@ -2396,7 +2390,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// large prompts must not be decoded into map[string]any. Spool token-by-token,
 	// then model-route: Grok/Kimi/MiniMax/ZAI/Xiaomi/Adverserial must not inherit
 	// the path-selected Codex upstream (especially /backend-api/codex/responses).
-	if isCodexResponsesPath(r.URL.Path) {
+	if isCodexResponsesPath(r.URL.Path) && accountType != AccountTypeClaude {
 		largeOrChunked := r.ContentLength < 0 || r.ContentLength > h.cfg.maxInMemoryBodyBytes
 		encoding := strings.TrimSpace(strings.ToLower(r.Header.Get("Content-Encoding")))
 		uncompressedJSON := encoding == "" || encoding == "identity"
@@ -2483,6 +2477,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// clamp runs for chunked and oversized requests too; otherwise the clamp is
 	// advisory and a large request fails upstream instead.
 	if accountType == AccountTypeAdverserial || accountType == AccountTypeGrok {
+		streamBody = false
+	}
+	// Claude needs the Responses envelope translated to Messages, including
+	// chunked requests. Keep this on the bounded replay/translation path.
+	if accountType == AccountTypeClaude && isCodexResponsesPath(r.URL.Path) {
 		streamBody = false
 	}
 	if streamBody {

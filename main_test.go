@@ -528,7 +528,7 @@ func TestCodexSSEStillSamplesWhenCyberPolicyMayInspect(t *testing.T) {
 	}
 }
 
-func TestModelRouteOverrideDoesNotRouteCodexClientPathsToClaude(t *testing.T) {
+func TestModelRouteOverrideRoutesOpenAIClientPathsToClaude(t *testing.T) {
 	base, _ := url.Parse("https://chatgpt.com/backend-api/codex")
 	handler := &proxyHandler{
 		registry: NewProviderRegistry(
@@ -539,10 +539,10 @@ func TestModelRouteOverrideDoesNotRouteCodexClientPathsToClaude(t *testing.T) {
 	}
 
 	for _, path := range []string{"/v1/responses", "/responses", "/v1/chat/completions", "/v1/completions"} {
-		for _, model := range []string{"opus", "fable"} {
+		for _, model := range []string{"opus", "fable", "claude-sonnet-5"} {
 			provider, overrideBase, rewritten := handler.modelRouteOverride(path, model, []byte(`{"model":"`+model+`"}`))
-			if provider != nil || overrideBase != nil || rewritten != nil {
-				t.Fatalf("modelRouteOverride(%q, %s) = provider=%v base=%v rewritten=%s, want no Claude override", path, model, provider, overrideBase, rewritten)
+			if provider == nil || provider.Type() != AccountTypeClaude || overrideBase == nil || !bytes.Contains(rewritten, []byte(claudeCanonicalModel(model))) {
+				t.Fatalf("modelRouteOverride(%q, %s) = provider=%v base=%v rewritten=%s, want Claude override", path, model, provider, overrideBase, rewritten)
 			}
 		}
 	}
@@ -586,10 +586,11 @@ func TestModelRouteOverrideRewritesClaudeSonnetAlias(t *testing.T) {
 	}
 }
 
-func TestCodexClientClaudeModelStaysOnCodexAccount(t *testing.T) {
+func TestCodexClientClaudeModelUsesClaudeAccount(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api/codex")
+	claudeBase, _ := url.Parse("https://api.anthropic.com")
 	codex := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", AccountID: "acct_codex", PlanType: "pro"}
 	claude := &Account{Type: AccountTypeClaude, ID: "claude", AccessToken: "sk-ant-api-upstream", PlanType: "max"}
 	var upstreamPath string
@@ -603,7 +604,7 @@ func TestCodexClientClaudeModelStaysOnCodexAccount(t *testing.T) {
 		recent:  newRecentErrors(5),
 		registry: NewProviderRegistry(
 			NewCodexProvider(base, base, nil),
-			NewClaudeProvider(base),
+			NewClaudeProvider(claudeBase),
 			NewGeminiProvider(base, base),
 		),
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -614,7 +615,7 @@ func TestCodexClientClaudeModelStaysOnCodexAccount(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+				Body:       io.NopCloser(bytes.NewBufferString(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)),
 			}, nil
 		}),
 	}
@@ -628,14 +629,14 @@ func TestCodexClientClaudeModelStaysOnCodexAccount(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
-	if upstreamPath != "/backend-api/codex/responses" {
-		t.Fatalf("upstream path = %q, want Codex responses path", upstreamPath)
+	if upstreamPath != "/v1/messages" {
+		t.Fatalf("upstream path = %q, want Claude messages path", upstreamPath)
 	}
-	if codexAccountID != "acct_codex" {
-		t.Fatalf("ChatGPT-Account-ID = %q, want Codex account", codexAccountID)
+	if codexAccountID != "" {
+		t.Fatalf("Codex account ID leaked to Claude: %q", codexAccountID)
 	}
-	if claudeAPIKey != "" {
-		t.Fatalf("Claude X-Api-Key should not be set, got %q", claudeAPIKey)
+	if claudeAPIKey != claude.AccessToken {
+		t.Fatalf("Claude X-Api-Key = %q, want Claude account credential", claudeAPIKey)
 	}
 }
 
