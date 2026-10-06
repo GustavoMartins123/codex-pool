@@ -20,20 +20,22 @@ func TestPoolModelDescriptorsCoverEveryProvider(t *testing.T) {
 	}
 
 	tests := map[string]string{
-		"gpt-5.6-sol":      "openai",
-		"gpt-5.6-sol[1m]":  "openai",
-		"gpt-5.6-luna[1m]": "openai",
-		"gemini-3.7-flash": "gemini",
-		"claude-sonnet-5":  "anthropic",
-		"claude-fable-5-1": "anthropic",
-		"claude-opus-5":    "anthropic",
-		"k3":               "anthropic",
-		"kimi-for-coding":  "anthropic",
-		"MiniMax-M3":       "anthropic",
-		"glm-5.3":          "anthropic",
-		"glm-5.3-flash":    "anthropic",
-		"mimo-v2.5-pro":    "anthropic",
-		"grok-4.5":         "openai",
+		"gpt-5.6-sol":       "openai",
+		"gpt-5.6-sol[1m]":   "openai",
+		"gpt-5.6-luna[1m]":  "openai",
+		"gemini-3.7-flash":  "gemini",
+		"claude-sonnet-5":   "anthropic",
+		"claude-sonnet-5-5": "anthropic",
+		"claude-opus-5-5":   "anthropic",
+		"claude-fable-5-1":  "anthropic",
+		"claude-opus-5":     "anthropic",
+		"k3":                "anthropic",
+		"kimi-for-coding":   "anthropic",
+		"MiniMax-M3":        "anthropic",
+		"glm-5.3":           "anthropic",
+		"glm-5.3-flash":     "anthropic",
+		"mimo-v2.5-pro":     "anthropic",
+		"grok-4.5":          "openai",
 	}
 	for id, protocol := range tests {
 		descriptor, ok := byID[id]

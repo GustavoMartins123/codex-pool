@@ -581,8 +581,8 @@ func TestModelRouteOverrideRewritesClaudeSonnetAlias(t *testing.T) {
 	if provider == nil || provider.Type() != AccountTypeClaude || overrideBase == nil {
 		t.Fatalf("modelRouteOverride(/v1/messages, sonnet) = provider=%v base=%v, want Claude override", provider, overrideBase)
 	}
-	if !bytes.Contains(rewritten, []byte(`"model":"claude-sonnet-5"`)) {
-		t.Fatalf("rewritten body = %s, want claude-sonnet-5", rewritten)
+	if !bytes.Contains(rewritten, []byte(`"model":"claude-sonnet-5-5"`)) {
+		t.Fatalf("rewritten body = %s, want claude-sonnet-5-5", rewritten)
 	}
 }
 
@@ -693,7 +693,7 @@ func TestClaudePoolTranslatesResponsesClientFormat(t *testing.T) {
 	if upstreamPath != "/v1/messages" {
 		t.Fatalf("upstream path = %q", upstreamPath)
 	}
-	if upstreamModel != "claude-opus-5" {
+	if upstreamModel != "claude-opus-5-5" {
 		t.Fatalf("upstream model = %q", upstreamModel)
 	}
 }
@@ -1072,6 +1072,11 @@ func TestInjectClaudeModelsAddsMissingCodexFallbackModels(t *testing.T) {
 	}
 	if got := found["claude-sonnet-5"]["display_name"]; got != "Claude Sonnet 5" {
 		t.Fatalf("claude-sonnet-5 display_name = %#v", got)
+	}
+	for id, name := range map[string]string{"claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-opus-5-5": "Claude Opus 5.5"} {
+		if found[id] == nil || found[id]["display_name"] != name {
+			t.Fatalf("missing current Claude model %s (%s) in Codex catalog", id, name)
+		}
 	}
 }
 

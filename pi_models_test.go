@@ -11,12 +11,12 @@ func TestClaudeCanonicalModelHandlesShortOneMillionAliases(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
-		"sonnet":      "claude-sonnet-5",
-		"sonnet[1m]":  "claude-sonnet-5 [1m]",
-		"sonnet [1m]": "claude-sonnet-5 [1m]",
-		"opus":        "claude-opus-5",
-		"opus[1m]":    "claude-opus-5 [1m]",
-		"opus [1m]":   "claude-opus-5 [1m]",
+		"sonnet":      "claude-sonnet-5-5",
+		"sonnet[1m]":  "claude-sonnet-5-5 [1m]",
+		"sonnet [1m]": "claude-sonnet-5-5 [1m]",
+		"opus":        "claude-opus-5-5",
+		"opus[1m]":    "claude-opus-5-5 [1m]",
+		"opus [1m]":   "claude-opus-5-5 [1m]",
 		"fable":       "claude-fable-5-1",
 		"haiku":       "claude-haiku-4-5-20251001",
 	}

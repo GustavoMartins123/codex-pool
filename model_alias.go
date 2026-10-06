@@ -9,6 +9,8 @@ import (
 // defaultModelAliases are always registered unless overridden by config.toml
 // [model_aliases]. Keys are matched case-insensitively at resolve time.
 var defaultModelAliases = map[string]string{
+	"sonnet": "claude-sonnet-5-5",
+	"opus":   "claude-opus-5-5",
 	// GPT-5.6 series short name → Sol (default variant).
 	"gpt-5.6": "gpt-5.6-sol",
 	// The 1M choices are client-facing context profiles. Upstream uses the

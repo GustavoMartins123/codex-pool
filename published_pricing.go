@@ -51,8 +51,11 @@ func publishedModelPricing(now time.Time) map[string]ModelPricing {
 		"gpt-5.4-mini":        flatPricing(0.75, 4.5, 0.075, 0),
 		"gpt-5.3-codex-spark": flatPricing(1.75, 14, 0.175, 0),
 
-		"claude-fable-5-1":           flatPricing(10, 50, 0.25, 12.5),
-		"claude-fable-5":             flatPricing(10, 50, 1, 12.5),
+		"claude-fable-5-1": flatPricing(10, 50, 0.25, 12.5),
+		"claude-fable-5":   flatPricing(10, 50, 1, 12.5),
+		// Anthropic pricing page, verified 2026-10-06; cache writes use the 5-minute rate.
+		"claude-opus-5-5":            flatPricing(4, 20, 0.2, 5),
+		"claude-sonnet-5-5":          flatPricing(2, 10, 0.2, 2.5),
 		"claude-opus-5":              flatPricing(5, 25, 0.5, 6.25),
 		"claude-opus-4-8":            flatPricing(5, 25, 0.5, 6.25),
 		"claude-opus-4-7":            flatPricing(5, 25, 0.5, 6.25),

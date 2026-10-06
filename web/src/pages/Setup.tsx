@@ -131,8 +131,8 @@ export function SetupPage() {
       name: "Anthropic API",
       summary: "Use the pool credential as an Anthropic API key. Claude models route natively; GPT/Kimi/MiniMax/GLM/Xiaomi are translated through /v1/messages. Get the key from the Claude Code config fetch above (access_token).",
       examples: [
-        { label: "Python SDK", code: `pip install anthropic\n\nfrom anthropic import Anthropic\nclient = Anthropic(base_url="${base}", api_key="${"<access_token>"}")\nmsg = client.messages.create(model="claude-sonnet-5", max_tokens=1024, messages=[{"role": "user", "content": "hello"}])` },
-        { label: "Env + curl", code: `export ANTHROPIC_BASE_URL="${base}"\nexport ANTHROPIC_API_KEY="<access_token>"\n\ncurl "$ANTHROPIC_BASE_URL/v1/messages" \\\n  -H "x-api-key: $ANTHROPIC_API_KEY" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"claude-sonnet-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}'` },
+        { label: "Python SDK", code: `pip install anthropic\n\nfrom anthropic import Anthropic\nclient = Anthropic(base_url="${base}", api_key="${"<access_token>"}")\nmsg = client.messages.create(model="claude-sonnet-5-5", max_tokens=1024, messages=[{"role": "user", "content": "hello"}])` },
+        { label: "Env + curl", code: `export ANTHROPIC_BASE_URL="${base}"\nexport ANTHROPIC_API_KEY="<access_token>"\n\ncurl "$ANTHROPIC_BASE_URL/v1/messages" \\\n  -H "x-api-key: $ANTHROPIC_API_KEY" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"claude-sonnet-5-5","max_tokens":1024,"messages":[{"role":"user","content":"hello"}]}'` },
       ],
     },
     openai: {
@@ -145,7 +145,7 @@ export function SetupPage() {
       ],
     },
   };
-  const modelPills = ["claude-sonnet-5", "claude-opus-5", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.4", "kimi-for-coding", "MiniMax-M3", "glm-5.3", "grok-4.5", "opencode-go/longcat-2.0"];
+  const modelPills = ["claude-sonnet-5-5", "claude-opus-5-5", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.4", "kimi-for-coding", "MiniMax-M3", "glm-5.3", "grok-4.5", "opencode-go/longcat-2.0"];
 
   const activeTool = cliTools[tool];
   const activeSdk = sdkTools[tool];

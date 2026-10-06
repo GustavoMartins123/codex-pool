@@ -132,6 +132,26 @@ func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 	}
 }
 
+func TestClaude55PricingAndContextAliases(t *testing.T) {
+	t.Parallel()
+	pd := newPricingData()
+	for model, want := range map[string]ModelPricing{
+		"claude-opus-5-5":   flatPricing(4, 20, 0.2, 5),
+		"claude-sonnet-5-5": flatPricing(2, 10, 0.2, 2.5),
+	} {
+		for _, id := range []string{model, model + "[1m]", model + " [1m]"} {
+			got, ok := pd.lookupPricing(id)
+			if !ok || got != want {
+				t.Fatalf("lookupPricing(%q) = %#v, %v; want %#v", id, got, ok, want)
+			}
+			advertised := advertisedModelCost(id, time.Now())
+			if advertised.Input != want.InputCostPerToken*1e6 || advertised.CacheRead != want.CacheReadCost*1e6 {
+				t.Fatalf("advertised %s pricing differs from accounting: %#v", id, advertised)
+			}
+		}
+	}
+}
+
 func TestLookupPricingGLM53UsesPublishedRates(t *testing.T) {
 	t.Parallel()
 
