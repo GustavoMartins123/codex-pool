@@ -165,9 +165,46 @@ it("uses explicit recipient, models, expiry and budget, preserving a retry ID", 
   vi.mocked(api.createGrant).mockRejectedValue(new Error("Account unavailable"));
   render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />); await screen.findByLabelText("Recipient principal ID");
   change("Recipient principal ID", "bob"); checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
-  fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await screen.findByText("Account unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" })); await screen.findByText("Account unavailable");
   const first = vi.mocked(api.createGrant).mock.calls[0][2]; expect(first.recipient_id).toBe("bob"); expect(first.models).toEqual(["gpt-5.5"]); expect(first.budget.daily_requests).toBe(100);
-  fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await waitFor(() => expect(api.createGrant).toHaveBeenCalledTimes(2)); expect(vi.mocked(api.createGrant).mock.calls[1][2].id).toBe(first.id);
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" })); await waitFor(() => expect(api.createGrant).toHaveBeenCalledTimes(2)); expect(vi.mocked(api.createGrant).mock.calls[1][2].id).toBe(first.id);
+});
+
+it("explains missing sharing fields and saves access only after explicit submission", async () => {
+  vi.mocked(api.createGrant).mockImplementation(async (_provider, _id, value) => ({ ...sharing, revision: 4, grants: [{ ...value, revision: 1 }] }));
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
+  await screen.findByLabelText("Recipient principal ID");
+  const button = screen.getByRole("button", { name: "Save account access" });
+  const help = document.getElementById(button.getAttribute("aria-describedby")!)!;
+  expect(help.textContent).toContain("Enter a recipient principal ID.");
+  expect(help.textContent).toContain("Select at least one granted model.");
+  expect(help.textContent).toContain("Set Expires at to a future date and time.");
+  expect(help.textContent).toContain("Enter a grant reason.");
+  expect(enabled("Save account access")).toBe(false);
+  fireEvent.click(button); expect(api.createGrant).not.toHaveBeenCalled();
+
+  change("Recipient principal ID", "bob"); checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00");
+  expect(help.textContent).not.toContain("Enter a recipient principal ID.");
+  expect(help.textContent).not.toContain("Select at least one granted model.");
+  expect(help.textContent).not.toContain("Set Expires at to a future date and time.");
+  expect(enabled("Save account access")).toBe(false);
+  change("Grant reason", "Team access"); change("Expires at", "2000-01-01T12:00");
+  expect(help.textContent).toContain("Set Expires at to a future date and time.");
+  change("Expires at", "2099-01-01T12:00"); change("Daily requests", "0");
+  expect(help.textContent).toContain("Set a positive daily or monthly request or token budget.");
+  change("Daily tokens", "1000");
+  expect(help.textContent).toContain("Set a positive token reservation for the token budget.");
+  expect(enabled("Save account access")).toBe(false);
+  change("Token reservation", "100"); change("Monthly requests", "-1");
+  expect(help.textContent).toContain("Use nonnegative whole numbers for all budget limits.");
+  change("Monthly requests", "0");
+  expect(help.textContent).toContain("Ready to save.");
+  expect(enabled("Save account access")).toBe(true);
+  expect(api.createGrant).not.toHaveBeenCalled();
+  fireEvent.click(button);
+  await screen.findByText("Account grant created");
+  expect(api.createGrant).toHaveBeenCalledWith("codex", "private", expect.objectContaining({ recipient_id: "bob", models: ["gpt-5.5"], budget: expect.objectContaining({ daily_tokens: 1000, token_reservation: 100 }), reason: "Team access" }));
+  expect(within(screen.getByLabelText("Account grants")).getByText("bob")).toBeTruthy();
 });
 
 it("selects a shareable account and named recipient with canonical model checkboxes", async () => {
@@ -189,7 +226,7 @@ it("selects a shareable account and named recipient with canonical model checkbo
   expect(choices.queryByRole("checkbox", { name: "gpt-latest" })).toBeNull();
   expect(api.createGrant).not.toHaveBeenCalled();
   checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
-  fireEvent.click(screen.getByRole("button", { name: "Create grant" })); await screen.findByText("Account grant created");
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" })); await screen.findByText("Account grant created");
   expect(api.createGrant).toHaveBeenCalledWith("codex", "private", expect.objectContaining({ recipient_id: "bob", models: ["gpt-5.5"], budget: { daily_requests: 100 }, revision: 3 }));
 });
 
@@ -197,7 +234,7 @@ it("retries a failed sharing catalog without allowing an empty grant", async () 
   vi.mocked(loadModelCatalog).mockRejectedValueOnce(new Error("Catalog unavailable"));
   render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
   await screen.findByText("Catalog unavailable");
-  expect(enabled("Create grant")).toBe(false);
+  expect(enabled("Save account access")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "Retry models" }));
   await screen.findByRole("checkbox", { name: "gpt-5.5" });
   expect(screen.queryByText("Catalog unavailable")).toBeNull();
@@ -205,5 +242,5 @@ it("retries a failed sharing catalog without allowing an empty grant", async () 
 
 it("shows sharing denial without displaying grant creation", async () => {
   vi.mocked(api.loadSharing).mockRejectedValue(new Error("Account delegation denied")); render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
-  expect((await screen.findByRole("alert")).textContent).toContain("Account delegation denied"); expect(screen.queryByRole("button", { name: "Create grant" })).toBeNull();
+  expect((await screen.findByRole("alert")).textContent).toContain("Account delegation denied"); expect(screen.queryByRole("button", { name: "Save account access" })).toBeNull();
 });

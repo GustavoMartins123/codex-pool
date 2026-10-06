@@ -1244,11 +1244,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .governance-form fieldset { min-width: 0; border: 1px solid var(--line, #45413b); padding: .75rem; }
 .governance-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: .75rem; }
 .governance-fields label { display: grid; gap: .35rem; font-size: .85rem; }
-.governance-fields input, .governance-fields select, .governance-panel > label select { width: 100%; min-width: 0; }
+.governance-fields input, .governance-fields select, .governance-panel > label select { width: 100%; min-width: 0; min-height: 40px; border: 1px solid var(--rule); background: var(--void); color: var(--ink); padding: .5rem; }
 .governance-fields small { grid-column: 1 / -1; }
 .governance-form pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
 .governance-consent { display: flex; align-items: center; gap: .6rem; }
 .governance-form .row-actions { display: flex; flex-wrap: wrap; }
+.governance-form .gold-button { min-height: 44px; border: 1px solid var(--gold-hot); padding: .65rem 1rem; cursor: pointer; }
+.governance-form .gold-button:disabled { cursor: not-allowed; opacity: .7; }
+.grant-save-actions { display: grid; gap: .75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+.grant-save-help { color: var(--ink); font-size: .85rem; }
+.grant-save-help p { margin: 0; }
+.grant-save-help ul { margin: .5rem 0 0; padding-left: 1.25rem; list-style: disc; }
+.grant-save-help li + li { margin-top: .3rem; }
 .policy-model-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: .75rem; margin-bottom: .75rem; }
 .policy-model-selector p { margin: 0 0 .6rem; color: var(--muted); font-size: .85rem; }
 .policy-model-filters { display: grid; gap: .5rem; margin-bottom: .6rem; }

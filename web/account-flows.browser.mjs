@@ -279,10 +279,24 @@ try {
     const { page, errors } = await open('/?view=mine', 'my-sharing');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await page.waitForSelector('.governance-form input[type="datetime-local"]');
+    await page.waitForSelector('.grant-save-actions button');
+    assert.equal(await page.$eval('.grant-save-actions button', el => el.disabled), true);
+    assert.ok(await page.$eval('.grant-save-help', el => el.textContent.includes('Enter a recipient principal ID.') && el.textContent.includes('Set Expires at to a future date and time.') && el.textContent.includes('Enter a grant reason.')));
+    for (const width of [390, 768, 1365]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Sharing overflows at ${width}px`);
+      assert.ok(await page.$eval('.grant-save-actions button', el => el.getBoundingClientRect().height >= 44), `Save action is too small at ${width}px`);
+    }
+    // Account inspectors also render this form in a narrow column.
+    await page.$eval('.governance-panel', el => { el.style.width = '280px'; el.style.maxWidth = '100%'; });
+    assert.ok(await page.$eval('.governance-form', el => el.scrollWidth <= el.clientWidth));
     await page.waitForSelector('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
     await page.click('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
     await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
-    await clickText(page, 'button', 'Create grant');
+    await page.waitForFunction(() => !document.querySelector('.grant-save-actions button').disabled);
+    assert.ok(await page.$eval('.grant-save-help', el => el.textContent.includes('Ready to save.')));
+    await page.$eval('.grant-save-actions button', el => el.scrollIntoView({ block: 'center' }));
+    await page.click('.grant-save-actions button');
     await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await clickText(page, 'button', 'Revoke grant');
