@@ -22,15 +22,14 @@ func TestFreshSetupCredentialsRequireAccountGrant(t *testing.T) {
 		{"codex-with-claude-chunked", "codex", "/responses", "claude-sonnet-5", `{"model":"claude-sonnet-5","input":"hello"}`, AccountTypeClaude},
 		{"codex-sonnet-alias", "codex", "/responses", "claude-sonnet-5-5", `{"model":"sonnet","input":"hello"}`, AccountTypeClaude},
 		{"claude-opus-alias", "claude", "/v1/messages", "claude-opus-5-5", `{"model":"opus","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`, AccountTypeClaude},
+		{"claude-opus-pro", "claude", "/v1/messages", "claude-opus-5-5", `{"model":"claude-opus-5-5","max_tokens":32,"messages":[{"role":"user","content":"hello"}]}`, AccountTypeClaude},
+		{"codex-opus-pro", "codex", "/responses", "claude-opus-5-5", `{"model":"claude-opus-5-5","input":"hello"}`, AccountTypeClaude},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("POOL_JWT_SECRET", "fresh-setup-secret")
 			p, client := newNonceTestPassport(t)
 			addTestPassportOperator(t, p, "owner")
 			a := &Account{ID: "managed-account", Type: tc.provider, AccessToken: "upstream-secret", AccountID: "upstream-account", PlanType: "pro"}
-			if tc.provider == AccountTypeClaude && strings.Contains(tc.model, "opus") {
-				a.PlanType = "max_20x"
-			}
 			if err := p.initializeAccountAuthority([]*Account{a}); err != nil {
 				t.Fatal(err)
 			}

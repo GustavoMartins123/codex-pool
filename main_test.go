@@ -1371,11 +1371,13 @@ func TestPlanMatchesClaudePremium(t *testing.T) {
 func TestClaudeRequestRequiresPremium(t *testing.T) {
 	t.Parallel()
 
-	if !claudeRequestRequiresPremium(nil, "claude-opus-4-7") {
-		t.Fatal("expected opus model to require a premium Claude account")
+	for _, model := range []string{"opus", "claude-opus-4-7", "claude-opus-5", "claude-opus-5-5"} {
+		if claudeRequestRequiresPremium(nil, model) || requiredPlanForRequest(AccountTypeClaude, nil, model) != "" {
+			t.Fatalf("regular Opus request %q must allow Pro accounts", model)
+		}
 	}
-	if !claudeRequestRequiresPremium(nil, "opus") {
-		t.Fatal("expected opus alias to require a premium Claude account")
+	if !claudeRequestRequiresPremium(nil, "claude-opus-5-5 [1m]") {
+		t.Fatal("expected explicit extended context to require a premium Claude account")
 	}
 	if !claudeRequestRequiresPremium(nil, "claude-sonnet-5 [1m]") {
 		t.Fatal("expected [1m] model suffix to require a premium Claude account")

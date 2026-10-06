@@ -1699,7 +1699,9 @@ const requiredPlanClaudePremium = "claude_premium"
 
 func claudeRequestRequiresPremium(r *http.Request, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
-	if strings.Contains(model, "opus") || strings.Contains(model, "[1m]") {
+	// Opus is available on Pro. Only explicit extended-context requests use
+	// this plan filter; regular model access is decided by Claude upstream.
+	if strings.Contains(model, "[1m]") {
 		return true
 	}
 	if r == nil {
