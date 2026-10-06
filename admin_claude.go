@@ -410,8 +410,15 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	uuid, err := FetchClaudeAccountUUIDWithContext(r.Context(), tokens.AccessToken, h.transport)
+	uuid := ""
+	if tokens.Account != nil {
+		uuid = strings.TrimSpace(tokens.Account.UUID)
+	}
+	if uuid == "" {
+		uuid, err = FetchClaudeAccountUUIDWithContext(r.Context(), tokens.AccessToken, h.transport)
+	}
 	if err != nil || uuid == "" {
+		log.Printf("Claude account identification failed: %v", err)
 		respondJSONError(w, 502, "could not identify Claude account")
 		return
 	}

@@ -106,11 +106,16 @@ func ClaudeAuthorize(accountID string) (string, *ClaudeOAuthSession, error) {
 
 // ClaudeTokenResponse is the response from the OAuth token endpoint.
 type ClaudeTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int64  `json:"expires_in"`
-	Scope        string `json:"scope"`
+	AccessToken  string                   `json:"access_token"`
+	RefreshToken string                   `json:"refresh_token"`
+	TokenType    string                   `json:"token_type"`
+	ExpiresIn    int64                    `json:"expires_in"`
+	Scope        string                   `json:"scope"`
+	Account      *ClaudeOAuthTokenAccount `json:"account,omitempty"`
+}
+
+type ClaudeOAuthTokenAccount struct {
+	UUID string `json:"uuid"`
 }
 
 // ClaudeExchange exchanges an authorization code for tokens.
@@ -300,7 +305,7 @@ func extractProfileInfo(profile map[string]any) *ClaudeProfileInfo {
 	return info
 }
 
-// FetchClaudeAccountUUID probes Anthropic's internal bootstrap endpoint to
+// FetchClaudeAccountUUID probes Anthropic's OAuth profile endpoint to
 // discover the real account UUID for an OAuth token. This UUID is injected
 // into metadata.user_id to match real Claude Code traffic.
 func FetchClaudeAccountUUID(accessToken string, transport http.RoundTripper) (string, error) {
@@ -311,7 +316,7 @@ func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, 
 	uuidCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(uuidCtx, http.MethodGet, "https://api.anthropic.com/api/claude_cli/bootstrap", nil)
+	req, err := http.NewRequestWithContext(uuidCtx, http.MethodGet, ClaudeOAuthProfileURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -337,7 +342,7 @@ func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, 
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("bootstrap status=%s body=%s", resp.Status, safeText(body))
+		return "", fmt.Errorf("profile status=%s body=%s", resp.Status, safeText(body))
 	}
 
 	var payload map[string]any
@@ -362,7 +367,7 @@ func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, 
 		}
 	}
 
-	return "", fmt.Errorf("account_uuid not found in bootstrap response")
+	return "", fmt.Errorf("account UUID not found in OAuth profile response")
 }
 
 // saveClaudeAccount persists a Claude OAuth account back to its JSON file.
@@ -563,7 +568,7 @@ func parseScopes(scope string) []string {
 }
 
 // probeClaudeAccountUUIDs iterates all Claude OAuth accounts and probes
-// Anthropic's bootstrap endpoint for any that don't have an AccountUUID yet.
+// Anthropic's OAuth profile endpoint for any that don't have an AccountUUID yet.
 func (h *proxyHandler) probeClaudeAccountUUIDs() {
 	h.pool.mu.RLock()
 	accounts := make([]*Account, 0, len(h.pool.accounts))
