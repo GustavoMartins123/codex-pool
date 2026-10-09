@@ -200,7 +200,8 @@ it("explains missing sharing fields and saves access only after explicit submiss
   change("Token reservation", "100"); change("Monthly requests", "-1");
   expect(help.textContent).toContain("Use nonnegative whole numbers for all budget limits.");
   change("Monthly requests", "0");
-  expect(help.textContent).toContain("Ready to save.");
+  expect(help.textContent).toContain("Ready to save this account grant.");
+  expect(help.textContent).toContain("User and credential policies also apply");
   expect(enabled("Save account access")).toBe(true);
   expect(api.createGrant).not.toHaveBeenCalled();
   fireEvent.click(button);
@@ -303,4 +304,23 @@ it("switches among multiple current grants and resets fields for a new recipient
   expect((screen.getByLabelText("Expires at") as HTMLInputElement).value).toBe("");
   expect((screen.getByLabelText("Grant reason") as HTMLInputElement).value).toBe("");
   expect((screen.getByRole("checkbox", { name: "gpt-5.5" }) as HTMLInputElement).checked).toBe(false);
+});
+
+it("shows why a remotely discovered model remains blocked after updating sharing", async () => {
+  const haiku = "claude-haiku-5-5";
+  const recipient: ConsolePrincipal = { id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
+  const current: api.SharingView = { ...sharing, provider: "claude", grants: [{ ...sharing.grants[0], models: ["claude-opus-5", haiku] }] };
+  vi.mocked(api.loadSharing).mockResolvedValue(current);
+  vi.mocked(loadModelCatalog).mockResolvedValue({ models: [...models, { id: haiku, provider: "claude", protocol: "messages", available_now: true }] });
+  const oldPolicy = { ...api.emptyPolicy(), models: { allow: ["claude-opus-5"] } };
+  vi.mocked(api.loadPolicies).mockResolvedValue({ ...view, principal_policy: oldPolicy, sources: [{ source: "principal:bob", policy: oldPolicy }], clients: [] });
+  vi.mocked(api.updateGrant).mockResolvedValue({ ...current, revision: 4, grants: [{ ...current.grants[0], revision: 2 }] });
+  render(<AccountGovernanceForm provider="claude" id="private" sharingOnly recipients={[recipient]} recipientID="bob" />);
+  expect((await screen.findByRole("alert")).textContent).toContain(haiku);
+  expect((screen.getByRole("checkbox", { name: haiku }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
+  await screen.findByText("Account access updated");
+  expect(screen.getByRole("alert").textContent).toContain("return 403");
+  expect(screen.getByRole("button", { name: "Edit user policy" })).toBeTruthy();
+  expect(api.savePolicy).not.toHaveBeenCalled();
 });

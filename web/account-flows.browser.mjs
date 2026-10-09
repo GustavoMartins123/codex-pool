@@ -22,6 +22,11 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
   let sharing = { provider: 'kimi', id: 'private-kimi', revision: 2, owner: true, operator_may_delegate: false, grants: [] };
   const emptyPolicy = () => ({ models: {}, providers: {}, limits: {}, routing: {} });
   let policyView = { principal_id: principal.id, revision: 0, principal_policy: emptyPolicy(), clients: [{ id: 'laptop', label: 'Laptop', status: 'active', policy: emptyPolicy() }], sources: [{ source: 'global', policy: emptyPolicy() }], effective: emptyPolicy(), allowed: true, reasons: [], usage: [{ scope: `principal:${principal.id}`, limits: {}, minute: { requests: 0, tokens: 0 }, day: { requests: 1, tokens: 5, reserved_tokens: 2 }, month: { requests: 1, tokens: 5 }, inflight: 1 }] };
+  if (mode === 'sharing-policy') {
+    const previous = { ...emptyPolicy(), models: { allow: ['claude-opus-5-5', 'claude-sonnet-5-5'] }, limits: { daily_requests: 100 } };
+    policyView = { ...policyView, principal_policy: previous, sources: [{ source: `principal:${principal.id}`, policy: previous }], effective: previous };
+    sharing = { ...sharing, provider: 'claude', id: 'private-claude', grants: [{ id: 'saved-grant', recipient_id: principal.id, models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], budget: { daily_requests: 100 }, expires_at: '2099-01-01T00:00:00Z', revision: 1, reason: 'Shared models' }] };
+  }
   await page.browserContext().setCookie({ name: 'pool_csrf', value: 'browser-fixture', domain: '127.0.0.1', path: '/' });
   page.on('pageerror', e => errors.push(e.message));
   await page.setRequestInterception(true);
@@ -69,7 +74,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
       if (request.method() === 'PUT') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, accountControls.revision); accountControls = { ...accountControls, revision: accountControls.revision + 1, controls: value.controls }; owned = owned.map(item => ({ ...item, revision: accountControls.revision })); }
       body = accountControls;
     }
-    else if (url.pathname === '/api/accounts/kimi/private-kimi/grants') {
+    else if (url.pathname === `/api/accounts/${sharing.provider}/${sharing.id}/grants`) {
       if (request.method() === 'POST') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, sharing.revision); sharing = { ...sharing, revision: sharing.revision + 1, grants: [...sharing.grants, { ...value, revision: 1 }] }; }
       if (request.method() === 'PUT') {
         assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
@@ -86,18 +91,19 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
       assert.equal(request.method(), 'DELETE'); assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const id = url.pathname.split('/').at(-1); sharing = { ...sharing, grants: sharing.grants.map(grant => grant.id === id ? { ...grant, revision: 2, revoked_at: new Date().toISOString() } : grant) }; body = { id, revoked: true };
     }
     else if (url.pathname.startsWith('/api/console/policies/')) {
-      if (request.method() !== 'GET') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, policyView.revision); body = { ...policyView, effective: value.policy }; if (request.method() === 'PUT') { policyView = { ...body, revision: policyView.revision + 1, principal_policy: value.policy }; body = policyView; } }
+      if (request.method() !== 'GET') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, policyView.revision); body = { ...policyView, effective: value.policy }; if (request.method() === 'PUT') { policyView = { ...body, revision: policyView.revision + 1, principal_policy: value.policy }; if (mode === 'sharing-policy') policyView.sources = [{ source: `principal:${principal.id}`, policy: policyView.principal_policy }]; body = policyView; } }
       else body = policyView;
     }
     else if (url.pathname === '/api/me/passkeys') body = [];
     else if (url.pathname === '/api/passes') body = [pass];
+    else if (url.pathname === '/api/console/shareable-accounts') body = [{ id: sharing.id, provider: sharing.provider, owner_id: 'owner' }];
     else if (url.pathname === '/api/console/principals') body = { principals: [{ ...principal, note: '', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }, { ...pass, kind: 'guest', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }] };
     else if (url.pathname === '/api/console/members') body = { principal, link: `${origin}/recover#fixture-invite`, expires_at: '2026-09-04T12:30:00Z' };
     else if (url.pathname === '/api/console/audit') body = [];
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
     else if (url.pathname === '/api/pool/stats') body = stats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
-    else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }, { id: 'kimi-k2.5', provider: 'kimi', protocol: 'messages', available_now: true }] };
+    else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }, { id: 'kimi-k2.5', provider: 'kimi', protocol: 'messages', available_now: true }, { id: 'claude-haiku-5-5', provider: 'claude', protocol: 'messages', available_now: true }] };
     else { status = 503; body = { error: 'Request failed. Try again.' }; }
     await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -303,7 +309,7 @@ try {
     await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
     await page.click('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
     await page.waitForFunction(() => !document.querySelector('.grant-save-actions button').disabled);
-    assert.ok(await page.$eval('.grant-save-help', el => el.textContent.includes('Ready to save.')));
+    assert.ok(await page.$eval('.grant-save-help', el => el.textContent.includes('Ready to save this account grant.')));
     await page.$eval('.grant-save-actions button', el => el.scrollIntoView({ block: 'center' }));
     await page.click('.grant-save-actions button');
     await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
@@ -333,6 +339,29 @@ try {
     await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Revoked'));
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('sharing identifies and edits a policy blocking a remotely discovered Haiku model', async () => {
+    const { page, errors } = await open('/?view=console', 'sharing-policy');
+    await clickText(page, 'button', 'Share provider accounts');
+    await page.waitForSelector('select option[value="claude:private-claude"]');
+    await page.evaluate(() => {
+      const select = [...document.querySelectorAll('select')].find(el => el.querySelector('option[value="claude:private-claude"]'));
+      select.value = 'claude:private-claude';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.querySelector('[aria-label="Recipient model policies"] [role="alert"]')?.textContent.includes('claude-haiku-5-5'));
+    assert.equal(await page.$eval('[aria-label="Granted models"] input[aria-label="claude-haiku-5-5"]', el => el.checked), true);
+    await clickText(page, 'button', 'Edit user policy');
+    await page.waitForSelector('[aria-label="Recipient model policies"] [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]');
+    await page.click('[aria-label="Recipient model policies"] [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]');
+    await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Recipient model policies"]')?.textContent.includes('The current user and active credential model policies allow the selected models.'));
+    assert.equal(await page.$eval('[aria-label="Granted models"] input[aria-label="claude-haiku-5-5"]', el => el.checked), true);
+    for (const width of [390, 768, 1365]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Policy conflict editor overflows at ${width}px`);
+    }
     assert.deepEqual(errors, []); await page.close();
   });
   await check('policy models use checkboxes and save directly with optional preview', async () => {

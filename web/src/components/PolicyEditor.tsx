@@ -8,11 +8,11 @@ export function PolicyEditor({ principalID }: { principalID: string }) {
   const [open, setOpen] = useState(false);
   return <section className="governance-panel"><button className="quiet-button" aria-expanded={open} onClick={() => setOpen(!open)}>Effective policy</button>{open && <PolicyEditorForm key={principalID} principalID={principalID} />}</section>;
 }
-export function PolicyEditorForm({ principalID }: { principalID: string }) {
+export function PolicyEditorForm({ principalID, initialClientID = "", initialTarget = "principal", onSaved }: { principalID: string; initialClientID?: string; initialTarget?: "principal" | "client"; onSaved?: () => void }) {
   const [view, setView] = useState<PolicyView | null>(null);
   const [draft, setDraft] = useState<Policy>(emptyPolicy);
-  const [client, setClient] = useState("");
-  const [target, setTarget] = useState<"principal" | "client">("principal");
+  const [client, setClient] = useState(initialClientID);
+  const [target, setTarget] = useState<"principal" | "client">(initialTarget);
   const [model, setModel] = useState("");
   const [provider, setProvider] = useState("");
   const [account, setAccount] = useState("");
@@ -40,7 +40,7 @@ export function PolicyEditorForm({ principalID }: { principalID: string }) {
     } catch (cause) { if (epoch === version.current) setError(cause instanceof Error ? cause.message : "Policy load failed"); }
     finally { if (epoch === version.current) setBusy(""); }
   };
-  useEffect(() => { void load(""); return () => { version.current++; }; }, [principalID]);
+  useEffect(() => { void load(initialClientID, initialTarget); return () => { version.current++; }; }, [principalID, initialClientID, initialTarget]);
   useEffect(() => {
     const controller = new AbortController();
     setModelsLoading(true); setModelsError("");
@@ -63,7 +63,7 @@ export function PolicyEditorForm({ principalID }: { principalID: string }) {
     try {
       const result = await (save ? savePolicy : previewPolicy)(principalID, payload(save));
       if (epoch !== version.current) return;
-      if (save) { setView(result); setPreview(null); setDraft(target === "principal" ? result.principal_policy : result.clients.find((item) => item.id === client)!.policy); setNotice("Policy saved"); }
+      if (save) { setView(result); setPreview(null); setDraft(target === "principal" ? result.principal_policy : result.clients.find((item) => item.id === client)!.policy); setNotice("Policy saved"); onSaved?.(); }
       else setPreview(result);
     } catch (cause) { if (epoch === version.current) { setPreview(null); setError(cause instanceof Error ? cause.message : "Policy request failed"); } }
     finally { if (epoch === version.current) setBusy(""); }
