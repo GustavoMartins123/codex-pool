@@ -47,6 +47,7 @@ export async function saveControls(provider: string, id: string, revision: numbe
 export async function loadSharing(provider: string, id: string) { return sharing(await request(`${accountPath(provider, id)}/grants`)); }
 export async function setDelegation(provider: string, id: string, revision: number, allowed: boolean) { return sharing(await request(`${accountPath(provider, id)}/delegation`, "PUT", { revision, allowed })); }
 export async function createGrant(provider: string, id: string, value: { revision: number; id: string; recipient_id: string; models: string[]; budget: Limits; expires_at: string; reason: string }) { return sharing(await request(`${accountPath(provider, id)}/grants`, "POST", value)); }
+export async function updateGrant(provider: string, id: string, value: { revision: number; grant_revision: number; id: string; recipient_id: string; models: string[]; budget: Limits; expires_at: string; reason: string }) { return sharing(await request(`${accountPath(provider, id)}/grants`, "PUT", value)); }
 export async function revokeGrant(id: string, revision: number) { await request(`/api/account-grants/${encodeURIComponent(id)}`, "DELETE", { revision }); }
 export async function loadPolicies(id: string, client = "") { return policies(await request(`${policyPath(id)}?client_id=${encodeURIComponent(client)}`)); }
 export async function previewPolicy(id: string, draft: PolicyDraft) { return policies(await request(`${policyPath(id)}/preview`, "POST", draft)); }

@@ -48,21 +48,27 @@ func (h *proxyHandler) handleAccountSharing(w http.ResponseWriter, r *http.Reque
 				return
 			}
 			err = p.setAccountDelegation(actor.ID, provider, id, q.Revision, *q.Allowed)
-		case action == "grants" && r.Method == http.MethodPost:
+		case action == "grants" && (r.Method == http.MethodPost || r.Method == http.MethodPut):
 			var q struct {
-				Revision    uint64       `json:"revision"`
-				ID          string       `json:"id"`
-				RecipientID string       `json:"recipient_id"`
-				Models      []string     `json:"models"`
-				Budget      PolicyLimits `json:"budget"`
-				ExpiresAt   time.Time    `json:"expires_at"`
-				Reason      string       `json:"reason"`
+				Revision      uint64       `json:"revision"`
+				GrantRevision uint64       `json:"grant_revision,omitempty"`
+				ID            string       `json:"id"`
+				RecipientID   string       `json:"recipient_id"`
+				Models        []string     `json:"models"`
+				Budget        PolicyLimits `json:"budget"`
+				ExpiresAt     time.Time    `json:"expires_at"`
+				Reason        string       `json:"reason"`
 			}
 			if decodeGovernanceJSON(w, r, &q) != nil {
 				respondJSONError(w, 400, "invalid grant request")
 				return
 			}
-			_, err = p.createAccountGrant(actor.ID, q.Revision, accountGrant{ID: q.ID, Provider: provider, AccountID: id, RecipientID: q.RecipientID, Models: q.Models, Budget: q.Budget, ExpiresAt: q.ExpiresAt, Reason: q.Reason})
+			draft := accountGrant{ID: q.ID, Provider: provider, AccountID: id, RecipientID: q.RecipientID, Models: q.Models, Budget: q.Budget, ExpiresAt: q.ExpiresAt, Reason: q.Reason}
+			if r.Method == http.MethodPut {
+				_, err = p.updateAccountGrant(actor.ID, q.Revision, q.GrantRevision, draft)
+			} else {
+				_, err = p.createAccountGrant(actor.ID, q.Revision, draft)
+			}
 		default:
 			http.Error(w, "method not allowed", 405)
 			return
