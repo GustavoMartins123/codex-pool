@@ -214,6 +214,81 @@ func (p *PassportStore) createAccountGrant(actor string, revision uint64, grant 
 	return &grant, err
 }
 
+func (p *PassportStore) updateAccountGrant(actor string, revision, grantRevision uint64, draft accountGrant) (*accountGrant, error) {
+	p.accountMu.Lock()
+	defer p.accountMu.Unlock()
+	var resource *accountResource
+	if err := p.db.View(func(tx *bbolt.Tx) error {
+		var err error
+		resource, err = readAccountResource(tx.Bucket([]byte(bucketAccountResources)), draft.Provider, draft.AccountID)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if !p.canDelegate(actor, resource) || resource.WithdrawnAt != nil || resource.Status != "active" || draft.RecipientID == resource.OwnerID {
+		return nil, accountControlError("account_delegation_denied", 403)
+	}
+	recipient := p.principal(draft.RecipientID)
+	if recipient == nil || recipient.Status != PrincipalActive || recipient.ExpiresAt != nil && !recipient.ExpiresAt.After(time.Now()) {
+		return nil, accountControlError("grant_recipient_unavailable", 400)
+	}
+	err := p.db.Update(func(tx *bbolt.Tx) error {
+		existing, err := readAccountGrant(tx.Bucket([]byte(bucketAccountGrants)), draft.ID)
+		if err != nil {
+			return err
+		}
+		if existing == nil || existing.Provider != draft.Provider || existing.AccountID != draft.AccountID || existing.RecipientID != draft.RecipientID {
+			return accountControlError("grant_not_found", 404)
+		}
+		if existing.RevokedAt != nil || !existing.ExpiresAt.After(time.Now()) {
+			return accountControlError("grant_inactive", 409)
+		}
+		if revision == 0 || resource.Revision != revision {
+			return accountControlError("account_revision_conflict", 409)
+		}
+		if grantRevision == 0 || existing.Revision != grantRevision {
+			return accountControlError("grant_revision_conflict", 409)
+		}
+		draft.CreatedAt = existing.CreatedAt
+		// Consent must cover the actor responsible for the current access.
+		draft.CreatedBy = actor
+		draft.Revision = existing.Revision + 1
+		if err := draft.validate(); err != nil {
+			return &policyError{Status: 400, Code: "grant_invalid", Message: err.Error()}
+		}
+		now := time.Now().UTC()
+		if !draft.ExpiresAt.After(now) || draft.ExpiresAt.After(now.Add(365*24*time.Hour)) {
+			return accountControlError("grant_expiry_invalid", 400)
+		}
+		if (draft.Budget.DailyTokens > 0 || draft.Budget.MonthlyTokens > 0) && draft.Provider != AccountTypeCodex && draft.Provider != AccountTypeClaude {
+			return unboundedPolicyRequest()
+		}
+		grants, err := accountGrantsByResource(tx, draft.Provider, draft.AccountID, draft.RecipientID)
+		if err != nil {
+			return err
+		}
+		for _, other := range grants {
+			if other.ID == draft.ID || other.RevokedAt != nil || !other.ExpiresAt.After(now) {
+				continue
+			}
+			for _, model := range draft.Models {
+				if policyMatches(other.Models, model) || policyMatches(draft.Models, "*") || policyMatches(other.Models, "*") {
+					return accountControlError("grant_models_overlap", 409)
+				}
+			}
+		}
+		resource.Revision++
+		if err := putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(resource.Provider, resource.ID), resource); err != nil {
+			return err
+		}
+		if err := putAccountGrant(tx, draft); err != nil {
+			return err
+		}
+		return p.audit(tx, actor, "account.grant_updated", draft.ID, string(draft.Provider)+" "+draft.AccountID+" "+draft.RecipientID)
+	})
+	return &draft, err
+}
+
 func (p *PassportStore) revokeAccountGrant(actor, id string, revision uint64) error {
 	p.accountMu.Lock()
 	defer p.accountMu.Unlock()
