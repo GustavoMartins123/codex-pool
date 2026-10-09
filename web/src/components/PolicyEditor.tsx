@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { emptyPolicy, loadPolicies, previewPolicy, savePolicy, type Policy, type PolicyDraft, type PolicyView } from "../governance-api";
 import { PolicyFields, validLimits } from "./PolicyFields";
 import { loadModelCatalog } from "../api";
 import type { ModelDescriptor } from "../types";
+import { notifyPolicySaved, subscribePolicySaved } from "../policy-events";
 
 export function PolicyEditor({ principalID }: { principalID: string }) {
   const [open, setOpen] = useState(false);
@@ -21,11 +22,13 @@ export function PolicyEditorForm({ principalID, initialClientID = "", initialTar
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [externalChange, setExternalChange] = useState(false);
   const [models, setModels] = useState<ModelDescriptor[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState("");
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const version = useRef(0);
+  const editorID = useId();
   const invalidate = () => { version.current++; setPreview(null); setNotice(""); };
   const load = async (credential = client, scope = target) => {
     const epoch = ++version.current;
@@ -37,10 +40,21 @@ export function PolicyEditorForm({ principalID, initialClientID = "", initialTar
       const selected = result.clients.find((item) => item.id === credential);
       if (scope === "client" && !selected) throw new Error("Selected credential is unavailable. Reload the principal policy.");
       setDraft(scope === "client" ? selected!.policy : result.principal_policy);
+      setExternalChange(false);
     } catch (cause) { if (epoch === version.current) setError(cause instanceof Error ? cause.message : "Policy load failed"); }
     finally { if (epoch === version.current) setBusy(""); }
   };
   useEffect(() => { void load(initialClientID, initialTarget); return () => { version.current++; }; }, [principalID, initialClientID, initialTarget]);
+  const latest = useRef({ load, dirty: false, busy });
+  const savedPolicy = target === "principal" ? view?.principal_policy : view?.clients.find((item) => item.id === client)?.policy;
+  latest.current = { load, dirty: Boolean(savedPolicy && JSON.stringify(draft) !== JSON.stringify(savedPolicy)), busy };
+  useEffect(() => subscribePolicySaved((event) => {
+    if (event.principalID !== principalID || event.editorID === editorID) return;
+    if (latest.current.dirty || latest.current.busy === "save") {
+      setExternalChange(true); setPreview(null); setNotice("");
+      if (latest.current.busy === "preview") { version.current++; setBusy(""); }
+    } else void latest.current.load();
+  }), [principalID, editorID]);
   useEffect(() => {
     const controller = new AbortController();
     setModelsLoading(true); setModelsError("");
@@ -54,7 +68,7 @@ export function PolicyEditorForm({ principalID, initialClientID = "", initialTar
     return () => controller.abort();
   }, [catalogAttempt, principalID]);
   const payload = (save: boolean): PolicyDraft => ({ revision: view!.revision, target, client_id: client, policy: draft, model: save ? "" : model, provider: save ? "" : provider, account_id: save ? "" : account, tokens: save ? 0 : tokens });
-  const valid = view !== null && validLimits(draft.limits) && Number.isSafeInteger(draft.priority ?? 0) && (draft.priority ?? 0) >= 0 && (draft.priority ?? 0) <= 100 && (target !== "client" || client !== "");
+  const valid = view !== null && !externalChange && validLimits(draft.limits) && Number.isSafeInteger(draft.priority ?? 0) && (draft.priority ?? 0) >= 0 && (draft.priority ?? 0) <= 100 && (target !== "client" || client !== "");
   const validPreview = valid && Number.isSafeInteger(tokens) && tokens >= 0;
   const run = async (save: boolean) => {
     if (!(save ? valid : validPreview)) return;
@@ -63,7 +77,7 @@ export function PolicyEditorForm({ principalID, initialClientID = "", initialTar
     try {
       const result = await (save ? savePolicy : previewPolicy)(principalID, payload(save));
       if (epoch !== version.current) return;
-      if (save) { setView(result); setPreview(null); setDraft(target === "principal" ? result.principal_policy : result.clients.find((item) => item.id === client)!.policy); setNotice("Policy saved"); onSaved?.(); }
+      if (save) { setView(result); setPreview(null); setDraft(target === "principal" ? result.principal_policy : result.clients.find((item) => item.id === client)!.policy); setNotice("Policy saved"); notifyPolicySaved({ principalID, editorID }); onSaved?.(); }
       else setPreview(result);
     } catch (cause) { if (epoch === version.current) { setPreview(null); setError(cause instanceof Error ? cause.message : "Policy request failed"); } }
     finally { if (epoch === version.current) setBusy(""); }
@@ -72,14 +86,16 @@ export function PolicyEditorForm({ principalID, initialClientID = "", initialTar
   const shown = preview ?? view;
   return <div className="governance-form">
     {error && <p role="alert" className="access-error">{error}</p>}
+    {externalChange && <p role="alert">This policy was saved in another editor. Your unsaved changes are preserved. Use Reload policy to review the current saved values before saving.</p>}
     <button className="quiet-button" disabled={Boolean(busy)} onClick={() => void load()}>Reload policy</button>
     {!view ? <p>{busy === "load" ? "Loading policy..." : "Policy unavailable."}</p> : <>
       <p>Revision {view.revision}. Restrictions from every source apply together.</p>
+      <p>Editing the saved {target === "principal" ? "user" : "credential"} policy. Models selected in account sharing are saved separately.</p>
       <div className="governance-fields"><label>Edit scope<select disabled={Boolean(busy)} value={target} onChange={(event) => { invalidate(); const value = event.target.value as "principal" | "client"; setTarget(value); setDraft(value === "principal" ? view.principal_policy : view.clients.find((item) => item.id === client)?.policy ?? emptyPolicy()); }}><option value="principal">Principal</option><option value="client" disabled={!client}>Credential</option></select></label><label>{target === "client" ? "Credential to edit" : "Credential for preview"}<select value={client} disabled={Boolean(busy)} onChange={(event) => { const credential = event.target.value; const scope = credential ? target : "principal"; setClient(credential); setTarget(scope); void load(credential, scope); }}><option value="">Principal only</option>{view.clients.map((item) => <option key={item.id} value={item.id}>{item.label} ({item.status})</option>)}</select></label></div>
       {modelsError && <div><p role="alert">Could not load the model catalog: {modelsError}. Saved selections are preserved.</p><button type="button" className="quiet-button" disabled={busy === "save"} onClick={() => setCatalogAttempt((attempt) => attempt + 1)}>Retry models</button></div>}
       <PolicyFields value={draft} onChange={change} disabled={busy === "save" || busy === "load"} models={models} modelsLoading={modelsLoading} />
       <label>Sample account ID (optional)<input disabled={busy === "save"} value={account} onChange={(event) => { invalidate(); setAccount(event.target.value); if (busy === "preview") setBusy(""); }} /></label>
-      {!valid && <p role="alert">Use nonnegative integers. Token budgets require a reservation.</p>}
+      {!valid && !externalChange && <p role="alert">Use nonnegative integers. Token budgets require a reservation.</p>}
       {!validPreview && valid && <p role="alert">Estimated tokens must be a nonnegative integer.</p>}
       <fieldset disabled={busy === "save"}><legend>Preview a request</legend><div className="governance-fields"><label>Sample model<input value={model} onChange={(event) => { invalidate(); setModel(event.target.value); if (busy === "preview") setBusy(""); }} /></label><label>Sample provider<input value={provider} onChange={(event) => { invalidate(); setProvider(event.target.value); if (busy === "preview") setBusy(""); }} /></label><label>Estimated tokens<input type="number" min="0" step="1" value={tokens} onChange={(event) => { invalidate(); setTokens(event.target.valueAsNumber); if (busy === "preview") setBusy(""); }} /></label></div></fieldset>
       <div className="row-actions"><button disabled={!validPreview || Boolean(busy)} onClick={() => void run(false)}>Preview policy</button><button className="gold-button" disabled={!valid || Boolean(busy)} onClick={() => void run(true)}>{busy === "save" ? "Saving…" : "Save policy"}</button></div>

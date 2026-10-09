@@ -324,3 +324,51 @@ it("shows why a remotely discovered model remains blocked after updating sharing
   expect(screen.getByRole("button", { name: "Edit user policy" })).toBeTruthy();
   expect(api.savePolicy).not.toHaveBeenCalled();
 });
+
+it("restores saved account access when editing the grant already selected", async () => {
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly recipientID="bob" />);
+  await screen.findByRole("checkbox", { name: "gpt-5.5" });
+  checkModel("gpt-6-astra", "Granted models"); change("Daily requests", "900"); change("Grant reason", "Unsaved edit");
+  fireEvent.click(screen.getByRole("button", { name: "Edit account access" }));
+  expect((screen.getByRole("checkbox", { name: "gpt-6-astra" }) as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("5");
+  expect((screen.getByLabelText("Grant reason") as HTMLInputElement).value).toBe("Team access");
+  expect(document.activeElement).toBe(screen.getByRole("form", { name: "Account access editor" }));
+  expect(api.updateGrant).not.toHaveBeenCalled();
+});
+
+it("refreshes an open Effective policy editor after the same policy is saved elsewhere", async () => {
+  let current: api.PolicyView = { ...view, principal_policy: { ...api.emptyPolicy(), models: { allow: ["gpt-5.5"] } } };
+  vi.mocked(api.loadPolicies).mockImplementation(async () => current);
+  vi.mocked(api.savePolicy).mockImplementation(async (_id, draft) => { current = { ...current, revision: current.revision + 1, principal_policy: draft.policy }; return current; });
+  render(<><section aria-label="Effective policy"><PolicyEditorForm principalID="bob" /></section><section aria-label="Inline policy"><PolicyEditorForm principalID="bob" /></section></>);
+  const main = within(screen.getByRole("region", { name: "Effective policy" }));
+  const inline = within(screen.getByRole("region", { name: "Inline policy" }));
+  await within(await main.findByRole("group", { name: "Allowed models" })).findByRole("checkbox", { name: "gpt-5.5" });
+  await within(await inline.findByRole("group", { name: "Allowed models" })).findByRole("checkbox", { name: "gpt-6-astra" });
+  fireEvent.click(within(inline.getByRole("group", { name: "Allowed models" })).getByRole("checkbox", { name: "gpt-6-astra" }));
+  fireEvent.click(inline.getByRole("button", { name: "Save policy" }));
+  await inline.findByText("Policy saved");
+  await waitFor(() => expect((within(main.getByRole("group", { name: "Allowed models" })).getByRole("checkbox", { name: "gpt-6-astra" }) as HTMLInputElement).checked).toBe(true));
+  expect(main.getByText(/Revision 3/)).toBeTruthy();
+});
+
+it("preserves unsaved policy edits and requires reloading after a save elsewhere", async () => {
+  let current: api.PolicyView = { ...view, principal_policy: { ...api.emptyPolicy(), models: { allow: ["gpt-5.5"] } } };
+  vi.mocked(api.loadPolicies).mockImplementation(async () => current);
+  vi.mocked(api.savePolicy).mockImplementation(async (_id, draft) => { current = { ...current, revision: 3, principal_policy: draft.policy }; return current; });
+  render(<><section aria-label="Effective policy"><PolicyEditorForm principalID="bob" /></section><section aria-label="Inline policy"><PolicyEditorForm principalID="bob" /></section></>);
+  const main = within(screen.getByRole("region", { name: "Effective policy" }));
+  const inline = within(screen.getByRole("region", { name: "Inline policy" }));
+  await main.findByLabelText("Daily requests"); await inline.findByLabelText("Daily requests");
+  fireEvent.change(main.getByLabelText("Daily requests"), { target: { value: "42" } });
+  fireEvent.click(within(inline.getByRole("group", { name: "Allowed models" })).getByRole("checkbox", { name: "gpt-6-astra" }));
+  fireEvent.click(inline.getByRole("button", { name: "Save policy" }));
+  await main.findByText(/This policy was saved in another editor/);
+  expect((main.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("42");
+  expect((main.getByRole("button", { name: "Save policy" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(main.getByRole("button", { name: "Reload policy" }));
+  await waitFor(() => expect((within(main.getByRole("group", { name: "Allowed models" })).getByRole("checkbox", { name: "gpt-6-astra" }) as HTMLInputElement).checked).toBe(true));
+  expect(main.queryByText(/This policy was saved in another editor/)).toBeNull();
+  expect((main.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("0");
+});

@@ -328,6 +328,20 @@ try {
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await clickText(page, 'button', 'Edit account access');
     await page.waitForFunction(() => [...document.querySelectorAll('.governance-form label')].find(el => el.firstChild?.textContent === 'Daily requests')?.querySelector('input').value === '200');
+    await page.evaluate(() => {
+      const input = [...document.querySelectorAll('.governance-form label')].find(el => el.firstChild?.textContent === 'Daily requests').querySelector('input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '999');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('.governance-form input[aria-label="kimi-k2.5"]');
+    await page.$eval('[aria-label="Account grants"]', el => el.scrollIntoView({ block: 'start' }));
+    await clickText(page, '[aria-label="Account grants"] button', 'Edit account access');
+    await page.waitForFunction(() => {
+      const form = document.querySelector('[aria-label="Account access editor"]');
+      return document.activeElement === form && form.getBoundingClientRect().top >= -1 && form.getBoundingClientRect().top < innerHeight;
+    });
+    assert.equal(await page.$eval('.governance-form input[aria-label="kimi-k2.5"]', el => el.checked), true);
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('.governance-form label')].find(el => el.firstChild?.textContent === 'Daily requests').querySelector('input').value), '200');
     assert.equal((await page.$$('.governance-form article')).length, 1);
     for (const width of [390, 768, 1365]) {
       await page.setViewport({ width, height: 900 });
@@ -343,6 +357,11 @@ try {
   });
   await check('sharing identifies and edits a policy blocking a remotely discovered Haiku model', async () => {
     const { page, errors } = await open('/?view=console', 'sharing-policy');
+    await clickText(page, 'button', 'Effective policy');
+    const effectiveEditor = '.principal-detail .governance-panel';
+    await page.waitForSelector(`${effectiveEditor} [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]`);
+    assert.equal(await page.$eval(`${effectiveEditor} [aria-label="Allowed models"] input[aria-label="claude-sonnet-5-5"]`, el => el.checked), true);
+    assert.equal(await page.$eval(`${effectiveEditor} [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]`, el => el.checked), false);
     await clickText(page, 'button', 'Share provider accounts');
     await page.waitForSelector('select option[value="claude:private-claude"]');
     await page.evaluate(() => {
@@ -353,10 +372,16 @@ try {
     await page.waitForFunction(() => document.querySelector('[aria-label="Recipient model policies"] [role="alert"]')?.textContent.includes('claude-haiku-5-5'));
     assert.equal(await page.$eval('[aria-label="Granted models"] input[aria-label="claude-haiku-5-5"]', el => el.checked), true);
     await clickText(page, 'button', 'Edit user policy');
+    await page.waitForFunction(() => {
+      const editor = document.querySelector('[aria-label="Recipient policy editor"]');
+      return document.activeElement === editor && editor.getBoundingClientRect().top >= -1 && editor.getBoundingClientRect().top < innerHeight;
+    });
     await page.waitForSelector('[aria-label="Recipient model policies"] [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]');
     await page.click('[aria-label="Recipient model policies"] [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]');
-    await clickText(page, 'button', 'Save policy');
+    await clickText(page, '[aria-label="Recipient policy editor"] button', 'Save policy');
     await page.waitForFunction(() => document.querySelector('[aria-label="Recipient model policies"]')?.textContent.includes('The current user and active credential model policies allow the selected models.'));
+    await page.waitForFunction((selector) => document.querySelector(`${selector} [aria-label="Allowed models"] input[aria-label="claude-haiku-5-5"]`)?.checked, {}, effectiveEditor);
+    assert.ok(await page.$eval(effectiveEditor, el => el.textContent.includes('Revision 1.')));
     assert.equal(await page.$eval('[aria-label="Granted models"] input[aria-label="claude-haiku-5-5"]', el => el.checked), true);
     for (const width of [390, 768, 1365]) {
       await page.setViewport({ width, height: 900 });

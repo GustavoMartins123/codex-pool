@@ -41,6 +41,7 @@ export function AccountGovernanceForm({ provider, id, sharingOnly = false, onCha
   const version = useRef(0);
   const grantAttempt = useRef<{ payload: string; id: string } | null>(null);
   const grantHelpID = useId();
+  const grantForm = useRef<HTMLFormElement>(null);
   const load = async () => {
     const epoch = ++version.current;
     setBusy(true); setError(""); setSuccess(""); setControl(null); setSharing(null);
@@ -64,14 +65,22 @@ export function AccountGovernanceForm({ provider, id, sharingOnly = false, onCha
   }, [tab, provider, id, catalogAttempt]);
   const recipientGrants = sharing?.grants.filter((grant) => grant.recipient_id === recipient.trim() && activeGrant(grant)) ?? [];
   const editingGrant = recipientGrants.find((grant) => grant.id === editingID) ?? recipientGrants[0];
-  useEffect(() => {
-    if (!sharing) return;
-    const grant = editingGrant;
+  const restoreGrant = (grant?: Grant) => {
     setModels(grant ? [...grant.models] : []);
     setBudget(grant ? { ...grant.budget } : { daily_requests: 100 });
     setExpires(grant ? localExpiry(grant.expires_at) : "");
     setGrantReason(grant?.reason ?? "");
     grantAttempt.current = null;
+  };
+  const editGrant = (grant: Grant) => {
+    setRecipient(grant.recipient_id); setEditingID(grant.id);
+    restoreGrant(grant); setError(""); setSuccess(""); setArmed("");
+    grantForm.current?.focus({ preventScroll: true });
+    grantForm.current?.scrollIntoView?.({ block: "start" });
+  };
+  useEffect(() => {
+    if (!sharing) return;
+    restoreGrant(editingGrant);
   }, [sharing, recipient, editingGrant?.id]);
   const submitGrant = () => {
     if (!sharing || !grantValid) return;
@@ -116,13 +125,13 @@ export function AccountGovernanceForm({ provider, id, sharingOnly = false, onCha
       {editingGrant && <aside aria-label="Current account access"><p>Editing saved account access. Saving replaces this grant's models, limits and expiry; accumulated usage is preserved.</p><p>Current shared models: {editingGrant.models.join(", ")}. Expires {new Date(editingGrant.expires_at).toLocaleString()}.</p></aside>}
       {recipients && recipient.trim() && <SharingPolicyCheck key={recipient.trim()} principalID={recipient.trim()} models={models} disabled={busy} />}
       {recipientGrants.length > 1 && <label>Existing account access<select disabled={busy} value={editingGrant?.id ?? ""} onChange={(event) => setEditingID(event.target.value)}>{recipientGrants.map((grant) => <option key={grant.id} value={grant.id}>{grant.models.join(", ")} · {grant.reason}</option>)}</select></label>}
-      <form onSubmit={(event) => { event.preventDefault(); submitGrant(); }}><fieldset disabled={busy}><legend>{editingGrant ? "Edit account grant" : "Create account grant"}</legend><div className="governance-fields">{recipients ? <label>Recipient user<select required value={recipient} onChange={(event) => setRecipient(event.target.value)}><option value="">Select a user</option>{recipients.filter((item) => item.status === "active" && (!item.expires_at || Date.parse(item.expires_at) > Date.now())).map((item) => <option key={item.id} value={item.id}>{item.display_name || item.username || item.email || item.note || item.id} · {item.email || item.kind}</option>)}</select></label> : <label>Recipient principal ID<input required value={recipient} onChange={(event) => setRecipient(event.target.value)} /></label>}<label>Expires at<input type="datetime-local" step="1" required value={expires} onChange={(event) => setExpires(event.target.value)} /></label><label>Grant reason<input required maxLength={240} value={grantReason} onChange={(event) => setGrantReason(event.target.value)} /></label></div>{!recipients && <p>To select a user by name, use Members → Share provider accounts.</p>}{catalogError && <p role="alert">{catalogError} <button type="button" onClick={() => setCatalogAttempt((value) => value + 1)}>Retry models</button></p>}<PolicyModelSelector label="Granted models" values={models} models={catalog} loading={catalogLoading} includeAliases={false} onChange={setModels} /><BudgetFields value={budget} onChange={setBudget} /><div className="grant-save-actions">
+      <form ref={grantForm} tabIndex={-1} aria-label="Account access editor" onSubmit={(event) => { event.preventDefault(); submitGrant(); }}><fieldset disabled={busy}><legend>{editingGrant ? "Edit account grant" : "Create account grant"}</legend><div className="governance-fields">{recipients ? <label>Recipient user<select required value={recipient} onChange={(event) => setRecipient(event.target.value)}><option value="">Select a user</option>{recipients.filter((item) => item.status === "active" && (!item.expires_at || Date.parse(item.expires_at) > Date.now())).map((item) => <option key={item.id} value={item.id}>{item.display_name || item.username || item.email || item.note || item.id} · {item.email || item.kind}</option>)}</select></label> : <label>Recipient principal ID<input required value={recipient} onChange={(event) => setRecipient(event.target.value)} /></label>}<label>Expires at<input type="datetime-local" step="1" required value={expires} onChange={(event) => setExpires(event.target.value)} /></label><label>Grant reason<input required maxLength={240} value={grantReason} onChange={(event) => setGrantReason(event.target.value)} /></label></div>{!recipients && <p>To select a user by name, use Members → Share provider accounts.</p>}{catalogError && <p role="alert">{catalogError} <button type="button" onClick={() => setCatalogAttempt((value) => value + 1)}>Retry models</button></p>}<PolicyModelSelector label="Granted models" values={models} models={catalog} loading={catalogLoading} includeAliases={false} onChange={setModels} /><BudgetFields value={budget} onChange={setBudget} /><div className="grant-save-actions">
         <div id={grantHelpID} className="grant-save-help" aria-live="polite">
           {grantRequirements.length > 0 ? <><p>To save account access:</p><ul>{grantRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul></> : <p>Ready to save this account grant. User and credential policies also apply to the selected models.</p>}
         </div>
         <button type="submit" className="gold-button" disabled={busy || !grantValid} aria-describedby={grantHelpID}>{busy ? "Saving account access…" : "Save account access"}</button>
       </div></fieldset></form>
-      <div aria-label="Account grants">{sharing.grants.length === 0 ? <p>No grants.</p> : sharing.grants.map((grant) => <article className="client-card" key={grant.id}><strong>{recipients?.find((item) => item.id === grant.recipient_id)?.display_name || grant.recipient_id}</strong><p>{grant.models.join(", ")} · expires {new Date(grant.expires_at).toLocaleString()}</p><p>{grant.reason}</p><details><summary>Grant budget</summary><pre>{JSON.stringify(grant.budget, null, 2)}</pre></details>{grant.revoked_at ? <span>Revoked</span> : Date.parse(grant.expires_at) <= Date.now() ? <span>Expired</span> : armed === grant.id ? <div className="row-actions"><button className="danger-action" disabled={busy} onClick={() => void mutate(async () => { await revokeGrant(grant.id, grant.revision); setSharing(await loadSharing(provider, id)); setArmed(""); }, "Grant revoked; new requests are blocked")}>Confirm revoke</button><button disabled={busy} onClick={() => setArmed("")}>Cancel revoke</button></div> : <div className="row-actions"><button disabled={busy} onClick={() => { setRecipient(grant.recipient_id); setEditingID(grant.id); }}>Edit account access</button><button className="danger-action" disabled={busy} onClick={() => setArmed(grant.id)}>Revoke grant</button></div>}</article>)}</div>
+      <div aria-label="Account grants">{sharing.grants.length === 0 ? <p>No grants.</p> : sharing.grants.map((grant) => <article className="client-card" key={grant.id}><strong>{recipients?.find((item) => item.id === grant.recipient_id)?.display_name || grant.recipient_id}</strong><p>{grant.models.join(", ")} · expires {new Date(grant.expires_at).toLocaleString()}</p><p>{grant.reason}</p><details><summary>Grant budget</summary><pre>{JSON.stringify(grant.budget, null, 2)}</pre></details>{grant.revoked_at ? <span>Revoked</span> : Date.parse(grant.expires_at) <= Date.now() ? <span>Expired</span> : armed === grant.id ? <div className="row-actions"><button className="danger-action" disabled={busy} onClick={() => void mutate(async () => { await revokeGrant(grant.id, grant.revision); setSharing(await loadSharing(provider, id)); setArmed(""); }, "Grant revoked; new requests are blocked")}>Confirm revoke</button><button disabled={busy} onClick={() => setArmed("")}>Cancel revoke</button></div> : <div className="row-actions"><button disabled={busy} onClick={() => editGrant(grant)}>Edit account access</button><button className="danger-action" disabled={busy} onClick={() => setArmed(grant.id)}>Revoke grant</button></div>}</article>)}</div>
     </>}
   </div>;
 }

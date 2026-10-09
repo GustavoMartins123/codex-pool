@@ -30,6 +30,7 @@ it("identifies the stale user allowlist for a model added through remote discove
   expect((await screen.findByRole("alert")).textContent).toContain(`User · User policy: ${haiku}`);
   expect(screen.getByRole("alert").textContent).toContain("return 403");
   fireEvent.click(screen.getByRole("button", { name: "Edit user policy" }));
+  expect(document.activeElement).toBe(screen.getByRole("region", { name: "Recipient policy editor" }));
   const choices = within(await screen.findByRole("group", { name: "Allowed models" }));
   fireEvent.click(await choices.findByRole("checkbox", { name: haiku }));
   fireEvent.click(screen.getByRole("button", { name: "Save policy" }));

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadPolicies, type PolicyView, type Selector } from "../governance-api";
 import { PolicyEditorForm } from "./PolicyEditor";
+import { subscribePolicySaved } from "../policy-events";
 
 function allows(selector: Selector, model: string) {
   const normalize = (value: string) => value.trim().toLowerCase().replace(/^antigravity\//, "");
@@ -22,6 +23,15 @@ export function SharingPolicyCheck({ principalID, models, disabled }: { principa
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [editor, setEditor] = useState<{ client: string; target: "principal" | "client" } | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => subscribePolicySaved((event) => {
+    if (event.principalID === principalID) setAttempt((value) => value + 1);
+  }), [principalID]);
+  useEffect(() => {
+    if (!editor) return;
+    editorRef.current?.focus({ preventScroll: true });
+    editorRef.current?.scrollIntoView?.({ block: "start" });
+  }, [editor]);
   useEffect(() => {
     let active = true;
     setLoading(true); setError(""); setViews([]);
@@ -53,6 +63,6 @@ export function SharingPolicyCheck({ principalID, models, disabled }: { principa
       <ul>{blockers.map((blocker) => <li key={`${blocker.client}:${blocker.source}`}><strong>{blocker.label} · {sourceLabel(blocker.source)}</strong>: {blocker.denied.join(", ")}. {blocker.target ? <button type="button" disabled={disabled} onClick={() => { if (blocker.target) setEditor({ client: blocker.target === "client" ? blocker.client : "", target: blocker.target }); }}>Edit {blocker.target === "client" ? `${blocker.label} credential policy` : "user policy"}</button> : <span>Update this restriction in the server policy configuration.</span>}</li>)}</ul>
     </div> : models.length ? <p>The current user and active credential model policies allow the selected models.</p> : <p>Select granted models to check for policy conflicts.</p>}
     <button type="button" className="quiet-button" disabled={loading || disabled} onClick={() => setAttempt((value) => value + 1)}>Recheck recipient policies</button>
-    {editor && <><button type="button" disabled={disabled} onClick={() => setEditor(null)}>Close recipient policy editor</button><PolicyEditorForm key={`${principalID}:${editor.client}:${editor.target}`} principalID={principalID} initialClientID={editor.client} initialTarget={editor.target} onSaved={() => setAttempt((value) => value + 1)} /></>}
+    {editor && <div ref={editorRef} tabIndex={-1} role="region" aria-label="Recipient policy editor"><button type="button" disabled={disabled} onClick={() => setEditor(null)}>Close recipient policy editor</button><PolicyEditorForm key={`${principalID}:${editor.client}:${editor.target}`} principalID={principalID} initialClientID={editor.client} initialTarget={editor.target} /></div>}
   </section>;
 }
