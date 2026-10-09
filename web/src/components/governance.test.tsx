@@ -7,7 +7,7 @@ import * as api from "../governance-api";
 import { loadModelCatalog } from "../api";
 import type { ConsolePrincipal, ModelDescriptor } from "../types";
 
-vi.mock("../governance-api", async (original) => ({ ...await original<typeof import("../governance-api")>(), loadControls: vi.fn(), saveControls: vi.fn(), loadSharing: vi.fn(), loadShareableAccounts: vi.fn(), setDelegation: vi.fn(), createGrant: vi.fn(), revokeGrant: vi.fn(), loadPolicies: vi.fn(), previewPolicy: vi.fn(), savePolicy: vi.fn() }));
+vi.mock("../governance-api", async (original) => ({ ...await original<typeof import("../governance-api")>(), loadControls: vi.fn(), saveControls: vi.fn(), loadSharing: vi.fn(), loadShareableAccounts: vi.fn(), setDelegation: vi.fn(), createGrant: vi.fn(), updateGrant: vi.fn(), revokeGrant: vi.fn(), loadPolicies: vi.fn(), previewPolicy: vi.fn(), savePolicy: vi.fn() }));
 vi.mock("../api", async (original) => ({ ...await original<typeof import("../api")>(), loadModelCatalog: vi.fn() }));
 const models: ModelDescriptor[] = [
   { id: "gpt-5.5", name: "GPT 5.5", provider: "codex", protocol: "responses", available_now: true, aliases: ["gpt-latest"] },
@@ -162,6 +162,7 @@ it("requires revoke confirmation and preserves the grant on failure", async () =
 });
 
 it("uses explicit recipient, models, expiry and budget, preserving a retry ID", async () => {
+  vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, grants: [] });
   vi.mocked(api.createGrant).mockRejectedValue(new Error("Account unavailable"));
   render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />); await screen.findByLabelText("Recipient principal ID");
   change("Recipient principal ID", "bob"); checkModel("gpt-5.5", "Granted models"); change("Expires at", "2099-01-01T12:00"); change("Grant reason", "Team access");
@@ -171,6 +172,7 @@ it("uses explicit recipient, models, expiry and budget, preserving a retry ID", 
 });
 
 it("explains missing sharing fields and saves access only after explicit submission", async () => {
+  vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, grants: [] });
   vi.mocked(api.createGrant).mockImplementation(async (_provider, _id, value) => ({ ...sharing, revision: 4, grants: [{ ...value, revision: 1 }] }));
   render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
   await screen.findByLabelText("Recipient principal ID");
@@ -208,6 +210,7 @@ it("explains missing sharing fields and saves access only after explicit submiss
 });
 
 it("selects a shareable account and named recipient with canonical model checkboxes", async () => {
+  vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, grants: [] });
   const recipient: ConsolePrincipal = { id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
   vi.mocked(api.loadShareableAccounts).mockResolvedValue([{ id: "private", provider: "codex", owner_id: "alice" }]);
   vi.mocked(api.createGrant).mockResolvedValue({ ...sharing, revision: 4 });
@@ -243,4 +246,61 @@ it("retries a failed sharing catalog without allowing an empty grant", async () 
 it("shows sharing denial without displaying grant creation", async () => {
   vi.mocked(api.loadSharing).mockRejectedValue(new Error("Account delegation denied")); render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
   expect((await screen.findByRole("alert")).textContent).toContain("Account delegation denied"); expect(screen.queryByRole("button", { name: "Save account access" })).toBeNull();
+});
+
+it("loads the saved sharing policy for a recipient and updates it when adding models", async () => {
+  vi.mocked(api.updateGrant).mockImplementation(async (_provider, _id, value) => ({ ...sharing, revision: 4, grants: [{ ...value, revision: 2 }] }));
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly recipientID="bob" />);
+  const choices = within(await screen.findByRole("group", { name: "Granted models" }));
+  await waitFor(() => expect((choices.getByRole("checkbox", { name: "gpt-5.5" }) as HTMLInputElement).checked).toBe(true));
+  expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("5");
+  expect((screen.getByLabelText("Grant reason") as HTMLInputElement).value).toBe("Team access");
+  expect(new Date((screen.getByLabelText("Expires at") as HTMLInputElement).value).toISOString()).toBe(sharing.grants[0].expires_at.replace("Z", ".000Z"));
+  expect(screen.getByLabelText("Current account access").textContent).toContain("gpt-5.5");
+  checkModel("gpt-6-astra", "Granted models"); change("Daily requests", "8");
+  expect(api.updateGrant).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
+  await screen.findByText("Account access updated");
+  expect(api.createGrant).not.toHaveBeenCalled();
+  expect(api.updateGrant).toHaveBeenCalledWith("codex", "private", expect.objectContaining({ id: "grant-one", revision: 3, grant_revision: 1, recipient_id: "bob", models: ["gpt-5.5", "gpt-6-astra"], budget: { daily_requests: 8 } }));
+  expect(screen.getByLabelText("Current account access").textContent).toContain("gpt-6-astra");
+  checkModel("gpt-5.5", "Granted models");
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
+  await waitFor(() => expect(api.updateGrant).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.updateGrant).mock.calls[1][2]).toEqual(expect.objectContaining({ revision: 4, grant_revision: 2, models: ["gpt-6-astra"] }));
+});
+
+it("retains failed sharing edits and reloads the current policy before retrying", async () => {
+  vi.mocked(api.updateGrant).mockRejectedValue(new Error("Grant revision conflict. Reload before trying again."));
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit account access" }));
+  await waitFor(() => expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("5"));
+  checkModel("gpt-6-astra", "Granted models"); change("Daily requests", "9");
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
+  await screen.findByRole("alert");
+  expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("9");
+  expect((screen.getByRole("checkbox", { name: "gpt-6-astra" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByText("Account access updated")).toBeNull();
+  vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, revision: 5, grants: [{ ...sharing.grants[0], revision: 3, budget: { daily_requests: 12 } }] });
+  fireEvent.click(screen.getByRole("button", { name: "Reload account settings" }));
+  await waitFor(() => expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("12"));
+  fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
+  await waitFor(() => expect(api.updateGrant).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.updateGrant).mock.calls[1][2]).toEqual(expect.objectContaining({ revision: 5, grant_revision: 3 }));
+});
+
+it("switches among multiple current grants and resets fields for a new recipient", async () => {
+  vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, grants: [sharing.grants[0], { ...sharing.grants[0], id: "grant-two", models: ["retired-model"], budget: { monthly_requests: 40 }, reason: "Separate budget" }, { ...sharing.grants[0], id: "revoked", revoked_at: "2026-01-01T00:00:00Z" }] });
+  render(<AccountGovernanceForm provider="codex" id="private" sharingOnly recipientID="bob" />);
+  await screen.findByLabelText("Existing account access");
+  change("Existing account access", "grant-two");
+  await waitFor(() => expect((screen.getByLabelText("Monthly requests") as HTMLInputElement).value).toBe("40"));
+  expect((screen.getByRole("checkbox", { name: "retired-model" }) as HTMLInputElement).checked).toBe(true);
+  expect(within(screen.getByLabelText("Existing account access")).getAllByRole("option")).toHaveLength(2);
+  change("Recipient principal ID", "charlie");
+  expect(screen.queryByLabelText("Current account access")).toBeNull();
+  expect((screen.getByLabelText("Daily requests") as HTMLInputElement).value).toBe("100");
+  expect((screen.getByLabelText("Expires at") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Grant reason") as HTMLInputElement).value).toBe("");
+  expect((screen.getByRole("checkbox", { name: "gpt-5.5" }) as HTMLInputElement).checked).toBe(false);
 });

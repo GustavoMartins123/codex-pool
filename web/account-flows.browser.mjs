@@ -71,6 +71,15 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
     }
     else if (url.pathname === '/api/accounts/kimi/private-kimi/grants') {
       if (request.method() === 'POST') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, sharing.revision); sharing = { ...sharing, revision: sharing.revision + 1, grants: [...sharing.grants, { ...value, revision: 1 }] }; }
+      if (request.method() === 'PUT') {
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        const value = JSON.parse(request.postData());
+        assert.equal(value.revision, sharing.revision);
+        const grant = sharing.grants.find(item => item.id === value.id);
+        assert.equal(value.grant_revision, grant.revision);
+        assert.equal(value.recipient_id, grant.recipient_id);
+        sharing = { ...sharing, revision: sharing.revision + 1, grants: sharing.grants.map(item => item.id === value.id ? { ...value, revision: grant.revision + 1 } : item) };
+      }
       body = sharing;
     }
     else if (url.pathname.startsWith('/api/account-grants/')) {
@@ -275,7 +284,7 @@ try {
     for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Controls overflow at ${width}px`); }
     assert.deepEqual(errors, []); await page.close();
   });
-  await check('sharing creates a scoped grant and requires confirmation to revoke', async () => {
+  await check('sharing loads and updates a saved grant and requires confirmation to revoke', async () => {
     const { page, errors } = await open('/?view=mine', 'my-sharing');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
     await page.waitForSelector('.governance-form input[type="datetime-local"]');
@@ -291,14 +300,33 @@ try {
     await page.$eval('.governance-panel', el => { el.style.width = '280px'; el.style.maxWidth = '100%'; });
     assert.ok(await page.$eval('.governance-form', el => el.scrollWidth <= el.clientWidth));
     await page.waitForSelector('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
-    await page.click('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
     await page.evaluate(() => { const values = { 'Recipient principal ID': 'guest', 'Expires at': '2026-12-01T12:00', 'Grant reason': 'Team access' }; const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const label of document.querySelectorAll('.governance-form label')) { const input = label.querySelector('input'); const text = label.firstChild?.textContent; if (input && values[text]) { setter.call(input, values[text]); input.dispatchEvent(new Event('input', { bubbles: true })); } } });
+    await page.click('.governance-form input[type="checkbox"][aria-label="kimi-k2.5"]');
     await page.waitForFunction(() => !document.querySelector('.grant-save-actions button').disabled);
     assert.ok(await page.$eval('.grant-save-help', el => el.textContent.includes('Ready to save.')));
     await page.$eval('.grant-save-actions button', el => el.scrollIntoView({ block: 'center' }));
     await page.click('.grant-save-actions button');
     await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
     await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
+    await clickText(page, 'button', 'Edit account access');
+    await page.waitForFunction(() => document.querySelector('.governance-form input[aria-label="kimi-k2.5"]').checked);
+    assert.ok(await page.$eval('aside[aria-label="Current account access"]', el => el.textContent.includes('kimi-k2.5')));
+    await page.evaluate(() => {
+      const label = [...document.querySelectorAll('.governance-form label')].find(el => el.firstChild?.textContent === 'Daily requests');
+      const input = label.querySelector('input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '200');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('.grant-save-actions button');
+    await page.waitForFunction(() => document.querySelector('.mine-accounts .governance-panel button')?.getAttribute('aria-expanded') === 'false');
+    await clickText(page, 'button', 'Controls and sharing'); await clickText(page, 'button', 'Sharing');
+    await clickText(page, 'button', 'Edit account access');
+    await page.waitForFunction(() => [...document.querySelectorAll('.governance-form label')].find(el => el.firstChild?.textContent === 'Daily requests')?.querySelector('input').value === '200');
+    assert.equal((await page.$$('.governance-form article')).length, 1);
+    for (const width of [390, 768, 1365]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Sharing edit overflows at ${width}px`);
+    }
     await clickText(page, 'button', 'Revoke grant');
     assert.equal(await page.$$eval('.governance-form span', nodes => nodes.some(el => el.textContent === 'Revoked')), false);
     await clickText(page, 'button', 'Confirm revoke');
