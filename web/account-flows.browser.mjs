@@ -389,6 +389,34 @@ try {
     }
     assert.deepEqual(errors, []); await page.close();
   });
+  await check('provider permissions persist none, Claude only, and allow all', async () => {
+    const { page, errors } = await open('/?view=console');
+    await clickText(page, 'button', 'Effective policy');
+    await page.waitForSelector('.provider-access');
+    await clickText(page, '.provider-access button', 'Block all providers');
+    assert.equal(await page.$$eval('.provider-access input', nodes => nodes.some(input => input.checked)), false);
+    await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Policy saved'));
+    await clickText(page, 'button', 'Reload policy');
+    await page.waitForFunction(() => document.querySelector('.provider-access')?.textContent.includes('No providers allowed.'));
+    await page.evaluate(() => [...document.querySelectorAll('.provider-access label')].find(label => label.textContent === 'Claude').querySelector('input').click());
+    await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Policy saved'));
+    await clickText(page, 'button', 'Reload policy');
+    await page.waitForFunction(() => [...document.querySelectorAll('.provider-access input')].filter(input => input.checked).length === 1);
+    assert.deepEqual(await page.$$eval('.provider-access label', nodes => nodes.filter(label => label.querySelector('input').checked).map(label => label.textContent)), ['Claude']);
+    await clickText(page, '.provider-access button', 'Allow all providers');
+    await clickText(page, 'button', 'Save policy');
+    await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Policy saved'));
+    await clickText(page, 'button', 'Reload policy');
+    await page.waitForFunction(() => document.querySelectorAll('.provider-access input').length === 11 && [...document.querySelectorAll('.provider-access input')].every(input => input.checked));
+    for (const width of [390, 768, 1365]) {
+      await page.setViewport({ width, height: 900 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Provider permissions overflow at ${width}px`);
+    }
+    await page.screenshot({ path: 'test-results/provider-permissions.png', fullPage: true });
+    assert.deepEqual(errors, []); await page.close();
+  });
   await check('policy models use checkboxes and save directly with optional preview', async () => {
     const { page, errors } = await open('/?view=console');
     await clickText(page, 'button', 'Effective policy'); await page.waitForSelector('.governance-form');
