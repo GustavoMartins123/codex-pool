@@ -47,10 +47,13 @@ const (
 // block routing in this pool: credentials are refreshed on demand during the
 // request (only conversation pin revalidation avoids expired accounts to skip
 // the refresh latency), so StateExpired stays routable and degrades to dead
-// only when refresh actually fails.
+// only when refresh actually fails. StateNeedsLogin marks a rejected refresh
+// token while the access token may still serve traffic, so it also stays
+// routable and retires only when the access token stops working.
 var routableStates = map[State]bool{
-	StateHealthy: true,
-	StateExpired: true,
+	StateHealthy:    true,
+	StateExpired:    true,
+	StateNeedsLogin: true,
 	// Draining keeps existing conversations but should not receive new pins;
 	// availability of drained accounts for pinned traffic is a CP-04 decision.
 }
@@ -61,6 +64,7 @@ var routableStates = map[State]bool{
 type Facts struct {
 	Disabled           bool
 	Dead               bool
+	NeedsLogin         bool // Refresh token permanently rejected; relogin required
 	NeedsVerification  bool // NeedsVerification || VerificationURL set
 	HealthError        bool
 	CredentialsExpired bool
@@ -69,9 +73,11 @@ type Facts struct {
 }
 
 // Derive maps facts onto the unified state. Precedence follows removal
-// semantics: operator overrides first, then permanent failure, then
-// interaction-required, then temporal blocks and health, then expiry
-// (routable — refresh happens on demand), then healthy.
+// semantics and must preserve the parity invariant with routing gates:
+// operator overrides first, then permanent failure, then interaction-required
+// and health, then temporal blocks, then needs-login (routable — the access
+// token may still serve), then expiry (routable — refresh happens on
+// demand), then healthy.
 func Derive(f Facts) State {
 	switch {
 	case f.Disabled:
@@ -84,6 +90,8 @@ func Derive(f Facts) State {
 		return StateDegraded
 	case f.RateLimited, f.UsageExhausted:
 		return StateCooldown
+	case f.NeedsLogin:
+		return StateNeedsLogin
 	case f.CredentialsExpired:
 		return StateExpired
 	default:
@@ -98,6 +106,8 @@ func (f Facts) Reason() string {
 		return "disabled_by_operator"
 	case StateDead:
 		return "permanent_failure"
+	case StateNeedsLogin:
+		return "refresh_token_rejected"
 	case StateNeedsVerification:
 		return "upstream_verification_required"
 	case StateExpired:
@@ -134,11 +144,11 @@ var validTransitions = map[State]map[State]bool{
 	StateDiscovered:        {StateVerifying: true, StateHealthy: true, StateDead: true, StateDisabled: true, StateNeedsVerification: true},
 	StateVerifying:         {StateHealthy: true, StateNeedsVerification: true, StateDead: true, StateDisabled: true},
 	StateHealthy:           {StateCooldown: true, StateDegraded: true, StateDead: true, StateDisabled: true, StateDraining: true, StateMaintenance: true, StateNeedsLogin: true, StateNeedsVerification: true, StateExpired: true},
-	StateDegraded:          {StateHealthy: true, StateDead: true, StateDisabled: true, StateCooldown: true, StateNeedsVerification: true},
-	StateCooldown:          {StateHealthy: true, StateDegraded: true, StateDead: true, StateDisabled: true, StateNeedsVerification: true},
+	StateDegraded:          {StateHealthy: true, StateDead: true, StateDisabled: true, StateCooldown: true, StateNeedsLogin: true, StateNeedsVerification: true},
+	StateCooldown:          {StateHealthy: true, StateDegraded: true, StateDead: true, StateDisabled: true, StateNeedsLogin: true, StateNeedsVerification: true},
 	StateDraining:          {StateHealthy: true, StateDisabled: true, StateDead: true},
 	StateMaintenance:       {StateHealthy: true, StateDisabled: true, StateDead: true},
-	StateNeedsLogin:        {StateHealthy: true, StateDead: true, StateDisabled: true, StateNeedsVerification: true},
+	StateNeedsLogin:        {StateHealthy: true, StateDead: true, StateDisabled: true, StateNeedsVerification: true, StateCooldown: true},
 	StateNeedsVerification: {StateHealthy: true, StateDead: true, StateDisabled: true, StateExpired: true},
 	StateExpired:           {StateHealthy: true, StateDead: true, StateDisabled: true, StateNeedsLogin: true},
 	StateDead:              {StateHealthy: true, StateDisabled: true}, // resurrection happens via successful refresh

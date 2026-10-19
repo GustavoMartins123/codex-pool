@@ -245,6 +245,8 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.AddedAt = loaded.AddedAt
 	existing.Disabled = loaded.Disabled
 	existing.Dead = loaded.Dead
+	existing.NeedsLogin = loaded.NeedsLogin
+	existing.AuthError = loaded.AuthError
 	existing.AllowedSourceIPs = loaded.AllowedSourceIPs
 	existing.AccountUUID = loaded.AccountUUID
 	existing.CyberAccess = loaded.CyberAccess
@@ -306,6 +308,8 @@ func (h *proxyHandler) resurrectAccount(w http.ResponseWriter, accountID string)
 			a.Dead = false
 			a.Penalty = 0
 			a.RateLimitUntil = time.Time{}
+			a.NeedsLogin = false
+			a.AuthError = ""
 			a.mu.Unlock()
 			log.Printf("resurrected account %s (was_dead=%v, was_rate_limited=%v)", accountID, wasDead, wasRateLimited)
 			w.WriteHeader(http.StatusOK)

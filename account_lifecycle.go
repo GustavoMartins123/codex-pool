@@ -60,6 +60,54 @@ func retireAfterRefreshFail(a *Account, err error, now time.Time) bool {
 	return true
 }
 
+// maxAuthErrorLength bounds the persisted credential rejection reason so a
+// verbose upstream error body cannot bloat every account file.
+const maxAuthErrorLength = 200
+
+// markAccountNeedsLogin records a permanent refresh-token rejection (session
+// ended, token reused or invalidated) on an account whose access token is
+// still usable. The account keeps serving traffic, but the operator must
+// relogin before the access token expires or the account goes dead silently.
+func markAccountNeedsLogin(a *Account, reason string) {
+	if a == nil {
+		return
+	}
+	if len(reason) > maxAuthErrorLength {
+		reason = reason[:maxAuthErrorLength]
+	}
+
+	a.mu.Lock()
+	if a.NeedsLogin && a.AuthError == reason {
+		a.mu.Unlock()
+		return
+	}
+	a.NeedsLogin = true
+	a.AuthError = reason
+	accountID := a.ID
+	a.mu.Unlock()
+
+	log.Printf("account %s needs relogin: %s", accountID, reason)
+	if err := saveAccount(a); err != nil {
+		log.Printf("warning: failed to save needs-login state for account %s: %v", accountID, err)
+	}
+}
+
+// clearAccountNeedsLogin drops the needs-login marker after the credentials
+// recovered (successful refresh or operator relogin). Callers persist the
+// account themselves; this only updates in-memory state.
+func clearAccountNeedsLogin(a *Account) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	changed := a.NeedsLogin || a.AuthError != ""
+	if changed {
+		a.NeedsLogin = false
+		a.AuthError = ""
+	}
+	a.mu.Unlock()
+}
+
 // persistDeadAccount retires an account once. Repeating the write is what made
 // the pool watcher hot-reload every minute after a refresh token was revoked.
 func persistDeadAccount(a *Account, reason string) {
@@ -163,6 +211,12 @@ func (h *proxyHandler) disableAccountPermanently(a *Account, reqID string, reaso
 	a.Disabled = true
 	a.Dead = true
 	a.Penalty += 100.0
+	// Keep the rejection reason so operator surfaces can explain that only a
+	// relogin recovers this account.
+	if !a.NeedsLogin {
+		a.NeedsLogin = true
+		a.AuthError = reason
+	}
 	accountID := a.ID
 	a.mu.Unlock()
 

@@ -13,7 +13,11 @@ func TestDerivePrecedence(t *testing.T) {
 	}{
 		{"healthy", Facts{}, StateHealthy},
 		{"disabled wins over dead", Facts{Disabled: true, Dead: true}, StateDisabled},
-		{"dead wins over verification", Facts{Dead: true, NeedsVerification: true}, StateDead},
+		{"dead wins over needs login", Facts{Dead: true, NeedsLogin: true}, StateDead},
+		{"verification wins over needs login", Facts{NeedsLogin: true, NeedsVerification: true}, StateNeedsVerification},
+		{"cooldown wins over needs login", Facts{NeedsLogin: true, RateLimited: true}, StateCooldown},
+		{"needs login with live access token", Facts{NeedsLogin: true}, StateNeedsLogin},
+		{"needs login wins over expiry", Facts{NeedsLogin: true, CredentialsExpired: true}, StateNeedsLogin},
 		{"verification wins over health error", Facts{NeedsVerification: true, HealthError: true}, StateNeedsVerification},
 		{"health error wins over cooldown", Facts{HealthError: true, RateLimited: true}, StateDegraded},
 		{"cooldown wins over expiry", Facts{CredentialsExpired: true, RateLimited: true}, StateCooldown},
@@ -38,6 +42,9 @@ func TestReason(t *testing.T) {
 	if got := (Facts{UsageExhausted: true}).Reason(); got != "usage_exhausted_until_reset" {
 		t.Fatalf("reason = %q", got)
 	}
+	if got := (Facts{NeedsLogin: true}).Reason(); got != "refresh_token_rejected" {
+		t.Fatalf("reason = %q", got)
+	}
 	if got := (Facts{}).Reason(); got != "routable" {
 		t.Fatalf("reason = %q", got)
 	}
@@ -50,7 +57,10 @@ func TestRoutable(t *testing.T) {
 	if !Routable(StateExpired) {
 		t.Fatal("expired must stay routable: credentials refresh on demand")
 	}
-	for _, s := range []State{StateCooldown, StateDegraded, StateDead, StateDisabled, StateNeedsVerification, StateMaintenance, StateDraining, StateNeedsLogin, StateVerifying, StateDiscovered} {
+	if !Routable(StateNeedsLogin) {
+		t.Fatal("needs_login must stay routable: the access token keeps serving until it expires")
+	}
+	for _, s := range []State{StateCooldown, StateDegraded, StateDead, StateDisabled, StateNeedsVerification, StateMaintenance, StateDraining, StateVerifying, StateDiscovered} {
 		if Routable(s) {
 			t.Fatalf("%s must not be routable in v1", s)
 		}
@@ -75,6 +85,12 @@ func TestCanTransition(t *testing.T) {
 	}
 	if !CanTransition(StateHealthy, StateHealthy) {
 		t.Fatal("self transitions are no-ops and always allowed")
+	}
+	if !CanTransition(StateCooldown, StateNeedsLogin) {
+		t.Fatal("cooldown -> needs_login must be allowed: rate limits can expire while the refresh token is rejected")
+	}
+	if !CanTransition(StateNeedsLogin, StateHealthy) {
+		t.Fatal("needs_login -> healthy must be allowed: relogin or a successful refresh recovers the account")
 	}
 }
 

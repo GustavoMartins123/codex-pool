@@ -90,6 +90,8 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 		acc.LastRefresh = *aj.LastRefresh
 	}
 	acc.Dead = aj.Dead
+	acc.NeedsLogin = aj.NeedsLogin
+	acc.AuthError = aj.AuthError
 	acc.CyberAccess = aj.CyberAccess
 	if len(aj.CodexCookies) > 0 {
 		acc.CodexCookies = aj.CodexCookies
@@ -198,6 +200,8 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 	}
 	acc.LastRefresh = time.Now().UTC()
 	acc.Dead = false
+	acc.NeedsLogin = false
+	acc.AuthError = ""
 	acc.mu.Unlock()
 
 	return saveAccount(acc)

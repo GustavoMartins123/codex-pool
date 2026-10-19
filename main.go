@@ -6540,6 +6540,8 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				} else if isPermanentRefreshTokenError(err) {
 					if retireAfterRefreshFail(acc, err, time.Now()) {
 						persistDeadAccount(acc, "refresh token revoked/invalid")
+					} else {
+						markAccountNeedsLogin(acc, errStr)
 					}
 					refreshFailed = true
 				} else if !strings.Contains(errStr, "rate limited") {
@@ -6788,6 +6790,10 @@ func (h *proxyHandler) refreshAccountOnce(ctx context.Context, a *Account) error
 	if err == nil {
 		a.mu.Lock()
 		a.LastRefresh = time.Now().UTC()
+		if a.NeedsLogin || a.AuthError != "" {
+			a.NeedsLogin = false
+			a.AuthError = ""
+		}
 		a.mu.Unlock()
 		if saveErr := saveAccount(a); saveErr != nil {
 			log.Printf("warning: failed to save account %s after refresh: %v", a.ID, saveErr)

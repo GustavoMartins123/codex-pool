@@ -107,3 +107,52 @@ func TestRestoreValidatedStaticAccountPersistsHealthyState(t *testing.T) {
 		t.Fatalf("persisted account still dead: %s", data)
 	}
 }
+
+func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex.json")
+	if err := os.WriteFile(path, []byte(`{"tokens":{"access_token":"a","refresh_token":"r"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	acc := &Account{ID: "codex", Type: AccountTypeCodex, File: path, AccessToken: "a", RefreshToken: "r"}
+
+	markAccountNeedsLogin(acc, "refresh failed: 400 Bad Request: invalid_grant")
+
+	if !acc.NeedsLogin || acc.AuthError == "" {
+		t.Fatalf("needs login marker missing: %+v", acc)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"needs_login": true`) || !strings.Contains(string(data), `"auth_error"`) {
+		t.Fatalf("needs-login marker not persisted: %s", data)
+	}
+
+	// A fresh load restores the marker so restarts keep the relogin warning.
+	loaded, err := (&CodexProvider{}).LoadAccount("codex", path, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.NeedsLogin || loaded.AuthError == "" {
+		t.Fatalf("loaded account lost needs-login state: %+v", loaded)
+	}
+
+	// Re-marking with the same reason must not rewrite the file: strip
+	// auth_error on disk and confirm a deduped mark leaves it untouched.
+	if err := os.WriteFile(path, []byte(`{"tokens":{"access_token":"a","refresh_token":"r"},"needs_login":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markAccountNeedsLogin(acc, "refresh failed: 400 Bad Request: invalid_grant")
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "auth_error") {
+		t.Fatalf("identical needs-login marker rewrote the account file: %s", data)
+	}
+
+	clearAccountNeedsLogin(loaded)
+	if loaded.NeedsLogin || loaded.AuthError != "" {
+		t.Fatalf("needs-login state not cleared: %+v", loaded)
+	}
+}

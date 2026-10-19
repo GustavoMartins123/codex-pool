@@ -21,6 +21,7 @@ func accountStateFactsLocked(a *Account, now time.Time) accountstate.Facts {
 	return accountstate.Facts{
 		Disabled:           a.Disabled,
 		Dead:               a.Dead,
+		NeedsLogin:         a.NeedsLogin,
 		NeedsVerification:  a.NeedsVerification || strings.TrimSpace(a.VerificationURL) != "",
 		HealthError:        strings.TrimSpace(a.HealthError) != "",
 		CredentialsExpired: !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now),

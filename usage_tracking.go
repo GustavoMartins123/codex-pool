@@ -138,6 +138,9 @@ func (h *proxyHandler) pollUpstreamUsage() {
 						h.applyRateLimit(a, nil)
 						continue
 					}
+					if isPermanentRefreshTokenError(err) {
+						markAccountNeedsLogin(a, err.Error())
+					}
 					log.Printf("proactive refresh for %s failed: %v", a.ID, err)
 				} else {
 					a.mu.Lock()
@@ -209,6 +212,9 @@ func (h *proxyHandler) pollUpstreamUsage() {
 					if isRateLimitError(err) {
 						h.applyRateLimit(a, nil)
 						continue
+					}
+					if isPermanentRefreshTokenError(err) {
+						markAccountNeedsLogin(a, err.Error())
 					}
 					log.Printf("proactive refresh for %s failed: %v", a.ID, err)
 				} else {
@@ -318,6 +324,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 				a.mu.Lock()
 				a.RefreshBlocked = true
 				a.mu.Unlock()
+				markAccountNeedsLogin(a, errStr)
 				log.Printf("codex refresh token invalid for %s; continuing with live access token", a.ID)
 			}
 			// If refresh was rate limited, skip this usage fetch cycle entirely.
@@ -411,6 +418,8 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 				if isPermanentRefreshTokenError(err) {
 					if retireAfterRefreshFail(a, err, now) {
 						persistDeadAccount(a, "refresh token revoked")
+					} else {
+						markAccountNeedsLogin(a, err.Error())
 					}
 					return fmt.Errorf("refresh token invalid: %w", err)
 				}

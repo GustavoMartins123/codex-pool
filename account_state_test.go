@@ -29,6 +29,9 @@ func TestUnifiedStateMatchesRoutingAvailability(t *testing.T) {
 		{Dead: true, Disabled: true},
 		{Dead: true, RateLimitUntil: now.Add(time.Minute)},
 		{Disabled: true, HealthError: "x"},
+		{NeedsLogin: true},
+		{NeedsLogin: true, RateLimitUntil: now.Add(time.Minute)},
+		{NeedsLogin: true, ExpiresAt: now.Add(-time.Hour)},
 	}
 	for i, a := range accounts {
 		state := accountLifecycleStateLocked(a, now)
@@ -87,6 +90,12 @@ func TestAccountStateSnapshotFeedsAdmin(t *testing.T) {
 	snap = accountStateSnapshotLocked(healthy, now)
 	if snap.State != accountstate.StateHealthy || !snap.Routable {
 		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+
+	zombie := &Account{ID: "codex-4", NeedsLogin: true, AuthError: "invalid_grant"}
+	snap = accountStateSnapshotLocked(zombie, now)
+	if snap.State != accountstate.StateNeedsLogin || snap.Reason != "refresh_token_rejected" || !snap.Routable {
+		t.Fatalf("unexpected needs-login snapshot: %+v", snap)
 	}
 }
 

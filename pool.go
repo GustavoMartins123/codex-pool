@@ -70,7 +70,14 @@ type Account struct {
 	// RefreshBlocked means a transient refresh failure was observed while the
 	// current access token was still usable. Do not keep refreshing proactively;
 	// clear it only after an auth failure or a successful refresh.
-	RefreshBlocked          bool
+	RefreshBlocked bool
+	// NeedsLogin records that the refresh token was permanently rejected
+	// (session ended, token reused or invalidated). The access token may still
+	// serve traffic, but only an interactive relogin can recover the account.
+	NeedsLogin bool
+	// AuthError keeps the last permanent credential rejection reason for
+	// operator surfaces; it is only meaningful while NeedsLogin is set.
+	AuthError               string
 	AddedAt                 time.Time
 	Usage                   UsageSnapshot
 	Penalty                 float64
@@ -285,6 +292,8 @@ type CodexAuthJSON struct {
 	Tokens           *TokenData        `json:"tokens"`
 	LastRefresh      *time.Time        `json:"last_refresh"`
 	Dead             bool              `json:"dead"`
+	NeedsLogin       bool              `json:"needs_login"`
+	AuthError        string            `json:"auth_error"`
 	AllowedIP        string            `json:"allowed_ip"`
 	AllowedSourceIPs []string          `json:"allowed_source_ips"`
 	CyberAccess      bool              `json:"cyber_access"`
@@ -1739,6 +1748,19 @@ func saveCodexAccount(a *Account) error {
 		root["dead"] = true
 	} else {
 		delete(root, "dead")
+	}
+	// Persist the needs-login marker so operators see the pending relogin
+	// across restarts; auth_error documents why it was raised.
+	if a.NeedsLogin {
+		root["needs_login"] = true
+		if msg := strings.TrimSpace(a.AuthError); msg != "" {
+			root["auth_error"] = msg
+		} else {
+			delete(root, "auth_error")
+		}
+	} else {
+		delete(root, "needs_login")
+		delete(root, "auth_error")
 	}
 	if a.Disabled {
 		root["disabled"] = true
