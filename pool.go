@@ -1937,7 +1937,6 @@ func mergeUsage(prev, next UsageSnapshot) UsageSnapshot {
 	hardReset := res.PrimaryUsedPercent == 0 && res.SecondaryUsedPercent == 0
 
 	if !res.primarySet {
-		res.PrimaryUsageReported = prev.PrimaryUsageReported
 		if res.PrimaryUsedPercent == 0 && prev.PrimaryUsedPercent > 0 && !authoritativeZero && !(hardSource && hardReset) {
 			res.PrimaryUsedPercent = prev.PrimaryUsedPercent
 		}
@@ -1952,7 +1951,6 @@ func mergeUsage(prev, next UsageSnapshot) UsageSnapshot {
 		}
 	}
 	if !res.secondarySet {
-		res.SecondaryUsageReported = prev.SecondaryUsageReported
 		if res.SecondaryUsedPercent == 0 && prev.SecondaryUsedPercent > 0 && !authoritativeZero && !(hardSource && hardReset) {
 			res.SecondaryUsedPercent = prev.SecondaryUsedPercent
 		}

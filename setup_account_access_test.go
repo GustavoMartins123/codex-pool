@@ -84,6 +84,14 @@ func TestFreshSetupCredentialsRequireAccountGrant(t *testing.T) {
 				return w
 			}
 			denied := request()
+			if denied.Code != 403 || !strings.Contains(denied.Body.String(), "policy_provider_denied") || calls != 0 {
+				t.Fatalf("new member provider access: %d %s, upstream calls=%d", denied.Code, denied.Body.String(), calls)
+			}
+			policy := ClientPolicy{Providers: PolicySelector{Allow: []string{string(tc.provider)}}}
+			if err := p.saveEditedPolicy("owner", client.PrincipalID, policyEditorRequest{Revision: p.principal(client.PrincipalID).PolicyRevision, Target: "principal", Policy: &policy}); err != nil {
+				t.Fatal(err)
+			}
+			denied = request()
 			if denied.Code != 403 || !strings.Contains(denied.Body.String(), "account_access_denied") || calls != 0 {
 				t.Fatalf("unshared setup request: %d %s, upstream calls=%d", denied.Code, denied.Body.String(), calls)
 			}

@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -328,5 +328,7 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		}
 	}
 
+	snap.primarySet, snap.PrimaryUsageReported = usedPrimary, usedPrimary
+	snap.secondarySet, snap.SecondaryUsageReported = usedSecondary, usedSecondary
 	return snap, true
 }

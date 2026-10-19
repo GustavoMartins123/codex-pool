@@ -178,12 +178,14 @@ func assignCodexUsageWindow(snap *UsageSnapshot, window *codexUsageWindow, fallb
 	}
 	switch kind {
 	case codexWindowFiveHour:
+		snap.PrimaryUsageReported = true
 		snap.PrimaryUsed = window.UsedPercent
 		snap.PrimaryUsedPercent = window.UsedPercent
 		snap.PrimaryWindowMinutes = window.WindowMinutes
 		snap.PrimaryResetAt = window.ResetAt
 		return true
 	case codexWindowWeekly:
+		snap.SecondaryUsageReported = true
 		snap.SecondaryUsed = window.UsedPercent
 		snap.SecondaryUsedPercent = window.UsedPercent
 		snap.SecondaryWindowMinutes = window.WindowMinutes

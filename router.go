@@ -490,6 +490,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/me/accounts":
 		h.handleMyAccounts(w, r)
 		return
+	case "/api/me/quotas":
+		h.handleMyQuotas(w, r)
+		return
 	case "/api/me/clients":
 		h.handlePassportClients(w, r)
 		return

@@ -90,6 +90,7 @@ func (p *PassportStore) createMemberLink(actorID, email, displayName, purpose st
 		}
 		principal = &Principal{
 			ID: id, Kind: PrincipalMember, Status: PrincipalActive,
+			Policy:      ClientPolicy{Providers: PolicySelector{Deny: []string{"*"}}},
 			DisplayName: strings.TrimSpace(displayName), Email: email,
 			Note: "member", CreatedAt: time.Now().UTC(),
 		}

@@ -725,6 +725,8 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 	// Map five_hour to primary, seven_day to secondary
 	if payload.FiveHour != nil {
 		if payload.FiveHour.Utilization != nil {
+			snap.primarySet = true
+			snap.PrimaryUsageReported = true
 			snap.PrimaryUsed = *payload.FiveHour.Utilization / 100.0
 			snap.PrimaryUsedPercent = *payload.FiveHour.Utilization / 100.0
 		}
@@ -740,6 +742,8 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 
 	if payload.SevenDay != nil {
 		if payload.SevenDay.Utilization != nil {
+			snap.secondarySet = true
+			snap.SecondaryUsageReported = true
 			snap.SecondaryUsed = *payload.SevenDay.Utilization / 100.0
 			snap.SecondaryUsedPercent = *payload.SevenDay.Utilization / 100.0
 		}
