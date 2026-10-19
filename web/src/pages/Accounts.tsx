@@ -25,7 +25,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [selected, setSelected] = useState<string | null>(() => queryValue("account"));
   const [query, setQuery] = useState("");
   const [attentionOnly, setAttentionOnly] = useState(() => queryValue("accounts") === "attention");
-  const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 760px)").matches);
+  const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 1300px)").matches);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
   const [reloginProvider, setReloginProvider] = useState<"codex" | "antigravity">("codex");
@@ -54,7 +54,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     return () => window.removeEventListener("popstate", restoreAccountState);
   }, []);
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 760px)");
+    const media = window.matchMedia("(max-width: 1300px)");
     const update = () => setMobileInspector(media.matches);
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
@@ -194,7 +194,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                 aria-label={`Open ${provider.label} ${account.plan_type || "account"} details`}
               >
                 <span className="account-identity"><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small><em>{account.plan_type || "unknown plan"}</em><span>{adminMatch?.id ?? account.id}</span></small></span>
-                <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.status}</span>
+                <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.status === "needs_login" ? "relogin" : account.status}</span>
                 <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
                 <span className="account-windows" data-label="Reset windows">
                   <AccountResetWindows account={account} compact />
@@ -220,6 +220,13 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                 <span className="inspector-code">Account details</span>
                 <h2 id="account-inspector-title">{selectedAccount.id}</h2>
                 <div className="inspector-provider" style={{ color: providerDisplay(selectedAccount.type).color }}>{providerDisplay(selectedAccount.type).label} · {selectedAccount.plan_type}</div>
+                {(selectedAdmin?.needs_login || selectedAccount.status === "needs_login") && (
+                  <div className="inspector-alert" role="alert">
+                    <b>Credentials rejected — relogin required</b>
+                    {(selectedAdmin?.auth_error || selectedAccount.auth_error) && <span>{selectedAdmin?.auth_error || selectedAccount.auth_error}</span>}
+                    <small>The access token can keep serving requests, but this account will go offline when it expires. Use “Relogin account” below to restore it.</small>
+                  </div>
+                )}
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
                 <div className="inspector-windows" aria-label="Account usage reset windows">
                   <AccountResetWindows account={selectedAccount} />

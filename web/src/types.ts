@@ -101,7 +101,9 @@ export interface AccountStats {
   type: Provider;
   plan_type: string;
   reset_windows: ResetWindowPolicy;
-  status: "healthy" | "degraded" | "cooldown" | "verification_required" | "dead";
+  status: "healthy" | "degraded" | "cooldown" | "verification_required" | "needs_login" | "dead";
+  needs_login?: boolean;
+  auth_error?: string;
   needs_verification?: boolean;
   health_blocked?: boolean;
   penalty: number;
@@ -311,6 +313,8 @@ export interface AdminAccount {
   email?: string;
   disabled: boolean;
   dead: boolean;
+  needs_login?: boolean;
+  auth_error?: string;
   needs_verification?: boolean;
   health_blocked?: boolean;
   verification_url?: string;
