@@ -14,6 +14,7 @@ const SetupPage = lazy(() => import("./pages/Setup").then(module => ({ default: 
 const Passes = lazy(() => import("./pages/Passes").then(module => ({ default: module.Passes })));
 const PassportConsole = lazy(() => import("./pages/Console").then(module => ({ default: module.PassportConsole })));
 const Accounts = lazy(() => import("./pages/Accounts").then(module => ({ default: module.Accounts })));
+const MemberAccounts = lazy(() => import("./pages/MemberAccounts").then(module => ({ default: module.MemberAccounts })));
 const Models = lazy(() => import("./pages/Models").then(module => ({ default: module.Models })));
 
 export function App() {
@@ -154,6 +155,7 @@ export function App() {
               {view === "mine" && <PassportMine principal={passport} onPrincipal={setPassport} />}
               {view === "passes" && passport && passport.kind !== "guest" && <Passes />}
               {view === "console" && passport && passport.kind === "operator" && <PassportConsole principal={passport} />}
+              {view === "accounts" && passport.kind === "member" && <MemberAccounts key={passport.id} />}
               {view === "accounts" && data?.view === "accounts" && (
                 <Accounts
                   stats={data.stats}
@@ -164,7 +166,7 @@ export function App() {
                 />
               )}
               {view === "models" && data?.view === "models" && <Models models={data.models} />}
-              {(view === "accounts" || view === "models") && !data && <p role="status">Loading page data…</p>}
+              {(view === "accounts" || view === "models") && passport.kind === "operator" && !data && <p role="status">Loading page data…</p>}
               {view === "setup" && <SetupPage />}
             </Suspense>
           </PageBoundary>}
@@ -225,7 +227,7 @@ export function Navigation({ view, principal, onChange, onSignOut }: { view: Vie
       ]
     : [
         { label: "Personal", items: [["mine", "Your usage"], ["setup", "Setup"]] },
-        { label: "Sharing", items: [["passes", "Guest passes"]] },
+        { label: "Sharing", items: [["accounts", "Accounts"], ["passes", "Guest passes"]] },
       ];
   return (
     <nav className="signal-nav" aria-label="Codex Pool">

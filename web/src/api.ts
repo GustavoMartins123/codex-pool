@@ -101,6 +101,27 @@ export async function restorePass(id: string): Promise<void> {
 export async function rotatePassLink(id: string): Promise<{ link: string }> {
   return decode(await fetch(`/api/passes/${encodeURIComponent(id)}/rotate`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
+export interface MemberQuotaWindow {
+  remaining_percent: number;
+  reported_accounts: number;
+  updated_at: string;
+}
+export interface MemberModelQuota {
+  model: string;
+  name: string;
+  provider: string;
+  supporting_accounts: number;
+  available_now: boolean;
+  primary: MemberQuotaWindow | null;
+  secondary: MemberQuotaWindow | null;
+}
+export async function loadMemberQuotas(signal?: AbortSignal): Promise<{ models: MemberModelQuota[]; generated_at: string }> {
+  const result = await decode<{ models: MemberModelQuota[]; generated_at: string }>(await fetch("/api/me/quotas", { credentials: "same-origin", cache: "no-store", signal }));
+  const validWindow = (window: MemberQuotaWindow | null, total: number) => window === null || window && Number.isFinite(window.remaining_percent) && window.remaining_percent >= 0 && window.remaining_percent <= 100 && Number.isSafeInteger(window.reported_accounts) && window.reported_accounts > 0 && window.reported_accounts <= total && Number.isFinite(Date.parse(window.updated_at));
+  if (!result || !Array.isArray(result.models) || !Number.isFinite(Date.parse(result.generated_at)) || result.models.some(model => !model || typeof model.model !== "string" || !model.model || typeof model.provider !== "string" || !model.provider || typeof model.name !== "string" || typeof model.available_now !== "boolean" || !Number.isSafeInteger(model.supporting_accounts) || model.supporting_accounts < 1 || !validWindow(model.primary, model.supporting_accounts) || !validWindow(model.secondary, model.supporting_accounts))) throw new Error("Invalid quota response");
+  return result;
+}
+
 export async function loadMyUsage(hours = 168): Promise<{ hourly: PassportUsagePoint[]; excludes_passthrough: boolean }> {
   return decode(await fetch(`/api/me/usage?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
 }

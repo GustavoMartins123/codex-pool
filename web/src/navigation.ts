@@ -36,5 +36,5 @@ export function updateURL(changes: Record<string, string | null>, mode: HistoryM
 export function allowedViews(principal: PassportPrincipal): View[] {
   if (principal.kind === "operator") return VIEWS;
   if (principal.kind === "guest") return ["mine", "setup"];
-  return ["mine", "setup", "passes"];
+  return ["mine", "setup", "passes", "accounts"];
 }

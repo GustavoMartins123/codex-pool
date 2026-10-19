@@ -163,6 +163,7 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
     </div>
     {showMemberForm && principal.kind === "operator" && <div className="member-admin">
       <form className="access-form" onSubmit={issueMemberLink}>
+        <p>New members start with no provider access. After creating the member, open Effective policy to allow all providers or select specific ones, then share the accounts and models.</p>
         <label><span>Email</span><input type="email" value={memberEmail} onChange={(event) => setMemberEmail(event.target.value)} required /></label>
         <label><span>Name</span><input value={memberName} onChange={(event) => setMemberName(event.target.value)} maxLength={48} /></label>
         <button className="gold-button" disabled={Boolean(busy)}>{busy === "onboard" ? "Creating…" : "Create invite link"}</button>

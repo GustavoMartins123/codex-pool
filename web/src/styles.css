@@ -1288,3 +1288,21 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   .console-layout { grid-template-columns: minmax(0, 1fr); }
   .principal-roster { max-height: 430px; }
 }
+/* Member quota and provider permissions */
+.provider-access { margin-block: 1rem; padding: 1.25rem; border: 1px solid var(--rule); border-radius: 8px; }
+.provider-access p, .member-accounts > p { max-width: 75ch; line-height: 1.6; }
+.provider-access-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .65rem; margin-block: 1rem; }
+.provider-access-options label { display: flex; align-items: center; gap: .7rem; padding: .7rem; border: 1px solid var(--rule); border-radius: 6px; cursor: pointer; text-transform: capitalize; }
+.provider-access-options input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--gold); }
+.provider-access-options label:has(input:checked) { background: color-mix(in srgb, var(--gold) 9%, transparent); }
+.member-quota-filter { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.member-quota-filter select { max-width: 100%; padding: .6rem; }
+.member-quota-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1rem; }
+.member-quota-card { min-width: 0; padding: 1.4rem; border: 1px solid var(--rule); border-radius: 8px; }
+.member-quota-card header span { text-transform: uppercase; letter-spacing: .08em; font-size: .75rem; }
+.member-quota-card h2 { margin-block: .5rem; font-size: 1.4rem; }
+.member-quota-card code { overflow-wrap: anywhere; font-size: .8rem; }
+.member-quota-window { display: grid; gap: .5rem; padding-block: 1rem; border-top: 1px solid var(--rule); }
+.member-quota-window strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.member-quota-window small { display: block; font-size: .75rem; font-weight: normal; line-height: 1.5; }
+.member-quota-window meter { width: 100%; height: .8rem; accent-color: var(--gold); }
