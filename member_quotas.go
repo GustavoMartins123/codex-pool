@@ -66,39 +66,38 @@ func (h *proxyHandler) handleMyQuotas(w http.ResponseWriter, r *http.Request) {
 		respondJSONError(w, 503, "account authority unavailable")
 		return
 	}
-	// Evaluate before catalog filtering: broken policy configuration must be an
-	// explicit error, not a successful empty catalog.
-	if _, _, _, err := h.passport.evaluateClientPolicy(principal.ID, "", h.cfg.hotClientPolicies()); err != nil {
-		respondJSONError(w, 503, "policy unavailable")
+	now := time.Now().UTC()
+	visible, err := h.memberQuotaSnapshot(principal.ID, now)
+	if err != nil {
+		respondJSONError(w, 503, "quota authorization unavailable")
 		return
 	}
-	visible := h.catalogPool(principal.ID)
 	rows := []memberModelQuota{}
-	now := time.Now().UTC()
+	accounts := visible.allAccounts()
 	for _, model := range poolModelDescriptors(visible) {
 		if model.SupportingAccounts == 0 {
 			continue
 		}
-		row := memberModelQuota{Model: model.ID, Name: model.Name, Provider: model.Provider,
-			SupportingAccounts: model.SupportingAccounts}
-		for _, account := range visible.allAccounts() {
+		row := memberModelQuota{Model: model.ID, Name: model.Name, Provider: model.Provider}
+		for _, account := range accounts {
 			if string(account.Type) != model.Provider || !visible.catalogAccountAllows(account, model.ID) {
 				continue
 			}
-			definition, _ := modelForProvider(account.Type, model.ID)
-			usable := h.passport.authorizeAccount(principal.ID, account, "use") == nil
-			account.mu.Lock()
-			if definition.RequiresDiscovery {
+			definition, known := modelForProvider(account.Type, model.ID)
+			_, grokKnown := grokModelByName(model.ID)
+			if definition.RequiresDiscovery || !known && !(account.Type == AccountTypeGrok && grokKnown) && account.Type != AccountTypeAntigravity {
 				if _, ok := accountDiscoveredModel(account, model.ID); !ok {
-					account.mu.Unlock()
 					continue
 				}
 			}
+			row.SupportingAccounts++
 			u := account.Usage
-			row.AvailableNow = row.AvailableNow || usable && accountAvailableForRoutingLocked(account, now)
+			row.AvailableNow = row.AvailableNow || accountAvailableForRoutingLocked(account, now)
 			addMemberQuotaWindow(&row.Primary, u.PrimaryUsedPercent, u.PrimaryUsageReported && u.primarySet, u.RetrievedAt, u.PrimaryResetAt, now)
 			addMemberQuotaWindow(&row.Secondary, u.SecondaryUsedPercent, u.SecondaryUsageReported && u.secondarySet, u.RetrievedAt, u.SecondaryResetAt, now)
-			account.mu.Unlock()
+		}
+		if row.SupportingAccounts == 0 {
+			continue
 		}
 		for _, window := range []*memberQuotaWindow{row.Primary, row.Secondary} {
 			if window != nil {
