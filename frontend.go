@@ -2003,7 +2003,9 @@ type AccountStats struct {
 	Type                      string            `json:"type"`
 	PlanType                  string            `json:"plan_type"`
 	ResetWindows              ResetWindowPolicy `json:"reset_windows"`
-	Status                    string            `json:"status"` // healthy, degraded, cooldown, verification_required, dead
+	Status                    string            `json:"status"` // healthy, degraded, cooldown, verification_required, needs_login, dead
+	NeedsLogin                bool              `json:"needs_login,omitempty"`
+	AuthError                 string            `json:"auth_error,omitempty"`
 	NeedsVerification         bool              `json:"needs_verification,omitempty"`
 	HealthBlocked             bool              `json:"health_blocked,omitempty"`
 	Penalty                   float64           `json:"penalty"`
@@ -2129,9 +2131,12 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 
 		status := "healthy"
 		healthBlocked := accountHealthBlockedLocked(acc)
+		needsLogin := acc.NeedsLogin
 		needsVerification := acc.NeedsVerification || strings.TrimSpace(acc.VerificationURL) != ""
 		if acc.Dead || acc.Disabled {
 			status = "dead"
+		} else if needsLogin {
+			status = "needs_login"
 		} else if needsVerification {
 			status = "verification_required"
 		} else if accountCoolingDownLocked(acc, stats.GeneratedAt) || accountUsageExhaustedLocked(acc) {
@@ -2190,6 +2195,8 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			PlanType:                 formatPlanWithTier(acc.PlanType, acc.RateLimitTier),
 			ResetWindows:             resetWindowPolicy(acc.Type, acc.PlanType),
 			Status:                   status,
+			NeedsLogin:               needsLogin,
+			AuthError:                acc.AuthError,
 			NeedsVerification:        needsVerification,
 			HealthBlocked:            healthBlocked,
 			Penalty:                  acc.Penalty,

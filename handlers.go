@@ -54,6 +54,8 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		IDTokenChatGPTAccountID string      `json:"id_token_chatgpt_account_id,omitempty"`
 		Disabled                bool        `json:"disabled"`
 		Dead                    bool        `json:"dead"`
+		NeedsLogin              bool        `json:"needs_login,omitempty"`
+		AuthError               string      `json:"auth_error,omitempty"`
 		NeedsVerification       bool        `json:"needs_verification,omitempty"`
 		HealthBlocked           bool        `json:"health_blocked,omitempty"`
 		VerificationURL         string      `json:"verification_url,omitempty"`
@@ -86,6 +88,8 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		idTokID := a.IDTokenChatGPTAccountID
 		disabled := a.Disabled
 		dead := a.Dead
+		needsLogin := a.NeedsLogin
+		authError := a.AuthError
 		needsVerification := a.NeedsVerification
 		healthBlocked := accountHealthBlockedLocked(a)
 		verificationURL := a.VerificationURL
@@ -116,6 +120,8 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 			IDTokenChatGPTAccountID: idTokID,
 			Disabled:                disabled,
 			Dead:                    dead,
+			NeedsLogin:              needsLogin,
+			AuthError:               authError,
 			NeedsVerification:       needsVerification,
 			HealthBlocked:           healthBlocked,
 			VerificationURL:         verificationURL,

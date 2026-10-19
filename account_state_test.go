@@ -114,7 +114,8 @@ func TestTransitionHistoryIsBounded(t *testing.T) {
 func TestServeAccountsExposesUnifiedState(t *testing.T) {
 	dead := &Account{ID: "dead", Type: AccountTypeCodex, Dead: true}
 	healthy := &Account{ID: "ok", Type: AccountTypeCodex}
-	p := newPoolState([]*Account{dead, healthy}, false)
+	zombie := &Account{ID: "zombie", Type: AccountTypeCodex, NeedsLogin: true, AuthError: "invalid_grant"}
+	p := newPoolState([]*Account{dead, healthy, zombie}, false)
 	p.observeAccountStates(time.Now())
 
 	h := &proxyHandler{pool: p}
@@ -126,15 +127,24 @@ func TestServeAccountsExposesUnifiedState(t *testing.T) {
 		t.Fatalf("bad response: %v (%s)", err, rec.Body.String())
 	}
 	states := map[string]string{}
+	authErrors := map[string]string{}
 	for _, row := range rows {
 		id, _ := row["id"].(string)
 		state, _ := row["state"].(string)
+		authErr, _ := row["auth_error"].(string)
 		states[id] = state
+		authErrors[id] = authErr
 	}
 	if states["dead"] != string(accountstate.StateDead) {
 		t.Fatalf("dead account state = %q, want %q", states["dead"], accountstate.StateDead)
 	}
 	if states["ok"] != string(accountstate.StateHealthy) {
 		t.Fatalf("healthy account state = %q, want %q", states["ok"], accountstate.StateHealthy)
+	}
+	if states["zombie"] != string(accountstate.StateNeedsLogin) {
+		t.Fatalf("needs-login account state = %q, want %q", states["zombie"], accountstate.StateNeedsLogin)
+	}
+	if authErrors["zombie"] != "invalid_grant" {
+		t.Fatalf("needs-login account auth_error = %q, want the rejection reason", authErrors["zombie"])
 	}
 }

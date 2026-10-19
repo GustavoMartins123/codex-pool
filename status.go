@@ -60,6 +60,8 @@ type AccountStatus struct {
 	PlanType           string
 	Disabled           bool
 	Dead               bool
+	NeedsLogin         bool
+	AuthError          string
 	NeedsVerification  bool
 	HealthBlocked      bool
 	CoolingDown        bool
@@ -219,6 +221,8 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 			PlanType:           a.PlanType,
 			Disabled:           a.Disabled,
 			Dead:               a.Dead,
+			NeedsLogin:         a.NeedsLogin,
+			AuthError:          a.AuthError,
 			NeedsVerification:  a.NeedsVerification,
 			HealthBlocked:      accountHealthBlockedLocked(a),
 			CoolingDown:        accountCoolingDownLocked(a, now),
