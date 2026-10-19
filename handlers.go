@@ -402,10 +402,19 @@ func (h *proxyHandler) forceRefreshAccount(w http.ResponseWriter, accountID stri
 		return
 	}
 
-	// Force refresh
-	err := h.refreshAccountOnce(context.Background(), target)
+	// Force refresh through the single-flight path: a concurrent poller or
+	// on-demand refresh for the same account must never send the same refresh
+	// token twice — OpenAI answers refresh-token reuse by ending the session.
+	err := h.refreshAccount(context.Background(), target)
 	if err != nil {
 		log.Printf("force refresh %s failed: %v", accountID, err)
+		if isPermanentRefreshTokenError(err) {
+			if retireAfterRefreshFail(target, err, time.Now()) {
+				persistDeadAccount(target, "refresh token revoked/invalid")
+			} else {
+				markAccountNeedsLogin(target, err.Error())
+			}
+		}
 		respondJSONError(w, http.StatusInternalServerError, "refresh failed: "+err.Error())
 		return
 	}

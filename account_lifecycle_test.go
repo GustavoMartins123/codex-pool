@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestUpstreamTokenRevoked(t *testing.T) {
@@ -154,5 +160,114 @@ func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
 	clearAccountNeedsLogin(loaded)
 	if loaded.NeedsLogin || loaded.AuthError != "" {
 		t.Fatalf("needs-login state not cleared: %+v", loaded)
+	}
+}
+
+func TestForceRefreshAccountJoinsInFlightRefresh(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "account.json")
+	_ = os.WriteFile(file, []byte(`{"tokens":{"access_token":"old-token","refresh_token":"valid-refresh"}}`), 0o600)
+	acc := &Account{Type: AccountTypeCodex, ID: "codex_force", File: file, AccessToken: "old-token", RefreshToken: "valid-refresh"}
+
+	refreshStarted := make(chan struct{})
+	release := make(chan struct{})
+	var tokenCalls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/oauth/token" {
+			http.NotFound(w, r)
+			return
+		}
+		atomic.AddInt32(&tokenCalls, 1)
+		select {
+		case <-refreshStarted:
+		default:
+			close(refreshStarted)
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "fresh-token", "refresh_token": "rotated"})
+	}))
+	defer server.Close()
+
+	serverURL, _ := url.Parse(server.URL)
+	h := &proxyHandler{
+		refreshTransport: server.Client().Transport,
+		registry:         NewProviderRegistry(NewCodexProvider(serverURL, serverURL, serverURL), nil, nil),
+		pool:             newPoolState([]*Account{acc}, false),
+	}
+
+	// A scheduled/on-demand refresh is already in flight when the operator
+	// presses "Refresh credentials".
+	go func() { _ = h.refreshAccount(context.Background(), acc) }()
+	<-refreshStarted
+
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.forceRefreshAccount(rec, "codex_force")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	<-done
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("force refresh status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if n := atomic.LoadInt32(&tokenCalls); n != 1 {
+		t.Fatalf("oauth token endpoint called %d times, want 1: the refresh token must never be spent twice", n)
+	}
+}
+
+func TestForceRefreshAccountMarksNeedsLoginOnPermanentFailure(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "account.json")
+	_ = os.WriteFile(file, []byte(`{"tokens":{"access_token":"old-token","refresh_token":"dead-refresh"}}`), 0o600)
+	acc := &Account{
+		Type:         AccountTypeCodex,
+		ID:           "codex_dead_rt",
+		File:         file,
+		AccessToken:  "old-token",
+		RefreshToken: "dead-refresh",
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/oauth/token" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+	}))
+	defer server.Close()
+
+	serverURL, _ := url.Parse(server.URL)
+	h := &proxyHandler{
+		refreshTransport: server.Client().Transport,
+		registry:         NewProviderRegistry(NewCodexProvider(serverURL, serverURL, serverURL), nil, nil),
+		pool:             newPoolState([]*Account{acc}, false),
+	}
+
+	rec := httptest.NewRecorder()
+	h.forceRefreshAccount(rec, "codex_dead_rt")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("force refresh status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	acc.mu.Lock()
+	needsLogin, authError, dead := acc.NeedsLogin, acc.AuthError, acc.Dead
+	acc.mu.Unlock()
+	if !needsLogin || authError == "" {
+		t.Fatalf("permanent refresh failure did not mark needs-login: %+v", acc)
+	}
+	if dead {
+		t.Fatal("account with live access token must not be retired")
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "needs_login") {
+		t.Fatalf("needs-login marker not persisted: %s", data)
 	}
 }
