@@ -1636,6 +1636,11 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	var lastError error
 	var lastRateLimitBody []byte
 	var lastRateLimitUntil time.Time
+	// The last account-specific failure (unrecoverable 401, 5xx) is relayed
+	// when every account fails, instead of a generic capacity error.
+	var lastFailureStatus int
+	var lastFailureBody []byte
+	serverFailures := 0
 	attempts := h.cfg.maxAttempts
 	if attempts < 1 {
 		attempts = 1
@@ -1781,15 +1786,27 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			}
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			_ = resp.Body.Close()
-			if err := h.refreshAccountAfterAuthFailure(r.Context(), account); err == nil {
-				atomic.AddInt64(&account.Inflight, 1)
-				resp, err = h.doAntigravityRequestWithTransientRetry(r.Context(), r.Header, account, provider, prepared)
-				atomic.AddInt64(&account.Inflight, -1)
-				if err != nil {
-					lastError = err
-					continue
-				}
+			if err := h.refreshAccountAfterAuthFailure(r.Context(), account); err != nil {
+				// This credential cannot serve the request; another account may.
+				lastFailureStatus, lastFailureBody = http.StatusUnauthorized, errBody
+				lastError = fmt.Errorf("Antigravity account %s rejected its credentials: %v", account.ID, err)
+				continue
+			}
+			atomic.AddInt64(&account.Inflight, 1)
+			resp, err = h.doAntigravityRequestWithTransientRetry(r.Context(), r.Header, account, provider, prepared)
+			atomic.AddInt64(&account.Inflight, -1)
+			if err != nil {
+				lastError = err
+				continue
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				errBody, _ = io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+				_ = resp.Body.Close()
+				lastFailureStatus, lastFailureBody = http.StatusUnauthorized, errBody
+				lastError = fmt.Errorf("Antigravity account %s rejected refreshed credentials", account.ID)
+				continue
 			}
 		}
 		if resp.StatusCode == http.StatusBadRequest && !contextCompactionRetry {
@@ -1832,10 +1849,13 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			}
 			if providerErr.Class == ProviderErrorQuota {
 				until := providerErr.ResetAt
+				if wait, ok := parseRetryAfter(resp.Header); ok && time.Now().Add(wait).After(until) {
+					until = time.Now().Add(wait)
+				}
 				if until.IsZero() {
 					until = time.Now().Add(backoffDuration(attempt))
 				}
-				setAntigravityModelCooldown(account, canonical, until)
+				setAntigravityQuotaCooldown(account, canonical, errBody, until)
 				lastRateLimitBody = append(lastRateLimitBody[:0], errBody...)
 				lastRateLimitUntil = until
 				lastError = fmt.Errorf("Antigravity %s is rate limited until %s", canonical, until.Format(time.RFC3339))
@@ -1852,6 +1872,22 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			recordAntigravityForbidden(account, errBody)
 			lastError = fmt.Errorf("Antigravity account %s was rejected: %s", account.ID, safeText(errBody))
+			continue
+		}
+		if resp.StatusCode >= 500 {
+			// Upstream failures are account-scoped until proven otherwise:
+			// rotate instead of failing a request other accounts can serve.
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
+			lastFailureStatus, lastFailureBody = resp.StatusCode, errBody
+			lastError = fmt.Errorf("Antigravity %s returned %d on account %s", canonical, resp.StatusCode, account.ID)
+			// A failure the request itself causes would repeat on every
+			// account; bound how many accounts it may consume.
+			if serverFailures++; serverFailures >= antigravityMaxServerFailover {
+				break
+			}
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -1897,12 +1933,20 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusTooManyRequests, lastRateLimitBody)
 		return true
 	}
+	if lastFailureStatus != 0 {
+		antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), lastFailureStatus, lastFailureBody)
+		return true
+	}
 	if lastError == nil {
 		lastError = fmt.Errorf("no Antigravity account currently supports %s", requestedModel)
 	}
 	antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusServiceUnavailable, []byte(lastError.Error()))
 	return true
 }
+
+// antigravityMaxServerFailover bounds how many accounts a request may try
+// after upstream 5xx answers.
+const antigravityMaxServerFailover = 3
 
 func recordAntigravityForbidden(account *Account, body []byte) {
 	applyAntigravityForbidden(account, body)

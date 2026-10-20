@@ -402,7 +402,7 @@ func antigravityAccountModelAvailable(pool *poolState, accountID, model string) 
 			return false, time.Time{}
 		}
 		now := time.Now()
-		until := account.ModelRateLimits[model]
+		until := antigravityModelCooldownLocked(account, model)
 		discoveryAvailable, discoveryReset := antigravityModels.DiscoveryAvailability(accountID, model, now)
 		if discoveryReset.After(until) {
 			until = discoveryReset
@@ -943,7 +943,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 					continue
 				}
 				account.mu.Lock()
-				until := account.ModelRateLimits[model]
+				until := antigravityModelCooldownLocked(account, model)
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
 				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
@@ -958,7 +958,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 					continue
 				}
 				account.mu.Lock()
-				until := account.ModelRateLimits[model]
+				until := antigravityModelCooldownLocked(account, model)
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
 				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
@@ -983,7 +983,7 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 			}
 		}
 		account.mu.Lock()
-		until := account.ModelRateLimits[model]
+		until := antigravityModelCooldownLocked(account, model)
 		discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
 		eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
 		score := scoreAccountLocked(account, now) - float64(atomic.LoadInt64(&account.Inflight))*0.02
@@ -1008,6 +1008,16 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 }
 
 func setAntigravityModelCooldown(account *Account, model string, until time.Time) {
+	setAntigravityCooldown(account, antigravityCanonicalModel(model), until)
+}
+
+// setAntigravityQuotaCooldown cools down the whole model family when the
+// rate-limit body names a shared family bucket, and only the model otherwise.
+func setAntigravityQuotaCooldown(account *Account, model string, body []byte, until time.Time) {
+	setAntigravityCooldown(account, antigravityRateLimitScope(model, body), until)
+}
+
+func setAntigravityCooldown(account *Account, key string, until time.Time) {
 	if account == nil || until.IsZero() {
 		return
 	}
@@ -1015,9 +1025,8 @@ func setAntigravityModelCooldown(account *Account, model string, until time.Time
 	if account.ModelRateLimits == nil {
 		account.ModelRateLimits = make(map[string]time.Time)
 	}
-	model = antigravityCanonicalModel(model)
-	if until.After(account.ModelRateLimits[model]) {
-		account.ModelRateLimits[model] = until
+	if until.After(account.ModelRateLimits[key]) {
+		account.ModelRateLimits[key] = until
 	}
 	account.mu.Unlock()
 	_ = saveAccount(account)
@@ -1031,10 +1040,72 @@ func clearAntigravityModelCooldown(account *Account, model string) {
 	canonical := antigravityCanonicalModel(model)
 	_, existed := account.ModelRateLimits[canonical]
 	delete(account.ModelRateLimits, canonical)
+	// A served request proves its family bucket has quota again.
+	if family := antigravityQuotaFamily(canonical); family != "" {
+		_, familyExisted := account.ModelRateLimits[antigravityFamilyCooldownKey(family)]
+		delete(account.ModelRateLimits, antigravityFamilyCooldownKey(family))
+		existed = existed || familyExisted
+	}
 	account.mu.Unlock()
 	if existed {
 		_ = saveAccount(account)
 	}
+}
+
+func antigravityFamilyCooldownKey(family string) string {
+	return "family:" + family
+}
+
+// antigravityModelCooldownLocked returns when a model may be retried on the
+// account, honoring both its own cooldown and its family's. Callers hold
+// account.mu.
+func antigravityModelCooldownLocked(account *Account, model string) time.Time {
+	until := account.ModelRateLimits[model]
+	if family := antigravityQuotaFamily(model); family != "" {
+		if familyUntil := account.ModelRateLimits[antigravityFamilyCooldownKey(family)]; familyUntil.After(until) {
+			until = familyUntil
+		}
+	}
+	return until
+}
+
+// antigravityRateLimitScope picks the cooldown key for a 429. Only a
+// structured provider-emitted bucket identifier establishes that the limit is
+// shared by the family; generic RESOURCE_EXHAUSTED and free-form messages
+// stay scoped to the exact model.
+func antigravityRateLimitScope(model string, body []byte) string {
+	model = antigravityCanonicalModel(model)
+	family := antigravityQuotaFamily(model)
+	var root any
+	if family != "" && json.Unmarshal(body, &root) == nil && antigravityBodyIdentifiesQuotaFamily(root, family) {
+		return antigravityFamilyCooldownKey(family)
+	}
+	return model
+}
+
+func antigravityBodyIdentifiesQuotaFamily(value any, family string) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		for key, child := range node {
+			lowerKey := strings.ToLower(key)
+			if text, ok := child.(string); ok && (strings.Contains(lowerKey, "quota") || strings.Contains(lowerKey, "bucket") || strings.Contains(lowerKey, "limit")) {
+				identifier := strings.ToLower(strings.TrimSpace(text))
+				if identifier == family+"-weekly" || identifier == family+"-5h" {
+					return true
+				}
+			}
+			if antigravityBodyIdentifiesQuotaFamily(child, family) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if antigravityBodyIdentifiesQuotaFamily(child, family) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {

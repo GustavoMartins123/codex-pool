@@ -540,7 +540,7 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 				accountSecondaryUsageLocked(account) < secondaryHardExcludeThreshold
 		}
 		if eligible && account.Type == AccountTypeAntigravity {
-			modelCooldown := account.ModelRateLimits[model]
+			modelCooldown := antigravityModelCooldownLocked(account, model)
 			discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
 			eligible = antigravityModels.Supports(account.ID, model) &&
 				!modelCooldown.After(now) && discoveryAvailable
