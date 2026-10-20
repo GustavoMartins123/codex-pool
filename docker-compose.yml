@@ -22,6 +22,8 @@ services:
       - PROXY_EXHAUSTION_PREFER_WAIT=${PROXY_EXHAUSTION_PREFER_WAIT:-true}
     cap_drop:
       - ALL
+    security_opt:
+      - no-new-privileges:true
     mem_limit: 2g
     memswap_limit: 2g
     deploy:
