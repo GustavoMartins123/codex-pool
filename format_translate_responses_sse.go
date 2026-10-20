@@ -1531,6 +1531,10 @@ type claudeToResponsesWriter struct {
 	outputTokens     int64
 	stopReason       string
 	sentMessageItem  bool // whether we've emitted the message output_item.added
+	messageParts     []any
+	output           []any
+	sequence         int
+	terminal         bool
 }
 
 func (cw *claudeToResponsesWriter) Write(p []byte) (int, error) {
@@ -1558,6 +1562,9 @@ func (cw *claudeToResponsesWriter) scanAndTranslate() {
 }
 
 func (cw *claudeToResponsesWriter) processEvent(event []byte) {
+	if cw.terminal {
+		return
+	}
 	eventType, data := parseSSEEvent(event)
 
 	if len(data) > 0 && cw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -1621,6 +1628,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 			// Emit output_item.added for the message (only once)
 			if !cw.sentMessageItem {
 				cw.sentMessageItem = true
+				cw.messageParts = nil
 				cw.emitEvent("response.output_item.added", map[string]any{
 					"type":         "response.output_item.added",
 					"output_index": cw.outputIndex,
@@ -1650,28 +1658,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 			cw.accumulatedArgs = ""
 			// Close previous message output item if needed
 			if cw.sentMessageItem {
-				// Emit content_part.done and output_item.done for the message
-				cw.emitEvent("response.content_part.done", map[string]any{
-					"type":          "response.content_part.done",
-					"output_index":  cw.outputIndex,
-					"content_index": cw.contentIndex,
-					"part":          map[string]any{"type": "output_text", "text": cw.accumulatedText},
-				})
-				cw.emitEvent("response.output_item.done", map[string]any{
-					"type":         "response.output_item.done",
-					"output_index": cw.outputIndex,
-					"item": map[string]any{
-						"type": "message",
-						"role": "assistant",
-						"content": []any{
-							map[string]any{"type": "output_text", "text": cw.accumulatedText},
-						},
-						"status": "completed",
-					},
-				})
-				cw.outputIndex++
-				cw.contentIndex = 0
-				cw.sentMessageItem = false
+				cw.finishMessage()
 			}
 			// Emit output_item.added for the function_call
 			cw.emitEvent("response.output_item.added", map[string]any{
@@ -1736,6 +1723,9 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 				"content_index": cw.contentIndex,
 				"text":          cw.accumulatedText,
 			})
+			part := map[string]any{"type": "output_text", "text": cw.accumulatedText, "annotations": []any{}}
+			cw.emitEvent("response.content_part.done", map[string]any{"type": "response.content_part.done", "output_index": cw.outputIndex, "content_index": cw.contentIndex, "part": part})
+			cw.messageParts = append(cw.messageParts, part)
 			cw.contentIndex++
 		case "thinking":
 			// No specific done event needed
@@ -1777,51 +1767,67 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 	case "message_stop":
 		// Close any open message item
 		if cw.sentMessageItem {
-			cw.emitEvent("response.content_part.done", map[string]any{
-				"type":          "response.content_part.done",
-				"output_index":  cw.outputIndex,
-				"content_index": cw.contentIndex,
-				"part":          map[string]any{"type": "output_text", "text": cw.accumulatedText},
-			})
-			cw.emitEvent("response.output_item.done", map[string]any{
-				"type":         "response.output_item.done",
-				"output_index": cw.outputIndex,
-				"item": map[string]any{
-					"type": "message",
-					"role": "assistant",
-					"content": []any{
-						map[string]any{"type": "output_text", "text": cw.accumulatedText},
-					},
-					"status": "completed",
-				},
-			})
+			cw.finishMessage()
 		}
-		// Emit response.completed
 		status := "completed"
 		if cw.stopReason == "max_tokens" {
 			status = "incomplete"
 		}
-		cw.emitEvent("response.completed", map[string]any{
-			"type": "response.completed",
-			"response": map[string]any{
-				"id":     cw.id,
-				"object": "response",
-				"model":  cw.model,
-				"status": status,
-				"usage": map[string]any{
-					"input_tokens":  cw.inputTokens,
-					"output_tokens": cw.outputTokens,
-					"total_tokens":  cw.inputTokens + cw.outputTokens,
-				},
+		response := map[string]any{
+			"id":     cw.id,
+			"object": "response",
+			"model":  cw.model,
+			"status": status,
+			"output": cw.output,
+			"usage": map[string]any{
+				"input_tokens":  cw.inputTokens,
+				"output_tokens": cw.outputTokens,
+				"total_tokens":  cw.inputTokens + cw.outputTokens,
 			},
-		})
+		}
+		if cw.output == nil {
+			response["output"] = []any{}
+		}
+		if status == "incomplete" {
+			response["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+		}
+		cw.emitEvent("response."+status, map[string]any{"type": "response." + status, "response": response})
+		cw.terminal = true
+	case "error":
+		cw.emitEvent("response.failed", map[string]any{"type": "response.failed", "response": map[string]any{"id": cw.id, "object": "response", "model": cw.model, "status": "failed", "output": cw.output, "error": map[string]any{"code": "provider_error", "message": "Claude upstream reported an error."}}})
+		cw.terminal = true
 
 	case "ping":
 		// Ignore
 	}
 }
 
+func (cw *claudeToResponsesWriter) finishMessage() {
+	cw.emitEvent("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": cw.outputIndex,
+		"item": map[string]any{"type": "message", "role": "assistant", "content": cw.messageParts, "status": "completed"}})
+	cw.outputIndex++
+	cw.contentIndex = 0
+	cw.sentMessageItem = false
+}
+
 func (cw *claudeToResponsesWriter) emitEvent(eventType string, data map[string]any) {
+	data["sequence_number"] = cw.sequence
+	cw.sequence++
+	if item, ok := data["item"].(map[string]any); ok {
+		id := fmt.Sprintf("msg_%s_%d", cw.id, cw.outputIndex)
+		if item["type"] == "function_call" {
+			id = "fc_" + cw.currentToolID
+		}
+		item["id"] = id
+		if eventType == "response.output_item.done" {
+			cw.output = append(cw.output, item)
+		}
+	}
+	if strings.HasPrefix(eventType, "response.function_call_arguments.") {
+		data["item_id"] = "fc_" + cw.currentToolID
+	} else if strings.HasPrefix(eventType, "response.output_text.") || strings.HasPrefix(eventType, "response.content_part.") {
+		data["item_id"] = fmt.Sprintf("msg_%s_%d", cw.id, cw.outputIndex)
+	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return
