@@ -532,7 +532,7 @@ func (p *poolState) count() int {
 
 // accountTier returns the preference tier for an account (1 = best, 2 = mid, 3 = last resort).
 // Claude: tier 1 = max/team/max_team, tier 2 = unknown/other, tier 3 = pro
-// Codex: tier 1 = pro/prolite, tier 2 = everything else
+// Codex: tier 1 = pro/promax/prolite, tier 2 = everything else
 // Gemini: tier 1 = ultra, tier 2 = everything else
 func accountTier(accType AccountType, planType string) int {
 	switch accType {
@@ -574,9 +574,11 @@ func normalizeCodexPlanType(planType string) string {
 	return p
 }
 
+const codexPlanProMax = "promax"
+
 func isCodexProAccessPlan(planType string) bool {
 	switch normalizeCodexPlanType(planType) {
-	case "pro", "prolite":
+	case "pro", codexPlanProMax, "prolite":
 		return true
 	default:
 		return false

@@ -230,6 +230,27 @@ func TestCodexProLiteHasProAccessAndTier(t *testing.T) {
 	}
 }
 
+func TestCodexProMaxHasProAccessAndTier(t *testing.T) {
+	for _, plan := range []string{"promax", "PROMAX", " ProMax "} {
+		if !isCodexProAccessPlan(plan) {
+			t.Fatalf("expected %q to have Codex Pro access", plan)
+		}
+		if !planMatchesRequired(plan, "pro") {
+			t.Fatalf("expected %q to satisfy a Pro plan requirement", plan)
+		}
+		if got := accountTier(AccountTypeCodex, plan); got != 1 {
+			t.Fatalf("accountTier(codex, %q) = %d, want 1", plan, got)
+		}
+	}
+
+	plus := &Account{ID: "plus", Type: AccountTypeCodex, PlanType: "plus", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
+	proMax := &Account{ID: "promax", Type: AccountTypeCodex, PlanType: "promax", Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
+	p := newPoolState([]*Account{plus, proMax}, false)
+	if got := p.candidate("", nil, AccountTypeCodex, "pro", ""); got == nil || got.ID != "promax" {
+		t.Fatalf("expected Pro Max account to serve a Pro-only request, got %+v", got)
+	}
+}
+
 func TestCandidateUsesCodexProLiteAlongsidePro(t *testing.T) {
 	pro := &Account{ID: "pro", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.7, SecondaryUsedPercent: 0.7}}
 	proLite := &Account{ID: "prolite", Type: AccountTypeCodex, PlanType: "prolite", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1, SecondaryUsedPercent: 0.1}}
