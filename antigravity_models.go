@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -462,6 +463,13 @@ func decodeRaw(raw map[string]json.RawMessage, key string, target any) {
 }
 
 func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error) {
+	snapshot, _, err := fetchAntigravityModelsWithQuota(ctx, transport, account, bases...)
+	return snapshot, err
+}
+
+// fetchAntigravityModelsWithQuota also reports why the quota summary is
+// missing, so callers can act on a daily-host verification demand.
+func fetchAntigravityModelsWithQuota(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error, error) {
 	body := []byte(`{}`)
 	var lastErr error
 	for _, base := range bases {
@@ -472,7 +480,7 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 		u.Path = singleJoin(u.Path, "/v1internal:fetchAvailableModels")
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
 		if err != nil {
-			return AntigravityAccountSnapshot{}, err
+			return AntigravityAccountSnapshot{}, nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 		req.Header.Set("Content-Type", "application/json")
@@ -494,17 +502,29 @@ func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, ac
 		}
 		snapshot, err := parseAntigravityModelSnapshot(responseBody, time.Now())
 		if err != nil {
-			return AntigravityAccountSnapshot{}, err
+			return AntigravityAccountSnapshot{}, nil, err
 		}
-		if summary, summaryErr := fetchAntigravityQuotaSummary(ctx, transport, account, bases...); summaryErr == nil {
+		summary, summaryErr := fetchAntigravityQuotaSummary(ctx, transport, account, bases...)
+		if summaryErr == nil {
 			snapshot.QuotaSummary = &summary
 		}
-		return snapshot, nil
+		return snapshot, summaryErr, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("fetchAvailableModels has no configured upstream")
 	}
-	return AntigravityAccountSnapshot{}, lastErr
+	return AntigravityAccountSnapshot{}, nil, lastErr
+}
+
+// antigravityForbiddenError is a daily-host 403 from the quota summary. That
+// endpoint enforces Google's account verification for the host that serves
+// generation, so its answer describes the account state.
+type antigravityForbiddenError struct {
+	body []byte
+}
+
+func (e *antigravityForbiddenError) Error() string {
+	return "retrieveUserQuotaSummary forbidden: " + safeText(e.body)
 }
 
 func parseAntigravityQuotaSummary(body []byte, fetchedAt time.Time) (AntigravityQuotaSummary, error) {
@@ -570,7 +590,7 @@ func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripp
 		return AntigravityQuotaSummary{}, err
 	}
 	var lastErr error
-	for _, base := range bases {
+	for index, base := range bases {
 		if base == nil {
 			continue
 		}
@@ -593,6 +613,11 @@ func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripp
 		if readErr != nil {
 			lastErr = readErr
 			continue
+		}
+		// Production can demand verification for an account the daily host
+		// still serves; only the daily host's 403 describes the account.
+		if resp.StatusCode == http.StatusForbidden && index == 0 {
+			return AntigravityQuotaSummary{}, &antigravityForbiddenError{body: responseBody}
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			lastErr = fmt.Errorf("retrieveUserQuotaSummary failed: %s: %s", resp.Status, safeText(responseBody))
@@ -712,11 +737,26 @@ func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSn
 	return usage
 }
 
+// syncAntigravityModels refreshes one account's model inventory and quota.
+// The quota summary doubles as the account health probe: a daily-host success
+// clears verification markers that only a served request could clear before,
+// and a daily-host verification demand sets them.
 func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) error {
 	previous, hadPrevious := antigravityModels.AccountSnapshot(account.ID)
-	snapshot, err := fetchAntigravityModels(ctx, transport, account, bases...)
+	snapshot, quotaErr, err := fetchAntigravityModelsWithQuota(ctx, transport, account, bases...)
 	if err != nil {
 		return err
+	}
+	var forbidden *antigravityForbiddenError
+	switch {
+	case quotaErr == nil:
+		clearAntigravityHealth(account)
+	case errors.As(quotaErr, &forbidden):
+		if needsVerification, banned, _ := classifyAntigravityForbidden(forbidden.body); needsVerification || banned {
+			recordAntigravityForbidden(account, forbidden.body)
+		}
+	default:
+		log.Printf("antigravity quota summary %s failed: %v", account.ID, quotaErr)
 	}
 	if snapshot.QuotaSummary == nil && hadPrevious && previous.QuotaSummary != nil {
 		snapshot.QuotaSummary = previous.QuotaSummary
@@ -727,10 +767,15 @@ func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, acc
 		account.Usage = extractAntigravityAccountUsage(snapshot)
 		account.mu.Unlock()
 	}
-	if hadPrevious && antigravitySnapshotsEquivalent(previous, snapshot) {
-		return nil
+	if !hadPrevious || !antigravitySnapshotsEquivalent(previous, snapshot) {
+		if err := saveAccount(account); err != nil {
+			return err
+		}
 	}
-	return saveAccount(account)
+	if forbidden != nil {
+		return fmt.Errorf("quota summary: %w", quotaErr)
+	}
+	return nil
 }
 
 func antigravitySnapshotsEquivalent(left, right AntigravityAccountSnapshot) bool {
@@ -894,9 +939,13 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 			}
 			checkCtx, cancel := context.WithTimeout(c, 30*time.Second)
 			if h.needsRefresh(account) {
-				_ = h.refreshAccount(checkCtx, account)
+				if err := h.refreshAccount(checkCtx, account); err != nil {
+					log.Printf("antigravity refresh %s failed: %v", account.ID, err)
+				}
 			}
-			_ = syncAntigravityModels(checkCtx, h.transport, account, provider.DailyURL(), provider.ProductionURL())
+			if err := syncAntigravityModels(checkCtx, h.transport, account, provider.DailyURL(), provider.ProductionURL()); err != nil {
+				log.Printf("antigravity sync %s failed: %v", account.ID, err)
+			}
 			cancel()
 		}
 	}

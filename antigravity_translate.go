@@ -1850,19 +1850,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			resp.Body.Close()
 			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
-			needsVerification, banned, verificationURL := classifyAntigravityForbidden(errBody)
-			account.mu.Lock()
-			account.NeedsVerification = needsVerification
-			account.VerificationURL = verificationURL
-			account.HealthError = strings.TrimSpace(string(errBody))
-			if banned {
-				account.Dead = true
-			}
-			if !needsVerification && !banned {
-				account.RateLimitUntil = time.Now().Add(30 * time.Minute)
-			}
-			account.mu.Unlock()
-			_ = saveAccount(account)
+			recordAntigravityForbidden(account, errBody)
 			lastError = fmt.Errorf("Antigravity account %s was rejected: %s", account.ID, safeText(errBody))
 			continue
 		}
@@ -1875,13 +1863,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			return true
 		}
 		clearAntigravityModelCooldown(account, canonical)
-		account.mu.Lock()
-		hadHealthError := account.NeedsVerification || account.VerificationURL != "" || account.HealthError != ""
-		account.NeedsVerification, account.VerificationURL, account.HealthError = false, "", ""
-		account.mu.Unlock()
-		if hadHealthError {
-			_ = saveAccount(account)
-		}
+		clearAntigravityHealth(account)
 		if prepared.Operation == "countTokens" {
 			defer resp.Body.Close()
 			responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
@@ -1920,6 +1902,38 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	}
 	antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusServiceUnavailable, []byte(lastError.Error()))
 	return true
+}
+
+func recordAntigravityForbidden(account *Account, body []byte) {
+	applyAntigravityForbidden(account, body)
+	_ = saveAccount(account)
+}
+
+func applyAntigravityForbidden(account *Account, body []byte) {
+	needsVerification, banned, verificationURL := classifyAntigravityForbidden(body)
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	account.NeedsVerification = needsVerification
+	account.VerificationURL = verificationURL
+	account.HealthError = strings.TrimSpace(string(body))
+	if banned {
+		account.Dead = true
+	}
+	if !needsVerification && !banned {
+		account.RateLimitUntil = time.Now().Add(30 * time.Minute)
+	}
+}
+
+// clearAntigravityHealth drops verification and health markers once the
+// daily host has served the account again.
+func clearAntigravityHealth(account *Account) {
+	account.mu.Lock()
+	hadHealthError := account.NeedsVerification || account.VerificationURL != "" || account.HealthError != ""
+	account.NeedsVerification, account.VerificationURL, account.HealthError = false, "", ""
+	account.mu.Unlock()
+	if hadHealthError {
+		_ = saveAccount(account)
+	}
 }
 
 var antigravityVerificationURLPattern = regexp.MustCompile(`https://[^\s"'<>]+`)
@@ -2038,10 +2052,25 @@ func (h *proxyHandler) doAntigravityRequest(ctx context.Context, incoming http.H
 	if err == nil && resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
 		return resp, nil
 	}
+	var daily *http.Response
 	if resp != nil {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
+		if readErr == nil {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			resp.ContentLength = int64(len(body))
+			daily = resp
+		}
 	}
-	return tryBase(provider.prodBase)
+	fallback, fallbackErr := tryBase(provider.prodBase)
+	if daily == nil || fallbackErr != nil || fallback.StatusCode != http.StatusForbidden {
+		return fallback, fallbackErr
+	}
+	// Production can demand account verification while the daily host keeps
+	// serving the same account. The daily answer is the one that describes
+	// this account's state, so a production 403 must not replace it.
+	_ = fallback.Body.Close()
+	return daily, nil
 }
 
 func (h *proxyHandler) doAntigravityRequestWithTransientRetry(ctx context.Context, incoming http.Header, account *Account, provider *AntigravityProvider, prepared antigravityPreparedRequest) (*http.Response, error) {
