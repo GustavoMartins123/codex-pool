@@ -269,6 +269,7 @@ var pricingModelAliases = map[string]string{
 	"zai.glm-5.3-flashx":         "glm-5.3-flash",
 	"glm-5-turbo":                "glm-5",
 	"glm-4.5-air":                "glm-4.5",
+	"grok-4.7-build":             "grok-4.7",
 	"grok-4.6-build":             "grok-4.6",
 	"grok-4.5-build":             "grok-4.5",
 	"grok-build-latest":          "grok-4.6",
