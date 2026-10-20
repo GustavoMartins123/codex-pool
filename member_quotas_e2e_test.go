@@ -17,8 +17,12 @@ func TestMemberQuotasBrowserE2E(t *testing.T) {
 	h, id, session, csrf, operator, opCSRF := memberQuotaFixture(t)
 	server := httptest.NewServer(h)
 	defer server.Close()
+	runtime, err := modelVerificationRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("node", "web/member-quotas.e2e.mjs")
-	cmd.Env = append(os.Environ(), "UI_TEST_ORIGIN="+server.URL, "E2E_MEMBER_ID="+id, "E2E_MEMBER_SESSION="+session, "E2E_MEMBER_CSRF="+csrf, "E2E_OPERATOR_SESSION="+operator, "E2E_OPERATOR_CSRF="+opCSRF)
+	cmd.Env = append(os.Environ(), "UI_TEST_ORIGIN="+server.URL, "E2E_MEMBER_ID="+id, "E2E_MEMBER_SESSION="+session, "E2E_MEMBER_CSRF="+csrf, "E2E_OPERATOR_SESSION="+operator, "E2E_OPERATOR_CSRF="+opCSRF, "E2E_VERIFICATION_RUNTIME="+runtime)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("browser: %v\n%s", err, output)
 	} else {
