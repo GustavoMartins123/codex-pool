@@ -532,9 +532,13 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 			(accountType == "" || account.Type == accountType) &&
 			planMatchesRequired(account.PlanType, requiredPlan) &&
 			accountAllowsClientIPLocked(account, clientIP) &&
-			(account.RateLimitUntil.IsZero() || !account.RateLimitUntil.After(now)) &&
-			accountPrimaryUsageLocked(account) < primaryHardExcludeThreshold &&
-			accountSecondaryUsageLocked(account) < secondaryHardExcludeThreshold
+			(account.RateLimitUntil.IsZero() || !account.RateLimitUntil.After(now))
+		// Antigravity usage aggregates every model family; its exhaustion is
+		// decided per family by DiscoveryAvailability below.
+		if eligible && account.Type != AccountTypeAntigravity {
+			eligible = accountPrimaryUsageLocked(account) < primaryHardExcludeThreshold &&
+				accountSecondaryUsageLocked(account) < secondaryHardExcludeThreshold
+		}
 		if eligible && account.Type == AccountTypeAntigravity {
 			modelCooldown := account.ModelRateLimits[model]
 			discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)

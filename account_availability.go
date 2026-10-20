@@ -45,6 +45,13 @@ func accountUsageExhaustedLocked(a *Account) bool {
 	if a == nil {
 		return false
 	}
+	// Antigravity aggregate usage mixes model families with separate quotas;
+	// the account is exhausted only when every family is.
+	if a.Type == AccountTypeAntigravity {
+		if exhausted, known := antigravityModels.AllFamiliesExhausted(a.ID, time.Now()); known {
+			return exhausted
+		}
+	}
 	return accountPrimaryUsageLocked(a) >= primaryHardExcludeThreshold ||
 		accountSecondaryUsageLocked(a) >= secondaryHardExcludeThreshold
 }

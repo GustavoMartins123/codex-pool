@@ -158,10 +158,117 @@ func (r *antigravityModelRegistry) DiscoveryAvailability(accountID, model string
 	if !ok {
 		return false, time.Time{}
 	}
-	if info.Quota.RemainingFraction != nil && *info.Quota.RemainingFraction <= 0 && info.Quota.ResetTime.After(now) {
-		return false, info.Quota.ResetTime
+	var reset time.Time
+	if info.Quota.RemainingFraction != nil && *info.Quota.RemainingFraction <= 0 {
+		reset = info.Quota.ResetTime
+	}
+	if familyReset := snapshot.QuotaSummary.exhaustedUntil(model, now); familyReset.After(reset) {
+		reset = familyReset
+	}
+	if reset.After(now) {
+		return false, reset
 	}
 	return true, time.Time{}
+}
+
+// Antigravity enforces quota per model family rather than per model: every
+// Gemini model shares one 5-hour and one weekly bucket, and Claude/GPT-OSS
+// share another pair. fetchAvailableModels only mirrors the 5-hour bucket, so
+// the weekly limit is visible only through retrieveUserQuotaSummary.
+const (
+	antigravityQuotaFamilyGemini     = "gemini"
+	antigravityQuotaFamilyThirdParty = "3p"
+)
+
+func antigravityQuotaFamily(model string) string {
+	lower := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(model), "antigravity/"))
+	switch {
+	case strings.HasPrefix(lower, "claude"), strings.HasPrefix(lower, "gpt"):
+		return antigravityQuotaFamilyThirdParty
+	case strings.HasPrefix(lower, "gemini") && !strings.Contains(lower, "image"):
+		return antigravityQuotaFamilyGemini
+	default:
+		return ""
+	}
+}
+
+func antigravityBucketFamily(bucket AntigravityQuotaBucket) string {
+	family, _, ok := strings.Cut(strings.ToLower(strings.TrimSpace(bucket.BucketID)), "-")
+	if !ok {
+		return ""
+	}
+	return family
+}
+
+// AllFamiliesExhausted reports whether every model family the account's quota
+// summary describes is at its hard-exclude threshold. known is false when no
+// summary identifies a family, so callers fall back to aggregate usage.
+func (r *antigravityModelRegistry) AllFamiliesExhausted(accountID string, now time.Time) (exhausted, known bool) {
+	r.mu.RLock()
+	snapshot, ok := r.accounts[accountID]
+	r.mu.RUnlock()
+	if !ok || snapshot.QuotaSummary == nil {
+		return false, false
+	}
+	for _, family := range []string{antigravityQuotaFamilyGemini, antigravityQuotaFamilyThirdParty} {
+		if len(snapshot.QuotaSummary.familyBuckets(family)) == 0 {
+			continue
+		}
+		known = true
+		if !snapshot.QuotaSummary.familyExhaustedUntil(family, now).After(now) {
+			return false, true
+		}
+	}
+	return known, known
+}
+
+// familyBuckets returns the buckets a model family draws from, identified by
+// the family prefix of their bucket IDs ("gemini-weekly", "3p-5h").
+func (s *AntigravityQuotaSummary) familyBuckets(family string) []AntigravityQuotaBucket {
+	if s == nil || family == "" {
+		return nil
+	}
+	var buckets []AntigravityQuotaBucket
+	for _, bucket := range s.Buckets {
+		if antigravityBucketFamily(bucket) == family {
+			buckets = append(buckets, bucket)
+		}
+	}
+	for _, group := range s.Groups {
+		for _, bucket := range group.Buckets {
+			if antigravityBucketFamily(bucket) == family {
+				buckets = append(buckets, bucket)
+			}
+		}
+	}
+	return buckets
+}
+
+// exhaustedUntil returns the latest reset among the family buckets at or past
+// the pool's hard-exclude thresholds; a model is usable again only once every
+// bucket it draws from has refilled. Another family's buckets never block it.
+func (s *AntigravityQuotaSummary) exhaustedUntil(model string, now time.Time) time.Time {
+	return s.familyExhaustedUntil(antigravityQuotaFamily(model), now)
+}
+
+func (s *AntigravityQuotaSummary) familyExhaustedUntil(family string, now time.Time) time.Time {
+	var until time.Time
+	for _, bucket := range s.familyBuckets(family) {
+		if bucket.Disabled || bucket.RemainingFraction == nil || !bucket.ResetTime.After(now) {
+			continue
+		}
+		threshold := 1.0
+		switch antigravityQuotaWindow(bucket) {
+		case "5h":
+			threshold = primaryHardExcludeThreshold
+		case "weekly":
+			threshold = secondaryHardExcludeThreshold
+		}
+		if 1-*bucket.RemainingFraction >= threshold && bucket.ResetTime.After(until) {
+			until = bucket.ResetTime
+		}
+	}
+	return until
 }
 
 // antigravityStaticAliases resolves official deprecated slugs even when
@@ -400,6 +507,11 @@ func parseAntigravityModelSnapshot(body []byte, fetchedAt time.Time) (Antigravit
 		if json.Unmarshal(raw["quotaInfo"], &quota) == nil {
 			model.Quota.RemainingFraction = quota.RemainingFraction
 			model.Quota.ResetTime, _ = time.Parse(time.RFC3339Nano, quota.ResetTime)
+			// proto3 JSON omits zero values: a reset without a fraction is an
+			// exhausted model, not an unknown one.
+			if quota.RemainingFraction == nil && !model.Quota.ResetTime.IsZero() {
+				model.Quota.RemainingFraction = new(float64)
+			}
 		}
 		snapshot.Models[id] = model
 	}
@@ -544,6 +656,11 @@ func parseAntigravityQuotaSummary(body []byte, fetchedAt time.Time) (Antigravity
 	}
 	decodeBucket := func(raw wireBucket) AntigravityQuotaBucket {
 		reset, _ := time.Parse(time.RFC3339Nano, raw.ResetTime)
+		// proto3 JSON omits zero values, so an enabled bucket without a
+		// fraction or amount is exhausted, not unknown.
+		if raw.RemainingFraction == nil && raw.RemainingAmount == nil && !raw.Disabled {
+			raw.RemainingFraction = new(float64)
+		}
 		return AntigravityQuotaBucket{
 			BucketID:          raw.BucketID,
 			DisplayName:       raw.DisplayName,
