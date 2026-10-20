@@ -747,40 +747,43 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 			"content": inp,
 		})
 	case []any:
-		for _, item := range inp {
+		for index, item := range inp {
 			it, ok := item.(map[string]any)
 			if !ok {
-				continue
+				return nil, fmt.Errorf("input[%d] must be an object", index)
 			}
 			itemType, _ := it["type"].(string)
 			switch itemType {
-			case "message":
+			case "", "message":
 				role, _ := it["role"].(string)
+				if role != "developer" && role != "system" && role != "user" && role != "assistant" {
+					return nil, fmt.Errorf("input[%d] has an unsupported message role", index)
+				}
+				var content any
+				switch raw := it["content"].(type) {
+				case string:
+					content = raw
+				case []any:
+					blocks, err := convertResponsesContentToClaude(raw)
+					if err != nil {
+						return nil, fmt.Errorf("input[%d]: %w", index, err)
+					}
+					content = blocks
+				default:
+					return nil, fmt.Errorf("input[%d] message content must be a string or an array", index)
+				}
 				// developer/system messages go into Claude's system prompt
 				if role == "developer" || role == "system" {
-					if content, ok := it["content"].(string); ok && content != "" {
-						developerTexts = append(developerTexts, content)
-					} else if content, ok := it["content"].([]any); ok {
-						for _, part := range content {
-							p, ok := part.(map[string]any)
-							if !ok {
-								continue
-							}
-							if t, _ := p["type"].(string); t == "input_text" || t == "output_text" || t == "text" {
-								if text, ok := p["text"].(string); ok && text != "" {
-									developerTexts = append(developerTexts, text)
-								}
-							}
+					if text, ok := content.(string); ok {
+						developerTexts = append(developerTexts, text)
+					} else {
+						for _, part := range content.([]any) {
+							developerTexts = append(developerTexts, part.(map[string]any)["text"].(string))
 						}
 					}
 					continue
 				}
-				msg := map[string]any{"role": role}
-				if content, ok := it["content"].([]any); ok {
-					msg["content"] = convertResponsesContentToClaude(content, role)
-				} else if content, ok := it["content"].(string); ok {
-					msg["content"] = content
-				}
+				msg := map[string]any{"role": role, "content": content}
 				claudeMsgs = append(claudeMsgs, msg)
 			case "function_call":
 				// Append as tool_use block to the previous assistant message,
@@ -788,9 +791,12 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 				callID, _ := it["call_id"].(string)
 				name, _ := it["name"].(string)
 				argsStr, _ := it["arguments"].(string)
-				var argsObj any
-				if json.Unmarshal([]byte(argsStr), &argsObj) != nil {
-					argsObj = map[string]any{}
+				var argsObj map[string]any
+				if json.Unmarshal([]byte(argsStr), &argsObj) != nil || argsObj == nil {
+					return nil, fmt.Errorf("input[%d] function arguments must be a JSON object", index)
+				}
+				if callID == "" || name == "" {
+					return nil, fmt.Errorf("input[%d] function call requires call_id and name", index)
 				}
 				block := map[string]any{
 					"type":  "tool_use",
@@ -817,7 +823,10 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 				}
 			case "function_call_output":
 				callID, _ := it["call_id"].(string)
-				output, _ := it["output"].(string)
+				output, ok := it["output"].(string)
+				if !ok || callID == "" {
+					return nil, fmt.Errorf("input[%d] function output requires call_id and string output", index)
+				}
 				block := map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": callID,
@@ -840,8 +849,15 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 						"content": []any{block},
 					})
 				}
+			default:
+				return nil, fmt.Errorf("input[%d] has an unsupported Responses item type for Claude", index)
 			}
 		}
+	default:
+		return nil, fmt.Errorf("Responses input must be a string or an array")
+	}
+	if err := validateResponsesClaudeToolPairing(claudeMsgs); err != nil {
+		return nil, err
 	}
 	claudeMsgs = mergeConsecutiveClaudeMessages(claudeMsgs)
 	claudeMsgs = normalizeClaudeToolPairing(claudeMsgs)
@@ -871,18 +887,26 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 	}
 
 	// tools -> convert from Responses API format to Claude format
-	if tools, ok := req["tools"].([]any); ok && len(tools) > 0 {
+	toolNames := make(map[string]bool)
+	if rawTools, exists := req["tools"]; exists {
+		tools, ok := rawTools.([]any)
+		if !ok {
+			return nil, fmt.Errorf("Responses tools must be an array")
+		}
 		var claudeTools []any
-		for _, t := range tools {
+		for index, t := range tools {
 			tool, ok := t.(map[string]any)
 			if !ok {
-				continue
+				return nil, fmt.Errorf("tools[%d] must be an object", index)
+			}
+			if tool["type"] != "function" {
+				return nil, fmt.Errorf("tools[%d]: Claude Responses translation supports function tools only", index)
 			}
 			name, _ := tool["name"].(string)
-			if name == "" {
-				// Skip non-function tools (code_interpreter, web_search, etc.)
-				continue
+			if name == "" || toolNames[name] {
+				return nil, fmt.Errorf("tools[%d] requires a unique nonempty name", index)
 			}
+			toolNames[name] = true
 			desc, _ := tool["description"].(string)
 			params, _ := tool["parameters"].(map[string]any)
 			ct := map[string]any{
@@ -891,17 +915,88 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 			if desc != "" {
 				ct["description"] = desc
 			}
-			if params != nil {
-				ct["input_schema"] = params
-			} else {
-				ct["input_schema"] = map[string]any{"type": "object"}
+			if params == nil {
+				return nil, fmt.Errorf("tools[%d] requires an object parameters schema", index)
 			}
+			ct["input_schema"] = params
 			claudeTools = append(claudeTools, ct)
 		}
 		claude["tools"] = claudeTools
 	}
+	if err := translateResponsesClaudeToolChoice(req, claude, toolNames); err != nil {
+		return nil, err
+	}
 
 	return claudeOrderedBody(claude)
+}
+
+func translateResponsesClaudeToolChoice(req, claude map[string]any, toolNames map[string]bool) error {
+	parallel, hasParallel := req["parallel_tool_calls"].(bool)
+	if _, exists := req["parallel_tool_calls"]; exists && !hasParallel {
+		return fmt.Errorf("parallel_tool_calls must be a boolean")
+	}
+	var choice map[string]any
+	if raw, exists := req["tool_choice"]; exists {
+		switch value := raw.(type) {
+		case string:
+			switch value {
+			case "auto", "none":
+				choice = map[string]any{"type": value}
+			case "required":
+				if len(toolNames) == 0 {
+					return fmt.Errorf("required tool_choice needs at least one function tool")
+				}
+				choice = map[string]any{"type": "any"}
+			default:
+				return fmt.Errorf("unsupported tool_choice for Claude")
+			}
+		case map[string]any:
+			name, _ := value["name"].(string)
+			if value["type"] != "function" || !toolNames[name] {
+				return fmt.Errorf("tool_choice must name a declared function tool")
+			}
+			choice = map[string]any{"type": "tool", "name": "mcp_" + name}
+		default:
+			return fmt.Errorf("unsupported tool_choice for Claude")
+		}
+	} else if hasParallel && !parallel && len(toolNames) > 0 {
+		choice = map[string]any{"type": "auto"}
+	}
+	if choice != nil {
+		if hasParallel && !parallel && choice["type"] != "none" {
+			choice["disable_parallel_tool_use"] = true
+		}
+		claude["tool_choice"] = choice
+	}
+	return nil
+}
+
+func validateResponsesClaudeToolPairing(messages []map[string]any) error {
+	calls, results := make(map[string]bool), make(map[string]bool)
+	for _, message := range messages {
+		for _, block := range claudeContentBlocks(message["content"]) {
+			switch block["type"] {
+			case "tool_use":
+				id, _ := block["id"].(string)
+				if calls[id] {
+					return fmt.Errorf("duplicate function call_id in Responses input")
+				}
+				calls[id] = true
+			case "tool_result":
+				id, _ := block["tool_use_id"].(string)
+				if !calls[id] || results[id] {
+					return fmt.Errorf("function output must follow a unique matching call in Responses input")
+				}
+				results[id] = true
+			}
+		}
+	}
+	for id := range calls {
+		if !results[id] {
+			return fmt.Errorf("function call is missing its output in Responses input")
+		}
+	}
+	return nil
 }
 
 // normalizeClaudeToolPairing makes every tool_result immediately follow its
@@ -1042,26 +1137,26 @@ func claudeContentBlocks(content any) []map[string]any {
 }
 
 // convertResponsesContentToClaude converts Responses API content blocks to Claude content blocks.
-func convertResponsesContentToClaude(content []any, role string) []any {
+func convertResponsesContentToClaude(content []any) ([]any, error) {
 	var blocks []any
 	for _, part := range content {
 		p, ok := part.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("Responses content parts must be objects")
 		}
 		partType, _ := p["type"].(string)
 		switch partType {
-		case "input_text":
-			text, _ := p["text"].(string)
-			blocks = append(blocks, map[string]any{"type": "text", "text": text})
-		case "output_text":
-			text, _ := p["text"].(string)
+		case "input_text", "output_text":
+			text, ok := p["text"].(string)
+			if !ok {
+				return nil, fmt.Errorf("Responses text content must be a string")
+			}
 			blocks = append(blocks, map[string]any{"type": "text", "text": text})
 		default:
-			blocks = append(blocks, p)
+			return nil, fmt.Errorf("unsupported Responses content part for Claude")
 		}
 	}
-	return blocks
+	return blocks, nil
 }
 
 // translateClaudeRespToResponses converts a non-streaming Claude Messages API response

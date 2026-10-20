@@ -5,17 +5,15 @@ import (
 	"testing"
 )
 
-func TestTranslateResponsesToClaudePairsParallelToolsAndDropsInvalidHistory(t *testing.T) {
+func TestTranslateResponsesToClaudePairsParallelTools(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-sonnet-4-5",
 		"input":[
 			{"type":"message","role":"user","content":"start"},
 			{"type":"function_call","call_id":"call_one","name":"first","arguments":"{\"value\":1}"},
 			{"type":"function_call","call_id":"call_two","name":"second","arguments":"{\"value\":2}"},
-			{"type":"function_call","call_id":"call_dangling","name":"missing","arguments":"{}"},
 			{"type":"message","role":"user","content":"injected"},
 			{"type":"function_call_output","call_id":"call_two","output":"two"},
-			{"type":"function_call_output","call_id":"call_orphan","output":"orphan"},
 			{"type":"function_call_output","call_id":"call_one","output":"one"},
 			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
 			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"merged"}]}
@@ -46,7 +44,7 @@ func TestTranslateResponsesToClaudePairsParallelToolsAndDropsInvalidHistory(t *t
 	}
 }
 
-func TestTranslateResponsesToClaudeKeepsAssistantTextWhenDroppingDanglingCall(t *testing.T) {
+func TestTranslateResponsesToClaudeRejectsInvalidToolHistory(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-sonnet-4-5",
 		"input":[
@@ -57,13 +55,9 @@ func TestTranslateResponsesToClaudeKeepsAssistantTextWhenDroppingDanglingCall(t 
 		]
 	}`)
 
-	got := translateResponsesToClaudeForToolPairingTest(t, body)
-	messages := got["messages"].([]any)
-	if len(messages) != 2 {
-		t.Fatalf("messages = %#v, want 2 entries", messages)
+	if _, err := translateResponsesToClaudeRequest(body); err == nil {
+		t.Fatal("invalid history must fail explicitly instead of dropping tool calls or outputs")
 	}
-	assertClaudeMessageText(t, messages[0], "assistant", "before call")
-	assertClaudeMessageText(t, messages[1], "user", "continue")
 }
 
 func translateResponsesToClaudeForToolPairingTest(t *testing.T, body []byte) map[string]any {
