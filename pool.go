@@ -630,13 +630,13 @@ func (p *poolState) nearestCooldown(accountType AccountType, exclude map[string]
 
 // hasRoutableAccountOfType reports whether at least one live account of the
 // type passes the routing gates (health, cooldown, usage thresholds).
-func (p *poolState) hasRoutableAccountOfType(accountType AccountType) bool {
+func (p *poolState) hasRoutableAccountOfType(accountType AccountType, exclude map[string]bool) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
 	now := time.Now()
 	for _, a := range p.accounts {
-		if a == nil || a.Type != accountType {
+		if a == nil || a.Type != accountType || exclude[a.ID] {
 			continue
 		}
 		a.mu.Lock()
@@ -670,6 +670,8 @@ func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[strin
 			a.mu.Unlock()
 			continue
 		}
+		var accountReset time.Duration
+		exhausted, resetKnown := false, true
 		for _, window := range []struct {
 			used    float64
 			limit   float64
@@ -678,12 +680,23 @@ func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[strin
 			{accountPrimaryUsageLocked(a), primaryHardExcludeThreshold, a.Usage.PrimaryResetAt},
 			{accountSecondaryUsageLocked(a), secondaryHardExcludeThreshold, a.Usage.SecondaryResetAt},
 		} {
-			if window.used < window.limit || window.resetAt.IsZero() || !window.resetAt.After(now) {
+			if window.used < window.limit {
 				continue
 			}
-			if wait := window.resetAt.Sub(now); !known || wait < nearest {
-				nearest, known = wait, true
+			exhausted = true
+			if window.resetAt.IsZero() || !window.resetAt.After(now) {
+				resetKnown = false
+				break
 			}
+			if wait := window.resetAt.Sub(now); wait > accountReset {
+				accountReset = wait
+			}
+		}
+		if cooldown := a.RateLimitUntil.Sub(now); cooldown > accountReset {
+			accountReset = cooldown
+		}
+		if exhausted && resetKnown && (!known || accountReset < nearest) {
+			nearest, known = accountReset, true
 		}
 		a.mu.Unlock()
 	}
@@ -695,11 +708,11 @@ func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[strin
 // the nearest reset lands inside the given budget. Callers use this to hold
 // the request for the original provider instead of switching to a fallback
 // model mid-conversation.
-func (p *poolState) usageResetWithinBudget(accountType AccountType, budget time.Duration) bool {
-	if p.hasRoutableAccountOfType(accountType) {
+func (p *poolState) usageResetWithinBudget(accountType AccountType, budget time.Duration, exclude map[string]bool) bool {
+	if p.hasRoutableAccountOfType(accountType, exclude) {
 		return false
 	}
-	nearest, known := p.nearestUsageReset(accountType, nil)
+	nearest, known := p.nearestUsageReset(accountType, exclude)
 	return known && nearest > 0 && nearest <= budget
 }
 

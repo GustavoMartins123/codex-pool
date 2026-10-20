@@ -149,17 +149,17 @@ func TestHasRoutableAccountOfType(t *testing.T) {
 	healthy := &Account{ID: "ok", Type: AccountTypeClaude, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{exhausted, cooling, healthy}, false)
 
-	if p.hasRoutableAccountOfType(AccountTypeCodex) {
+	if p.hasRoutableAccountOfType(AccountTypeCodex, nil) {
 		t.Fatal("expected no routable codex accounts while exhausted or cooling down")
 	}
-	if !p.hasRoutableAccountOfType(AccountTypeClaude) {
+	if !p.hasRoutableAccountOfType(AccountTypeClaude, nil) {
 		t.Fatal("expected the healthy claude account to be routable")
 	}
 
 	exhausted.mu.Lock()
 	exhausted.Usage.PrimaryUsedPercent = 0.1
 	exhausted.mu.Unlock()
-	if !p.hasRoutableAccountOfType(AccountTypeCodex) {
+	if !p.hasRoutableAccountOfType(AccountTypeCodex, nil) {
 		t.Fatal("expected the recovered codex account to be routable")
 	}
 }

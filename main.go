@@ -3060,12 +3060,17 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				respondPolicyError(w, err)
 				return
 			}
+			waitExclude := h.pool.capacityWaitExclusions(userID, conversationID, hardExclude, accountType, requiredPlan, originIP, requestedModel)
+			if reset, known := h.pool.nearestUsageReset(accountType, waitExclude); known && reset > h.capacityWaitBudget(ctx) {
+				respondCapacityError(w, "provider_quota_exhausted", reset)
+				return
+			}
 			// Prefer holding the request for the original provider when its
 			// usage window resets within the exhaustion wait budget, instead
 			// of switching to a fallback model mid-conversation.
 			if h.cfg.exhaustionWait > 0 && h.cfg.exhaustionPreferWait && exhaustionRetries < 3 &&
-				h.usageResetWithinRequestBudget(ctx, accountType) &&
-				h.waitForUsageReset(ctx, accountType, reqID) {
+				h.usageResetWithinRequestBudget(ctx, accountType, waitExclude) &&
+				h.waitForUsageReset(ctx, accountType, reqID, waitExclude) {
 				exhaustionRetries++
 				exclude = map[string]bool{}
 				if attempt == attempts {
@@ -3170,10 +3175,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			// All accounts excluded or rate-limited. If there are rate-limited
 			// accounts, wait for the shortest cooldown instead of 503 immediately.
-			if cooldown := h.pool.nearestCooldown(accountType, nil); cooldown > 0 {
+			if cooldown := h.pool.nearestCooldown(accountType, waitExclude); cooldown > 0 {
 				wait := cooldown
 				if wait > maxCooldownWait {
-					wait = maxCooldownWait
+					respondCapacityError(w, "provider_rate_limited", cooldown)
+					return
 				}
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] all %s accounts exhausted, waiting %s for cooldown", reqID, accountType, wait)
@@ -3191,7 +3197,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			// hard-exclude thresholds). Hold the request until a window resets
 			// instead of failing fast, bounded by exhaustion_wait and the
 			// request deadline.
-			if h.cfg.exhaustionWait > 0 && exhaustionRetries < 3 && h.waitForUsageReset(ctx, accountType, reqID) {
+			if h.cfg.exhaustionWait > 0 && exhaustionRetries < 3 && h.waitForUsageReset(ctx, accountType, reqID, waitExclude) {
 				exhaustionRetries++
 				exclude = map[string]bool{}
 				if attempt == attempts {

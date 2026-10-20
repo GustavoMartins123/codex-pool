@@ -21,7 +21,7 @@ func exhaustedCodexAccount(id string, primary float64, resetIn time.Duration) *A
 }
 
 func TestWaitForUsageResetReturnsWhenWindowClears(t *testing.T) {
-	acc := exhaustedCodexAccount("ex", 0.96, time.Hour)
+	acc := exhaustedCodexAccount("ex", 0.96, time.Second)
 	p := newPoolState([]*Account{acc}, false)
 	h := &proxyHandler{cfg: &config{exhaustionWait: 5 * time.Second}, pool: p}
 
@@ -34,7 +34,7 @@ func TestWaitForUsageResetReturnsWhenWindowClears(t *testing.T) {
 	}()
 
 	start := time.Now()
-	if !h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-1") {
+	if !h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-1", nil) {
 		t.Fatal("expected wait to end once the window cleared")
 	}
 	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
@@ -48,7 +48,7 @@ func TestWaitForUsageResetGivesUpWithoutKnownReset(t *testing.T) {
 	h := &proxyHandler{cfg: &config{exhaustionWait: 5 * time.Second}, pool: p}
 
 	start := time.Now()
-	if h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-2") {
+	if h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-2", nil) {
 		t.Fatal("expected immediate give-up when the reset time is unknown")
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
@@ -57,12 +57,12 @@ func TestWaitForUsageResetGivesUpWithoutKnownReset(t *testing.T) {
 }
 
 func TestWaitForUsageResetTimesOut(t *testing.T) {
-	acc := exhaustedCodexAccount("ex", 0.96, time.Hour)
+	acc := exhaustedCodexAccount("ex", 0.96, 50*time.Millisecond)
 	p := newPoolState([]*Account{acc}, false)
 	h := &proxyHandler{cfg: &config{exhaustionWait: 60 * time.Millisecond}, pool: p}
 
 	start := time.Now()
-	if h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-3") {
+	if h.waitForUsageReset(context.Background(), AccountTypeCodex, "req-3", nil) {
 		t.Fatal("expected the bounded wait budget to expire")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
@@ -71,7 +71,7 @@ func TestWaitForUsageResetTimesOut(t *testing.T) {
 }
 
 func TestWaitForUsageResetHonorsContextCancel(t *testing.T) {
-	acc := exhaustedCodexAccount("ex", 0.96, time.Hour)
+	acc := exhaustedCodexAccount("ex", 0.96, time.Second)
 	p := newPoolState([]*Account{acc}, false)
 	h := &proxyHandler{cfg: &config{exhaustionWait: 5 * time.Second}, pool: p}
 
@@ -80,7 +80,7 @@ func TestWaitForUsageResetHonorsContextCancel(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	if h.waitForUsageReset(ctx, AccountTypeCodex, "req-4") {
+	if h.waitForUsageReset(ctx, AccountTypeCodex, "req-4", nil) {
 		t.Fatal("expected cancellation to end the hold")
 	}
 }
@@ -94,9 +94,10 @@ func TestProxyHoldsRequestForUsageWindowReset(t *testing.T) {
 	defer upstream.Close()
 	base, _ := url.Parse(upstream.URL)
 
-	account := exhaustedCodexAccount("acct_ex", 0.96, time.Hour)
+	account := exhaustedCodexAccount("acct_ex", 0.96, time.Second)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.exhaustionWait = 2 * time.Second
+	fx.handler.cfg.exhaustionPreferWait = true
 	fx.handler.aliases = newModelAliases(nil)
 
 	// Simulate the periodic usage poll observing the window reset shortly
@@ -153,7 +154,7 @@ func TestProxyStillFailsFastWhenExhaustionWaitDisabled(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "no live codex accounts") {
+	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(body), "provider_quota_exhausted") {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
@@ -165,16 +166,16 @@ func TestUsageResetWithinBudget(t *testing.T) {
 	exhaustedSoon := exhaustedCodexAccount("soon", 0.96, 200*time.Millisecond)
 	p := newPoolState([]*Account{exhaustedSoon}, false)
 
-	if !p.usageResetWithinBudget(AccountTypeCodex, time.Second) {
+	if !p.usageResetWithinBudget(AccountTypeCodex, time.Second, nil) {
 		t.Fatal("expected a reset within the 1s budget")
 	}
-	if p.usageResetWithinBudget(AccountTypeCodex, 50*time.Millisecond) {
+	if p.usageResetWithinBudget(AccountTypeCodex, 50*time.Millisecond, nil) {
 		t.Fatal("expected the reset to exceed the 50ms budget")
 	}
 
 	recovered := exhaustedCodexAccount("ok", 0.1, time.Hour)
 	p2 := newPoolState([]*Account{recovered}, false)
-	if p2.usageResetWithinBudget(AccountTypeCodex, time.Hour) {
+	if p2.usageResetWithinBudget(AccountTypeCodex, time.Hour, nil) {
 		t.Fatal("expected false while an account is routable")
 	}
 }
@@ -264,26 +265,18 @@ func TestProxyPrefersWaitingOverFallbackWhenResetIsClose(t *testing.T) {
 	}
 }
 
-// A declined fallback provider must not strand the request: the loop keeps
-// going and waits for the original provider's usage window reset instead of
-// answering 503 immediately.
-func TestProxyWaitsForUsageResetAfterFallbackDecline(t *testing.T) {
+func TestProxyRejectsDistantResetBeforeModelFallback(t *testing.T) {
 	account := exhaustedCodexAccount("acct_ex", 0.96, time.Hour)
 	h := newExhaustedFallbackHandler(t, false, account)
 	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
 		OnUnavailable: []string{"gemini-custom-unknown"},
 	})
-	recoverExhaustedAccountAfter(t, account, 120*time.Millisecond)
-
 	start := time.Now()
 	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body=%q)", w.Code, w.Body.String())
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "provider_quota_exhausted") {
+		t.Fatalf("expected an explicit quota error, got %d %q", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "\"servedBy\":\"codex\"") {
-		t.Fatalf("expected the original codex provider to answer, got %q", w.Body.String())
-	}
-	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
-		t.Fatalf("request was not held after the fallback declined (elapsed %s)", elapsed)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("waited for a reset outside the hold budget (%s)", elapsed)
 	}
 }

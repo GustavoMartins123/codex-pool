@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -10,17 +12,48 @@ import (
 // routability while waiting for a usage window to reset.
 const exhaustionWaitPollInterval = 2 * time.Second
 
-// usageResetWithinRequestBudget reports whether the provider's usage window
-// resets within the effective hold budget: the configured exhaustion wait
-// clamped by the request deadline.
-func (h *proxyHandler) usageResetWithinRequestBudget(ctx context.Context, accountType AccountType) bool {
+// capacityWaitBudget clamps the configured hold to the request deadline.
+func (h *proxyHandler) capacityWaitBudget(ctx context.Context) time.Duration {
 	budget := h.cfg.exhaustionWait
 	if d, ok := ctx.Deadline(); ok {
 		if remaining := time.Until(d); remaining < budget {
 			budget = remaining
 		}
 	}
-	return h.pool.usageResetWithinBudget(accountType, budget)
+	return budget
+}
+
+func (p *poolState) capacityWaitExclusions(userID, conversationID string, excluded map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) map[string]bool {
+	excluded = p.accountExclusions(userID, excluded, model)
+	excluded = p.controlExclusions(userID, conversationID, excluded)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	requiresDiscovery := p.discoveredModelRequiresEntitlementLocked(accountType, model)
+	for _, account := range p.accounts {
+		account.mu.Lock()
+		eligible := account.Type == accountType && planMatchesRequired(account.PlanType, requiredPlan) && accountAllowsClientIPLocked(account, clientIP)
+		if eligible && requiresDiscovery {
+			_, eligible = accountDiscoveredModel(account, model)
+		}
+		if !eligible {
+			excluded[account.ID] = true
+		}
+		account.mu.Unlock()
+	}
+	return excluded
+}
+
+func (h *proxyHandler) usageResetWithinRequestBudget(ctx context.Context, accountType AccountType, exclude map[string]bool) bool {
+	return h.pool.usageResetWithinBudget(accountType, h.capacityWaitBudget(ctx), exclude)
+}
+
+func respondCapacityError(w http.ResponseWriter, code string, retryIn time.Duration) {
+	if retryIn > 0 {
+		seconds := int64((retryIn + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	}
+	respondPolicyError(w, &policyError{Status: http.StatusTooManyRequests, Code: code,
+		Message: "The requested provider has no available account capacity within the request wait budget."})
 }
 
 // waitForUsageReset holds a request while every account of the type is
@@ -30,12 +63,15 @@ func (h *proxyHandler) usageResetWithinRequestBudget(ctx context.Context, accoun
 // periodic usage poll observed it — so the caller can retry immediately. It
 // returns false when there is nothing to wait for, the bounded wait budget
 // expires, or the client goes away.
-func (h *proxyHandler) waitForUsageReset(ctx context.Context, accountType AccountType, reqID string) bool {
-	if h.pool.hasRoutableAccountOfType(accountType) {
+func (h *proxyHandler) waitForUsageReset(ctx context.Context, accountType AccountType, reqID string, exclude map[string]bool) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if h.pool.hasRoutableAccountOfType(accountType, exclude) {
 		return true
 	}
-	nearest, known := h.pool.nearestUsageReset(accountType, nil)
-	if !known {
+	nearest, known := h.pool.nearestUsageReset(accountType, exclude)
+	if !known || nearest > h.capacityWaitBudget(ctx) {
 		return false
 	}
 
@@ -64,11 +100,11 @@ func (h *proxyHandler) waitForUsageReset(ctx context.Context, accountType Accoun
 		case <-ctx.Done():
 			return false
 		}
-		if h.pool.hasRoutableAccountOfType(accountType) {
+		if h.pool.hasRoutableAccountOfType(accountType, exclude) {
 			log.Printf("[%s] %s account available again after usage window reset", reqID, accountType)
 			return true
 		}
-		if _, known := h.pool.nearestUsageReset(accountType, nil); !known {
+		if _, known := h.pool.nearestUsageReset(accountType, exclude); !known {
 			return false
 		}
 	}
