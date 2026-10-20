@@ -165,7 +165,7 @@ export function App() {
                   }}
                 />
               )}
-              {view === "models" && data?.view === "models" && <Models models={data.models} />}
+              {view === "models" && data?.view === "models" && <Models models={data.models} onVerified={refresh} />}
               {(view === "accounts" || view === "models") && passport.kind === "operator" && !data && <p role="status">Loading page data…</p>}
               {view === "setup" && <SetupPage />}
             </Suspense>

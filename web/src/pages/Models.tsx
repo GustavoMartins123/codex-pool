@@ -1,8 +1,25 @@
 import { type ModelDescriptor } from "../types";
 import { Instrument, classNames, formatTokens, providerDisplay } from "../ui";
 import { type CSSProperties, useState } from "react";
+import { ModelCompatibility } from "../components/ModelCompatibility";
+import { importModelVerification } from "../api";
 
-export function Models({ models }: { models: ModelDescriptor[] }) {
+export function Models({ models, onVerified }: { models: ModelDescriptor[]; onVerified?: () => Promise<unknown> }) {
+	const [importing, setImporting] = useState(false);
+	const [importError, setImportError] = useState("");
+	const [imported, setImported] = useState(false);
+	const upload = async (file: File) => {
+		setImporting(true); setImportError(""); setImported(false);
+		try {
+			if (file.size > 8192) throw new Error("Verification file exceeds 8 KB.");
+			let evidence: unknown;
+			try { evidence = JSON.parse(await file.text()); } catch { throw new Error("Select a verification JSON produced by the test runner."); }
+			await importModelVerification(evidence);
+			await onVerified?.();
+			setImported(true);
+		} catch (cause) { setImportError(cause instanceof Error ? cause.message : "Unable to import verification"); }
+		finally { setImporting(false); }
+	};
 	const [query, setQuery] = useState("");
 	const [provider, setProvider] = useState<string>("all");
 	const [copied, setCopied] = useState("");
@@ -41,6 +58,9 @@ export function Models({ models }: { models: ModelDescriptor[] }) {
 				</div>
 				<span>{filtered.length} MATCHES</span>
 			</div>
+			{onVerified && <div className="verification-import"><label className="quiet-button">{importing ? "Importing…" : "Import test results"}<input type="file" accept="application/json,.json" disabled={importing} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} /></label><small>Register results from the Codex test runner. Untested models stay unverified.</small></div>}
+			{importError && <p role="alert" className="signal-error">{importError}</p>}
+			{imported && <p role="status">Verification registered.</p>}
 			<div className="model-table" role="table" aria-label="Supported model routing names">
 				<div className="model-row model-head" role="row"><span>ROUTING ID / ALIASES</span><span>PROVIDER</span><span>STATUS</span><span>PROTOCOLS</span><span>CONTEXT</span><span>OUTPUT</span><span>ACCOUNTS</span></div>
 				{filtered.map((model) => {
@@ -55,6 +75,7 @@ export function Models({ models }: { models: ModelDescriptor[] }) {
 						<span>{model.contextWindow ? formatTokens(model.contextWindow) : "n/a"}</span>
 						<span>{model.max_output_tokens ? formatTokens(model.max_output_tokens) : "n/a"}</span>
 						<span>{model.available_accounts ?? 0}/{model.supporting_accounts ?? 0}</span>
+						<ModelCompatibility verification={model.compatibility} />
 					</div>;
 				})}
 				{filtered.length === 0 && <div className="model-empty">NO ROUTING NAMES MATCH THIS FILTER</div>}

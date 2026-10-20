@@ -183,6 +183,7 @@ export interface PoolStats {
 }
 
 export interface ModelDescriptor {
+	compatibility?: ModelCompatibility;
   id: string;
   name?: string;
   protocol: string;
@@ -207,6 +208,19 @@ export interface ModelDescriptor {
 
 export interface ModelCatalog {
   models: ModelDescriptor[];
+}
+
+export type VerificationCheck = { status: "passed" | "failed" | "not_tested"; code: string };
+export interface ModelCompatibility {
+  suite: "codex-pool/1";
+  model: string;
+  provider: string;
+  runtime: string;
+  codex_version: string;
+  started_at: string;
+  finished_at: string;
+  expired: boolean;
+  checks: Record<"text" | "streaming" | "tools" | "codex_edit", VerificationCheck>;
 }
 
 export interface SignalEconomicsPoint {

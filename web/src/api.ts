@@ -1,6 +1,12 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
 import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
 
+import { validCompatibility } from "./compatibility";
+
+export async function importModelVerification(verification: unknown): Promise<void> {
+  await decode(await fetch("/api/console/model-verifications", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify(verification) }));
+}
+
 function csrfToken() {
   return document.cookie.split("; ").find((part) => part.startsWith("pool_csrf="))?.split("=").slice(1).join("=") ?? "";
 }
@@ -107,6 +113,7 @@ export interface MemberQuotaWindow {
   updated_at: string;
 }
 export interface MemberModelQuota {
+  compatibility?: import("./types").ModelCompatibility;
   model: string;
   name: string;
   provider: string;
@@ -119,6 +126,7 @@ export async function loadMemberQuotas(signal?: AbortSignal): Promise<{ models: 
   const result = await decode<{ models: MemberModelQuota[]; generated_at: string }>(await fetch("/api/me/quotas", { credentials: "same-origin", cache: "no-store", signal }));
   const validWindow = (window: MemberQuotaWindow | null, total: number) => window === null || window && Number.isFinite(window.remaining_percent) && window.remaining_percent >= 0 && window.remaining_percent <= 100 && Number.isSafeInteger(window.reported_accounts) && window.reported_accounts > 0 && window.reported_accounts <= total && Number.isFinite(Date.parse(window.updated_at));
   if (!result || !Array.isArray(result.models) || !Number.isFinite(Date.parse(result.generated_at)) || result.models.some(model => !model || typeof model.model !== "string" || !model.model || typeof model.provider !== "string" || !model.provider || typeof model.name !== "string" || typeof model.available_now !== "boolean" || !Number.isSafeInteger(model.supporting_accounts) || model.supporting_accounts < 1 || !validWindow(model.primary, model.supporting_accounts) || !validWindow(model.secondary, model.supporting_accounts))) throw new Error("Invalid quota response");
+  if (result.models.some(model => model.compatibility !== undefined && !validCompatibility(model.compatibility, model.model, model.provider))) throw new Error("Invalid model verification response");
   return result;
 }
 
@@ -180,6 +188,7 @@ export async function loadSignalAnalytics(signal?: AbortSignal): Promise<SignalA
 export async function loadModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {
   const catalog = await decode<ModelCatalog>(await fetch("/api/pool/catalog", { credentials: "same-origin", cache: "no-store", signal }));
   if (!Array.isArray(catalog.models)) throw new Error("Invalid catalog response: models must be an array");
+  if (catalog.models.some(model => model.compatibility !== undefined && !validCompatibility(model.compatibility, model.id, model.provider))) throw new Error("Invalid model verification response");
   return catalog;
 }
 

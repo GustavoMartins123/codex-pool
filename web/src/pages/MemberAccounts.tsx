@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { loadMemberQuotas, type MemberModelQuota, type MemberQuotaWindow } from "../api";
 import { providerDisplay } from "../ui";
 import type { Provider } from "../types";
+import { ModelCompatibility } from "../components/ModelCompatibility";
 
 function QuotaWindow({ label, window, total }: { label: string; window: MemberQuotaWindow | null; total: number }) {
   return <div className="member-quota-window"><span>{label}</span>{window ? <>
@@ -61,6 +62,7 @@ export function MemberAccounts() {
         <header><span>{providerDisplay(model.provider as Provider).label}</span><h2>{model.name || model.model}</h2><code>{model.model}</code><p>{model.available_now ? "Available now" : "Currently unavailable"}</p></header>
         <QuotaWindow label="Primary window" window={model.primary} total={model.supporting_accounts} />
         <QuotaWindow label="Secondary window" window={model.secondary} total={model.supporting_accounts} />
+        <ModelCompatibility verification={model.compatibility} />
       </article>)}</div>
     </>}
   </section>;
