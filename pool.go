@@ -678,11 +678,14 @@ func (p *poolState) nearestUsageReset(accountType AccountType, exclude map[strin
 			used    float64
 			limit   float64
 			resetAt time.Time
+			// Grok monthly spend in the Primary slot never excludes, so it
+			// has no reset to wait for.
+			enforced bool
 		}{
-			{accountPrimaryUsageLocked(a), primaryHardExcludeThreshold, a.Usage.PrimaryResetAt},
-			{accountSecondaryUsageLocked(a), secondaryHardExcludeThreshold, a.Usage.SecondaryResetAt},
+			{accountPrimaryUsageLocked(a), primaryHardExcludeThreshold, a.Usage.PrimaryResetAt, a.Type != AccountTypeGrok},
+			{accountSecondaryUsageLocked(a), secondaryHardExcludeThreshold, a.Usage.SecondaryResetAt, true},
 		} {
-			if window.used < window.limit {
+			if !window.enforced || window.used < window.limit {
 				continue
 			}
 			exhausted = true
@@ -758,7 +761,7 @@ func (p *poolState) candidateByIDForUser(userID, id string, accountType AccountT
 	if !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now) {
 		return nil
 	}
-	if accountPrimaryUsageLocked(a) >= primaryHardExcludeThreshold || accountSecondaryUsageLocked(a) >= secondaryHardExcludeThreshold {
+	if primaryUsageBlocksRoutingLocked(a, accountPrimaryUsageLocked(a)) || accountSecondaryUsageLocked(a) >= secondaryHardExcludeThreshold {
 		return nil
 	}
 	return a
@@ -795,7 +798,7 @@ func (p *poolState) candidateWithCyberAccessForUser(userID string, exclude map[s
 		// account happens to have just expired.
 		primaryUsed := accountPrimaryUsageLocked(a)
 		secondaryUsed := accountSecondaryUsageLocked(a)
-		if primaryUsed >= primaryHardExcludeThreshold || secondaryUsed >= secondaryHardExcludeThreshold {
+		if primaryUsageBlocksRoutingLocked(a, primaryUsed) || secondaryUsed >= secondaryHardExcludeThreshold {
 			a.mu.Unlock()
 			continue
 		}
@@ -956,9 +959,11 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 							conversationID, id, secondaryUsed*100, secondaryHardExcludeThreshold*100)
 					}
 				}
-				// Also unpin if primary usage is at/above 95% (hard limit)
+				// Also unpin if primary usage is at/above 95% (hard limit).
+				// Grok monthly spend is display-only (see
+				// primaryUsageBlocksRoutingLocked) and never unpins.
 				primaryUsed := accountPrimaryUsageLocked(a)
-				if ok && primaryUsed >= primaryHardExcludeThreshold {
+				if ok && primaryUsageBlocksRoutingLocked(a, primaryUsed) {
 					ok = false
 					if p.debug {
 						log.Printf("unpinning conversation %s from account %s (%.0f%% primary >= %.0f%%)",
@@ -1048,9 +1053,10 @@ func (p *poolState) candidateForUser(userID, conversationID string, exclude map[
 			}
 			continue
 		}
-		// Hard exclusion: >=95% primary usage
+		// Hard exclusion: >=95% primary usage (Grok monthly spend is
+		// display-only and exempt via primaryUsageBlocksRoutingLocked).
 		primaryUsed := accountPrimaryUsageLocked(a)
-		if primaryUsed >= primaryHardExcludeThreshold {
+		if primaryUsageBlocksRoutingLocked(a, primaryUsed) {
 			a.mu.Unlock()
 			if p.debug {
 				log.Printf("excluding account %s: primary usage %.1f%% >= %.0f%%", a.ID, primaryUsed*100, primaryHardExcludeThreshold*100)
@@ -1430,8 +1436,10 @@ func scoreAccountBreakdownLocked(a *Account, now time.Time) scoreBreakdown {
 
 	// When both windows exist, use five-hour headroom as the burst signal on
 	// top of the weekly base. If five-hour is the only window, it is already the
-	// base and must not be counted twice.
-	if out.PrimaryAvailable && out.SecondaryAvailable {
+	// base and must not be counted twice. Grok's Primary slot is monthly API
+	// spend (display-only, not a burst window), so it neither bonuses nor
+	// penalizes the score; weekly credits drive it.
+	if a.Type != AccountTypeGrok && out.PrimaryAvailable && out.SecondaryAvailable {
 		if !a.Usage.PrimaryResetAt.IsZero() && a.Usage.PrimaryResetAt.After(now) {
 			hoursRemaining := a.Usage.PrimaryResetAt.Sub(now).Hours()
 			primaryHeadroom := 1.0 - primaryUsed
@@ -2263,7 +2271,7 @@ func (p *poolState) getPoolUtilization() []PoolUtilization {
 		}
 
 		if (account.RateLimitUntil.IsZero() || !account.RateLimitUntil.After(now)) &&
-			usedP < primaryHardExcludeThreshold && usedS < secondaryHardExcludeThreshold {
+			(account.Type == AccountTypeGrok || usedP < primaryHardExcludeThreshold) && usedS < secondaryHardExcludeThreshold {
 			pa.available++
 		}
 

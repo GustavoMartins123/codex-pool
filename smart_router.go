@@ -536,7 +536,7 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 		// Antigravity usage aggregates every model family; its exhaustion is
 		// decided per family by DiscoveryAvailability below.
 		if eligible && account.Type != AccountTypeAntigravity {
-			eligible = accountPrimaryUsageLocked(account) < primaryHardExcludeThreshold &&
+			eligible = !primaryUsageBlocksRoutingLocked(account, accountPrimaryUsageLocked(account)) &&
 				accountSecondaryUsageLocked(account) < secondaryHardExcludeThreshold
 		}
 		if eligible && account.Type == AccountTypeAntigravity {

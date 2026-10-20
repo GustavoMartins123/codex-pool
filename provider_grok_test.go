@@ -734,3 +734,47 @@ func TestGrokSchemaCompatibility(t *testing.T) {
 		t.Fatalf("nested null required values were not normalized: %s", rewritten)
 	}
 }
+
+func TestGrokMonthlySpendDoesNotBlockRouting(t *testing.T) {
+	t.Parallel()
+
+	overMonthly := UsageSnapshot{
+		PrimaryUsedPercent:     1.0,
+		PrimaryUsed:            1.0,
+		SecondaryUsedPercent:   0,
+		SecondaryUsed:          0,
+		PrimaryWindowMinutes:   31 * 24 * 60,
+		SecondaryWindowMinutes: 7 * 24 * 60,
+		primarySet:             true,
+		secondarySet:           true,
+		Source:                 "grok_billing",
+		RetrievedAt:            time.Now(),
+	}
+	grok := &Account{ID: "pp-grok", Type: AccountTypeGrok, PlanType: "grok", Usage: overMonthly}
+	codex := &Account{ID: "codex", Type: AccountTypeCodex, PlanType: "pro", Usage: overMonthly}
+
+	if accountUsageExhaustedLocked(grok) {
+		t.Fatalf("grok account exhausted by monthly spend: %+v", grok.Usage)
+	}
+	if !accountUsageExhaustedLocked(codex) {
+		t.Fatal("control codex account with 100%/100% should still be exhausted")
+	}
+
+	p := newPoolState([]*Account{grok}, false)
+	if got := p.candidate("", nil, AccountTypeGrok, "", ""); got == nil || got.ID != "pp-grok" {
+		t.Fatalf("grok account not routable despite fresh weekly quota, got %+v", got)
+	}
+	if got := p.candidateByID("pp-grok", AccountTypeGrok, "", ""); got == nil {
+		t.Fatal("candidateByID refused grok account pinned by conversation")
+	}
+	if got := p.smartCandidateForModelForUser("", "", nil, AccountTypeGrok, "", "", "grok-4.6", RoutingBalanced); got.Account != grok {
+		t.Fatalf("smart routing refused grok account over monthly spend: %#v", got)
+	}
+	if !p.hasRoutableAccountOfType(AccountTypeGrok, nil) {
+		t.Fatal("grok account over monthly spend must stay routable")
+	}
+
+	if breakdown := scoreAccountBreakdownLocked(grok, time.Now()); breakdown.PrimaryPenalty != 0 {
+		t.Fatalf("grok score penalized by monthly spend: %+v", breakdown)
+	}
+}
