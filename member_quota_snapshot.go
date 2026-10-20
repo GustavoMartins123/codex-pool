@@ -35,7 +35,13 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 	admission := &policyAdmission{policy: policy}
 	accounts := h.pool.allAccounts()
 	access := make(map[*Account]memberQuotaAccess, len(accounts))
+	var verifications map[string]modelVerification
 	err = h.passport.db.View(func(tx *bbolt.Tx) error {
+		var err error
+		verifications, err = readModelVerifications(tx, now)
+		if err != nil {
+			return err
+		}
 		for _, account := range accounts {
 			resource, err := readAccountResource(tx.Bucket([]byte(bucketAccountResources)), account.Type, account.ID)
 			if err != nil {
@@ -87,7 +93,7 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 
 	// Copy only catalog and quota fields, without credentials or a copied mutex.
 	// Each live account is locked once; later model scans use detached values.
-	visible := &poolState{catalogScoped: true}
+	visible := &poolState{catalogScoped: true, catalogVerifications: verifications}
 	detachedAccess := make(map[*Account]memberQuotaAccess, len(access))
 	for _, account := range accounts {
 		a, ok := access[account]

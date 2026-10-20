@@ -11,6 +11,9 @@ import (
 	httppprof "net/http/pprof"
 	"sort"
 	"strings"
+	"time"
+
+	"go.etcd.io/bbolt"
 )
 
 func normalizeNoopPath(path string) string {
@@ -493,6 +496,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/me/quotas":
 		h.handleMyQuotas(w, r)
 		return
+	case "/api/verification/target":
+		h.handleVerificationTarget(w, r)
+		return
+	case "/api/console/model-verifications":
+		h.handleModelVerification(w, r)
+		return
 	case "/api/me/clients":
 		h.handlePassportClients(w, r)
 		return
@@ -588,10 +597,23 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		noStore(w)
+		visible := h.requestVisiblePool(r)
+		if h.passport != nil {
+			var loadErr error
+			loadErr = h.passport.db.View(func(tx *bbolt.Tx) error {
+				visible.catalogVerifications, loadErr = readModelVerifications(tx, time.Now().UTC())
+				return loadErr
+			})
+			if loadErr != nil {
+				respondJSONError(w, 503, "model verifications unavailable")
+				return
+			}
+		}
 		if h.isOperatorRequest(r) {
-			servePoolModels(w, h.requestVisiblePool(r))
+			servePoolModels(w, visible)
 		} else {
-			serveClientPoolModels(w, h.requestVisiblePool(r))
+			serveClientPoolModels(w, visible)
 		}
 		return
 	case "/api/pool/experiments":

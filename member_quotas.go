@@ -17,6 +17,7 @@ type memberQuotaWindow struct {
 }
 
 type memberModelQuota struct {
+	Compatibility      *modelVerification `json:"compatibility,omitempty"`
 	Model              string             `json:"model"`
 	Name               string             `json:"name"`
 	Provider           string             `json:"provider"`
@@ -78,7 +79,7 @@ func (h *proxyHandler) handleMyQuotas(w http.ResponseWriter, r *http.Request) {
 		if model.SupportingAccounts == 0 {
 			continue
 		}
-		row := memberModelQuota{Model: model.ID, Name: model.Name, Provider: model.Provider}
+		row := memberModelQuota{Model: model.ID, Name: model.Name, Provider: model.Provider, Compatibility: model.Compatibility}
 		for _, account := range accounts {
 			if string(account.Type) != model.Provider || !visible.catalogAccountAllows(account, model.ID) {
 				continue

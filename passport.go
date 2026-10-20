@@ -262,6 +262,9 @@ func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
 func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, error) {
 	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}, accountInflight: map[string]int{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
+		if _, err := tx.CreateBucketIfNotExists([]byte(bucketModelVerifications)); err != nil {
+			return err
+		}
 		for _, n := range []string{bucketAccountGrants, bucketContributionAttempts, bucketAccountResources, bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketJoinLinksByToken, bucketMemberRecoveryLinks, bucketMemberRecoveryLinksByToken, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err

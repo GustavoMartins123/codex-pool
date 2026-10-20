@@ -15,6 +15,7 @@ type poolNativeToolDescriptor struct {
 }
 
 type poolModelDescriptor struct {
+	Compatibility      *modelVerification                  `json:"compatibility,omitempty"`
 	ID                 string                              `json:"id"`
 	Name               string                              `json:"name,omitempty"`
 	Protocol           string                              `json:"protocol"`
@@ -206,6 +207,13 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 			}
 		}
 		models = filtered
+	}
+	if pool != nil {
+		for i := range models {
+			if verification, ok := pool.catalogVerifications[resourceKey(AccountType(models[i].Provider), models[i].ID)]; ok {
+				models[i].Compatibility = &verification
+			}
+		}
 	}
 	return models
 }

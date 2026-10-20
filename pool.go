@@ -478,6 +478,8 @@ const (
 )
 
 type poolState struct {
+	catalogVerifications map[string]modelVerification
+
 	accountAuthority *PassportStore
 	catalogScoped    bool
 	catalogAccountAllows func(*Account, string) bool
