@@ -22,8 +22,8 @@ type resetCreditEndpointFixture struct {
 }
 
 // newResetCreditEndpointFixture serves an operator-managed Codex account with
-// one banked reset, an operator-managed Kimi account and a Codex account
-// privately owned by a member.
+// one banked reset, an operator-managed Kimi account, a Codex account the
+// operator added themselves and a Codex account privately owned by a member.
 func newResetCreditEndpointFixture(t *testing.T, credits string) *resetCreditEndpointFixture {
 	t.Helper()
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
@@ -38,15 +38,21 @@ func newResetCreditEndpointFixture(t *testing.T, credits string) *resetCreditEnd
 	managed := codexAccountWithResets()
 	pooled := &Account{ID: "pool-kimi", Type: AccountTypeKimi}
 	private := &Account{ID: "member-codex", Type: AccountTypeCodex, AccessToken: "member-token"}
+	added := codexAccountWithResets()
+	added.ID = "operator-codex"
 	if err := passport.initializeAccountAuthority([]*Account{managed, pooled}); err != nil {
 		t.Fatal(err)
 	}
 	if err := passport.db.Update(func(tx *bbolt.Tx) error {
-		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, private.ID), &accountResource{Version: 2, ID: private.ID, Provider: AccountTypeCodex, OwnerID: "member", AddedBy: "member", Revision: 1, Status: "active"})
+		resources := tx.Bucket([]byte(bucketAccountResources))
+		if err := putJSON(resources, resourceKey(AccountTypeCodex, added.ID), &accountResource{Version: 2, ID: added.ID, Provider: AccountTypeCodex, OwnerID: "operator", AddedBy: "operator", Revision: 1, Status: "active"}); err != nil {
+			return err
+		}
+		return putJSON(resources, resourceKey(AccountTypeCodex, private.ID), &accountResource{Version: 2, ID: private.ID, Provider: AccountTypeCodex, OwnerID: "member", AddedBy: "member", Revision: 1, Status: "active"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	pool := newPoolState([]*Account{managed, pooled, private}, false)
+	pool := newPoolState([]*Account{managed, pooled, added, private}, false)
 	pool.accountAuthority = passport
 	f.upstream = &resetCreditUpstream{t: t, credits: credits, consume: func(map[string]string) *http.Response {
 		f.spent++
@@ -102,6 +108,17 @@ func TestOperatorConsumesResetOnPoolManagedCodexAccount(t *testing.T) {
 	}
 	actors := f.auditActions(t, "pool-codex")
 	if actors["account.reset_credit_consume_requested"] != "operator" || actors["account.reset_credit_consumed"] != "operator" {
+		t.Fatalf("audit = %+v", actors)
+	}
+}
+
+func TestOperatorConsumesResetOnCodexAccountTheyAddedThemselves(t *testing.T) {
+	f := newResetCreditEndpointFixture(t, oneResetCredit())
+	response := f.serve(authorityRequest(http.MethodPost, "/admin/accounts/operator-codex/reset-credit/consume", f.operator, ""))
+	if response.Code != http.StatusOK || f.spent != 1 {
+		t.Fatalf("status = %d spent=%d body=%s", response.Code, f.spent, response.Body.String())
+	}
+	if actors := f.auditActions(t, "operator-codex"); actors["account.reset_credit_consumed"] != "operator" {
 		t.Fatalf("audit = %+v", actors)
 	}
 }
@@ -199,7 +216,7 @@ func TestAdminAccountsOffersResetConsumptionOnlyWhereAllowed(t *testing.T) {
 	for _, row := range rows {
 		got[row.ID] = row.CanConsumeReset
 	}
-	if !got["pool-codex"] || got["pool-kimi"] {
+	if !got["pool-codex"] || !got["operator-codex"] || got["pool-kimi"] {
 		t.Fatalf("can_consume_reset by account = %v", got)
 	}
 	if strings.Contains(response.Body.String(), "member-codex") {

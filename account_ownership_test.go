@@ -94,13 +94,17 @@ func TestAccountOwnershipMissingMetadataAndRestart(t *testing.T) {
 	}
 }
 
-func TestConsumeResetIsLimitedToOperatorManagedCodexAccounts(t *testing.T) {
+func TestConsumeResetIsLimitedToOperatorsOnTheirOwnCodexAccounts(t *testing.T) {
 	p, pool := ownershipFixture(t)
 	managed := &Account{ID: "pool-codex", Type: AccountTypeCodex, PlanType: "pro"}
-	pool.replace(append(pool.allAccounts(), managed))
+	memberOwned := &Account{ID: "carol-codex", Type: AccountTypeCodex, PlanType: "pro"}
+	pool.replace(append(pool.allAccounts(), managed, memberOwned))
 	member := &Principal{ID: "carol", Kind: PrincipalMember, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
 	if err := p.db.Update(func(tx *bbolt.Tx) error {
 		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), member.ID, member); err != nil {
+			return err
+		}
+		if err := putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, memberOwned.ID), &accountResource{Version: 2, ID: memberOwned.ID, Provider: AccountTypeCodex, OwnerID: "carol", AddedBy: "carol", Revision: 1, Status: "active"}); err != nil {
 			return err
 		}
 		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, managed.ID), &accountResource{Version: 2, ID: managed.ID, Provider: AccountTypeCodex, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, Revision: 1, Status: "active"})
@@ -122,8 +126,11 @@ func TestConsumeResetIsLimitedToOperatorManagedCodexAccounts(t *testing.T) {
 		{"break-glass on pool account", "break-glass", managed, true},
 		{"member on pool account", "carol", managed, false},
 		{"anonymous on pool account", "", managed, false},
-		{"owner-operator on own private account", "alice", private, false},
-		{"other operator on private account", "bob", private, false},
+		{"operator on a Codex account they added", "alice", private, true},
+		{"other operator on that account", "bob", private, false},
+		{"member on own private Codex account", "carol", memberOwned, false},
+		{"operator on a member's private Codex account", "alice", memberOwned, false},
+		{"break-glass on a member's private Codex account", "break-glass", memberOwned, false},
 		{"operator on non-Codex pool account", "alice", shared, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -219,10 +219,13 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 				return nil
 			}
 		case "consume_reset":
-			// Spending a banked reset is irreversible, so it is limited to the
-			// operator-managed Codex accounts. Owners and operators never
-			// reach another member's private account through this action.
-			if a.Type == AccountTypeCodex && r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
+			// Spending a banked reset is irreversible, so it is limited to
+			// operators acting on the Codex accounts they run: the pool's own
+			// and the ones they added themselves. A member's private account
+			// never qualifies, whoever asks.
+			isOperator := principal != nil && principal.Kind == PrincipalOperator
+			ownsAccount := actor != "" && actor == r.OwnerID
+			if a.Type == AccountTypeCodex && (r.OperatorManaged && (identity == "break-glass" || isOperator) || ownsAccount && isOperator) {
 				return nil
 			}
 		default:
