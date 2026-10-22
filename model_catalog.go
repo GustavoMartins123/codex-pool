@@ -21,10 +21,12 @@ type poolModel struct {
 // Codex discovery reports context_window 272000 and max_context_window 872000
 // for the GPT-6 family (GET /backend-api/codex/models, 2026-09-04); the [1m]
 // entries are client-facing 1M context profiles routed to the base model ID.
+// GPT-6.1-Sol's default Codex context was raised to 500000 on 2026-10-11
+// (upstream 05c6b43 saw context_window=500000 from the same endpoint).
 var poolModels = []poolModel{
 	{AccountType: AccountTypeCodex, ID: defaultCodexModel, DisplayName: "GPT-6-Astra", Description: "Frontier model for complex, demanding work.", ContextWindow: 272000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}, RequiresDiscovery: true},
 	{AccountType: AccountTypeCodex, ID: "gpt-6-astra[1m]", DisplayName: "GPT-6-Astra (1M)", Description: "This is really fucking expensive.", ContextWindow: 1000000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}},
-	{AccountType: AccountTypeCodex, ID: "gpt-6.1-sol", DisplayName: "GPT-6.1-Sol", Description: "Latest workhorse model for coding and everyday work.", ContextWindow: 272000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}, RequiresDiscovery: true},
+	{AccountType: AccountTypeCodex, ID: "gpt-6.1-sol", DisplayName: "GPT-6.1-Sol", Description: "Latest workhorse model for coding and everyday work.", ContextWindow: 500000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}, RequiresDiscovery: true},
 	{AccountType: AccountTypeCodex, ID: "gpt-6.1-sol[1m]", DisplayName: "GPT-6.1-Sol (1M)", Description: "Latest workhorse model with a 1M context window.", ContextWindow: 1000000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}},
 	{AccountType: AccountTypeCodex, ID: "gpt-5.6-sol", DisplayName: "GPT-5.6-Sol", Description: "Frontier agentic coding model.", ContextWindow: 372000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}, Aliases: []string{"gpt-5.6"}},
 	{AccountType: AccountTypeCodex, ID: "gpt-5.6-sol[1m]", DisplayName: "GPT-5.6-Sol (1M)", Description: "Frontier agentic coding model with a 1M context window.", ContextWindow: 1000000, MaxTokens: 128000, Reasoning: true, WebSearch: true, Input: []string{"text", "image"}},
