@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -551,6 +552,139 @@ func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 	a.ResetCreditsRetrievedAt = time.Now()
 	a.mu.Unlock()
 	return nil
+}
+
+var (
+	errResetCreditUnavailable = errors.New("no banked reset is available")
+	errResetCreditInProgress  = errors.New("a reset is already being consumed for this account")
+)
+
+// resetCreditConsumption is what the upstream reported for a spent reset.
+// RefreshError is set when the reset was spent but re-reading the account's
+// credits or usage failed, so callers can still report the spend.
+type resetCreditConsumption struct {
+	CreditID     string `json:"credit_id"`
+	Code         string `json:"code"`
+	WindowsReset int    `json:"windows_reset"`
+	RefreshError string `json:"refresh_error,omitempty"`
+}
+
+// consumeEarliestCodexResetCredit spends the soonest-expiring banked reset of
+// a Codex account. This is irreversible, so the credit list is read fresh from
+// the upstream instead of trusting the polled snapshot, and the credit is
+// always chosen here rather than by the caller.
+func (h *proxyHandler) consumeEarliestCodexResetCredit(a *Account) (resetCreditConsumption, error) {
+	if a.Type != AccountTypeCodex {
+		return resetCreditConsumption{}, errors.New("banked resets are only available on Codex accounts")
+	}
+	a.mu.Lock()
+	if a.ResetCreditRedeeming {
+		a.mu.Unlock()
+		return resetCreditConsumption{}, errResetCreditInProgress
+	}
+	a.ResetCreditRedeeming = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.ResetCreditRedeeming = false
+		a.mu.Unlock()
+	}()
+
+	if err := h.fetchCodexResetCredits(a); err != nil {
+		return resetCreditConsumption{}, fmt.Errorf("confirm available resets: %w", err)
+	}
+	now := time.Now()
+	var credit *RateLimitResetCredit
+	a.mu.Lock()
+	for _, candidate := range a.RateLimitResetCredits {
+		if candidate.ID != "" && candidate.ExpiresAt.After(now) {
+			picked := candidate
+			credit = &picked
+			break
+		}
+	}
+	a.mu.Unlock()
+	if credit == nil {
+		return resetCreditConsumption{}, errResetCreditUnavailable
+	}
+
+	code, windowsReset, err := h.consumeCodexResetCredit(a, *credit)
+	if err != nil {
+		return resetCreditConsumption{}, err
+	}
+	result := resetCreditConsumption{CreditID: credit.ID, Code: code, WindowsReset: windowsReset}
+	log.Printf("reset credit consumed %s: credit=%s expires_in=%s code=%s windows_reset=%d",
+		a.ID, credit.ID, formatDuration(credit.ExpiresAt.Sub(now)), code, windowsReset)
+
+	creditsErr := h.fetchCodexResetCredits(a)
+	usageErr := h.fetchUsage(time.Now(), a)
+	switch {
+	case creditsErr != nil && usageErr != nil:
+		result.RefreshError = fmt.Sprintf("refresh reset credits: %v; refresh usage: %v", creditsErr, usageErr)
+	case creditsErr != nil:
+		result.RefreshError = fmt.Sprintf("refresh reset credits: %v", creditsErr)
+	case usageErr != nil:
+		result.RefreshError = fmt.Sprintf("refresh usage: %v", usageErr)
+	}
+	return result, nil
+}
+
+func buildWhamConsumeResetCreditURL(base *url.URL) string {
+	joined := singleJoin(base.Path, "/wham/rate-limit-reset-credits/consume")
+	copy := *base
+	copy.Path = joined
+	copy.RawQuery = ""
+	return copy.String()
+}
+
+func (h *proxyHandler) consumeCodexResetCredit(a *Account, credit RateLimitResetCredit) (string, int, error) {
+	body, err := json.Marshal(map[string]string{
+		"redeem_request_id": "codex-pool:" + credit.ID,
+		"credit_id":         credit.ID,
+	})
+	if err != nil {
+		return "", 0, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, buildWhamConsumeResetCreditURL(h.cfg.whamBase), bytes.NewReader(body))
+	if err != nil {
+		return "", 0, err
+	}
+
+	a.mu.Lock()
+	access := a.AccessToken
+	accountID := a.AccountID
+	if accountID == "" {
+		accountID = a.IDTokenChatGPTAccountID
+	}
+	a.mu.Unlock()
+
+	req.Header.Set("Authorization", "Bearer "+access)
+	req.Header.Set("Content-Type", "application/json")
+	if accountID != "" {
+		req.Header.Set("ChatGPT-Account-ID", accountID)
+	}
+
+	resp, err := h.transport.RoundTrip(req)
+	if err != nil {
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", 0, fmt.Errorf("consume reset credit bad status: %s", resp.Status)
+	}
+
+	var payload struct {
+		Code         string `json:"code"`
+		WindowsReset int    `json:"windows_reset"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return "", 0, err
+	}
+	return payload.Code, payload.WindowsReset, nil
 }
 
 func parseClaudeResetAt(value any) (time.Time, bool) {
