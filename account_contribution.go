@@ -163,6 +163,11 @@ func (h *proxyHandler) saveContribution(r *http.Request, provider AccountType, i
 }
 
 func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	if h.passport == nil {
+		respondJSONError(w, 503, "account authority unavailable")
+		return
+	}
 	operator, session, ok := h.requireOperator(w, r)
 	if !ok {
 		return
@@ -177,9 +182,9 @@ func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.R
 	}
 	var q struct {
 		PrincipalID   string `json:"principal_id"`
-		CanContribute bool   `json:"can_contribute"`
+		CanContribute *bool  `json:"can_contribute"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&q) != nil {
+	if decodeGovernanceJSON(w, r, &q) != nil || q.CanContribute == nil {
 		respondJSONError(w, 400, "invalid json")
 		return
 	}
@@ -194,8 +199,12 @@ func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 	updated := *pr
-	updated.CanContribute = q.CanContribute
+	updated.CanContribute = *q.CanContribute
 	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		pr, err := accountPrincipal(tx, operator.ID)
+		if err != nil || !principalIsUsableOperator(pr) {
+			return accountControlError("operator_access_denied", 403)
+		}
 		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), updated.ID, &updated); err != nil {
 			return err
 		}

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-"errors"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -14,6 +14,7 @@ import (
 )
 
 type ConsolePrincipal struct {
+	CanContribute        bool            `json:"can_contribute"`
 	ID                   string          `json:"id"`
 	Kind                 PrincipalKind   `json:"kind"`
 	Status               PrincipalStatus `json:"status"`
@@ -53,7 +54,7 @@ func (p *PassportStore) consolePrincipals(usage []PrincipalUsageSummary) []Conso
 			lastSeenCopy := lastSeen
 			lastSeenAt = &lastSeenCopy
 		}
-		out = append(out, ConsolePrincipal{ID: principal.ID, Kind: principal.Kind, Status: principal.Status, Note: principal.Note, DisplayName: principal.DisplayName, Username: principal.Username, Email: principal.Email, AvatarURL: avatar, ExpiresAt: principal.ExpiresAt, CreatedAt: principal.CreatedAt, LastSeenAt: lastSeenAt, BillableTokens: item.BillableTokens, RequestCount: item.RequestCount, APIEquivalentCostUSD: item.APIEquivalentCostUSD, MaxReasoningEffort: principal.MaxReasoningEffort})
+		out = append(out, ConsolePrincipal{CanContribute: principal.Kind == PrincipalOperator || principal.CanContribute, ID: principal.ID, Kind: principal.Kind, Status: principal.Status, Note: principal.Note, DisplayName: principal.DisplayName, Username: principal.Username, Email: principal.Email, AvatarURL: avatar, ExpiresAt: principal.ExpiresAt, CreatedAt: principal.CreatedAt, LastSeenAt: lastSeenAt, BillableTokens: item.BillableTokens, RequestCount: item.RequestCount, APIEquivalentCostUSD: item.APIEquivalentCostUSD, MaxReasoningEffort: principal.MaxReasoningEffort})
 	}
 	p.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool {
@@ -72,16 +73,22 @@ func (p *PassportStore) recentAudit(limit int) ([]AuditEntry, error) {
 	out := make([]AuditEntry, 0, limit)
 	err := p.db.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketPassportAudit))
-		if bucket == nil { return errors.New("audit storage unavailable") }
+		if bucket == nil {
+			return errors.New("audit storage unavailable")
+		}
 		cursor := bucket.Cursor()
 		for key, value := cursor.Last(); key != nil && len(out) < limit; key, value = cursor.Prev() {
 			var entry AuditEntry
-			if err := json.Unmarshal(value, &entry); err != nil { return err }
+			if err := json.Unmarshal(value, &entry); err != nil {
+				return err
+			}
 			out = append(out, entry)
 		}
 		return nil
 	})
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

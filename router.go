@@ -589,6 +589,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/console/account-contribution":
 		h.handleContributionPolicy(w, r)
 		return
+	case "/api/console/operator-accounts":
+		h.handleOperatorAccounts(w, r)
+		return
 	case "/api/pool/catalog":
 		if !h.checkMemberOrAdminAuth(w, r) {
 			return
@@ -1004,6 +1007,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/accounts/") {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/accounts/"), "/")
+		if len(parts) == 3 && parts[2] == "operator-access" {
+			h.handleOperatorAccountAccess(w, r, AccountType(parts[0]), parts[1])
+			return
+		}
 		if len(parts) == 3 && (parts[2] == "grants" || parts[2] == "delegation") {
 			h.handleAccountSharing(w, r, AccountType(parts[0]), parts[1], parts[2])
 			return

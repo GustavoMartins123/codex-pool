@@ -44,7 +44,13 @@ func (h *proxyHandler) serveReadyz(w http.ResponseWriter) {
 }
 
 func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	if h.passport == nil || h.pool == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "account authority unavailable")
+		return
+	}
 	type row struct {
+		CanManage               bool        `json:"can_manage"`
 		ID                      string      `json:"id"`
 		PublicID                string      `json:"public_id"`
 		Type                    AccountType `json:"type"`
@@ -80,7 +86,10 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 	h.pool.mu.RLock()
 	out := make([]row, 0, len(h.pool.accounts))
 	for _, a := range h.pool.accounts {
-		if h.passport != nil && h.passport.authorizeAccount(providerContributionActor(r), a, "read") != nil { continue }
+		if h.passport.authorizeAccount(providerContributionActor(r), a, "read") != nil {
+			continue
+		}
+		canManage := h.passport.authorizeAccount(providerContributionActor(r), a, "manage") == nil
 		a.mu.Lock()
 		planType := a.PlanType
 		email := a.Email
@@ -97,6 +106,10 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		if a.Type == AccountTypeAntigravity {
 			accountVerificationURL = antigravityAccountBoundVerificationURL(verificationURL, email)
 		}
+		if !canManage {
+			verificationURL = ""
+			accountVerificationURL = ""
+		}
 		healthError := a.HealthError
 		cyberAccess := a.CyberAccess
 		expiresAt := a.ExpiresAt
@@ -111,6 +124,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 
 		out = append(out, row{
+			CanManage:               canManage,
 			ID:                      a.ID,
 			PublicID:                hashAccountID(a.ID),
 			Type:                    a.Type,

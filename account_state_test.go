@@ -119,8 +119,15 @@ func TestServeAccountsExposesUnifiedState(t *testing.T) {
 	p.observeAccountStates(time.Now())
 
 	h := &proxyHandler{pool: p}
+	if err := ensureTestPassport(t, h); err != nil {
+		t.Fatal(err)
+	}
+	addTestPassportOperator(t, h.passport, "state-reader")
+	if err := h.passport.initializeAccountAuthority(p.allAccounts()); err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
-	h.serveAccounts(rec, httptest.NewRequest("GET", "/admin/accounts", nil))
+	h.serveAccounts(rec, contributionRequestActor(httptest.NewRequest("GET", "/admin/accounts", nil), "state-reader"))
 
 	var rows []map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
