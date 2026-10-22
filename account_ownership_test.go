@@ -93,3 +93,44 @@ func TestAccountOwnershipMissingMetadataAndRestart(t *testing.T) {
 		t.Fatal("stale authority admitted withdrawn account")
 	}
 }
+
+func TestConsumeResetIsLimitedToOperatorManagedCodexAccounts(t *testing.T) {
+	p, pool := ownershipFixture(t)
+	managed := &Account{ID: "pool-codex", Type: AccountTypeCodex, PlanType: "pro"}
+	pool.replace(append(pool.allAccounts(), managed))
+	member := &Principal{ID: "carol", Kind: PrincipalMember, Status: PrincipalActive, CreatedAt: time.Now().UTC()}
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		if err := putJSON(tx.Bucket([]byte(bucketPrincipals)), member.ID, member); err != nil {
+			return err
+		}
+		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(AccountTypeCodex, managed.ID), &accountResource{Version: 2, ID: managed.ID, Provider: AccountTypeCodex, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, Revision: 1, Status: "active"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.principals[member.ID] = member
+	p.mu.Unlock()
+	private, shared := pool.allAccounts()[1], pool.allAccounts()[0]
+
+	for _, test := range []struct {
+		name     string
+		identity string
+		account  *Account
+		allowed  bool
+	}{
+		{"operator on pool account", "alice", managed, true},
+		{"break-glass on pool account", "break-glass", managed, true},
+		{"member on pool account", "carol", managed, false},
+		{"anonymous on pool account", "", managed, false},
+		{"owner-operator on own private account", "alice", private, false},
+		{"other operator on private account", "bob", private, false},
+		{"operator on non-Codex pool account", "alice", shared, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := p.authorizeAccount(test.identity, test.account, "consume_reset")
+			if (err == nil) != test.allowed {
+				t.Fatalf("authorizeAccount(%q, %s, consume_reset) = %v, want allowed=%v", test.identity, test.account.ID, err, test.allowed)
+			}
+		})
+	}
+}

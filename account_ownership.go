@@ -218,6 +218,13 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 			if actor != "" && actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
 				return nil
 			}
+		case "consume_reset":
+			// Spending a banked reset is irreversible, so it is limited to the
+			// operator-managed Codex accounts. Owners and operators never
+			// reach another member's private account through this action.
+			if a.Type == AccountTypeCodex && r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
+				return nil
+			}
 		default:
 			return errors.New("unknown account permission")
 		}
