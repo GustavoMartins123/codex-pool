@@ -762,6 +762,20 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Consume one banked Codex reset: /admin/accounts/:id/reset-credit/consume
+	if strings.HasPrefix(r.URL.Path, "/admin/accounts/") && strings.HasSuffix(r.URL.Path, "/reset-credit/consume") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
+		h.consumeAccountResetCredit(w, r, strings.TrimSuffix(path, "/reset-credit/consume"))
+		return
+	}
+
 	// Route Trace: /api/pool/routes/:request_id
 	if strings.HasPrefix(r.URL.Path, "/api/pool/routes/") {
 		if !h.checkAdminAuth(w, r) {

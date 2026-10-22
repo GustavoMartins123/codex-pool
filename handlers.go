@@ -51,6 +51,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	type row struct {
 		CanManage               bool        `json:"can_manage"`
+		CanConsumeReset         bool        `json:"can_consume_reset"`
 		ID                      string      `json:"id"`
 		PublicID                string      `json:"public_id"`
 		Type                    AccountType `json:"type"`
@@ -90,6 +91,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		canManage := h.passport.authorizeAccount(providerContributionActor(r), a, "manage") == nil
+		canConsumeReset := h.passport.authorizeAccount(providerContributionActor(r), a, "consume_reset") == nil
 		a.mu.Lock()
 		planType := a.PlanType
 		email := a.Email
@@ -125,6 +127,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 
 		out = append(out, row{
 			CanManage:               canManage,
+			CanConsumeReset:         canConsumeReset,
 			ID:                      a.ID,
 			PublicID:                hashAccountID(a.ID),
 			Type:                    a.Type,

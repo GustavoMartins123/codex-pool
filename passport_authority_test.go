@@ -295,6 +295,7 @@ func TestAuthorityMatrix(t *testing.T) {
 		{"provider key contribution", http.MethodPost, "/api/pool/accounts/kimi/add", `{}`, map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"admin accounts", http.MethodGet, "/admin/accounts", "", map[PrincipalKind]bool{PrincipalOperator: true}},
 		{"admin mutation", http.MethodPost, "/admin/accounts/nonexistent/disable", "", map[PrincipalKind]bool{PrincipalOperator: true}},
+		{"reset consumption", http.MethodPost, "/admin/accounts/nonexistent/reset-credit/consume", "", map[PrincipalKind]bool{PrincipalOperator: true}},
 	}
 	// Global telemetry is operator-only. The catalog remains available to
 	// members for model discovery and omits administrative capacity details.
