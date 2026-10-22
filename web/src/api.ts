@@ -217,6 +217,21 @@ export async function mutateAccount(accountID: string, action: "enable" | "disab
   }));
 }
 
+export interface ResetCreditConsumption {
+  credit_id: string;
+  code: string;
+  windows_reset: number;
+  refresh_error?: string;
+}
+
+/** Spends the account's soonest-expiring banked reset. The server picks the credit. */
+export async function consumeResetCredit(accountID: string) {
+  return decode<ResetCreditConsumption>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/reset-credit/consume`, {
+    method: "POST",
+    credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
+  }));
+}
+
 export interface AccountContributionResult {
   success?: boolean;
   account_id?: string;
