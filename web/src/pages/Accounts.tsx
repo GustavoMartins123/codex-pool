@@ -1,4 +1,4 @@
-import { mutateAccount, reloadAccounts } from "../api";
+import { consumeResetCredit, mutateAccount, reloadAccounts } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
 import { Sparkline } from "../charts";
@@ -7,7 +7,7 @@ import { queryValue, updateURL } from "../navigation";
 import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 
-type AccountAction = "enable" | "disable" | "resurrect" | "refresh";
+type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset";
 
 type ArmedAccountAction = { accountID: string; kind: AccountAction } | null;
 
@@ -125,6 +125,30 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     : "";
   const toggleAction: AccountAction | null = selectedAdmin ? selectedAdmin.disabled ? "enable" : "disable" : null;
 
+  // The reset is already spent once the request succeeds, so a failed list
+  // refresh must never read as a failed consume.
+  const consumeReset = async (accountID: string) => {
+    let result;
+    try {
+      result = await consumeResetCredit(accountID);
+    } catch (cause) {
+      setAction(null);
+      throw cause;
+    }
+    const spent = `${accountID} banked reset consumed${result.windows_reset > 0 ? ` · ${result.windows_reset} window${result.windows_reset === 1 ? "" : "s"} reset` : ""}`;
+    setAction(null);
+    if (result.refresh_error) {
+      setMessage({ tone: "success", text: `${spent} · usage numbers may be stale until the next refresh` });
+    } else {
+      setMessage({ tone: "success", text: spent });
+    }
+    try {
+      await onAccountsChanged();
+    } catch {
+      setMessage({ tone: "success", text: `${spent} · reload the pool to see the new numbers` });
+    }
+  };
+
   const perform = async (nextAction: AccountAction) => {
     if (!selectedAdmin) return;
     if (!isArmedAccountAction(action, selectedAdmin.id, nextAction)) {
@@ -133,6 +157,10 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     }
     setBusy(true);
     try {
+      if (nextAction === "consume-reset") {
+        await consumeReset(selectedAdmin.id);
+        return;
+      }
       await mutateAccount(selectedAdmin.id, nextAction);
       setMessage({ tone: "success", text: `${selectedAdmin.id} ${nextAction} complete` });
       setAction(null);
@@ -236,6 +264,16 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                     <header><span>Banked usage resets</span><strong>{selectedAccount.reset_credits_known ? selectedAccount.reset_credits_available ?? 0 : "—"}</strong></header>
                     <div>{selectedAccount.reset_credits_known ? <ResetCreditExpirations account={selectedAccount} /> : <span>Reset credit data is not reported.</span>}</div>
                     <small>Expiration times use your local timezone.</small>
+                    {selectedAdmin?.can_consume_reset && (
+                      <div className="reset-consume">
+                        <button
+                          disabled={busy || (Boolean(selectedAccount.reset_credits_known) && !selectedAccount.reset_credits_available)}
+                          className={isArmedAccountAction(action, selectedAdmin.id, "consume-reset") ? "confirm" : ""}
+                          onClick={() => perform("consume-reset")}
+                        >{isArmedAccountAction(action, selectedAdmin.id, "consume-reset") ? "Confirm consume" : "Consume banked reset"}</button>
+                        <small>Spends the soonest-expiring banked reset on this account. This cannot be undone.</small>
+                      </div>
+                    )}
                   </section>
                 )}
                 <div className="inspector-metrics">
