@@ -110,6 +110,9 @@ func (p *PassportStore) setPrincipalStatus(actorID, principalID string, status P
 			}
 		}
 		if status == PrincipalSuspended {
+			if err := p.revokeOperatorAccountAccess(tx, actorID, principalID); err != nil {
+				return err
+			}
 			if err := deletePrincipalSessions(tx, principalID); err != nil {
 				return err
 			}
@@ -170,6 +173,9 @@ func (p *PassportStore) setPrincipalKind(actorID, principalID string, kind Princ
 			return err
 		}
 		if demoteOperator {
+			if err := p.revokeOperatorAccountAccess(tx, actorID, principalID); err != nil {
+				return err
+			}
 			if err := deletePrincipalSessions(tx, principalID); err != nil {
 				return err
 			}

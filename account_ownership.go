@@ -42,6 +42,12 @@ func migrateAccountResources(tx *bbolt.Tx) error {
 		if _, ok := fields["controls"]; !ok {
 			updates = append(updates, r)
 		}
+		if _, ok := fields["operator_access"]; !ok {
+			updates = append(updates, r)
+		}
+		if err := r.validateOperatorAccess(); err != nil {
+			return err
+		}
 		if err := r.Controls.validate(); err != nil {
 			return err
 		}
@@ -61,20 +67,21 @@ func migrateAccountResources(tx *bbolt.Tx) error {
 }
 
 type accountResource struct {
-	OperatorMayDelegate bool            `json:"operator_may_delegate"`
-	Controls            accountControls `json:"controls"`
-	Version             int             `json:"version"`
-	ID                  string          `json:"id"`
-	Provider            AccountType     `json:"provider"`
-	OwnerID             string          `json:"owner_id"`
-	AddedBy             string          `json:"added_by"`
-	OperatorManaged     bool            `json:"operator_managed"`
-	SecretRef           string          `json:"secret_ref"`
-	Identity            string          `json:"identity,omitempty"`
-	Revision            uint64          `json:"revision"`
-	Status              string          `json:"status"`
-	PendingExpiresAt    *time.Time      `json:"pending_expires_at,omitempty"`
-	WithdrawnAt         *time.Time      `json:"withdrawn_at,omitempty"`
+	OperatorAccess      map[string]operatorAccountAccess `json:"operator_access"`
+	OperatorMayDelegate bool                             `json:"operator_may_delegate"`
+	Controls            accountControls                  `json:"controls"`
+	Version             int                              `json:"version"`
+	ID                  string                           `json:"id"`
+	Provider            AccountType                      `json:"provider"`
+	OwnerID             string                           `json:"owner_id"`
+	AddedBy             string                           `json:"added_by"`
+	OperatorManaged     bool                             `json:"operator_managed"`
+	SecretRef           string                           `json:"secret_ref"`
+	Identity            string                           `json:"identity,omitempty"`
+	Revision            uint64                           `json:"revision"`
+	Status              string                           `json:"status"`
+	PendingExpiresAt    *time.Time                       `json:"pending_expires_at,omitempty"`
+	WithdrawnAt         *time.Time                       `json:"withdrawn_at,omitempty"`
 }
 
 func resourceKey(provider AccountType, id string) string { return string(provider) + "|" + id }
@@ -102,6 +109,12 @@ func readAccountResource(b *bbolt.Bucket, provider AccountType, id string) (*acc
 		return nil, errors.New("account controls missing; migration required")
 	}
 	if err := resource.Controls.validate(); err != nil {
+		return nil, err
+	}
+	if _, ok := fields["operator_access"]; !ok {
+		return nil, errors.New("operator access missing; migration required")
+	}
+	if err := resource.validateOperatorAccess(); err != nil {
 		return nil, err
 	}
 	return &resource, nil
@@ -199,16 +212,8 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 			if action == "use" && (r.Controls.State == accountDisabled || r.Controls.State == accountMaintenance) {
 				return errors.New("account administratively unavailable")
 			}
-			if actor != "" && actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
-				return nil
-			}
-			grant, err := findAccountGrant(tx, r, actor, "")
-			if err != nil {
-				return err
-			}
-			if grant != nil {
-				return nil
-			}
+			_, err := accountReadPermission(tx, r, actor, identity, "")
+			return err
 		case "manage", "withdraw":
 			if actor != "" && actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
 				return nil

@@ -341,20 +341,8 @@ func (p *PassportStore) accountGrantForUse(identity string, a *Account, model st
 		if err != nil {
 			return err
 		}
-		if r.WithdrawnAt != nil || r.Status != "active" {
-			return accountControlError("account_access_denied", 403)
-		}
-		if actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
-			return nil
-		}
-		grant, err = findAccountGrant(tx, r, actor, model)
-		if err != nil {
-			return err
-		}
-		if grant == nil {
-			return accountControlError("account_grant_denied", 403)
-		}
-		return nil
+		grant, err = accountReadPermission(tx, r, actor, identity, model)
+		return err
 	})
 	return grant, err
 }
