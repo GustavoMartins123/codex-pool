@@ -212,7 +212,7 @@ it("explains missing sharing fields and saves access only after explicit submiss
 
 it("selects a shareable account and named recipient with canonical model checkboxes", async () => {
   vi.mocked(api.loadSharing).mockResolvedValue({ ...sharing, grants: [] });
-  const recipient: ConsolePrincipal = { id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
+  const recipient: ConsolePrincipal = { can_contribute: false, id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
   vi.mocked(api.loadShareableAccounts).mockResolvedValue([{ id: "private", provider: "codex", owner_id: "alice" }]);
   vi.mocked(api.createGrant).mockResolvedValue({ ...sharing, revision: 4 });
   render(<OperatorSharing recipients={[recipient, { ...recipient, id: "suspended", display_name: "Suspended", status: "suspended" }]} recipientID="bob" />);
@@ -265,6 +265,7 @@ it("loads the saved sharing policy for a recipient and updates it when adding mo
   expect(api.createGrant).not.toHaveBeenCalled();
   expect(api.updateGrant).toHaveBeenCalledWith("codex", "private", expect.objectContaining({ id: "grant-one", revision: 3, grant_revision: 1, recipient_id: "bob", models: ["gpt-5.5", "gpt-6-astra"], budget: { daily_requests: 8 } }));
   expect(screen.getByLabelText("Current account access").textContent).toContain("gpt-6-astra");
+  await waitFor(() => expect(enabled("Save account access")).toBe(true));
   checkModel("gpt-5.5", "Granted models");
   fireEvent.click(screen.getByRole("button", { name: "Save account access" }));
   await waitFor(() => expect(api.updateGrant).toHaveBeenCalledTimes(2));
@@ -308,7 +309,7 @@ it("switches among multiple current grants and resets fields for a new recipient
 
 it("shows why a remotely discovered model remains blocked after updating sharing", async () => {
   const haiku = "claude-haiku-5-5";
-  const recipient: ConsolePrincipal = { id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
+  const recipient: ConsolePrincipal = { can_contribute: false, id: "bob", display_name: "Bob", email: "bob@example.test", kind: "member", status: "active", note: "", created_at: "2026-01-01T00:00:00Z", billable_tokens: 0, request_count: 0, api_equivalent_cost_usd: 0 };
   const current: api.SharingView = { ...sharing, provider: "claude", grants: [{ ...sharing.grants[0], models: ["claude-opus-5", haiku] }] };
   vi.mocked(api.loadSharing).mockResolvedValue(current);
   vi.mocked(loadModelCatalog).mockResolvedValue({ models: [...models, { id: haiku, provider: "claude", protocol: "messages", available_now: true }] });

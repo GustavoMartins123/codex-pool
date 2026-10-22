@@ -5,7 +5,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("passes cancellation to page data requests", async () => {
   const controller = new AbortController();
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+  const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(url === "/admin/accounts" ? [] : {
     models: [], economics: [], hourly: [], origin_weekly: [], model_daily: [],
     quota_capacity: [], model_efficiency: [], reset_observations: [],
   }), { status: 200 }));

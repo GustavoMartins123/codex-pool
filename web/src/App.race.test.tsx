@@ -32,6 +32,7 @@ function deferred<T>() {
 function principalFixture(overrides: Partial<ConsolePrincipal> = {}): ConsolePrincipal {
   return {
     id: "member-fixture",
+    can_contribute: false,
     kind: "member",
     status: "active",
     note: "",

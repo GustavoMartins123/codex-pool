@@ -1255,6 +1255,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 
 .mine-accounts .client-header > span { min-width: 0; overflow-wrap: anywhere; }
 .mine-accounts .client-header > span small { display: block; }
+.operator-account-access { display: grid; gap: .75rem; min-width: 0; margin: 1rem 0; overflow-wrap: anywhere; }
+.operator-account-access .client-card { min-width: 0; display: grid; gap: .6rem; border-top: 1px solid var(--rule); }
+.operator-account-access .client-card form { display: grid; gap: .75rem; }
 .governance-panel { margin: 1rem 0; border-top: 1px solid var(--line, #45413b); padding-top: 1rem; }
 .governance-form { display: grid; gap: .75rem; margin-top: .75rem; min-width: 0; overflow-wrap: anywhere; }
 .governance-form fieldset { min-width: 0; border: 1px solid var(--line, #45413b); padding: .75rem; }

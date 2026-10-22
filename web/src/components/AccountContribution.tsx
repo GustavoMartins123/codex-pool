@@ -180,7 +180,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
         <h2 id="contribution-title">{reloginAccountID ? reloginProvider === "antigravity" ? "Relogin / revalidate account" : "Relogin account" : "Add a pool account"}</h2>
         <p>{reloginAccountID
           ? "Sign in with the same upstream account to replace its credentials. The pool account stays the same."
-          : "This account is private and can only be used by you."}</p>
+          : "This account is private by default. Operators can explicitly activate their own access. Changes are recorded; you can inspect the latest activation for each operator."}</p>
         {!reloginAccountID && <div className="contribution-providers" aria-label="Provider">
           {CONTRIBUTION_PROVIDERS.map((candidate) => <button type="button" key={candidate.id} className={provider === candidate.id ? "active" : ""} disabled={busy} aria-pressed={provider === candidate.id} onClick={() => choose(candidate.id)}>{candidate.label}</button>)}
         </div>}

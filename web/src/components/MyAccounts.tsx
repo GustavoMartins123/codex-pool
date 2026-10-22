@@ -5,6 +5,7 @@ import type { MyAccount, PassportPrincipal } from "../types";
 import { providerDisplay } from "../ui";
 import { AccountContribution } from "./AccountContribution";
 import { AccountGovernance } from "./AccountGovernance";
+import { OwnedAccountOperatorAccess } from "./OperatorAccountAccess";
 
 export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
   const [accounts, setAccounts] = useState<MyAccount[]>([]);
@@ -58,7 +59,7 @@ export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
   if (principal.kind === "guest") return null;
   return <section className="mine-accounts" aria-labelledby="my-account-heading">
     <header className="section-heading">
-      <div><h2 id="my-account-heading">My accounts</h2><p>Provider accounts you add are private to you.</p></div>
+      <div><h2 id="my-account-heading">My accounts</h2><p>Provider accounts you add are private by default. Operators can explicitly activate their own access, with a recorded reason.</p></div>
       <div className="row-actions">
         <button className="quiet-button" disabled={loading || Boolean(busy)} onClick={() => void load()}>Refresh accounts</button>
         {(principal.kind === "operator" || principal.can_contribute) && <button className="gold-button" disabled={Boolean(busy)} onClick={() => setAdding(true)}>Add account</button>}
@@ -74,6 +75,7 @@ export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
       </div>
       {armed === account.id && <p>New requests will stop using this account. Withdrawal is permanent.</p>}
       {account.status === "active" && <AccountGovernance provider={account.provider} id={account.id} onChanged={load} />}
+      <OwnedAccountOperatorAccess provider={account.provider} id={account.id} />
     </article>)}
     {adding && <AccountContribution onClose={() => setAdding(false)} onAdded={added} />}
   </section>;

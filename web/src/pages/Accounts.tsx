@@ -224,7 +224,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                   <div className="inspector-alert" role="alert">
                     <b>Credentials rejected — relogin required</b>
                     {(selectedAdmin?.auth_error || selectedAccount.auth_error) && <span>{selectedAdmin?.auth_error || selectedAccount.auth_error}</span>}
-                    <small>The access token can keep serving requests, but this account will go offline when it expires. Use “Relogin account” below to restore it.</small>
+                    <small>{selectedAdmin?.can_manage ? "The access token can keep serving requests, but this account will go offline when it expires. Use Relogin account below to restore it." : "The account owner needs to sign in again to restore this account."}</small>
                   </div>
                 )}
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
@@ -254,15 +254,16 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <Instrument label="Primary" value={selectedAdmin.is_primary ? "Yes" : "No"} />
                     </div>
                     <pre className="score-trace">{selectedAdmin.score_tooltip || "No score detail is available."}</pre>
-                    <AccountGovernance key={`${selectedAccount.type}:${selectedAdmin.id}`} provider={selectedAccount.type} id={selectedAdmin.id} onChanged={onAccountsChanged} />
+                    {!selectedAdmin.can_manage && <p>You have use access. Account management remains with the owner.</p>}
+                    {selectedAdmin.can_manage && <AccountGovernance key={`${selectedAccount.type}:${selectedAdmin.id}`} provider={selectedAccount.type} id={selectedAdmin.id} onChanged={onAccountsChanged} />}
                     {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}{selectedAccount.type === "antigravity" && selectedVerificationURL ? " · finish the phone verification on this account, then relogin" : ""}</p>}
-                    <div className="operator-actions">
+                    {selectedAdmin.can_manage && <div className="operator-actions">
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
-                    </div>
+                    </div>}
 
                   </>
                 ) : null}

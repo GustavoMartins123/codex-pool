@@ -41,6 +41,31 @@ function policies(value: unknown): PolicyView {
   return value as PolicyView;
 }
 const accountPath = (provider: string, id: string) => `/api/accounts/${encodeURIComponent(provider)}/${encodeURIComponent(id)}`;
+
+export type OperatorAccount = { provider: string; id: string; owner_id: string; revision: number; enabled: boolean; updated_at?: string; reason?: string };
+export type OperatorAccessEntry = { operator_id: string; enabled: boolean; updated_at: string; reason: string };
+function operatorAccount(value: unknown): OperatorAccount {
+  if (!object(value) || typeof value.provider !== "string" || typeof value.id !== "string" || typeof value.owner_id !== "string" || !Number.isSafeInteger(value.revision) || Number(value.revision) < 1 || typeof value.enabled !== "boolean" || (value.updated_at !== undefined && (typeof value.updated_at !== "string" || !Number.isFinite(Date.parse(value.updated_at)))) || (value.reason !== undefined && typeof value.reason !== "string")) throw new Error("Invalid operator account response");
+  return value as OperatorAccount;
+}
+export async function loadOperatorAccounts(ownerID: string): Promise<OperatorAccount[]> {
+  const value = await request(`/api/console/operator-accounts?owner_id=${encodeURIComponent(ownerID)}`);
+  if (!Array.isArray(value)) throw new Error("Invalid operator accounts response");
+  return value.map(operatorAccount);
+}
+export async function setOperatorAccountAccess(account: OperatorAccount, enabled: boolean, reason: string): Promise<OperatorAccount> {
+  return operatorAccount(await request(`${accountPath(account.provider, account.id)}/operator-access`, "PUT", { revision: account.revision, enabled, reason }));
+}
+export async function loadOperatorAccess(provider: string, id: string): Promise<OperatorAccessEntry[]> {
+  const value = await request(`${accountPath(provider, id)}/operator-access`);
+  if (!Array.isArray(value) || !value.every((entry) => object(entry) && typeof entry.operator_id === "string" && typeof entry.enabled === "boolean" && typeof entry.reason === "string" && typeof entry.updated_at === "string" && Number.isFinite(Date.parse(entry.updated_at)))) throw new Error("Invalid operator access response");
+  return value;
+}
+export async function setContributionPermission(principalID: string, allowed: boolean): Promise<boolean> {
+  const value = await request("/api/console/account-contribution", "PUT", { principal_id: principalID, can_contribute: allowed });
+  if (!object(value) || value.principal_id !== principalID || typeof value.can_contribute !== "boolean") throw new Error("Invalid contribution permission response");
+  return value.can_contribute;
+}
 const policyPath = (id: string) => `/api/console/policies/${encodeURIComponent(id)}`;
 export async function loadControls(provider: string, id: string) { return controls(await request(`${accountPath(provider, id)}/controls`)); }
 export async function saveControls(provider: string, id: string, revision: number, controlsValue: Controls, reason: string) { return controls(await request(`${accountPath(provider, id)}/controls`, "PUT", { revision, controls: controlsValue, reason })); }

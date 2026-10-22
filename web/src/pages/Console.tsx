@@ -1,5 +1,6 @@
 import { PolicyEditor } from "../components/PolicyEditor";
 import { OperatorSharing } from "../components/AccountGovernance";
+import { MemberContributionPermission, OperatorAccounts } from "../components/OperatorAccountAccess";
 import { createMemberLink, loadAnalyticsHealth, loadConsoleAudit, loadConsolePrincipalUsage, loadConsolePrincipals, setPrincipalReasoningEffort, setPrincipalStatus } from "../api";
 import { Area, AreaChart, Grid, Tooltip, XAxis, YAxis } from "../charts";
 import { ResponseVersion } from "../response-version";
@@ -238,7 +239,11 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
             </button>}
           </div>}
           <div className="detail-facts"><span>Last seen <b>{selected.last_seen_at ? new Date(selected.last_seen_at).toLocaleDateString() : "Never"}</b></span><span>Requests <b>{selected.request_count.toLocaleString()}</b></span><span>Value <b>{preciseMoney.format(selected.api_equivalent_cost_usd)}</b></span>{selected.expires_at && <span>Expires <b>{new Date(selected.expires_at).toLocaleDateString()}</b></span>}</div>
-          {principal.kind === "operator" && <PolicyEditor key={selected.id} principalID={selected.id} />}
+          {principal.kind === "operator" && <>
+            {selected.kind === "member" && <MemberContributionPermission key={`contribution:${selected.id}`} principalID={selected.id} allowed={selected.can_contribute} onChanged={refresh} />}
+            {selected.id !== principal.id && selected.kind !== "guest" && <OperatorAccounts key={`operator-access:${selected.id}`} ownerID={selected.id} />}
+            <PolicyEditor key={selected.id} principalID={selected.id} />
+          </>}
           <SignalPanel title={`Usage · ${windowLabel}`}>{usageLoading ? <div className="empty-state">Loading usage…</div> : chartData.length ? <div className="chart-stage medium"><AreaChart data={chartData} config={{ tokens: { label: "Tokens", color: "orange" } }} margins={{ left: 52, bottom: 34 }}><Grid horizontal /><Area dataKey="tokens" variant="hatched" isClickable /><XAxis dataKey="hour" tickFormatter={(value) => String(value).slice(5, 13)} maxTicks={7} /><YAxis tickFormatter={(value) => compact.format(Number(value))} /><Tooltip /></AreaChart></div> : <div className="empty-state">No usage in this period.</div>}</SignalPanel>
         </>}
       </aside>

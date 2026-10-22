@@ -31,6 +31,7 @@ export interface PassportPrincipal {
 }
 
 export interface ConsolePrincipal {
+  can_contribute: boolean;
   id: string;
   kind: "operator" | "member" | "guest";
   status: "active" | "suspended" | "expired";
@@ -320,6 +321,7 @@ export interface SignalAnalytics {
 }
 
 export interface AdminAccount {
+  can_manage: boolean;
   id: string;
   public_id: string;
   type: Provider;

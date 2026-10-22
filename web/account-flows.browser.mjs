@@ -6,7 +6,7 @@ assert.ok(process.env.UI_TEST_ORIGIN, 'UI_TEST_ORIGIN is required');
 const origin = process.env.UI_TEST_ORIGIN;
 const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, args: process.env.BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : [] });
 const failures = [];
-const principal = { id: 'fixture-member', kind: 'operator', status: 'active', display_name: 'Alex Morgan', email: 'alex@example.test' };
+const principal = { id: 'fixture-member', kind: 'operator', status: 'active', display_name: 'Alex Morgan', email: 'alex@example.test', can_contribute: true };
 const clients = [{ id: 'laptop', label: 'Work laptop', status: 'active' }, { id: 'server', label: 'Home server', status: 'active' }, { id: 'old', label: 'Old machine', status: 'revoked' }];
 const pass = { id: 'guest', note: 'Sam', display_name: 'Sam', status: 'active', expires_at: '2026-10-12T18:30:00Z', clients: 1, link: '/join#fixture-pass' };
 const stats = { accounts: [], active_accounts: 0, total_accounts: 0, last_24h_tokens: 0, generated_at: '2026-09-04T12:00:00Z', aggregate: { total_api_cost: 0, total_subscription_cost: 0, total_subscription_monthly: 0, overall_roi: 0 } };
@@ -18,6 +18,8 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
   const ownMode = mode.startsWith('my-');
   let owned = ownMode ? [{ id: 'private-kimi', provider: 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
   let createdClient;
+  let registrationAllowed = false;
+  let operatorAccount = { provider: 'kimi', id: 'private-kimi', owner_id: 'private-owner', revision: 2, enabled: false };
   let accountControls = { provider: 'kimi', id: 'private-kimi', revision: 2, inflight: 1, controls: { state: 'enabled', max_concurrent: 2 } };
   let sharing = { provider: 'kimi', id: 'private-kimi', revision: 2, owner: true, operator_may_delegate: false, grants: [] };
   const emptyPolicy = () => ({ models: {}, providers: {}, limits: {}, routing: {} });
@@ -97,7 +99,20 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
     else if (url.pathname === '/api/me/passkeys') body = [];
     else if (url.pathname === '/api/passes') body = [pass];
     else if (url.pathname === '/api/console/shareable-accounts') body = [{ id: sharing.id, provider: sharing.provider, owner_id: 'owner' }];
-    else if (url.pathname === '/api/console/principals') body = { principals: [{ ...principal, note: '', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }, { ...pass, kind: 'guest', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }] };
+    else if (url.pathname === '/api/console/principals') body = { principals: [{ ...principal, note: '', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }, { ...pass, kind: 'guest', can_contribute: false, billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }, ...(mode === 'operator-access' ? [{ ...principal, id: 'private-owner', display_name: 'Private Owner', kind: 'member', can_contribute: registrationAllowed, note: '', billable_tokens: 0, api_equivalent_cost_usd: 0, request_count: 0 }] : [])] };
+    else if (url.pathname === '/api/console/account-contribution') {
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      const value = JSON.parse(request.postData()); assert.equal(value.principal_id, 'private-owner');
+      registrationAllowed = value.can_contribute; body = { principal_id: 'private-owner', can_contribute: registrationAllowed };
+    }
+    else if (url.pathname === '/api/console/operator-accounts') { assert.equal(url.searchParams.get('owner_id'), 'private-owner'); body = [operatorAccount]; }
+    else if (url.pathname === '/api/accounts/kimi/private-kimi/operator-access') {
+      if (request.method() === 'PUT') {
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        const value = JSON.parse(request.postData()); assert.equal(value.revision, operatorAccount.revision); assert.ok(value.reason.trim());
+        operatorAccount = { ...operatorAccount, enabled: value.enabled, reason: value.reason, revision: operatorAccount.revision + 1, updated_at: '2026-10-21T12:00:00Z' }; body = operatorAccount;
+      } else body = [{ operator_id: 'support-operator', enabled: true, updated_at: '2026-10-21T12:00:00Z', reason: 'Support investigation' }];
+    }
     else if (url.pathname === '/api/console/members') body = { principal, link: `${origin}/recover#fixture-invite`, expires_at: '2026-09-04T12:30:00Z' };
     else if (url.pathname === '/api/console/audit') body = [];
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
@@ -120,6 +135,33 @@ const check = async (name, test) => {
   catch (error) { failures.push(name); console.error(`FAIL ${name}: ${error.message}`); }
 };
 try {
+  await check('operators activate only their own access and enable member registration', async () => {
+    const { page, errors } = await open('/?view=console&member=private-owner', 'operator-access');
+    await page.waitForSelector('.principal-detail input[type="checkbox"]');
+    const registration = '.principal-detail .operator-account-access input[type="checkbox"]';
+    assert.equal(await page.$eval(registration, input => input.checked), false);
+    await page.click(registration);
+    await page.waitForFunction(selector => document.querySelector(selector)?.checked === true, {}, registration);
+    await clickText(page, 'button', 'My access to private accounts');
+    await page.waitForSelector('.operator-account-access .client-card form');
+    assert.equal(await page.$eval('.operator-account-access .client-card button', button => button.disabled), true);
+    await page.type('.operator-account-access .client-card input', 'Support investigation');
+    await clickText(page, 'button', 'Activate my access');
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Deactivate my access'));
+    for (const width of [390, 768, 1365]) { await page.setViewport({ width, height: 900 }); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Operator access overflows at ${width}px`); }
+    await page.type('.operator-account-access .client-card input', 'Support finished');
+    await clickText(page, 'button', 'Deactivate my access');
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent === 'Activate my access'));
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('members can inspect operator activations on their private accounts', async () => {
+    const { page, errors } = await open('/?view=mine', 'my-operator-access');
+    await clickText(page, 'button', 'Operator access');
+    await page.waitForFunction(() => document.body.textContent.includes('Operator support-operator'));
+    assert.ok(await page.evaluate(() => document.body.textContent.includes('Support investigation')));
+    assert.equal(await page.$$eval('button', nodes => nodes.some(button => button.textContent === 'Activate my access')), false);
+    assert.deepEqual(errors, []); await page.close();
+  });
   await check('recovery waits for blur and keeps submit enabled', async () => {
     const { page } = await open('/recover#fixture-recovery', 'signed-out');
     await page.waitForSelector('input[autocomplete="new-password"]');

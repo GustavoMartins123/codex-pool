@@ -134,7 +134,9 @@ export async function loadMyUsage(hours = 168): Promise<{ hourly: PassportUsageP
   return decode(await fetch(`/api/me/usage?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
 }
 export async function loadConsolePrincipals(hours = 168): Promise<{ principals: ConsolePrincipal[]; hours: number; excludes_passthrough: boolean }> {
-  return decode(await fetch(`/api/console/principals?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
+  const result = await decode<{ principals: ConsolePrincipal[]; hours: number; excludes_passthrough: boolean }>(await fetch(`/api/console/principals?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
+  if (!Array.isArray(result.principals) || result.principals.some(item => !item || typeof item.can_contribute !== "boolean")) throw new Error("Invalid member registration permissions response");
+  return result;
 }
 export async function createMemberLink(email: string, displayName: string, purpose: "onboard" | "recover"): Promise<{ principal: PassportPrincipal; link: string; expires_at: string }> {
   return decode(await fetch("/api/console/members", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ email, display_name: displayName, purpose }) }));
@@ -203,7 +205,9 @@ export async function loadLiveCuteCodeSettings(downloadToken: string): Promise<s
 }
 
 export async function loadAdminAccounts(signal?: AbortSignal): Promise<AdminAccount[]> {
-  return decode(await fetch("/admin/accounts", { credentials: "same-origin", cache: "no-store", signal }));
+  const result = await decode<AdminAccount[]>(await fetch("/admin/accounts", { credentials: "same-origin", cache: "no-store", signal }));
+  if (!Array.isArray(result) || result.some(item => !item || typeof item.can_manage !== "boolean")) throw new Error("Invalid account management permissions response");
+  return result;
 }
 
 export async function mutateAccount(accountID: string, action: "enable" | "disable" | "resurrect" | "refresh") {
