@@ -147,3 +147,47 @@ func TestAntigravityAdditionalToolsReplayNamespacedHistory(t *testing.T) {
 		t.Fatalf("expected two function responses:\n%s", contents)
 	}
 }
+
+// Codex marks some tool arguments with its own `encrypted` schema annotation.
+// Gemini rejects the unknown keyword, so the translator must strip it while
+// keeping the rest of the property schema intact.
+func TestAntigravityAdditionalToolsDropEncryptedSchemaAnnotation(t *testing.T) {
+	body := []byte(`{
+		"model":"antigravity/gemini-3.8-flash-high",
+		"input":[
+			{"type":"additional_tools","id":"at_1","role":"developer","tools":[
+				{"type":"namespace","name":"multi_agent_v1","tools":[
+					{"type":"function","name":"send_input","parameters":{"type":"object","properties":{
+						"message":{"type":"string","description":"Message text.","encrypted":true},
+						"target":{"type":"string","description":"Agent id."}
+					},"required":["message","target"]}}
+				]}
+			]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+		],
+		"tools":[],
+		"stream":false
+	}`)
+	prepared, err := prepareAntigravityRequest("/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
+	encoded, err := json.Marshal(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"encrypted"`)) {
+		t.Fatalf("Codex-only schema annotation leaked upstream: %s", encoded)
+	}
+	declarations := inner["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)
+	declaration := declarations[0].(map[string]any)
+	if declaration["name"] != "multi_agent_v1.send_input" {
+		t.Fatalf("declaration name = %#v", declaration["name"])
+	}
+	properties := declaration["parameters"].(map[string]any)["properties"].(map[string]any)
+	message := properties["message"].(map[string]any)
+	if message["type"] != "string" || message["description"] != "Message text." {
+		t.Fatalf("message schema = %#v", message)
+	}
+}

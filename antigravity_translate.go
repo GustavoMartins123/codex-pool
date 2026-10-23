@@ -1332,6 +1332,7 @@ var antigravityUnsupportedSchemaKeywords = map[string]bool{
 	"title": true, "minLength": true, "maxLength": true, "exclusiveMinimum": true,
 	"exclusiveMaximum": true, "pattern": true, "minItems": true, "maxItems": true,
 	"uniqueItems": true, "format": true, "default": true, "examples": true,
+	"encrypted": true,
 }
 
 var antigravitySchemaConstraintHints = map[string]string{
