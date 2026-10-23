@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "codex-pool-app"
 include(":composeApp")
+include(":androidApp")

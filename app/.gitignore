@@ -5,3 +5,9 @@ build/
 *.iml
 local.properties
 .DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Kotlin sources in the data package are not runtime pool data.
+!composeApp/src/*/kotlin/com/gustavomartins/codexpool/data/

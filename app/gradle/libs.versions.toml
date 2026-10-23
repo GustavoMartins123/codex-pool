@@ -4,12 +4,17 @@ kotlin = "2.4.21"
 composeMultiplatform = "1.12.2"
 composeMaterial3 = "1.9.0"
 activityCompose = "1.13.0"
-navigation = "2.10.2"
+navigation = "2.9.2"
 lifecycle = "2.11.0"
 koin = "4.2.2"
 ktor = "3.5.2"
 coroutines = "1.10.2"
 serializationJson = "1.9.0"
+datastore = "1.2.0"
+turbine = "1.2.1"
+androidTestRunner = "1.6.2"
+androidTestJunit = "1.2.1"
+androidCompose = "1.12.1"
 
 [libraries]
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
@@ -32,9 +37,20 @@ androidx-activity-compose = { module = "androidx.activity:activity-compose", ver
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
+navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "navigation" }
+lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidTestRunner" }
+androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidTestJunit" }
+androidx-compose-ui-test = { module = "androidx.compose.ui:ui-test-junit4", version.ref = "androidCompose" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidCompose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
