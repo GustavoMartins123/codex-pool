@@ -213,21 +213,49 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         val generation = ++streamGeneration
         mutable.update { it.copy(connection = StreamConnection.Connecting, error = null) }
         stream = viewModelScope.launch {
-            try {
-                val session = api.session(id)
-                mutable.update { it.copy(session = session, approvals = session.approvals) }
-                if (session.state == SessionState.Closed) return@launch
-                api.events(id, lastEventId, onCursor = { cursor -> if (generation == streamGeneration) lastEventId = cursor }) {
-                    if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Live) }
-                }.collect { event ->
-                    if (generation == streamGeneration) mutable.update { reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1) }
+            var reconnectDelay = 500L
+            var sessionLoaded = false
+            while (isActive && generation == streamGeneration) {
+                var stop = false
+                try {
+                    val session = api.session(id)
+                    sessionLoaded = true
+                    mutable.update { it.copy(session = session, approvals = session.approvals) }
+                    if (session.state == SessionState.Closed) break
+                    api.events(id, lastEventId, onCursor = { cursor ->
+                        if (generation == streamGeneration) lastEventId = cursor
+                    }) {
+                        if (generation == streamGeneration) mutable.update {
+                            it.copy(connection = StreamConnection.Live, error = null)
+                        }
+                    }.collect { event ->
+                        if (generation == streamGeneration) mutable.update {
+                            reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1)
+                        }
+                    }
+                    if (mutable.value.session?.state == SessionState.Closed) break
+                } catch (e: CancellationException) { throw e }
+                catch (e: PoolApiException) {
+                    if (e.status == 409 || !sessionLoaded) {
+                        mutable.update { it.copy(connection = StreamConnection.Disconnected, error = e.userMessage()) }
+                        stop = true
+                    } else {
+                        mutable.update { it.copy(error = "SSE desconectado; reconectando?") }
+                    }
+                } catch (e: Exception) {
+                    if (!sessionLoaded) {
+                        mutable.update { it.copy(connection = StreamConnection.Disconnected, error = e.userMessage()) }
+                        stop = true
+                    } else {
+                        mutable.update { it.copy(error = "SSE desconectado; reconectando?") }
+                    }
                 }
-                if (mutable.value.session?.state != SessionState.Closed) {
-                    mutable.update { it.copy(error = "O canal de eventos foi encerrado. Reconecte para continuar.") }
-                }
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { mutable.update { it.copy(error = e.userMessage()) } }
-            finally { if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Disconnected) } }
+                if (stop || !isActive || generation != streamGeneration || mutable.value.session?.state == SessionState.Closed) break
+                mutable.update { it.copy(connection = StreamConnection.Connecting) }
+                delay(reconnectDelay)
+                reconnectDelay = (reconnectDelay * 2).coerceAtMost(5_000L)
+            }
+            if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Disconnected) }
         }
     }
 
