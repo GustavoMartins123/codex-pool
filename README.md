@@ -236,6 +236,13 @@ Docker deployment, use `scripts/deploy.sh` or
 
 For a VPS behind Traefik, see [Traefik deployment and migration](docs/deploy-traefik.md).
 
+### Runner
+
+Para executar agentes em outra máquina, consulte o [guia do runner](docs/runner.md).
+As releases `runner-v*` publicam binários `runnerd` para Windows, Linux e macOS
+com `SHA256SUMS`. O pareamento e a execução usam um único arquivo
+`runner.launch.json`.
+
 ### 4. Point your CLI
 
 **Codex** - `~/.codex/config.toml`:
