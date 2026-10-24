@@ -17,6 +17,8 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     var closeDialog by remember { mutableStateOf(false) }
+    var deleteDialog by remember { mutableStateOf(false) }
+    LaunchedEffect(state.deleted) { if (state.deleted) onBack() }
     LifecycleStartEffect(vm) {
         vm.connect()
         onStopOrDispose { vm.disconnect() }
@@ -25,6 +27,9 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
         TopAppBar(title = { Text(state.session?.let { "${it.agent.name} · ${it.model}" } ?: "Sessão") },
             navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } },
             actions = {
+                if (state.session?.state == SessionState.Closed) {
+                    TextButton(onClick = { deleteDialog = true }, enabled = !state.busy) { Text("Apagar", color = MaterialTheme.colorScheme.error) }
+                }
                 if (state.session != null && state.session?.state !in listOf(SessionState.Closed, SessionState.Closing)) {
                     TextButton(onClick = { closeDialog = true }, enabled = !state.busy && state.connection == StreamConnection.Live) { Text("Encerrar", color = MaterialTheme.colorScheme.error) }
                 }
@@ -42,11 +47,15 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
             }
         }
     }) { padding ->
-        SessionEventList(state, Modifier.padding(padding).consumeWindowInsets(padding), vm::connect, vm::decide, vm::loadOlder)
+        SessionEventList(state, Modifier.padding(padding).consumeWindowInsets(padding), vm::connect, vm::decide, vm::loadOlder, vm::resume)
 
     }
     if (closeDialog) AlertDialog(onDismissRequest = { closeDialog = false }, title = { Text("Encerrar sessão?") },
-        text = { Text("O runner encerrará o processo do agente e limpará o workspace efêmero. Workspaces por caminho ou repositório serão preservados.") },
+        text = { Text("O runner encerrará o processo. A conversa e os arquivos serão preservados para retomada.") },
         confirmButton = { TextButton(onClick = { vm.close(); closeDialog = false }) { Text("Encerrar sessão") } },
         dismissButton = { TextButton(onClick = { closeDialog = false }) { Text("Voltar") } })
+    if (deleteDialog) AlertDialog(onDismissRequest = { deleteDialog = false }, title = { Text("Apagar conversa permanentemente?") },
+        text = { Text("O histórico e os dados de retomada serão apagados. O workspace efêmero também será removido; caminhos próprios e repositórios serão preservados. Conecte o runner original para concluir.") },
+        confirmButton = { TextButton(onClick = { deleteDialog = false; vm.deleteConversation() }) { Text("Apagar permanentemente", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { deleteDialog = false }) { Text("Cancelar") } })
 }

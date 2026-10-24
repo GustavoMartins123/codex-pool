@@ -21,6 +21,7 @@ fun SessionEventList(
     onReconnect: () -> Unit,
     onDecision: (String, Decision) -> Unit,
     onLoadOlder: () -> Unit,
+    onResume: () -> Unit,
 ) {
     val scroll = rememberLazyListState()
     val sections = remember(state.entries) { transcriptSections(state.entries) }
@@ -49,10 +50,18 @@ fun SessionEventList(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.session?.let { session ->
+                    if (state.conversation?.storage == ConversationStorage.Archived) Text("Conversa arquivada", style = MaterialTheme.typography.titleLarge)
                     Text(session.state.label(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
                     SelectionContainer { Text(session.id, style = MaterialTheme.typography.labelSmall) }
                     Text(session.runnerId?.let { "Runner: $it" } ?: "Aguardando runner do seu principal", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     session.closedReason?.let { Text("Encerrada: $it") }
+                    if (session.state == SessionState.Closed) {
+                        if (state.conversation?.deleting == true) Text("Exclusão em andamento…")
+                        else if (state.conversation?.resumeAvailable == true) {
+                            Button(onClick = onResume, enabled = !state.busy) { Text("Retomar conversa") }
+                        } else Text("O histórico está preservado. A retomada desta execução não está disponível.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 Text(when (state.connection) {
                     StreamConnection.Live -> "● Ao vivo"

@@ -78,6 +78,8 @@ data class Session(
     val id: String, @SerialName("session_id") val sessionId: String, val agent: Agent, val model: String,
     val title: String, val storage: ConversationStorage, @SerialName("session_state") val sessionState: SessionState,
     @SerialName("last_interaction_at") val lastInteractionAt: String?, val preview: List<MessagePreview>,
+    @SerialName("resume_available") val resumeAvailable: Boolean,
+    val deleting: Boolean, @SerialName("delete_error") val deleteError: String? = null,
 )
 @Serializable data class ConversationPage(val conversations: List<Conversation>, @SerialName("next_cursor") val nextCursor: String? = null)
 @Serializable data class LoginRequest(val email: String, val password: String)

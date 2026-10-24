@@ -218,6 +218,7 @@ data class SessionScreenState(
     val hasOlder: Boolean = false,
     val loadingOlder: Boolean = false,
     val historyError: String? = null,
+    val deleted: Boolean = false,
 ) {
     val canSend get() = session?.state == SessionState.WaitingInput && connection == StreamConnection.Live && !busy
     val canCancel get() = session?.state in listOf(SessionState.Running, SessionState.WaitingApproval) && connection == StreamConnection.Live && !busy
@@ -304,7 +305,11 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                                 if (event is SessionEvent.Error) throw SessionProtocolException(event.value.message)
                             }
                         }
-                        if (mutable.value.session?.state == SessionState.Closed) break
+                        if (mutable.value.session?.state == SessionState.Closed) {
+                            val conversation = api.conversation(id)
+                            if (generation == streamGeneration) mutable.update { it.copy(conversation = conversation) }
+                            break
+                        }
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
                         if (generation != streamGeneration) return@launch
@@ -352,6 +357,34 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (generation == streamGeneration) mutable.update { it.copy(historyError = e.userMessage()) } }
             finally { if (generation == streamGeneration) mutable.update { it.copy(loadingOlder = false) } }
+        }
+    }
+
+    fun resume() {
+        if (mutable.value.busy || mutable.value.session?.state != SessionState.Closed || mutable.value.conversation?.resumeAvailable != true || mutable.value.conversation?.deleting == true) return
+        mutable.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val session = api.resume(id)
+                disconnect()
+                lastEventId = null
+                mutable.update { it.copy(session = session, busy = false) }
+                connect()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { mutable.update { it.copy(busy = false, error = e.userMessage()) } }
+        }
+    }
+
+    fun deleteConversation() {
+        if (mutable.value.busy || mutable.value.session?.state != SessionState.Closed) return
+        mutable.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                api.deleteConversation(id)
+                disconnect()
+                mutable.update { it.copy(busy = false, deleted = true) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { mutable.update { it.copy(busy = false, error = e.userMessage()) } }
         }
     }
 

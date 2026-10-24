@@ -25,7 +25,7 @@ class SessionScrollTest {
             entries = listOf(TranscriptEntry("t", "Text", (1..40).joinToString("\n") { "Stream line $it" }, 1L)),
         ))
         compose.setContent {
-            MaterialTheme { SessionEventList(state, Modifier.height(220.dp), onReconnect = {}, onDecision = { _, _ -> }, onLoadOlder = {}) }
+            MaterialTheme { SessionEventList(state, Modifier.height(220.dp), onReconnect = {}, onDecision = { _, _ -> }, onLoadOlder = {}, onResume = {}) }
         }
         compose.waitForIdle()
         compose.onNodeWithTag("session-latest").assertIsDisplayed()

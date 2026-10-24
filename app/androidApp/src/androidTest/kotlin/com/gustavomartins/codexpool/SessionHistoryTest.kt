@@ -20,7 +20,7 @@ class SessionHistoryTest {
     @get:Rule val compose = createComposeRule()
     private val historyReads = AtomicInteger()
     private val session = """{"id":"s","conversation_id":"s","agent":"codex","model":"history-model","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"closed"}"""
-    private val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"history-model","title":"","storage":"active","session_state":"closed","last_interaction_at":null,"preview":[]}"""
+    private val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"history-model","title":"","storage":"active","session_state":"closed","last_interaction_at":null,"preview":[],"resume_available":false,"deleting":false}"""
     private val client = HttpClient(MockEngine { request ->
         val body = when (request.url.encodedPath) {
             "/api/conversations" -> """{"conversations":[$conversation]}"""

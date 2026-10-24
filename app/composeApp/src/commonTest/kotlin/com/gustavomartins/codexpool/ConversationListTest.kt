@@ -18,7 +18,7 @@ class ConversationListTest {
     private val headers = headersOf(HttpHeaders.ContentType, "application/json")
     private val credentials = Credentials("https://pool.example", "test-token", "client")
     private fun conversation(id: String, storage: ConversationStorage) = Conversation(id, "execution-$id", Agent.Codex,
-        "model", "Title $id", storage, SessionState.Closed, null, listOf(MessagePreview("t", "assistant", "Preview $id")))
+        "model", "Title $id", storage, SessionState.Closed, null, listOf(MessagePreview("t", "assistant", "Preview $id")), false, false)
 
     @Test fun loadingMoreUsesTheCursorAndSwitchingCategoriesReplacesTheList() = runTest {
         val engine = MockEngine { request ->

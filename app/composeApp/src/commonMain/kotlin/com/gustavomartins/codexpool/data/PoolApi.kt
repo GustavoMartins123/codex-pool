@@ -15,6 +15,8 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.transformWhile
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 interface CredentialStore {
     suspend fun read(): PoolAccounts?
@@ -51,6 +53,7 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
     410 -> "O pedido de pareamento expirou. Gere um novo QR no computador."
     429 -> "Muitas tentativas. Aguarde antes de tentar novamente."
     409 -> if (endpoint.endsWith("/events")) "O cursor de eventos expirou. Não foi possível recuperar os eventos pendentes."
+        else if (endpoint.endsWith("/resume")) "Não foi possível retomar. Conecte o runner original e verifique se o ponto de retomada está disponível."
         else if (endpoint.endsWith("/history")) "O histórico desta sessão não está disponível ou o cursor é inválido. Sessões anteriores à gravação do histórico não podem ser recuperadas."
         else if (endpoint.contains("runner-pairings")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
         else "O estado da sessão mudou no pool (409). Atualize e tente novamente."
@@ -79,6 +82,26 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     private fun HttpRequestBuilder.authorize() { bearerAuth(credentials.token) }
     private fun sessionPath(id: String): String = "/api/sessions/${resourceId(id)}"
     private fun conversationPath(id: String): String = "/api/conversations/${resourceId(id)}"
+    suspend fun conversation(id: String): Conversation = client.get(endpoint(conversationPath(id))) { authorize() }
+        .checked(conversationPath(id)).body<Conversation>().also { require(it.id == id) { "O pool retornou outra conversa." } }
+    suspend fun resume(id: String): Session = client.post(endpoint("${conversationPath(id)}/resume")) { authorize() }
+        .checked("${conversationPath(id)}/resume").body<Session>().also { require(it.conversationId == id) { "O pool retomou outra conversa." } }
+    suspend fun deleteConversation(id: String) {
+        val path = conversationPath(id)
+        val response = client.delete(endpoint(path)) { authorize() }.checked(path)
+        require(response.status == HttpStatusCode.Accepted) { "O pool retornou um estado de exclusão incompatível." }
+        val deleted = withTimeoutOrNull(30_000) {
+            while (true) {
+                try {
+                    val conversation = conversation(id)
+                    conversation.deleteError?.let { throw SessionProtocolException(it) }
+                } catch (e: PoolApiException) { if (e.status == 404) return@withTimeoutOrNull true else throw e }
+                delay(500)
+            }
+            @Suppress("UNREACHABLE_CODE") false
+        }
+        if (deleted != true) throw SessionProtocolException("A exclusão ainda está em andamento. Atualize a lista para acompanhar.")
+    }
     suspend fun conversations(storage: ConversationStorage, cursor: String? = null): ConversationPage = client.get(endpoint("/api/conversations")) {
         authorize(); parameter("storage", if (storage == ConversationStorage.Active) "active" else "archived"); parameter("limit", 50)
         cursor?.let { parameter("cursor", it) }

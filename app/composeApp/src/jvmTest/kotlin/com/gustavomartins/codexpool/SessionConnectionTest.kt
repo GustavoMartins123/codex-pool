@@ -117,10 +117,10 @@ class SessionConnectionTest {
                 } else {
                     val state = if (closed.get()) "closed" else "running"
                     val session = """{"id":"s","conversation_id":"s","agent":"codex","model":"synthetic","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"$state","approvals":[]}"""
-                    val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"synthetic","title":"","storage":"active","session_state":"$state","last_interaction_at":null,"preview":[]}"""
+                    val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"synthetic","title":"","storage":"active","session_state":"$state","last_interaction_at":null,"preview":[],"resume_available":false,"deleting":false}"""
                     val data = (if (exchange.requestURI.path.endsWith("/history")) {
                         """{"conversation":$conversation,"session":$session,"events":[],"before":1,"through":0,"has_older":false}"""
-                    } else session).toByteArray()
+                    } else if (exchange.requestURI.path == "/api/conversations/s") conversation else session).toByteArray()
                     exchange.responseHeaders.set("Content-Type", "application/json")
                     exchange.sendResponseHeaders(200, data.size.toLong())
                     exchange.responseBody.use { it.write(data) }

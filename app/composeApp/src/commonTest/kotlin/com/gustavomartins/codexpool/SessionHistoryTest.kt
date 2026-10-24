@@ -15,7 +15,7 @@ import kotlin.test.*
 class SessionHistoryTest {
     private val credentials = Credentials("https://pool.example", "history-token", "client")
     private val session = Session("s", Agent.Codex, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.Closed, conversationId = "s")
-    private val conversation = Conversation("s", "s", Agent.Codex, "model", "", ConversationStorage.Active, SessionState.Closed, null, emptyList())
+    private val conversation = Conversation("s", "s", Agent.Codex, "model", "", ConversationStorage.Active, SessionState.Closed, null, emptyList(), false, false)
     private val headers = headersOf(HttpHeaders.ContentType, "application/json")
     @BeforeTest fun mainDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @AfterTest fun resetDispatcher() { Dispatchers.resetMain() }
