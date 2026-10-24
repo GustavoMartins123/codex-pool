@@ -51,6 +51,7 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
     410 -> "O pedido de pareamento expirou. Gere um novo QR no computador."
     429 -> "Muitas tentativas. Aguarde antes de tentar novamente."
     409 -> if (endpoint.endsWith("/events")) "O cursor de eventos expirou. Não foi possível recuperar os eventos pendentes."
+        else if (endpoint.endsWith("/history")) "O histórico desta sessão não está disponível ou o cursor é inválido. Sessões anteriores à gravação do histórico não podem ser recuperadas."
         else if (endpoint.contains("runner-pairings")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
         else "O estado da sessão mudou no pool (409). Atualize e tente novamente."
     else -> "O pool recusou $endpoint (HTTP $status)."
@@ -81,6 +82,33 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
         .checked("/api/sessions").body<SessionList>().sessions
     suspend fun session(id: String): Session = client.get(endpoint(sessionPath(id))) { authorize() }
         .checked(sessionPath(id)).body()
+    suspend fun history(id: String): SessionHistory {
+        val path = "${sessionPath(id)}/history"
+        var cursor = 0L
+        var through: Long? = null
+        var snapshot: Session? = null
+        val events = mutableListOf<SessionEvent>()
+        do {
+            val page = client.get(endpoint(path)) {
+                authorize(); parameter("after", cursor)
+                through?.let { parameter("through", it) }
+            }.checked(path).body<HistoryPage>()
+            require(page.session.id == id && page.through >= cursor && (through == null || page.through == through)) {
+                "O pool retornou um histórico de sessão inconsistente."
+            }
+            if (snapshot == null) snapshot = page.session
+            through = page.through
+            for (event in page.events) {
+                require(event.id == cursor + 1 && event.id <= page.through) { "O histórico contém uma lacuna ou eventos fora de ordem." }
+                events += decodeEvent(event.type, event.data.toString())
+                cursor = event.id
+            }
+            require(page.cursor == cursor && page.hasMore == (cursor < page.through) && (!page.hasMore || page.events.isNotEmpty())) {
+                "A paginação do histórico é inválida."
+            }
+        } while (page.hasMore)
+        return SessionHistory(requireNotNull(snapshot), cursor, events)
+    }
     suspend fun create(request: CreateSession): Session {
         request.validate()
         return client.post(endpoint("/api/sessions")) {

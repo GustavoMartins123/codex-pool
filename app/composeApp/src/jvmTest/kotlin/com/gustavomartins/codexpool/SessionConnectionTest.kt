@@ -37,7 +37,7 @@ class SessionConnectionTest {
             exchange.responseHeaders.set("Content-Type", "text/event-stream")
             exchange.sendResponseHeaders(200, 0)
             exchange.responseBody.bufferedWriter().use { out ->
-                if (cursor == null) {
+                if (cursor == "0") {
                     out.write("id: 1\nevent: turn.delta\ndata: {\"turn_id\":\"t\",\"kind\":\"text\",\"content\":\"hello\"}\n\n")
                     out.flush()
                     check(continueFirst.await(5, TimeUnit.SECONDS))
@@ -60,7 +60,7 @@ class SessionConnectionTest {
                 val completed = withTimeout(5_000) { vm.state.first { it.entries.size == 2 && it.connection == StreamConnection.Disconnected } }
                 assertEquals("hello world", completed.entries.first().content)
                 assertEquals(SessionState.Closed, completed.session?.state)
-                assertEquals(listOf(null, "1"), cursors.toList())
+                assertEquals(listOf("0", "1"), cursors.toList())
                 assertEquals(1, completed.entries.count { it.kind == "summary" })
             } finally { continueFirst.countDown(); vm.disconnect() }
         }
@@ -116,7 +116,10 @@ class SessionConnectionTest {
                     stream(exchange)
                 } else {
                     val state = if (closed.get()) "closed" else "running"
-                    val data = """{"id":"s","agent":"codex","model":"synthetic","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"$state","approvals":[]}""".toByteArray()
+                    val session = """{"id":"s","agent":"codex","model":"synthetic","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"$state","approvals":[]}"""
+                    val data = (if (exchange.requestURI.path.endsWith("/history")) {
+                        """{"session":$session,"events":[],"cursor":0,"through":0,"has_more":false}"""
+                    } else session).toByteArray()
                     exchange.responseHeaders.set("Content-Type", "application/json")
                     exchange.sendResponseHeaders(200, data.size.toLong())
                     exchange.responseBody.use { it.write(data) }

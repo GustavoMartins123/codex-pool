@@ -201,6 +201,8 @@ data class SessionScreenState(
 }
 
 fun reduceEvent(state: SessionScreenState, event: SessionEvent): SessionScreenState = when (event) {
+    is SessionEvent.Input -> state.copy(entries = state.entries.filterNot { it.kind == "user" && it.turnId == event.value.turnId } +
+        TranscriptEntry(event.value.turnId, "user", event.value.input))
     is SessionEvent.State -> state.copy(session = state.session?.copy(state = event.value.state))
     is SessionEvent.Started -> state.copy(session = state.session?.copy(state = SessionState.Running, turnId = event.value.turnId))
     is SessionEvent.Delta -> {
@@ -236,7 +238,6 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
     val state = mutable.asStateFlow()
     private var stream: Job? = null
     private var streamGeneration = 0L
-    private var messageSequence = 0L
     private var lastEventId: String? = null
 
     fun connect() {
@@ -248,11 +249,20 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
             try {
                 while (isActive && generation == streamGeneration) {
                     try {
-                        val session = api.session(id)
+                        val loadingHistory = lastEventId == null
+                        val session = if (loadingHistory) {
+                            val history = api.history(id)
+                            if (generation != streamGeneration) return@launch
+                            val restored = history.events.fold(SessionScreenState(session = history.session), ::reduceEvent)
+                            lastEventId = history.cursor.toString()
+                            mutable.update { restored.copy(session = history.session, approvals = history.session.approvals,
+                                connection = StreamConnection.Connecting, eventRevision = it.eventRevision + 1) }
+                            history.session
+                        } else api.session(id)
                         if (generation != streamGeneration) return@launch
                         mutable.update { it.copy(session = session, approvals = session.approvals) }
                         // Replay the last deltas even if the session closed while offline.
-                        if (session.state == SessionState.Closed && lastEventId == null) break
+                        if (session.state == SessionState.Closed && loadingHistory) break
                         api.events(id, lastEventId, onCursor = { cursor ->
                             if (generation == streamGeneration) lastEventId = cursor
                         }) {
@@ -297,18 +307,11 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
 
     fun send(input: String, onSent: () -> Unit) {
         if (!mutable.value.canSend) return
-        val localTurnId = "local-${++messageSequence}"
         action {
             val revision = mutable.value.eventRevision
-            mutable.update { it.copy(entries = it.entries + TranscriptEntry(localTurnId, "user", input)) }
-            val turn = try { api.turn(id, input) }
-            catch (e: Exception) {
-                mutable.update { it.copy(entries = it.entries.filterNot { entry -> entry.turnId == localTurnId }) }
-                throw e
-            }
+            val turn = api.turn(id, input)
             mutable.update {
-                it.copy(session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId) else it.session,
-                    entries = it.entries.map { entry -> if (entry.turnId == localTurnId) entry.copy(turnId = turn.turnId) else entry })
+                it.copy(session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId) else it.session)
             }
             onSent()
         }

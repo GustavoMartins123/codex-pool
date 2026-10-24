@@ -3,6 +3,7 @@ package com.gustavomartins.codexpool.data
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 val PoolJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -75,6 +76,13 @@ data class Session(
 @Serializable data class LoginResponse(val token: String, @SerialName("client_id") val clientId: String)
 @Serializable data class Credentials(val baseUrl: String, val token: String, val clientId: String)
 @Serializable data class TurnInput(val input: String)
+@Serializable data class TurnMessage(@SerialName("turn_id") val turnId: String, val input: String)
+@Serializable data class HistoryEvent(val id: Long, val type: String, val data: JsonElement)
+@Serializable data class HistoryPage(
+    val session: Session, val events: List<HistoryEvent>, val cursor: Long, val through: Long,
+    @SerialName("has_more") val hasMore: Boolean,
+)
+data class SessionHistory(val session: Session, val cursor: Long, val events: List<SessionEvent>)
 @Serializable data class TurnStarted(@SerialName("turn_id") val turnId: String)
 @Serializable enum class Decision { @SerialName("approve") Approve, @SerialName("deny") Deny }
 @Serializable data class ApprovalDecision(val decision: Decision)
@@ -116,6 +124,7 @@ data class CatalogModel(val id: String, val name: String? = null, val protocol: 
 @Serializable data class ExecutionError(val message: String)
 
 sealed interface SessionEvent {
+    data class Input(val value: TurnMessage) : SessionEvent
     data class State(val value: StateEvent) : SessionEvent
     data class Started(val value: TurnStarted) : SessionEvent
     data class Delta(val value: TurnDelta) : SessionEvent
@@ -128,6 +137,7 @@ sealed interface SessionEvent {
 }
 
 fun decodeEvent(type: String, data: String): SessionEvent = when (type) {
+    "turn.input" -> SessionEvent.Input(PoolJson.decodeFromString(data))
     "state" -> SessionEvent.State(PoolJson.decodeFromString(data))
     "turn.started" -> SessionEvent.Started(PoolJson.decodeFromString(data))
     "turn.delta" -> SessionEvent.Delta(PoolJson.decodeFromString(data))
