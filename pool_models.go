@@ -15,28 +15,30 @@ type poolNativeToolDescriptor struct {
 }
 
 type poolModelDescriptor struct {
-	Compatibility      *modelVerification                  `json:"compatibility,omitempty"`
-	ID                 string                              `json:"id"`
-	Name               string                              `json:"name,omitempty"`
-	Protocol           string                              `json:"protocol"`
-	ContextWindow      int                                 `json:"contextWindow,omitempty"`
-	Description        string                              `json:"description,omitempty"`
-	Provider           string                              `json:"provider,omitempty"`
-	UpstreamID         string                              `json:"upstream_id,omitempty"`
-	MaxOutputTokens    int                                 `json:"max_output_tokens,omitempty"`
-	Protocols          []string                            `json:"protocols,omitempty"`
-	Modalities         []string                            `json:"modalities,omitempty"`
-	Capabilities       map[string]bool                     `json:"capabilities,omitempty"`
-	NativeTools        map[string]poolNativeToolDescriptor `json:"native_tools,omitempty"`
-	SupportedMimeTypes []string                            `json:"supported_mime_types,omitempty"`
-	Recommended        bool                                `json:"recommended,omitempty"`
-	QuotaRemaining     *float64                            `json:"quota_remaining_fraction,omitempty"`
-	Aliases            []string                            `json:"aliases,omitempty"`
-	SupportingAccounts int                                 `json:"supporting_accounts,omitempty"`
-	AvailableAccounts  int                                 `json:"available_accounts,omitempty"`
-	AvailableNow       bool                                `json:"available_now"`
-	NextResetAt        *time.Time                          `json:"next_reset_at,omitempty"`
-	Stale              bool                                `json:"stale,omitempty"`
+	ReasoningEfforts       []string                            `json:"reasoning_efforts"`
+	DefaultReasoningEffort string                              `json:"default_reasoning_effort,omitempty"`
+	Compatibility          *modelVerification                  `json:"compatibility,omitempty"`
+	ID                     string                              `json:"id"`
+	Name                   string                              `json:"name,omitempty"`
+	Protocol               string                              `json:"protocol"`
+	ContextWindow          int                                 `json:"contextWindow,omitempty"`
+	Description            string                              `json:"description,omitempty"`
+	Provider               string                              `json:"provider,omitempty"`
+	UpstreamID             string                              `json:"upstream_id,omitempty"`
+	MaxOutputTokens        int                                 `json:"max_output_tokens,omitempty"`
+	Protocols              []string                            `json:"protocols,omitempty"`
+	Modalities             []string                            `json:"modalities,omitempty"`
+	Capabilities           map[string]bool                     `json:"capabilities,omitempty"`
+	NativeTools            map[string]poolNativeToolDescriptor `json:"native_tools,omitempty"`
+	SupportedMimeTypes     []string                            `json:"supported_mime_types,omitempty"`
+	Recommended            bool                                `json:"recommended,omitempty"`
+	QuotaRemaining         *float64                            `json:"quota_remaining_fraction,omitempty"`
+	Aliases                []string                            `json:"aliases,omitempty"`
+	SupportingAccounts     int                                 `json:"supporting_accounts,omitempty"`
+	AvailableAccounts      int                                 `json:"available_accounts,omitempty"`
+	AvailableNow           bool                                `json:"available_now"`
+	NextResetAt            *time.Time                          `json:"next_reset_at,omitempty"`
+	Stale                  bool                                `json:"stale,omitempty"`
 }
 
 func nativeWebSearchTools(accountType AccountType, enabled bool) map[string]poolNativeToolDescriptor {
@@ -214,6 +216,10 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 				models[i].Compatibility = &verification
 			}
 		}
+	}
+	for i := range models {
+		models[i].ReasoningEfforts = modelReasoningEfforts(pool, models[i])
+		models[i].DefaultReasoningEffort = modelDefaultReasoningEffort(pool, models[i])
 	}
 	return models
 }

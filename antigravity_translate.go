@@ -946,6 +946,11 @@ func antigravityCopyGenerationConfig(input, result map[string]any) {
 			config["thinkingConfig"] = map[string]any{"thinkingBudget": budgets[effort], "includeThoughts": effort != "none"}
 		}
 	}
+	if output, ok := input["output_config"].(map[string]any); ok {
+		if effort := stringValue(output["effort"]); effort != "" {
+			config["thinkingConfig"] = map[string]any{"thinkingLevel": effort, "includeThoughts": true}
+		}
+	}
 	if len(config) > 0 {
 		result["generationConfig"] = config
 	}

@@ -19,15 +19,17 @@ const (
 )
 
 type DiscoveredModel struct {
-	ID              string   `json:"id"`
-	DisplayName     string   `json:"display_name,omitempty"`
-	Description     string   `json:"description,omitempty"`
-	ContextWindow   int      `json:"context_window,omitempty"`
-	MaxOutputTokens int      `json:"max_output_tokens,omitempty"`
-	Reasoning       bool     `json:"reasoning,omitempty"`
-	WebSearch       bool     `json:"web_search,omitempty"`
-	Modalities      []string `json:"modalities,omitempty"`
-	Protocol        string   `json:"protocol,omitempty"`
+	ID                     string   `json:"id"`
+	DisplayName            string   `json:"display_name,omitempty"`
+	Description            string   `json:"description,omitempty"`
+	ContextWindow          int      `json:"context_window,omitempty"`
+	MaxOutputTokens        int      `json:"max_output_tokens,omitempty"`
+	Reasoning              bool     `json:"reasoning,omitempty"`
+	WebSearch              bool     `json:"web_search,omitempty"`
+	Modalities             []string `json:"modalities,omitempty"`
+	Protocol               string   `json:"protocol,omitempty"`
+	ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`
+	DefaultReasoningEffort string   `json:"default_reasoning_effort,omitempty"`
 }
 
 type providerModelSnapshot struct {
@@ -66,6 +68,27 @@ func parseProviderModels(body []byte) (map[string]DiscoveredModel, error) {
 		decodeFirstBool(row, &model.Reasoning, "supports_reasoning", "supports_thinking", "supports_reasoning_effort", "reasoning")
 		if !model.Reasoning {
 			model.Reasoning = hasNonEmptyArray(row, "supported_reasoning_levels", "reasoning_efforts")
+		}
+		var levels []struct {
+			Effort string `json:"effort"`
+		}
+		if raw, ok := row["supported_reasoning_levels"]; ok {
+			if err := json.Unmarshal(raw, &levels); err != nil {
+				return nil, fmt.Errorf("invalid reasoning levels for model %s", model.ID)
+			}
+			for _, level := range levels {
+				model.ReasoningEfforts = append(model.ReasoningEfforts, level.Effort)
+			}
+		}
+		if raw, ok := row["reasoning_efforts"]; ok {
+			if err := json.Unmarshal(raw, &model.ReasoningEfforts); err != nil {
+				return nil, fmt.Errorf("invalid reasoning efforts for model %s", model.ID)
+			}
+		}
+		if raw, ok := row["default_reasoning_level"]; ok {
+			if err := json.Unmarshal(raw, &model.DefaultReasoningEffort); err != nil {
+				return nil, fmt.Errorf("invalid default reasoning effort for model %s", model.ID)
+			}
 		}
 		decodeFirstBool(row, &model.WebSearch, "supports_backend_search", "supports_search_tool", "web_search")
 
