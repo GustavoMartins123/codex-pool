@@ -44,7 +44,7 @@ fun TranscriptSectionCard(section: TranscriptSection) {
         return
     }
     val collapsible = section.topic == TranscriptTopic.Thinking || section.topic == TranscriptTopic.Tools
-    var expanded by rememberSaveable(section.id) { mutableStateOf(false) }
+    var expanded by rememberSaveable(section.id) { mutableStateOf(section.topic == TranscriptTopic.Thinking) }
     val title = when (section.topic) {
         TranscriptTopic.User -> "Você"
         TranscriptTopic.Thinking -> "Pensando"
@@ -60,7 +60,9 @@ fun TranscriptSectionCard(section: TranscriptSection) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (collapsible) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
-                    Text("$title · ${if (expanded) "Ocultar" else "Mostrar"} · ${section.entries.size}", style = MaterialTheme.typography.labelLarge)
+                    Text("$title · ${if (expanded) "Ocultar" else "Mostrar"}" +
+                        if (section.topic == TranscriptTopic.Tools) " · ${section.entries.size}" else "",
+                        style = MaterialTheme.typography.labelLarge)
                 }
                 if (!expanded) Text(if (section.topic == TranscriptTopic.Thinking) "Raciocínio do agente" else "Chamadas e resultados de ferramentas",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)

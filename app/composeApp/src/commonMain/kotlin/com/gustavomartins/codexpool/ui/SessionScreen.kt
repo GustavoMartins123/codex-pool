@@ -3,10 +3,6 @@
 package com.gustavomartins.codexpool.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -14,9 +10,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.runtime.snapshotFlow
 import com.gustavomartins.codexpool.data.*
 
 @Composable
@@ -24,31 +17,9 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     var closeDialog by remember { mutableStateOf(false) }
-    val scroll = rememberLazyListState()
-    var followLatest by remember { mutableStateOf(true) }
-    var programmaticScroll by remember { mutableStateOf(false) }
     LifecycleStartEffect(vm) {
         vm.connect()
         onStopOrDispose { vm.disconnect() }
-    }
-    LaunchedEffect(scroll) {
-        snapshotFlow { scroll.isScrollInProgress }
-            .distinctUntilChanged()
-            .collectLatest { scrolling ->
-                if (!programmaticScroll) {
-                    followLatest = if (scrolling) false else {
-                        val layout = scroll.layoutInfo
-                        layout.totalItemsCount == 0 || layout.visibleItemsInfo.lastOrNull()?.index == layout.totalItemsCount - 1
-                    }
-                }
-            }
-    }
-    LaunchedEffect(state.eventRevision, state.entries.size) {
-        if (followLatest && scroll.layoutInfo.totalItemsCount > 0) {
-            programmaticScroll = true
-            try { scroll.animateScrollToItem(scroll.layoutInfo.totalItemsCount - 1) }
-            finally { programmaticScroll = false }
-        }
     }
     Scaffold(topBar = {
         TopAppBar(title = { Text(state.session?.let { "${it.agent.name} · ${it.model}" } ?: "Sessão") },
@@ -71,52 +42,8 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
             }
         }
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), state = scroll, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.session?.let { session ->
-                        Text(session.state.label(), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-                        SelectionContainer { Text(session.id, style = MaterialTheme.typography.labelSmall) }
-                        Text(session.runnerId?.let { "Runner: $it" } ?: "Aguardando runner do seu principal", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        session.closedReason?.let { Text("Encerrada: $it") }
-                    }
-                    Text(when (state.connection) {
-                        StreamConnection.Live -> "● Ao vivo"
-                        StreamConnection.Connecting -> "Conectando ao canal de eventos…"
-                        StreamConnection.Disconnected -> "Canal de eventos desconectado"
-                    }, style = MaterialTheme.typography.labelSmall)
-                    state.runnerStatus?.let { status -> Text(when (status) {
-                        RunnerStatus.Online -> "Runner online"
-                        RunnerStatus.Offline -> "Runner offline · aguardando reconexão da máquina"
-                        RunnerStatus.Reconnected -> "Runner reconectado"
-                    }) }
-                    ErrorMessage(state.error)
-                    if (state.connection == StreamConnection.Disconnected && state.session?.state != SessionState.Closed) {
-                        OutlinedButton(onClick = vm::connect) { Text("Reconectar") }
-                    }
-                    if (state.connection == StreamConnection.Connecting || state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("Eventos recebidos nesta tela. O agente executa na sua máquina.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            items(state.approvals, key = { "approval/${it.approvalId}" }) { approval ->
-                OutlinedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Aprovação necessária", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
-                        SelectionContainer { Text(approval.command, style = MaterialTheme.typography.labelSmall) }
-                        Text(approval.context)
-                        Text("Sem decisão, o broker nega após 10 minutos.", style = MaterialTheme.typography.bodySmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(onClick = { vm.decide(approval.approvalId, Decision.Deny) }, enabled = !state.busy && state.connection == StreamConnection.Live) { Text("Negar") }
-                            Button(onClick = { vm.decide(approval.approvalId, Decision.Approve) }, enabled = !state.busy && state.connection == StreamConnection.Live) { Text("Aprovar") }
-                        }
-                    }
-                }
-            }
-            items(transcriptSections(state.entries), key = { "transcript/${it.id}" }) { section ->
-                TranscriptSectionCard(section)
-            }
+        SessionEventList(state, Modifier.padding(padding).consumeWindowInsets(padding), vm::connect, vm::decide)
 
-        }
     }
     if (closeDialog) AlertDialog(onDismissRequest = { closeDialog = false }, title = { Text("Encerrar sessão?") },
         text = { Text("O runner encerrará o processo do agente e limpará o workspace efêmero. Workspaces por caminho ou repositório serão preservados.") },

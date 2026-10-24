@@ -15,19 +15,21 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TranscriptPresentationTest {
     @get:Rule val compose = createComposeRule()
-    @Test fun reasoningAndToolsStayCollapsedWhileAnswerRemainsVisible() {
+    @Test fun thinkingIsVisibleAndCanBeCollapsedWhileToolsStartCollapsed() {
         val sections = transcriptSections(listOf(TranscriptEntry("t", "Thinking", "private-ui-reason"),
             TranscriptEntry("t", "ToolCall", "synthetic command"), TranscriptEntry("t", "ToolResult", "synthetic output"),
             TranscriptEntry("t", "Text", "Resposta legível")))
         compose.setContent { MaterialTheme { Column { sections.forEach { TranscriptSectionCard(it) } } } }
         compose.onNodeWithText("Resposta legível").assertIsDisplayed()
+        compose.onNodeWithText("private-ui-reason").assertIsDisplayed()
+        compose.onNodeWithText("Pensando · Ocultar").performClick()
         compose.onNodeWithText("private-ui-reason").assertDoesNotExist()
         compose.onNodeWithText("synthetic command").assertDoesNotExist()
         compose.onNodeWithText("Ferramentas · Mostrar · 2").performClick()
         compose.onNodeWithText("synthetic command").assertIsDisplayed()
         compose.onNodeWithText("synthetic output").assertIsDisplayed()
         compose.onNodeWithText("Ferramentas · Ocultar · 2").performClick()
-        compose.onNodeWithText("Pensando · Mostrar · 1").performClick()
+        compose.onNodeWithText("Pensando · Mostrar").performClick()
         compose.onNodeWithText("private-ui-reason").assertIsDisplayed()
         compose.onNodeWithText("Resposta legível").assertIsDisplayed()
     }
