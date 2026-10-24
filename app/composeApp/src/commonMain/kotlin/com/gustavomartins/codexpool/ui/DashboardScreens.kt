@@ -185,28 +185,19 @@ private fun EmptyCard(title: String, message: String) {
 fun CreateSessionScreen(state: DashboardState, reloadCatalog: () -> Unit, onBack: () -> Unit, onCreate: (CreateSession) -> Unit) {
     var agent by rememberSaveable { mutableStateOf(Agent.Codex) }
     var model by rememberSaveable { mutableStateOf("") }
+    var effort by rememberSaveable { mutableStateOf("") }
     var mode by rememberSaveable { mutableStateOf(WorkspaceMode.Ephemeral) }
     var target by rememberSaveable { mutableStateOf("") }
     var permission by rememberSaveable { mutableStateOf(PermissionMode.Gated) }
     var prompt by rememberSaveable { mutableStateOf("") }
-    var modelMenu by remember { mutableStateOf(false) }
     Scaffold(topBar = { TopAppBar(title = { Text("Nova sessão") }, navigationIcon = { TextButton(onClick = onBack) { Text("Voltar") } }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Escolha como trabalhar", style = MaterialTheme.typography.headlineLarge)
             Text("Agente")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Agent.entries.forEach { item -> FilterChip(selected = agent == item, enabled = !state.loading, onClick = { agent = item }, label = { Text(item.name) }) }
+                Agent.entries.forEach { item -> FilterChip(selected = agent == item, enabled = !state.loading, onClick = { agent = item; model = ""; effort = "" }, label = { Text(item.name) }) }
             }
-            ExposedDropdownMenuBox(expanded = modelMenu, onExpandedChange = { if (!state.loading) modelMenu = it }) {
-                OutlinedTextField(value = model, onValueChange = {}, label = { Text("Modelo do pool") }, readOnly = true,
-                    modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable), trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(modelMenu) })
-                ExposedDropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }) {
-                    state.catalog.orEmpty().forEach { item ->
-                        DropdownMenuItem(text = { Text(item.id + if (item.availableNow) "" else " · indisponível") }, enabled = item.availableNow,
-                            onClick = { model = item.id; modelMenu = false })
-                    }
-                }
-            }
+            ModelSettingsFields(agent, state.catalog.orEmpty(), TurnSettings(model, effort), !state.loading) { model = it.model; effort = it.reasoningEffort }
             if (state.catalog?.isEmpty() == true) Text("O pool não retornou modelos.")
             if (state.catalog == null && !state.loading) TextButton(onClick = reloadCatalog) { Text("Carregar catálogo") }
             Text("Workspace")
@@ -229,8 +220,8 @@ fun CreateSessionScreen(state: DashboardState, reloadCatalog: () -> Unit, onBack
             OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth().heightIn(min = 130.dp), label = { Text("Primeira mensagem (opcional)") }, enabled = !state.loading)
             ErrorMessage(state.error)
             if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            Button(onClick = { onCreate(CreateSession(agent, model, Workspace(mode, if (mode == WorkspaceMode.Ephemeral) null else target.trim()), permission, prompt.takeIf { it.isNotBlank() })) },
-                enabled = !state.loading && state.catalog?.any { it.id == model && it.availableNow } == true && (mode == WorkspaceMode.Ephemeral || target.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Abrir sessão") }
+            Button(onClick = { onCreate(CreateSession(agent, model, Workspace(mode, if (mode == WorkspaceMode.Ephemeral) null else target.trim()), permission, prompt.takeIf { it.isNotBlank() }, effort)) },
+                enabled = !state.loading && state.catalog?.any { it.id == model && it.availableNow && it.supports(agent) } == true && (mode == WorkspaceMode.Ephemeral || target.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Abrir sessão") }
         }
     }
 }

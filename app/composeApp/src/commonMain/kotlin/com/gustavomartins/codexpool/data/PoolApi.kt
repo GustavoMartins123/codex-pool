@@ -133,10 +133,10 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
             authorize(); contentType(ContentType.Application.Json); setBody(request)
         }.checked("/api/sessions").body()
     }
-    suspend fun turn(id: String, input: String): TurnStarted {
+    suspend fun turn(id: String, input: String, settings: TurnSettings? = null): TurnStarted {
         require(input.isNotBlank()) { "O turno não pode estar vazio." }
         return client.post(endpoint("${sessionPath(id)}/turns")) {
-            authorize(); contentType(ContentType.Application.Json); setBody(TurnInput(input))
+            authorize(); contentType(ContentType.Application.Json); setBody(TurnInput(input, settings?.model, settings?.reasoningEffort))
         }.checked("${sessionPath(id)}/turns").body()
     }
     suspend fun cancel(id: String) { client.post(endpoint("${sessionPath(id)}/turns:cancel")) { authorize() }.checked(sessionPath(id)) }

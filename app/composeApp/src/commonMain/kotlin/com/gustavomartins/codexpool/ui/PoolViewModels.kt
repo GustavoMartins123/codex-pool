@@ -204,6 +204,10 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
 enum class StreamConnection { Disconnected, Connecting, Live }
 data class TranscriptEntry(val turnId: String, val kind: String, val content: String, val keyEventId: Long)
 data class SessionScreenState(
+    val catalog: List<CatalogModel>? = null,
+    val catalogLoading: Boolean = false,
+    val catalogError: String? = null,
+    val selectedSettings: TurnSettings? = null,
     val session: Session? = null,
     val conversation: Conversation? = null,
     val connection: StreamConnection = StreamConnection.Disconnected,
@@ -220,11 +224,13 @@ data class SessionScreenState(
     val historyError: String? = null,
     val deleted: Boolean = false,
 ) {
+    val turnSettings get() = selectedSettings ?: session?.let { TurnSettings(it.model, it.reasoningEffort) }
     val canSend get() = session?.state == SessionState.WaitingInput && connection == StreamConnection.Live && !busy
     val canCancel get() = session?.state in listOf(SessionState.Running, SessionState.WaitingApproval) && connection == StreamConnection.Live && !busy
 }
 
 fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?): SessionScreenState = when (event) {
+    is SessionEvent.Settings -> state.copy(session = state.session?.copy(model = event.value.model, reasoningEffort = event.value.reasoningEffort))
     is SessionEvent.Input -> state.copy(entries = state.entries.filterNot { it.kind == "user" && it.turnId == event.value.turnId } +
         TranscriptEntry(event.value.turnId, "user", event.value.input, requireNotNull(eventId)))
     is SessionEvent.State -> state.copy(session = state.session?.copy(state = event.value.state))
@@ -264,6 +270,28 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
     private var streamGeneration = 0L
     private var lastEventId: String? = null
     private var older: Job? = null
+
+    fun loadModels() {
+        if (mutable.value.catalogLoading) return
+        mutable.update { it.copy(catalogLoading = true, catalogError = null) }
+        viewModelScope.launch {
+            try {
+                val catalog = api.catalog()
+                mutable.update { it.copy(catalog = catalog) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { mutable.update { it.copy(catalogError = e.userMessage()) } }
+            finally { mutable.update { it.copy(catalogLoading = false) } }
+        }
+    }
+
+    fun selectSettings(settings: TurnSettings) {
+        val current = mutable.value
+        if (current.busy) return
+        val agent = current.session?.agent ?: return
+        val model = current.catalog?.singleOrNull { it.id == settings.model && it.availableNow && it.supports(agent) } ?: return
+        if (settings.reasoningEffort.isNotEmpty() && settings.reasoningEffort !in model.efforts(agent)) return
+        mutable.update { it.copy(selectedSettings = settings) }
+    }
 
     fun connect() {
         if (stream?.isActive == true) return
@@ -392,9 +420,11 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         if (!mutable.value.canSend) return
         action {
             val revision = mutable.value.eventRevision
-            val turn = api.turn(requireNotNull(mutable.value.session).id, input)
+            val selected = requireNotNull(mutable.value.turnSettings)
+            val turn = api.turn(requireNotNull(mutable.value.session).id, input, selected)
             mutable.update {
-                it.copy(session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId) else it.session)
+                it.copy(selectedSettings = null, session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId,
+                    model = selected.model, reasoningEffort = selected.reasoningEffort) else it.session)
             }
             onSent()
         }
