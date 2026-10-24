@@ -73,13 +73,13 @@ func CompletePairing(ctx context.Context, client *http.Client, origin string, p 
 func AwaitPairing(ctx context.Context, client *http.Client, origin string, p runnerproto.PairingStart) (Config, error) {
 	ctx, cancel := context.WithDeadline(ctx, p.ExpiresAt)
 	defer cancel()
-	ticker := time.NewTicker(time.Duration(p.Interval) * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(time.Duration(p.Interval) * time.Second)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return Config{}, errors.New("pairing expired or cancelled; create a new request")
-		case <-ticker.C:
+		case <-timer.C:
 			cfg, done, err := CompletePairing(ctx, client, origin, p)
 			if err != nil {
 				return Config{}, err
@@ -87,6 +87,9 @@ func AwaitPairing(ctx context.Context, client *http.Client, origin string, p run
 			if done {
 				return cfg, nil
 			}
+			// Measure the interval after the response: a fixed ticker can send
+			// consecutive polls too close together when request latency varies.
+			timer.Reset(time.Duration(p.Interval) * time.Second)
 		}
 	}
 }

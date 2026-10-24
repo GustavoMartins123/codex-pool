@@ -74,6 +74,19 @@ class PoolNavigationTest {
         compose.onNodeWithText("Concluir").performClick()
     }
 
+    @Test fun scannedLinkReturnsFromSessionCreationToMachineReview() {
+        compose.setContent { PoolApp(store, client) }
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText("+ Nova sessão").performClick()
+        waitForText("Escolha como trabalhar")
+        compose.runOnIdle {
+            PairingLinks.receive("codexpool://pair?pool=${AppBuildConfig.PoolUrl.encodeURLParameter()}&request=${"a".repeat(43)}")
+        }
+        waitForText("Synthetic machine")
+        compose.onNodeWithText("Autorizar máquina").assertIsNotEnabled()
+        compose.onNodeWithText("Código no computador").assertIsDisplayed()
+    }
+
 
     @Test fun authenticatedNavigationAndPathPermissionWorkOnDevice() {
         compose.setContent { PoolApp(store, client) }
