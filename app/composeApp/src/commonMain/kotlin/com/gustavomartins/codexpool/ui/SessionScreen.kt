@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.snapshotFlow
 import com.gustavomartins.codexpool.data.*
 
 @Composable
@@ -22,12 +25,30 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
     var input by rememberSaveable { mutableStateOf("") }
     var closeDialog by remember { mutableStateOf(false) }
     val scroll = rememberLazyListState()
+    var followLatest by remember { mutableStateOf(true) }
+    var programmaticScroll by remember { mutableStateOf(false) }
     LifecycleStartEffect(vm) {
         vm.connect()
         onStopOrDispose { vm.disconnect() }
     }
-    LaunchedEffect(state.entries.size) {
-        if (scroll.layoutInfo.totalItemsCount > 0 && !scroll.canScrollForward) scroll.animateScrollToItem(scroll.layoutInfo.totalItemsCount - 1)
+    LaunchedEffect(scroll) {
+        snapshotFlow { scroll.isScrollInProgress }
+            .distinctUntilChanged()
+            .collectLatest { scrolling ->
+                if (!programmaticScroll) {
+                    followLatest = if (scrolling) false else {
+                        val layout = scroll.layoutInfo
+                        layout.totalItemsCount == 0 || layout.visibleItemsInfo.lastOrNull()?.index == layout.totalItemsCount - 1
+                    }
+                }
+            }
+    }
+    LaunchedEffect(state.eventRevision, state.entries.size) {
+        if (followLatest && scroll.layoutInfo.totalItemsCount > 0) {
+            programmaticScroll = true
+            try { scroll.animateScrollToItem(scroll.layoutInfo.totalItemsCount - 1) }
+            finally { programmaticScroll = false }
+        }
     }
     Scaffold(topBar = {
         TopAppBar(title = { Text(state.session?.let { "${it.agent.name} · ${it.model}" } ?: "Sessão") },
@@ -91,7 +112,7 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
                     }
                 }
             }
-            items(transcriptSections(state.entries)) { section ->
+            items(transcriptSections(state.entries), key = { "transcript/${it.id}" }) { section ->
                 TranscriptSectionCard(section)
             }
 

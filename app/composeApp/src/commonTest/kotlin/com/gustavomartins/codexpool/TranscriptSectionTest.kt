@@ -13,4 +13,14 @@ class TranscriptSectionTest {
         assertEquals("answer", sections[2].entries.single().content)
         assertEquals(entries, sections.flatMap { it.entries })
     }
+
+    @Test fun completedTurnIsASeparateLowPriorityMetadataSection() {
+        val sections = transcriptSections(listOf(
+            TranscriptEntry("one", "Text", "answer"),
+            TranscriptEntry("one", "summary", "12 tokens · 340 ms"),
+        ))
+        assertEquals(TranscriptTopic.Answer, sections[0].topic)
+        assertEquals(TranscriptTopic.Summary, sections[1].topic)
+        assertEquals("12 tokens · 340 ms", sections[1].entries.single().content)
+    }
 }

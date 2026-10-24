@@ -10,7 +10,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
 enum class TranscriptTopic { User, Thinking, Tools, Answer, Summary }
-data class TranscriptSection(val turnId: String, val topic: TranscriptTopic, val entries: List<TranscriptEntry>)
+data class TranscriptSection(val id: Int, val turnId: String, val topic: TranscriptTopic, val entries: List<TranscriptEntry>)
 
 fun transcriptSections(entries: List<TranscriptEntry>): List<TranscriptSection> {
     val sections = mutableListOf<TranscriptSection>()
@@ -26,15 +26,25 @@ fun transcriptSections(entries: List<TranscriptEntry>): List<TranscriptSection> 
         val last = sections.lastOrNull()
         if (last?.turnId == entry.turnId && last.topic == topic) {
             sections[sections.lastIndex] = last.copy(entries = last.entries + entry)
-        } else sections += TranscriptSection(entry.turnId, topic, listOf(entry))
+        } else sections += TranscriptSection(sections.size, entry.turnId, topic, listOf(entry))
     }
     return sections
 }
 
 @Composable
 fun TranscriptSectionCard(section: TranscriptSection) {
+    if (section.topic == TranscriptTopic.Summary) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Text(
+                section.entries.joinToString(" · ") { it.content },
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        return
+    }
     val collapsible = section.topic == TranscriptTopic.Thinking || section.topic == TranscriptTopic.Tools
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(section.id) { mutableStateOf(false) }
     val title = when (section.topic) {
         TranscriptTopic.User -> "Você"
         TranscriptTopic.Thinking -> "Pensando"
@@ -42,7 +52,7 @@ fun TranscriptSectionCard(section: TranscriptSection) {
         TranscriptTopic.Answer -> "Resposta do agente"
         TranscriptTopic.Summary -> "Turno concluído"
     }
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = when (section.topic) {
+    OutlinedCard(Modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors(containerColor = when (section.topic) {
         TranscriptTopic.User -> MaterialTheme.colorScheme.surfaceVariant
         TranscriptTopic.Answer -> MaterialTheme.colorScheme.surface
         else -> MaterialTheme.colorScheme.surfaceContainerLow
@@ -50,7 +60,7 @@ fun TranscriptSectionCard(section: TranscriptSection) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (collapsible) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
-                    Text("$title · ${if (expanded) "Ocultar" else "Mostrar"}", style = MaterialTheme.typography.labelLarge)
+                    Text("$title · ${if (expanded) "Ocultar" else "Mostrar"} · ${section.entries.size}", style = MaterialTheme.typography.labelLarge)
                 }
                 if (!expanded) Text(if (section.topic == TranscriptTopic.Thinking) "Raciocínio do agente" else "Chamadas e resultados de ferramentas",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
