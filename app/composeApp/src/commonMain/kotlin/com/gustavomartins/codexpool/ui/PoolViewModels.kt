@@ -4,12 +4,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.gustavomartins.codexpool.data.*
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpRequestTimeoutException
+import kotlinx.io.IOException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.SerializationException
 
 fun Throwable.userMessage(): String = when (this) {
     is PoolApiException -> message.orEmpty()
+    is SessionProtocolException -> message.orEmpty()
     is SerializationException -> "Resposta incompatível com o contrato do pool."
     is IllegalArgumentException -> message.orEmpty()
     else -> "A operação falhou (${this::class.simpleName}). Verifique a conexão e tente novamente."
@@ -214,56 +217,56 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         mutable.update { it.copy(connection = StreamConnection.Connecting, error = null) }
         stream = viewModelScope.launch {
             var reconnectDelay = 500L
-            var sessionLoaded = false
-            while (isActive && generation == streamGeneration) {
-                var stop = false
-                try {
-                    val session = api.session(id)
-                    sessionLoaded = true
-                    mutable.update { it.copy(session = session, approvals = session.approvals) }
-                    if (session.state == SessionState.Closed) break
-                    api.events(id, lastEventId, onCursor = { cursor ->
-                        if (generation == streamGeneration) lastEventId = cursor
-                    }) {
-                        if (generation == streamGeneration) mutable.update {
-                            it.copy(connection = StreamConnection.Live, error = null)
+            try {
+                while (isActive && generation == streamGeneration) {
+                    try {
+                        val session = api.session(id)
+                        if (generation != streamGeneration) return@launch
+                        mutable.update { it.copy(session = session, approvals = session.approvals) }
+                        // Replay the last deltas even if the session closed while offline.
+                        if (session.state == SessionState.Closed && lastEventId == null) break
+                        api.events(id, lastEventId, onCursor = { cursor ->
+                            if (generation == streamGeneration) lastEventId = cursor
+                        }) {
+                            if (generation == streamGeneration) mutable.update {
+                                it.copy(connection = StreamConnection.Live, error = null)
+                            }
+                        }.collect { event ->
+                            if (generation == streamGeneration) {
+                                mutable.update { reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1) }
+                                reconnectDelay = 500L
+                                if (event is SessionEvent.Error) throw SessionProtocolException(event.value.message)
+                            }
                         }
-                    }.collect { event ->
-                        if (generation == streamGeneration) mutable.update {
-                            reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1)
+                        if (mutable.value.session?.state == SessionState.Closed) break
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        if (generation != streamGeneration) return@launch
+                        val retryable = e is IOException || e is HttpRequestTimeoutException ||
+                            (e is PoolApiException && e.status in listOf(408, 429, 502, 503, 504))
+                        if (!retryable) {
+                            mutable.update { it.copy(error = e.userMessage()) }
+                            break
                         }
                     }
-                    if (mutable.value.session?.state == SessionState.Closed) break
-                } catch (e: CancellationException) { throw e }
-                catch (e: PoolApiException) {
-                    if (e.status == 409 || !sessionLoaded) {
-                        mutable.update { it.copy(connection = StreamConnection.Disconnected, error = e.userMessage()) }
-                        stop = true
-                    } else {
-                        mutable.update { it.copy(error = "SSE desconectado; reconectando?") }
-                    }
-                } catch (e: Exception) {
-                    if (!sessionLoaded) {
-                        mutable.update { it.copy(connection = StreamConnection.Disconnected, error = e.userMessage()) }
-                        stop = true
-                    } else {
-                        mutable.update { it.copy(error = "SSE desconectado; reconectando?") }
-                    }
+                    if (!isActive || generation != streamGeneration || mutable.value.session?.state == SessionState.Closed) break
+                    mutable.update { it.copy(connection = StreamConnection.Connecting, error = "SSE desconectado; reconectando...") }
+                    delay(reconnectDelay)
+                    reconnectDelay = (reconnectDelay * 2).coerceAtMost(5_000L)
                 }
-                if (stop || !isActive || generation != streamGeneration || mutable.value.session?.state == SessionState.Closed) break
-                mutable.update { it.copy(connection = StreamConnection.Connecting) }
-                delay(reconnectDelay)
-                reconnectDelay = (reconnectDelay * 2).coerceAtMost(5_000L)
+            } finally {
+                if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Disconnected) }
             }
-            if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Disconnected) }
         }
     }
 
     fun disconnect() {
         streamGeneration++
         stream?.cancel()
+        stream = null
         mutable.update { it.copy(connection = StreamConnection.Disconnected) }
     }
+
     fun send(input: String, onSent: () -> Unit) {
         if (!mutable.value.canSend) return
         val localTurnId = "local-${++messageSequence}"

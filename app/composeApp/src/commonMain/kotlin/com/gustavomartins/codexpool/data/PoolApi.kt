@@ -6,6 +6,7 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.plugins.sse.SSEClientException
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.*
 import io.ktor.client.statement.HttpResponse
@@ -13,6 +14,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.transformWhile
 
 interface CredentialStore {
     suspend fun read(): Credentials?
@@ -48,10 +50,13 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
     404 -> "O pool não disponibiliza $endpoint (404)."
     410 -> "O pedido de pareamento expirou. Gere um novo QR no computador."
     429 -> "Muitas tentativas. Aguarde antes de tentar novamente."
-    409 -> if (endpoint.contains("runner-pairings")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
+    409 -> if (endpoint.endsWith("/events")) "O cursor de eventos expirou. Não foi possível recuperar os eventos pendentes."
+        else if (endpoint.contains("runner-pairings")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
         else "O estado da sessão mudou no pool (409). Atualize e tente novamente."
     else -> "O pool recusou $endpoint (HTTP $status)."
 })
+
+class SessionProtocolException(message: String) : Exception(message)
 
 class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     init { require(normalizePoolUrl(credentials.baseUrl) == credentials.baseUrl); require(credentials.token.isNotBlank()) }
@@ -118,24 +123,36 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
 
     fun events(id: String, lastEventId: String? = null, onCursor: (String) -> Unit = {}, onConnected: () -> Unit): Flow<SessionEvent> = flow {
         var cursor = lastEventId?.toLong()
-        client.sse(request = {
-            url(endpoint("${sessionPath(id)}/events")); authorize()
-            lastEventId?.let { header("Last-Event-ID", it) }
-        }) {
-            onConnected()
-            incoming.collect { event ->
-                val data = event.data
-                if (data != null) {
-                    val type = requireNotNull(event.event) { "Evento SSE sem tipo." }
-                    val next = event.id?.let { raw ->
-                        val value = requireNotNull(raw.toLongOrNull()) { "Cursor SSE inválido." }
-                        require(value > 0 && (cursor == null || value > cursor!!)) { "Cursor SSE fora de ordem." }
-                        value
-                    }
-                    emit(decodeEvent(type, data))
-                    if (next != null) { cursor = next; onCursor(next.toString()) }
-                }
+        val path = "${sessionPath(id)}/events"
+        try {
+            client.sse(request = {
+                url(endpoint(path)); authorize()
+                lastEventId?.let { header("Last-Event-ID", it) }
+            }) {
+                onConnected()
+                incoming.transformWhile { event ->
+                    val data = event.data
+                    if (data != null) {
+                        val type = requireNotNull(event.event) { "Evento SSE sem tipo." }
+                        val next = event.id?.let { raw ->
+                            val value = requireNotNull(raw.toLongOrNull()) { "Cursor SSE inválido." }
+                            require(value > 0 && (cursor == null || value > cursor!!)) { "Cursor SSE fora de ordem." }
+                            value
+                        }
+                        val decoded = decodeEvent(type, data)
+                        emit(decoded)
+                        if (next != null) { cursor = next; onCursor(next.toString()) }
+                        decoded !is SessionEvent.Closed && decoded !is SessionEvent.Error
+                    } else true
+                }.collect { emit(it) }
             }
+        } catch (e: SSEClientException) {
+            val response = e.response
+            if (response != null && response.status.value != 200) throw PoolApiException(response.status.value, path)
+            if (response != null && response.contentType()?.withoutParameters() != ContentType.Text.EventStream) {
+                throw SessionProtocolException("O pool retornou um canal de eventos incompatível.")
+            }
+            throw (e.cause ?: SessionProtocolException("O canal SSE falhou sem um motivo de transporte."))
         }
     }
 }
