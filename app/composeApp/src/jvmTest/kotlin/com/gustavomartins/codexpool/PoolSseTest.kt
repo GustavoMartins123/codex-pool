@@ -4,6 +4,7 @@ import com.gustavomartins.codexpool.data.*
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
 import io.ktor.http.URLProtocol
@@ -14,6 +15,36 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class PoolSseTest {
+    @Test fun okhttpKeepsTheStreamOpenWhileWaitingForTheServerHeartbeat() = runTest {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/api/sessions/s-1/events") { exchange ->
+            exchange.responseHeaders.set("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.use { body ->
+                body.write("id: 1\nevent: state\ndata: {\"state\":\"waiting_input\"}\n\n".toByteArray())
+                body.flush()
+                // OkHttp's default ten-second read timeout is shorter than the
+                // broker's fifteen-second heartbeat interval.
+                Thread.sleep(12_000)
+                body.write("id: 2\nevent: session.closed\ndata: {\"reason\":\"user\"}\n\n".toByteArray())
+            }
+        }
+        server.start()
+        val client = HttpClient(OkHttp) { poolConfiguration() }
+        client.plugin(HttpSend).intercept { request ->
+            request.url.protocol = URLProtocol.HTTP
+            request.url.host = "127.0.0.1"
+            request.url.port = server.address.port
+            execute(request)
+        }
+        try {
+            val events = PoolApi(client, Credentials("https://pool.example", "test-token", "app-client"))
+                .events("s-1") {}.toList()
+            assertEquals(2, events.size)
+            assertEquals(SessionEvent.Closed(ClosedEvent("user")), events.last())
+        } finally { client.close(); server.stop(0) }
+    }
+
     @Test fun sseUsesBearerAndParsesMultilineEventsOnARealConnection() = runTest {
         val received = CopyOnWriteArrayList<Pair<String, String?>>()
         val cursors = CopyOnWriteArrayList<String?>()

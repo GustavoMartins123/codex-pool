@@ -78,7 +78,10 @@ kotlin {
             implementation(libs.datastore.preferences)
         }
         iosMain.dependencies { implementation(libs.ktor.client.darwin) }
-        jvmTest.dependencies { implementation(libs.ktor.client.cio) }
+        jvmTest.dependencies {
+            implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.okhttp)
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)

@@ -3,6 +3,7 @@ package com.gustavomartins.codexpool.data
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.sse
@@ -33,6 +34,11 @@ fun HttpClientConfig<*>.poolConfiguration() {
     followRedirects = false
     expectSuccess = false
     install(ContentNegotiation) { json(PoolJson) }
+    install(HttpTimeout) {
+        connectTimeoutMillis = 15_000
+        requestTimeoutMillis = 30_000
+        socketTimeoutMillis = 45_000
+    }
     install(SSE) { maxReconnectionAttempts = 0 }
 }
 
