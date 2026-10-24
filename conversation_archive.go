@@ -182,7 +182,7 @@ func (b *sessionBroker) archiveConversation(principal, id string) error {
 	if c.Storage == "archived" {
 		return nil
 	}
-	if !c.HistoryComplete || c.ArchiveAfter.After(b.now()) || c.SessionState != "closed" {
+	if !c.HistoryComplete || c.Deleting || c.ArchiveAfter.After(b.now()) || c.SessionState != "closed" {
 		return sessionError(409, "conversation is not eligible for archival")
 	}
 	buildID := uuid.NewString()

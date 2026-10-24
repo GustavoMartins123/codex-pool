@@ -18,7 +18,7 @@ func (b *sessionBroker) resumeConversation(principal, client, id string) (*runne
 	if err != nil {
 		return nil, err
 	}
-	if !c.HistoryComplete || !c.ResumeAvailable || s.State != "closed" || s.TurnID != "" || len(s.Approvals) > 0 || s.Checkpoint == nil || !s.Checkpoint.Ready || !validAgentCheckpoint(s.Checkpoint) {
+	if c.Deleting || !c.HistoryComplete || !c.ResumeAvailable || s.State != "closed" || s.TurnID != "" || len(s.Approvals) > 0 || s.Checkpoint == nil || !s.Checkpoint.Ready || !validAgentCheckpoint(s.Checkpoint) {
 		return nil, sessionError(409, "conversation has no complete native checkpoint available for resume")
 	}
 	r := b.runners[s.RunnerID]

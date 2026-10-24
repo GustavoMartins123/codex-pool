@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"codex-pool-proxy/internal/runner"
 	"codex-pool-proxy/internal/runnerproto"
+	"go.etcd.io/bbolt"
 )
 
 func TestRunnerSessionEndToEnd(t *testing.T) {
@@ -35,7 +37,7 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := h.startSessionBroker(ctx); err != nil {
 		t.Fatal(err)
@@ -174,6 +176,71 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	}
 	if state.Checkpoint == nil || !state.Checkpoint.Ready {
 		t.Fatal("native checkpoint unavailable after close")
+	}
+	originalNativeID := state.Checkpoint.NativeSessionID
+	b.mu.Lock()
+	err = b.store.db.Update(func(tx *bbolt.Tx) error {
+		var c conversationRecord
+		if err := json.Unmarshal(tx.Bucket([]byte(bucketConversations)).Get([]byte(session.ConversationID)), &c); err != nil {
+			return err
+		}
+		next := c
+		next.ArchiveAfter = b.now().Add(-time.Second)
+		return putConversationTx(tx, &c, &next)
+	})
+	b.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.archiveDueConversations(); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := b.conversation(principal, session.ConversationID)
+	if err != nil || archived.Storage != "archived" {
+		t.Fatal("completed conversation was not archived")
+	}
+	resume := appAuthRequest(h, "POST", "/api/conversations/"+session.ConversationID+"/resume", login.Token, "")
+	if resume.Code != 200 {
+		t.Fatalf("resume: %d %s", resume.Code, resume.Body.String())
+	}
+	state = await(func(s *runnerproto.Session) bool { return s.State == "waiting_input" })
+	if state.Checkpoint == nil || state.Checkpoint.NativeSessionID != originalNativeID {
+		t.Fatal("resume created a new native conversation")
+	}
+	continued := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, `{"input":"continue the same conversation"}`)
+	if continued.Code != 200 {
+		t.Fatalf("continued turn: %d %s", continued.Code, continued.Body.String())
+	}
+	state = await(func(s *runnerproto.Session) bool { return s.State == "waiting_approval" && len(s.Approvals) == 1 })
+	approved := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/approvals/"+state.Approvals[0].ID, login.Token, `{"decision":"approve"}`)
+	if approved.Code != 204 {
+		t.Fatal("continued tool approval failed")
+	}
+	await(func(s *runnerproto.Session) bool { return s.State == "waiting_input" && s.Turns == 4 })
+	if response := appAuthRequest(h, "DELETE", "/api/sessions/"+session.ID, login.Token, ""); response.Code != 204 {
+		t.Fatal(response.Code)
+	}
+	await(func(s *runnerproto.Session) bool { return s.State == "closed" })
+	if response := appAuthRequest(h, "DELETE", "/api/conversations/"+session.ConversationID, login.Token, ""); response.Code != 202 {
+		t.Fatalf("delete: %d %s", response.Code, response.Body.String())
+	}
+	for {
+		_, err := b.conversation(principal, session.ConversationID)
+		if err != nil {
+			var fault *sessionFault
+			if !errors.As(err, &fault) || fault.status != 404 {
+				t.Fatal(err)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("conversation purge timed out")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, session.ID)); !os.IsNotExist(err) {
+		t.Fatal("explicit deletion did not remove the ephemeral workspace")
 	}
 	if deltas.Load() < 3 {
 		t.Fatal("agent output did not reach SSE")

@@ -141,8 +141,16 @@ func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if len(parts) == 1 {
+		if r.Method == http.MethodDelete {
+			if err := b.deleteConversation(principal.ID, id); err != nil {
+				sessionHTTPError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
+			w.Header().Set("Allow", "GET, DELETE")
 			respondJSONError(w, 405, "method not allowed")
 			return
 		}

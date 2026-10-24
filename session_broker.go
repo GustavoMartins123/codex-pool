@@ -35,6 +35,8 @@ type sessionRecord struct {
 	LastSequence    uint64 `json:"last_sequence"`
 	EventCursor     uint64 `json:"event_cursor"`
 	HistoryComplete bool   `json:"history_complete"`
+	DeleteRequested bool   `json:"delete_requested"`
+	DeleteError     string `json:"delete_error,omitempty"`
 }
 
 type approvalRecord struct {

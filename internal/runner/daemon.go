@@ -322,6 +322,9 @@ func (d *daemon) connect() (bool, error) {
 			if err := d.acknowledge(m); err != nil {
 				return true, err
 			}
+		case "session.purge":
+			go d.purge(m)
+		case "purge.ack":
 		case "turn.start", "turn.cancel", "approval.decision", "session.close":
 			d.mu.Lock()
 			s := d.sessions[m.SessionID]

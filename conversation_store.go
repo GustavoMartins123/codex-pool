@@ -47,6 +47,8 @@ type conversationRecord struct {
 	ResumeAvailable   bool                  `json:"resume_available"`
 	ArchiveID         string                `json:"archive_id,omitempty"`
 	ArchivedThrough   uint64                `json:"archived_through"`
+	Deleting          bool                  `json:"deleting"`
+	DeleteError       string                `json:"delete_error,omitempty"`
 }
 
 func conversationIndexKey(at time.Time, id string) []byte {
@@ -144,7 +146,7 @@ func putConversationTx(tx *bbolt.Tx, previous *conversationRecord, next *convers
 	if err := bucket.Put(conversationIndexKey(next.OrderAt, next.ID), []byte(next.ID)); err != nil {
 		return err
 	}
-	if next.Storage == "active" && next.HistoryComplete && (next.SessionState == "closed" || next.SessionState == "waiting_input") {
+	if next.Storage == "active" && !next.Deleting && next.HistoryComplete && (next.SessionState == "closed" || next.SessionState == "waiting_input") {
 		if err := tx.Bucket([]byte(bucketConversationDue)).Put(conversationIndexKey(next.ArchiveAfter, next.ID), []byte(next.ID)); err != nil {
 			return err
 		}
@@ -177,10 +179,12 @@ func (b *sessionBroker) updateConversationTx(tx *bbolt.Tx, s *sessionRecord, eve
 			return err
 		}
 	}
-	if len(events) > 0 {
+	if len(events) > 0 || c.Deleting != s.DeleteRequested || c.DeleteError != s.DeleteError {
 		c.Generation++
 	}
 	c.SessionState = s.State
+	c.Deleting = s.DeleteRequested
+	c.DeleteError = s.DeleteError
 	c.ResumeAvailable = s.State == "closed" && s.TurnID == "" && len(s.Approvals) == 0 && s.Checkpoint != nil && s.Checkpoint.Ready
 	c.EventCursor = s.EventCursor
 	c.HistoryComplete = s.HistoryComplete

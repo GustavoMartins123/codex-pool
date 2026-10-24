@@ -96,6 +96,8 @@ func (h *proxyHandler) handleRunnerWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch m.Type {
+		case "session.purged":
+			err = b.erasedByRunner(runner, m)
 		case "heartbeat":
 			err = b.heartbeat(runner, m.Sessions)
 		case "claim":
@@ -192,6 +194,14 @@ func (b *sessionBroker) connectRunner(r *connectedRunner) error {
 	m := runnerproto.Frame("hello.ack")
 	b.sendLocked(r, m)
 	for _, s := range b.sessions {
+		if s.PrincipalID == r.principal && s.RunnerID == r.id && s.DeleteRequested {
+			m := runnerproto.Frame("session.purge")
+			m.SessionID = s.ID
+			value := s.Session
+			m.Session = &value
+			b.sendLocked(r, m)
+			continue
+		}
 		if s.PrincipalID == r.principal && (s.State == "pending_runner" || (s.RunnerID == r.id && s.State != "closed")) {
 			b.offerLocked(s)
 		}

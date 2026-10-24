@@ -18,6 +18,7 @@ func archiveFixture(t *testing.T) (*sessionBroker, *connectedRunner, *runnerprot
 	b.now = func() time.Time { return clock }
 	r := brokerRunner(t, b, principal)
 	r.hello.PersistentSessions = true
+	r.out = make(chan runnerproto.Message, 4096)
 	s := brokerSession(t, b, principal, login.ClientID)
 	if err := b.claim(r, s.ID); err != nil {
 		t.Fatal(err)
