@@ -119,6 +119,29 @@ func TestFairQueueCancellationDuringAdmissionDoesNotLeak(t *testing.T) {
 	}
 }
 
+func TestFairQueueDefaultAllowsEightConcurrentRequestsPerPrincipal(t *testing.T) {
+	q := newFairQueue()
+	q.wait = 10 * time.Millisecond
+	releases := make([]func(), 0, 8)
+	for i := 0; i < 8; i++ {
+		release, err := q.Acquire(context.Background(), "owner")
+		if err != nil {
+			t.Fatalf("acquire %d: %v", i+1, err)
+		}
+		releases = append(releases, release)
+	}
+	_, err := q.Acquire(context.Background(), "owner")
+	requirePolicyCode(t, err, "queue_wait_expired")
+	for _, release := range releases {
+		release()
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.active != 0 || q.waiting != 0 || len(q.inflight)+len(q.pending)+len(q.order) != 0 {
+		t.Fatal("leaked queue state")
+	}
+}
+
 func TestFairQueueRevalidatesRevokedCredentials(t *testing.T) {
 	p, client := testPolicyPassport(t)
 	t.Setenv("POOL_JWT_SECRET", "queue-test-jwt-secret-long-enough")

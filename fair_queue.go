@@ -23,7 +23,7 @@ type fairQueue struct {
 }
 
 func newFairQueue() *fairQueue {
-	return &fairQueue{capacity: 64, perPrincipal: 4, maxWaiting: 256, perPrincipalWaiting: 16, wait: 30 * time.Second, inflight: map[string]int{}, pending: map[string][]*queueWaiter{}}
+	return &fairQueue{capacity: 64, perPrincipal: 8, maxWaiting: 256, perPrincipalWaiting: 16, wait: 30 * time.Second, inflight: map[string]int{}, pending: map[string][]*queueWaiter{}}
 }
 
 func queueError(code string) error {
