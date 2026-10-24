@@ -360,7 +360,7 @@ try {
     $accessToken = [string]$auth.access_token
   }
   if (-not [string]::IsNullOrWhiteSpace($accessToken)) {
-    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.159.0'
+    $modelsUrl = $BaseUrl.TrimEnd('/') + '/backend-api/codex/models?client_version=0.164.0'
     $headers = @{ Authorization = "Bearer $accessToken" }
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
@@ -424,7 +424,7 @@ function Refresh-ModelCatalog {
   }
   if ([string]::IsNullOrWhiteSpace($token)) { return }
 
-  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.159.0'
+  $modelsUrl = $Url.TrimEnd('/') + '/backend-api/codex/models?client_version=0.164.0'
   $headers = @{ Authorization = "Bearer $token" }
 
   try {
@@ -664,9 +664,24 @@ args = ["-NoLogo", "-NoProfile", "-File", "$mcpScriptToml", "$BaseUrl"]
   # preserved; the prior file was backed up as config.toml.bak.$Stamp.
   $existing = $existing -replace '(?ms)^[ \t]*\[model_providers\.codex-pool(\.features)?\].*?(?=^[ \t]*\[|\z)', ''
   $existing = $existing -replace '(?ms)^[ \t]*\[mcp_servers\.(model_sync|codex_pool_model_sync)\].*?(?=^[ \t]*\[|\z)', ''
-  $existing = $existing -replace '(?m)^[ \t]*chatgpt_base_url[ \t]*=.*', ('chatgpt_base_url = "' + $BaseUrl + '/backend-api"')
   $existing = $existing -replace '(?m)^[ \t]*experimental_realtime_webrtc_call_base_url[ \t]*=.*', ('experimental_realtime_webrtc_call_base_url = "' + $BaseUrl + '/v1"')
   $existing = $existing -replace '(?m)^[ \t]*experimental_realtime_ws_base_url[ \t]*=.*', ('experimental_realtime_ws_base_url = "' + $BaseUrl + '/v1"')
+
+  # Codex may rewrite config.toml and drop the root routing keys. Restore
+  # them here so rerunning setup never leaves the pool provider unselected.
+  $rootConfig = ($existing -split '(?m)^[ \t]*\[', 2)[0]
+  $restConfig = $existing.Substring($rootConfig.Length)
+  if ($rootConfig -match '(?m)^[ \t]*model_provider[ \t]*=') {
+    $rootConfig = [regex]::Replace($rootConfig, '(?m)^[ \t]*model_provider[ \t]*=.*', 'model_provider = "codex-pool"', 1)
+  } else {
+    $rootConfig = 'model_provider = "codex-pool"' + $nl + $rootConfig
+  }
+  if ($rootConfig -match '(?m)^[ \t]*chatgpt_base_url[ \t]*=') {
+    $rootConfig = [regex]::Replace($rootConfig, '(?m)^[ \t]*chatgpt_base_url[ \t]*=.*', ('chatgpt_base_url = "' + $BaseUrl + '/backend-api"'), 1)
+  } else {
+    $rootConfig = 'chatgpt_base_url = "' + $BaseUrl + '/backend-api"' + $nl + $rootConfig
+  }
+  $existing = $rootConfig + $restConfig
 
   if ($existing -notmatch '(?m)^[ \t]*model_catalog_json[ \t]*=') {
     $existing = 'model_catalog_json = "' + $modelCatalogToml + '"' + $nl + $existing
@@ -749,7 +764,7 @@ ACCESS_TOKEN=$(sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/
 if [ -n "${ACCESS_TOKEN:-}" ]; then
     curl --connect-timeout 5 --max-time 10 -fsSL \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
-        "${BASE_URL%%/}/backend-api/codex/models?client_version=0.159.0" \
+        "${BASE_URL%%/}/backend-api/codex/models?client_version=0.164.0" \
         -o "$MODEL_CATALOG" 2>/dev/null && chmod 600 "$MODEL_CATALOG" 2>/dev/null || true
 fi
 
@@ -762,7 +777,7 @@ BASE_URL="${1:-}"
 AUTH_DIR="${HOME}/.codex"
 AUTH_FILE="$AUTH_DIR/auth.json"
 MODEL_CATALOG="$AUTH_DIR/model_catalog.json"
-CLIENT_VERSION="0.159.0"
+CLIENT_VERSION="0.164.0"
 
 refresh_model_catalog() {
     if [ -z "$BASE_URL" ] || [ ! -f "$AUTH_FILE" ]; then
@@ -996,10 +1011,41 @@ else
         /^[[:space:]]*\[/ { skip = 0 }
         !skip { print }
     ' "$CONFIG_FILE" | sed \
-        -e "s|^[[:space:]]*chatgpt_base_url[[:space:]]*=.*|chatgpt_base_url = \"$BASE_URL/backend-api\"|" \
         -e "s|^[[:space:]]*experimental_realtime_webrtc_call_base_url[[:space:]]*=.*|experimental_realtime_webrtc_call_base_url = \"$BASE_URL/v1\"|" \
         -e "s|^[[:space:]]*experimental_realtime_ws_base_url[[:space:]]*=.*|experimental_realtime_ws_base_url = \"$BASE_URL/v1\"|" \
         > "$TEMP_FILE"
+
+    # Codex may rewrite config.toml and drop the root routing keys. Restore
+    # them here so rerunning setup never leaves the pool provider unselected.
+    TEMP_KEY=$(mktemp)
+    awk -v base_url="$BASE_URL" '
+        BEGIN { root = 1 }
+        root && /^[[:space:]]*\[/ { root = 0 }
+        root && /^[[:space:]]*model_provider[[:space:]]*=/ {
+            print "model_provider = \"codex-pool\""
+            next
+        }
+        root && /^[[:space:]]*chatgpt_base_url[[:space:]]*=/ {
+            print "chatgpt_base_url = \"" base_url "/backend-api\""
+            next
+        }
+        { print }
+    ' "$TEMP_FILE" > "$TEMP_KEY"
+    mv "$TEMP_KEY" "$TEMP_FILE"
+
+    if ! awk '/^[[:space:]]*\[/ { exit } /^[[:space:]]*model_provider[[:space:]]*=/ { found = 1 } END { exit !found }' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        printf 'model_provider = "codex-pool"\n' > "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
+    fi
+
+    if ! awk '/^[[:space:]]*\[/ { exit } /^[[:space:]]*chatgpt_base_url[[:space:]]*=/ { found = 1 } END { exit !found }' "$TEMP_FILE"; then
+        TEMP_KEY=$(mktemp)
+        printf 'chatgpt_base_url = "%%s/backend-api"\n' "$BASE_URL" > "$TEMP_KEY"
+        cat "$TEMP_FILE" >> "$TEMP_KEY"
+        mv "$TEMP_KEY" "$TEMP_FILE"
+    fi
 
     if ! grep -Eq '^[[:space:]]*model_catalog_json[[:space:]]*=' "$TEMP_FILE"; then
         TEMP_KEY=$(mktemp)

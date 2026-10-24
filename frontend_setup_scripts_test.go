@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -270,8 +271,199 @@ trust_level = "trusted"
 	}
 }
 
+func TestCodexSetupRestoresRootRoutingKeys(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	h := &proxyHandler{}
+	rr := httptest.NewRecorder()
+	h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token", nil))
+	body := rr.Body.String()
+	start := strings.Index(body, `echo "4. Updating configuration..."`)
+	end := strings.Index(body, "if command -v codex >/dev/null")
+	if start < 0 || end <= start {
+		t.Fatal("configuration section missing")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		initial string
+	}{
+		{
+			name: "missing root keys",
+			initial: `model = "gpt-6-astra"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://old.example"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/home/user/demo"]
+trust_level = "trusted"
+`,
+		},
+		{
+			name: "stale root keys",
+			initial: `model_provider = "openai"
+chatgpt_base_url = "http://old.example/backend-api"
+model = "gpt-6-astra"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://old.example"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/home/user/demo"]
+trust_level = "trusted"
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configFile := filepath.Join(dir, "config.toml")
+			if err := os.WriteFile(configFile, []byte(tc.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				cmd := exec.Command("bash", "-eu")
+				cmd.Stdin = strings.NewReader(body[start:end])
+				cmd.Env = append(os.Environ(), "CONFIG_FILE="+configFile, "BASE_URL=http://new.example", "MODEL_CATALOG="+filepath.Join(dir, "models.json"), "MCP_SCRIPT="+filepath.Join(dir, "sync.sh"))
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("configure: %v\n%s", err, output)
+				}
+			}
+			updated, err := os.ReadFile(configFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCodexRootRouting(t, string(updated))
+		})
+	}
+}
+
+func TestCodexSetupPowerShellRestoresRootRoutingKeys(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell script semantics are verified on Windows")
+	}
+	h := &proxyHandler{}
+	rr := httptest.NewRecorder()
+	h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token?shell=powershell", nil))
+	body := rr.Body.String()
+	start := strings.Index(body, "Write-Host '4. Updating configuration...'")
+	end := strings.Index(body, `if (Test-Path ("$configFile.bak.$Stamp"))`)
+	if start < 0 || end <= start {
+		t.Fatal("configuration section missing")
+	}
+
+	for _, tc := range []struct {
+		name    string
+		initial string
+	}{
+		{
+			name: "missing root keys",
+			initial: `model = "gpt-6-astra"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://old.example"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/home/user/demo"]
+trust_level = "trusted"
+`,
+		},
+		{
+			name: "stale root keys",
+			initial: `model_provider = "openai"
+chatgpt_base_url = "http://old.example/backend-api"
+model = "gpt-6-astra"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://old.example"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/home/user/demo"]
+trust_level = "trusted"
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configFile := filepath.Join(dir, "config.toml")
+			if err := os.WriteFile(configFile, []byte(tc.initial), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			script := filepath.Join(dir, "configure.ps1")
+			prefix := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+function Set-Utf8NoBom {
+  param([string]$Path, [string]$Value)
+  $utf8 = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Value, $utf8)
+}
+$authDir = %s
+$configFile = %s
+$modelCatalog = %s
+$mcpScript = %s
+$mcpCommand = 'powershell'
+$Stamp = 'test'
+$BaseUrl = 'http://new.example'
+$nl = [Environment]::NewLine
+$modelCatalogToml = $modelCatalog -replace '\\', '\\\\'
+$mcpScriptToml = $mcpScript -replace '\\', '\\\\'
+$mcpCommandToml = $mcpCommand -replace '\\', '\\\\'
+`, psSingleQuote(dir), psSingleQuote(configFile), psSingleQuote(filepath.Join(dir, "model_catalog.json")), psSingleQuote(filepath.Join(dir, "model_sync.ps1")))
+			if err := os.WriteFile(script, []byte(prefix+"\n"+body[start:end]), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script)
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("configure: %v\n%s", err, output)
+				}
+			}
+			updated, err := os.ReadFile(configFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCodexRootRouting(t, string(updated))
+		})
+	}
+}
+
+func assertCodexRootRouting(t *testing.T, text string) {
+	t.Helper()
+	root := strings.SplitN(text, "[", 2)[0]
+	if got := strings.Count(root, "model_provider ="); got != 1 {
+		t.Fatalf("expected one root model_provider, got %d:\n%s", got, text)
+	}
+	if !strings.Contains(root, `model_provider = "codex-pool"`) {
+		t.Fatalf("root model_provider does not select the pool:\n%s", text)
+	}
+	if got := strings.Count(root, "chatgpt_base_url ="); got != 1 {
+		t.Fatalf("expected one root chatgpt_base_url, got %d:\n%s", got, text)
+	}
+	if !strings.Contains(root, `chatgpt_base_url = "http://new.example/backend-api"`) {
+		t.Fatalf("root chatgpt_base_url does not point at the pool:\n%s", text)
+	}
+	if !strings.Contains(text, `[projects."/home/user/demo"]`) {
+		t.Fatalf("unrelated configuration was dropped:\n%s", text)
+	}
+	if got := strings.Count(text, "[model_providers.codex-pool]"); got != 1 {
+		t.Fatalf("expected one provider block, got %d:\n%s", got, text)
+	}
+}
+
+func psSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
 func TestSetupExamplesUseAstra(t *testing.T) {
-       for _, path := range []string{"web/src/pages/Setup.tsx"} {
+	for _, path := range []string{"web/src/pages/Setup.tsx"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
