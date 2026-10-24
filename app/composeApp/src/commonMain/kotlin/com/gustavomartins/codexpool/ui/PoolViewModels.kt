@@ -131,6 +131,7 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         mutable.update { it.copy(pairing = pairing) }
     }
     fun decidePairing(id: String, decision: Decision, code: String) = action {
+        require(mutable.value.pairing?.id == id) { "O pedido de pareamento mudou. Leia o QR novamente." }
         api.decidePairing(id, decision, code)
         mutable.update { it.copy(pairing = null, pairingComplete = true) }
     }

@@ -56,6 +56,24 @@ class PoolNavigationTest {
         client.close()
     }
 
+    @Test fun pairingRequiresReviewAndCodeBeforeApproval() {
+        compose.setContent { PoolApp(store, client) }
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText("Runners").performClick()
+        waitForText("Nenhum runner conectado")
+        compose.onNodeWithText("Conectar runner", useUnmergedTree = true).performClick()
+        waitForText("Conectar máquina")
+        val link = "codexpool://pair?pool=${AppBuildConfig.PoolUrl.encodeURLParameter()}&request=${"a".repeat(43)}"
+        compose.onNodeWithText("Link de pareamento").performScrollTo().performTextInput(link)
+        compose.onNodeWithText("Verificar máquina").performScrollTo().performClick()
+        waitForText("Synthetic machine")
+        compose.onNodeWithText("Autorizar máquina").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("Código no computador").performScrollTo().performTextInput("AbCd1234")
+        compose.onNodeWithText("Autorizar máquina").performScrollTo().assertIsEnabled().performClick()
+        waitForText("Decisão enviada")
+        compose.onNodeWithText("Concluir").performClick()
+    }
+
     @Test fun scannedLinkReturnsFromSessionCreationToMachineReview() {
         compose.setContent { PoolApp(store, client) }
         waitForText("Nenhuma sessão")
@@ -109,7 +127,7 @@ class PoolNavigationTest {
         try {
             compose.waitUntil(10_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
         } catch (failure: Throwable) {
-            throw AssertionError("Expected '$value'. UI: ${compose.onRoot(useUnmergedTree = true).printToString()}", failure)
+            throw AssertionError("Expected '$value'. UI: ${compose.onAllNodes(isRoot(), useUnmergedTree = true).printToString()}", failure)
         }
         compose.onNodeWithText(value).assertIsDisplayed()
     }

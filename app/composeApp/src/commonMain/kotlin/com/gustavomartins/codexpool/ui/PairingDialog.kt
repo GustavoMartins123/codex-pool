@@ -7,6 +7,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import com.gustavomartins.codexpool.data.Decision
 
@@ -14,10 +16,20 @@ import com.gustavomartins.codexpool.data.Decision
 fun PairingDialog(state: DashboardState, vm: DashboardViewModel, onScan: (() -> Unit)?) {
     var link by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable(state.pairing?.id) { mutableStateOf("") }
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val scroll = rememberScrollState()
+    LaunchedEffect(state.pairing?.id, state.pairingComplete) {
+        if (state.pairing != null || state.pairingComplete) {
+            focus.clearFocus()
+            keyboard?.hide()
+            scroll.scrollTo(0)
+        }
+    }
     AlertDialog(onDismissRequest = vm::dismissPairing,
         title = { Text(if (state.pairingComplete) "Decisão enviada" else "Conectar máquina") },
         text = {
-            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.pairingComplete) {
                     Text("O computador receberá a decisão. A credencial fica somente na máquina.")
                 } else if (state.pairing == null) {
