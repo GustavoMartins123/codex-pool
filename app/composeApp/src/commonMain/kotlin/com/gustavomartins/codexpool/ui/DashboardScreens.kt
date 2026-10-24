@@ -92,11 +92,14 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(runner.name, style = MaterialTheme.typography.titleLarge)
-                                Text(if (runner.online) "Online" else "Offline", color = if (runner.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (runner.revoked) "Revogado" else if (runner.online) "Online" else "Offline", color = if (runner.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(runner.agents.joinToString { it.name })
                                 if (runner.labels.isNotEmpty()) Text(runner.labels.joinToString(" · "))
                                 if (runner.allowedPaths.isNotEmpty()) SelectionContainer { Text(runner.allowedPaths.joinToString("\n"), style = MaterialTheme.typography.labelSmall) }
-                                TextButton(onClick = { revoke = runner }, enabled = !state.loading) { Text("Revogar runner", color = MaterialTheme.colorScheme.error) }
+                                if (!runner.revoked) {
+                                    TextButton(onClick = { revoke = runner }, enabled = !state.loading) { Text("Revogar runner", color = MaterialTheme.colorScheme.error) }
+                                    TextButton(onClick = { vm.rotate(runner.id) }, enabled = !state.loading) { Text("Rotacionar credencial") }
+                                }
                             }
                         }
                     }
@@ -128,10 +131,14 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
         confirmButton = { TextButton(onClick = { vm.revoke(runner.id); revoke = null }) { Text("Revogar") } },
         dismissButton = { TextButton(onClick = { revoke = null }) { Text("Voltar") } })
     state.enrollment?.let { enrollment ->
-        AlertDialog(onDismissRequest = vm::dismissEnrollment, title = { Text("Conectar uma máquina") },
+        AlertDialog(onDismissRequest = vm::dismissEnrollment, title = { Text(if (enrollment.runnerId == null) "Conectar uma máquina" else "Rotacionar credencial") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Execute na máquina com runnerd instalado:")
-                SelectionContainer { Text("runnerd enroll --url $url --nonce ${enrollment.nonce}", style = MaterialTheme.typography.labelSmall) }
+                SelectionContainer { Text(
+                    if (enrollment.runnerId == null) "runnerd enroll --url $url --nonce ${enrollment.nonce} --name \"meu-runner\""
+                    else "runnerd rotate --nonce ${enrollment.nonce} --name \"meu-runner\"",
+                    style = MaterialTheme.typography.labelSmall) }
+                if (enrollment.runnerId != null) Text("Pare o runner antes de trocar sua credencial.")
                 Text("Uso único · expira em ${enrollment.expiresAt}")
             } }, confirmButton = { TextButton(onClick = vm::dismissEnrollment) { Text("Concluir") } })
     }

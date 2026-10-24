@@ -116,6 +116,21 @@ class PoolApiTest {
         assertFails { decodeEvent("approval.requested", "{}") }
     }
 
+    @Test fun rotationUsesOwnedRunnerRouteAndReturnsSingleUseNonce() = runTest {
+        val engine = MockEngine { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/me/runners/r-1/rotate", request.url.encodedPath)
+            assertEquals("Bearer test-session-token", request.headers[HttpHeaders.Authorization])
+            respond("""{"nonce":"synthetic-nonce","expires_at":"2026-10-23T23:00:00Z","runner_id":"r-1"}""", HttpStatusCode.OK, jsonHeaders)
+        }
+        val client = HttpClient(engine) { poolConfiguration() }
+        try {
+            val enrollment = PoolApi(client, credentials).rotate("r-1")
+            assertEquals("r-1", enrollment.runnerId)
+            assertEquals("synthetic-nonce", enrollment.nonce)
+        } finally { client.close() }
+    }
+
     @Test fun catalogAndQuotasDecodeExistingBackendProjections() {
         val catalog = PoolJson.decodeFromString<Catalog>("""{"schema_version":1,"models":[{"id":"m","name":"Model","protocol":"openai","available_now":true,"provider":"codex","contextWindow":200000}]}""")
         assertEquals("m", catalog.models.single().id)

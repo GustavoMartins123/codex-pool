@@ -40,6 +40,8 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
     401 -> "Autenticação recusada pelo pool (401). Entre novamente."
     403 -> "Acesso negado pelo pool (403)."
     404 -> "O pool não disponibiliza $endpoint (404)."
+    409 -> if (endpoint.endsWith("/rotate")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
+        else "O estado da sessão mudou no pool (409). Atualize e tente novamente."
     else -> "O pool recusou $endpoint (HTTP $status)."
 })
 
@@ -90,19 +92,31 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     suspend fun enroll(): Enrollment = client.post(endpoint("/api/me/runners")) { authorize() }
         .checked("/api/me/runners").body()
     suspend fun revoke(id: String) { client.delete(endpoint("/api/me/runners/${resourceId(id)}")) { authorize() }.checked("/api/me/runners") }
+    suspend fun rotate(id: String): Enrollment = client.post(endpoint("/api/me/runners/${resourceId(id)}/rotate")) { authorize() }
+        .checked("/api/me/runners/${resourceId(id)}/rotate").body()
     suspend fun catalog(): List<CatalogModel> = client.get(endpoint("/api/pool/catalog")) { authorize() }
         .checked("/api/pool/catalog").body<Catalog>().models
     suspend fun quotas(): Quotas = client.get(endpoint("/api/me/quotas")) { authorize() }.checked("/api/me/quotas").body()
     suspend fun logout() { client.delete(endpoint("/api/auth/token")) { authorize() }.checked("/api/auth/token") }
 
-    fun events(id: String, onConnected: () -> Unit): Flow<SessionEvent> = flow {
-        client.sse(request = { url(endpoint("${sessionPath(id)}/events")); authorize() }) {
+    fun events(id: String, lastEventId: String? = null, onCursor: (String) -> Unit = {}, onConnected: () -> Unit): Flow<SessionEvent> = flow {
+        var cursor = lastEventId?.toLong()
+        client.sse(request = {
+            url(endpoint("${sessionPath(id)}/events")); authorize()
+            lastEventId?.let { header("Last-Event-ID", it) }
+        }) {
             onConnected()
             incoming.collect { event ->
                 val data = event.data
                 if (data != null) {
                     val type = requireNotNull(event.event) { "Evento SSE sem tipo." }
+                    val next = event.id?.let { raw ->
+                        val value = requireNotNull(raw.toLongOrNull()) { "Cursor SSE inválido." }
+                        require(value > 0 && (cursor == null || value > cursor!!)) { "Cursor SSE fora de ordem." }
+                        value
+                    }
                     emit(decodeEvent(type, data))
+                    if (next != null) { cursor = next; onCursor(next.toString()) }
                 }
             }
         }

@@ -127,6 +127,11 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         mutable.update { it.copy(enrollment = enrollment) }
     }
     fun dismissEnrollment() { mutable.update { it.copy(enrollment = null) } }
+    fun rotate(id: String) = action {
+        mutable.update { it.copy(enrollment = null) }
+        val enrollment = api.rotate(id)
+        mutable.update { it.copy(enrollment = enrollment) }
+    }
     fun revoke(id: String) = action {
         api.revoke(id)
         val runners = api.runners()
@@ -175,7 +180,12 @@ fun reduceEvent(state: SessionScreenState, event: SessionEvent): SessionScreenSt
     }
     is SessionEvent.Finished -> state.copy(
         session = state.session?.copy(state = SessionState.WaitingInput, turnId = null),
-        entries = state.entries + TranscriptEntry(event.value.turnId, "summary", "${event.value.tokens} tokens · ${event.value.durationMs} ms"),
+        entries = state.entries + TranscriptEntry(event.value.turnId, "summary",
+            "${event.value.tokens} tokens · ${event.value.durationMs} ms" + when (event.value.exitCode) {
+                0 -> ""
+                130 -> " · cancelado"
+                else -> " · falha (código ${event.value.exitCode})"
+            }),
     )
     is SessionEvent.Requested -> state.copy(
         session = state.session?.copy(state = SessionState.WaitingApproval),
@@ -193,6 +203,7 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
     private var stream: Job? = null
     private var streamGeneration = 0L
     private var messageSequence = 0L
+    private var lastEventId: String? = null
 
     fun connect() {
         if (stream?.isActive == true) return
@@ -203,7 +214,7 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                 val session = api.session(id)
                 mutable.update { it.copy(session = session, approvals = session.approvals) }
                 if (session.state == SessionState.Closed) return@launch
-                api.events(id) {
+                api.events(id, lastEventId, onCursor = { cursor -> if (generation == streamGeneration) lastEventId = cursor }) {
                     if (generation == streamGeneration) mutable.update { it.copy(connection = StreamConnection.Live) }
                 }.collect { event ->
                     if (generation == streamGeneration) mutable.update { reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1) }

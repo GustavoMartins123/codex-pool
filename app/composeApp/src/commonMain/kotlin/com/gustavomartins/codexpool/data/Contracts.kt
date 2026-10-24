@@ -85,11 +85,13 @@ data class Runner(
     val name: String,
     val online: Boolean,
     val agents: List<Agent>,
+    val revoked: Boolean = false,
     val labels: List<String> = emptyList(),
     @SerialName("allowed_paths") val allowedPaths: List<String> = emptyList(),
 )
 @Serializable data class RunnerList(val runners: List<Runner>)
-@Serializable data class Enrollment(val nonce: String, @SerialName("expires_at") val expiresAt: String)
+@Serializable data class Enrollment(val nonce: String, @SerialName("expires_at") val expiresAt: String,
+    @SerialName("runner_id") val runnerId: String? = null)
 
 @Serializable
 data class CatalogModel(val id: String, val name: String? = null, val protocol: String,
@@ -108,7 +110,7 @@ data class CatalogModel(val id: String, val name: String? = null, val protocol: 
 }
 @Serializable data class TurnDelta(@SerialName("turn_id") val turnId: String, val kind: DeltaKind, val content: String)
 @Serializable data class TurnFinished(@SerialName("turn_id") val turnId: String, val tokens: Long,
-    @SerialName("duration_ms") val durationMs: Long)
+    @SerialName("duration_ms") val durationMs: Long, @SerialName("exit_code") val exitCode: Int = 0)
 @Serializable data class Approval(@SerialName("approval_id") val approvalId: String, val command: String, val context: String)
 @Serializable data class ApprovalResolved(@SerialName("approval_id") val approvalId: String, val decision: Decision)
 @Serializable enum class RunnerStatus { @SerialName("online") Online, @SerialName("offline") Offline, @SerialName("reconnected") Reconnected }
