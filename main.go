@@ -816,6 +816,9 @@ func main() {
 	}
 	defer h.bruteForce.stop()
 	h.startUsagePoller(shutdownCtx)
+	if err := h.startSessionBroker(shutdownCtx); err != nil {
+		log.Fatalf("failed to start session broker: %v", err)
+	}
 	if getenv("PROXY_ENABLE_QUOTA_INTELLIGENCE", "1") != "0" {
 		h.startQuotaIntelligenceRefresher(shutdownCtx)
 	} else {
@@ -966,6 +969,9 @@ type proxyHandler struct {
 	pacer                *requestPacer // Per-session request pacing
 	webSocketRegistryMu  sync.Mutex
 	webSockets           *webSocketRegistry
+	runnerBrokerOnce     sync.Once
+	runnerBroker         *sessionBroker
+	runnerBrokerErr      error
 	// Large JSON rewrites temporarily hold several copies of a request. This
 	// deliberately serializes only those requests on a small production host.
 	largeReplayBodies chan struct{}

@@ -1,0 +1,120 @@
+package runnerproto
+
+import "time"
+
+const Version = 1
+const MaxMessageBytes = 256 << 10
+const MaxInputBytes = 64 << 10
+
+type Workspace struct {
+	Mode   string `json:"mode"`
+	Target string `json:"target,omitempty"`
+}
+
+type CreateSession struct {
+	Agent          string    `json:"agent"`
+	Model          string    `json:"model"`
+	Workspace      Workspace `json:"workspace"`
+	PermissionMode string    `json:"permission_mode"`
+	Prompt         string    `json:"prompt,omitempty"`
+}
+
+type Approval struct {
+	ID        string    `json:"approval_id"`
+	Command   string    `json:"command"`
+	Context   string    `json:"context"`
+	TurnID    string    `json:"turn_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type TurnSummary struct {
+	TurnID     string `json:"turn_id"`
+	Tokens     int64  `json:"tokens"`
+	DurationMS int64  `json:"duration_ms"`
+	ExitCode   int    `json:"exit_code"`
+}
+
+type Session struct {
+	ID             string        `json:"id"`
+	PrincipalID    string        `json:"principal_id"`
+	ClientID       string        `json:"client_id"`
+	Agent          string        `json:"agent"`
+	Model          string        `json:"model"`
+	Workspace      Workspace     `json:"workspace"`
+	PermissionMode string        `json:"permission_mode"`
+	State          string        `json:"state"`
+	RunnerID       string        `json:"runner_id,omitempty"`
+	LeaseExpiresAt time.Time     `json:"lease_expires_at"`
+	TurnID         string        `json:"turn_id,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	ClosedAt       *time.Time    `json:"closed_at,omitempty"`
+	Turns          int           `json:"turns"`
+	ClosedReason   string        `json:"closed_reason,omitempty"`
+	Approvals      []Approval    `json:"approvals"`
+	Summaries      []TurnSummary `json:"turn_summaries"`
+}
+
+type Hello struct {
+	Agents       []string `json:"agents"`
+	OS           string   `json:"os"`
+	Arch         string   `json:"arch"`
+	Labels       []string `json:"labels"`
+	AllowedPaths []string `json:"allowed_paths"`
+}
+
+type Runner struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Online       bool      `json:"online"`
+	Agents       []string  `json:"agents"`
+	Labels       []string  `json:"labels"`
+	AllowedPaths []string  `json:"allowed_paths"`
+	OS           string    `json:"os"`
+	Arch         string    `json:"arch"`
+	Revoked      bool      `json:"revoked"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type Enrollment struct {
+	Nonce     string    `json:"nonce"`
+	ExpiresAt time.Time `json:"expires_at"`
+	RunnerID  string    `json:"runner_id,omitempty"`
+}
+
+type EnrollRequest struct {
+	Nonce string `json:"nonce"`
+	Name  string `json:"name"`
+}
+
+type EnrollResponse struct {
+	RunnerID string `json:"runner_id"`
+	Token    string `json:"token"`
+}
+
+// Every frame carries a version. A connection never negotiates another protocol.
+type Message struct {
+	Version        int      `json:"version"`
+	Type           string   `json:"type"`
+	SessionID      string   `json:"session_id,omitempty"`
+	TurnID         string   `json:"turn_id,omitempty"`
+	Hello          *Hello   `json:"hello,omitempty"`
+	Session        *Session `json:"session,omitempty"`
+	Sessions       []string `json:"sessions,omitempty"`
+	CredentialPath string   `json:"credential_path,omitempty"`
+	Input          string   `json:"input,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	Content        string   `json:"content,omitempty"`
+	ApprovalID     string   `json:"approval_id,omitempty"`
+	Command        string   `json:"command,omitempty"`
+	Context        string   `json:"context,omitempty"`
+	Decision       string   `json:"decision,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
+	Tokens         int64    `json:"tokens,omitempty"`
+	DurationMS     int64    `json:"duration_ms,omitempty"`
+	ExitCode       int      `json:"exit_code,omitempty"`
+	Sequence       uint64   `json:"sequence,omitempty"`
+}
+
+func Frame(kind string) Message { return Message{Version: Version, Type: kind} }

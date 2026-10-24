@@ -355,6 +355,22 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqID = randomID()
 	}
 	w.Header().Set("X-Pool-Request-Id", reqID)
+	if r.URL.Path == "/api/runner/ws" {
+		h.handleRunnerWS(w, r)
+		return
+	}
+	if r.URL.Path == "/api/runner/enroll" {
+		h.handleRunnerEnrollment(w, r)
+		return
+	}
+	if r.URL.Path == "/api/me/runners" || strings.HasPrefix(r.URL.Path, "/api/me/runners/") {
+		h.handleMyRunners(w, r)
+		return
+	}
+	if r.URL.Path == "/api/sessions" || strings.HasPrefix(r.URL.Path, "/api/sessions/") {
+		h.handleSessions(w, r)
+		return
+	}
 	if r.URL.Path == "/admin/debug/transition" {
 		h.handleTransitionDryRun(w, r)
 		return
