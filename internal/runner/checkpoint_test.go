@@ -107,7 +107,7 @@ func TestNativeAgentsResumeTheirOriginalSessionAfterProcessRestart(t *testing.T)
 				} else if native != agent.NativeCheckpoint() {
 					t.Fatal("resume created another native session")
 				}
-				if err := agent.StartTurn("turn", "synthetic input"); err != nil {
+				if err := agent.StartTurn("turn", "synthetic input", runnerproto.TurnSettings{Model: session.Model}); err != nil {
 					agent.Close()
 					t.Fatal(err)
 				}

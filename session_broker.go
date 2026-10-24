@@ -228,13 +228,13 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 	}
 	now := b.now()
 	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: uuid.NewString(), PrincipalID: principal, ClientID: client, Agent: q.Agent, Model: q.Model, Workspace: q.Workspace,
-		PermissionMode: q.PermissionMode, State: "pending_runner", CreatedAt: now, UpdatedAt: now, Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
+		ReasoningEffort: q.ReasoningEffort, PermissionMode: q.PermissionMode, State: "pending_runner", CreatedAt: now, UpdatedAt: now, Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
 	if q.Prompt != "" {
 		s.TurnID = uuid.NewString()
 		s.QueuedInput = q.Prompt
 	}
 	s.ConversationID = s.ID
-	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State})}
+	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State}), newSessionEvent("session.settings", runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})}
 	if q.Prompt != "" {
 		events = append(events, newSessionEvent("turn.input", map[string]any{"turn_id": s.TurnID, "input": q.Prompt}))
 	}
@@ -296,7 +296,7 @@ func (b *sessionBroker) ownedLocked(principal, id string) (*sessionRecord, error
 	return s, nil
 }
 
-func (b *sessionBroker) startTurn(principal, id, input string) (string, error) {
+func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnInput, authorize func(*runnerproto.CreateSession) error) (string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s, err := b.ownedLocked(principal, id)
@@ -307,14 +307,32 @@ func (b *sessionBroker) startTurn(principal, id, input string) (string, error) {
 		return "", sessionError(409, "session is not ready for input")
 	}
 	next := copySession(s)
+	if input.Model != nil {
+		next.Model = *input.Model
+	}
+	if input.ReasoningEffort != nil {
+		next.ReasoningEffort = *input.ReasoningEffort
+	}
+	if authorize == nil {
+		return "", sessionError(503, "model authorization unavailable")
+	}
+	settings := runnerproto.CreateSession{Agent: next.Agent, Model: next.Model, ReasoningEffort: next.ReasoningEffort}
+	if err := authorize(&settings); err != nil {
+		return "", err
+	}
+	next.ReasoningEffort = settings.ReasoningEffort
+	if next.Agent == "codex" && s.ReasoningEffort != "" && next.ReasoningEffort == "" {
+		return "", sessionError(400, "select an explicit reasoning effort; the model default is unavailable")
+	}
 	next.TurnID = uuid.NewString()
-	next.QueuedInput = input
+	next.QueuedInput = input.Input
 	next.State = "running"
 	next.UpdatedAt = b.now()
 	next.CancelRequested = false
 	if err := b.saveLocked(next, "session.turn", principal,
+		newSessionEvent("session.settings", runnerproto.TurnSettings{Model: next.Model, ReasoningEffort: next.ReasoningEffort}),
 		newSessionEvent("state", map[string]any{"state": next.State}),
-		newSessionEvent("turn.input", map[string]any{"turn_id": next.TurnID, "input": input})); err != nil {
+		newSessionEvent("turn.input", map[string]any{"turn_id": next.TurnID, "input": input.Input})); err != nil {
 		return "", err
 	}
 	b.dispatchTurnLocked(next)
@@ -329,6 +347,7 @@ func (b *sessionBroker) dispatchTurnLocked(s *sessionRecord) {
 	m.SessionID = s.ID
 	m.TurnID = s.TurnID
 	m.Input = s.QueuedInput
+	m.Settings = &runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort}
 	b.sendLocked(b.runners[s.RunnerID], m)
 }
 

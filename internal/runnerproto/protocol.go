@@ -2,7 +2,7 @@ package runnerproto
 
 import "time"
 
-const Version = 2
+const Version = 3
 const MaxMessageBytes = 256 << 10
 const MaxInputBytes = 64 << 10
 
@@ -12,11 +12,23 @@ type Workspace struct {
 }
 
 type CreateSession struct {
-	Agent          string    `json:"agent"`
-	Model          string    `json:"model"`
-	Workspace      Workspace `json:"workspace"`
-	PermissionMode string    `json:"permission_mode"`
-	Prompt         string    `json:"prompt,omitempty"`
+	Agent           string    `json:"agent"`
+	Model           string    `json:"model"`
+	ReasoningEffort string    `json:"reasoning_effort"`
+	Workspace       Workspace `json:"workspace"`
+	PermissionMode  string    `json:"permission_mode"`
+	Prompt          string    `json:"prompt,omitempty"`
+}
+
+type TurnSettings struct {
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoning_effort"`
+}
+
+type TurnInput struct {
+	Input           string  `json:"input"`
+	Model           *string `json:"model,omitempty"`
+	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 }
 
 type Approval struct {
@@ -49,6 +61,7 @@ type Session struct {
 	ClientID        string           `json:"client_id"`
 	Agent           string           `json:"agent"`
 	Model           string           `json:"model"`
+	ReasoningEffort string           `json:"reasoning_effort"`
 	Workspace       Workspace        `json:"workspace"`
 	PermissionMode  string           `json:"permission_mode"`
 	State           string           `json:"state"`
@@ -100,6 +113,7 @@ type Message struct {
 	Sessions       []string         `json:"sessions,omitempty"`
 	CredentialPath string           `json:"credential_path,omitempty"`
 	Input          string           `json:"input,omitempty"`
+	Settings       *TurnSettings    `json:"settings,omitempty"`
 	Kind           string           `json:"kind,omitempty"`
 	Content        string           `json:"content,omitempty"`
 	ApprovalID     string           `json:"approval_id,omitempty"`

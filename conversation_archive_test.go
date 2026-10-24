@@ -205,7 +205,7 @@ func TestResumeUsesSameConversationAndPreservesArchivePrefix(t *testing.T) {
 		m.Checkpoint = &runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: "native", NativeLogID: "log"}
 	})
 	brokerEvent(t, b, r, s.ID, "workspace.status", func(m *runnerproto.Message) { m.Status = "ready" })
-	if _, err := b.startTurn(principal, s.ID, "continued question"); err != nil {
+	if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "continued question"}, authorizeSyntheticSession); err != nil {
 		t.Fatal(err)
 	}
 	brokerEvent(t, b, r, s.ID, "turn.started", nil)

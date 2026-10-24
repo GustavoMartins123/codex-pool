@@ -83,7 +83,7 @@ func (h *proxyHandler) handleMyRunners(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *proxyHandler) authorizeSessionModel(identity string, q runnerproto.CreateSession) error {
+func (h *proxyHandler) authorizeSessionModel(identity string, q *runnerproto.CreateSession) error {
 	if h.pool == nil || h.cfg == nil || h.pool.accountAuthority != h.passport {
 		return errors.New("account authority unavailable")
 	}
@@ -93,6 +93,11 @@ func (h *proxyHandler) authorizeSessionModel(identity string, q runnerproto.Crea
 	}
 	for _, model := range poolModelsForClients(visible) {
 		if model.ID == q.Model {
+			effort, err := sessionReasoningEffort(q.Agent, q.ReasoningEffort, model, h.effortCap.limitFor(identity, ""))
+			if err != nil {
+				return err
+			}
+			q.ReasoningEffort = effort
 			protocol := "responses"
 			if q.Agent == "claude" {
 				protocol = "anthropic"
@@ -108,6 +113,22 @@ func (h *proxyHandler) authorizeSessionModel(identity string, q runnerproto.Crea
 		}
 	}
 	return sessionError(403, "model is not in the authorized catalog")
+}
+
+func sessionReasoningEffort(agent, effort string, model poolModelDescriptor, limit string) (string, error) {
+	if effort == "" && model.DefaultReasoningEffort != "" {
+		effort = model.DefaultReasoningEffort
+	}
+	if !runnerproto.ValidReasoningEffort(effort) || (effort != "" && !supportsAgent(model.ReasoningEfforts, effort)) {
+		return "", sessionError(400, "reasoning effort is not supported by the selected model")
+	}
+	if agent == "claude" && (effort == "none" || effort == "minimal") {
+		return "", sessionError(400, "reasoning effort is not supported by the selected agent")
+	}
+	if limit != "" && effort != "" && codexEffortRank[effort] > codexEffortRank[limit] {
+		return "", sessionError(403, "reasoning effort exceeds the account limit")
+	}
+	return effort, nil
 }
 
 func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +162,7 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 				sessionHTTPError(w, err)
 				return
 			}
-			if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, q); err != nil {
+			if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, &q); err != nil {
 				sessionHTTPError(w, err)
 				return
 			}
@@ -196,9 +217,7 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[1] == "turns" {
-		var q struct {
-			Input string `json:"input"`
-		}
+		var q runnerproto.TurnInput
 		if err := decodeSessionJSON(w, r, &q); err != nil {
 			sessionHTTPError(w, err)
 			return
@@ -207,7 +226,9 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, 400, "invalid turn input")
 			return
 		}
-		turn, err := b.startTurn(principal.ID, id, q.Input)
+		turn, err := b.startTurn(principal.ID, id, q, func(settings *runnerproto.CreateSession) error {
+			return h.authorizeSessionModel(principal.ID+"-c-"+client.ID, settings)
+		})
 		if err != nil {
 			sessionHTTPError(w, err)
 			return
@@ -294,6 +315,8 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 	} else {
 		data, _ := json.Marshal(map[string]any{"state": s.State})
 		initial = append(initial, sessionEvent{Type: "state", Data: data})
+		settings, _ := json.Marshal(runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})
+		initial = append(initial, sessionEvent{Type: "session.settings", Data: settings})
 		for _, a := range s.Approvals {
 			data, _ := json.Marshal(a)
 			initial = append(initial, sessionEvent{Type: "approval.requested", Data: data})

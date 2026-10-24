@@ -33,6 +33,7 @@ func fakeAgent(codex bool) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	turn := 0
+	model, effort := "synthetic-model", ""
 	control := os.Getenv("CLAUDE_CONFIG_DIR")
 	nativeID := ""
 	resume := false
@@ -126,10 +127,25 @@ func fakeAgent(codex bool) {
 				}
 				send(map[string]any{"id": frame["id"], "result": map[string]any{"thread": map[string]any{"id": "thread", "sessionId": nativeLogID}}})
 			case "turn/start":
+				var params struct {
+					Model  string `json:"model"`
+					Effort string `json:"effort"`
+					Input  []struct {
+						Text string `json:"text"`
+					} `json:"input"`
+				}
+				if json.Unmarshal(frame["params"], &params) != nil || params.Model == "" {
+					os.Exit(26)
+				}
+				model, effort = params.Model, params.Effort
 				turn++
 				persist()
 				send(map[string]any{"id": frame["id"], "result": map[string]any{"turn": map[string]any{"id": "agent-turn"}}})
 				send(map[string]any{"method": "turn/started", "params": map[string]any{"turn": map[string]any{"id": "agent-turn"}}})
+				if len(params.Input) == 1 && params.Input[0].Text == "report-settings" {
+					complete(model+":"+effort, false)
+					continue
+				}
 				send(map[string]any{"id": "approval-request", "method": "item/commandExecution/requestApproval", "params": map[string]any{"command": "echo synthetic", "reason": "test permission"}})
 			case "turn/interrupt":
 				send(map[string]any{"id": frame["id"], "result": map[string]any{}})
@@ -153,9 +169,16 @@ func fakeAgent(codex bool) {
 			switch rawString(frame["type"]) {
 			case "control_request":
 				var request struct {
-					Subtype string `json:"subtype"`
+					Subtype  string `json:"subtype"`
+					Settings struct {
+						Model  string `json:"model"`
+						Effort string `json:"effortLevel"`
+					} `json:"settings"`
 				}
 				_ = json.Unmarshal(frame["request"], &request)
+				if request.Subtype == "apply_flag_settings" {
+					model, effort = request.Settings.Model, request.Settings.Effort
+				}
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": rawString(frame["request_id"]), "response": map[string]any{}}})
 				if request.Subtype == "interrupt" {
 					complete("cancelled", true)
@@ -163,6 +186,16 @@ func fakeAgent(codex bool) {
 			case "user":
 				turn++
 				persist()
+				var user struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				}
+				_ = json.Unmarshal(frame["message"], &user.Message)
+				if user.Message.Content == "report-settings" {
+					complete(model+":"+effort, false)
+					continue
+				}
 				send(map[string]any{"type": "control_request", "request_id": "permission-request", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "echo synthetic"}}})
 			case "control_response":
 				var response struct {
@@ -229,7 +262,7 @@ func TestAgentApprovalDecisionAndCancellationContracts(t *testing.T) {
 			}
 			for index, decision := range []string{"approve", "deny"} {
 				id := []string{"turn-one", "turn-two"}[index]
-				if err := agent.StartTurn(id, "synthetic"); err != nil {
+				if err := agent.StartTurn(id, "synthetic", runnerproto.TurnSettings{Model: session.Model}); err != nil {
 					t.Fatal(err)
 				}
 				request := next("approval.request")
@@ -244,7 +277,7 @@ func TestAgentApprovalDecisionAndCancellationContracts(t *testing.T) {
 					t.Fatalf("finish=%+v", finished)
 				}
 			}
-			if err := agent.StartTurn("turn-three", "hold"); err != nil {
+			if err := agent.StartTurn("turn-three", "hold", runnerproto.TurnSettings{Model: session.Model}); err != nil {
 				t.Fatal(err)
 			}
 			next("approval.request")

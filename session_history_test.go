@@ -22,7 +22,7 @@ func TestSessionHistorySurvivesRestartAndReplaysPastMemoryRing(t *testing.T) {
 		brokerEvent(t, b, r, s.ID, "turn.event", func(m *runnerproto.Message) { m.Kind = "text"; m.Content = fmt.Sprint(i) })
 	}
 	brokerEvent(t, b, r, s.ID, "turn.finished", func(m *runnerproto.Message) { m.Tokens = 42 })
-	if _, err := b.startTurn(principal, s.ID, "second input"); err != nil {
+	if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "second input"}, authorizeSyntheticSession); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.requestClose(principal, s.ID); err != nil {
@@ -78,7 +78,7 @@ func TestSessionHistoryRejectsMissingRangesAndOldUnrecordedSessions(t *testing.T
 	s := brokerSession(t, b, principal, login.ClientID)
 	response := appAuthRequest(h, "GET", "/api/conversations/"+s.ConversationID+"/history?limit=256", login.Token, "")
 	var page conversationHistoryPage
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Events) != 2 {
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Events) != 3 {
 		t.Fatalf("history route: %d %s", response.Code, response.Body.String())
 	}
 	if err := b.store.db.Update(func(tx *bbolt.Tx) error {

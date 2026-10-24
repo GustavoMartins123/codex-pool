@@ -183,6 +183,7 @@ func (b *sessionBroker) updateConversationTx(tx *bbolt.Tx, s *sessionRecord, eve
 		c.Generation++
 	}
 	c.SessionState = s.State
+	c.Model = s.Model
 	c.Deleting = s.DeleteRequested
 	c.DeleteError = s.DeleteError
 	c.ResumeAvailable = s.State == "closed" && s.TurnID == "" && len(s.Approvals) == 0 && s.Checkpoint != nil && s.Checkpoint.Ready

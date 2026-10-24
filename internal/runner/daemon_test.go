@@ -62,6 +62,7 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 			m.SessionID = session.ID
 			m.TurnID = turn
 			m.Input = "synthetic"
+			m.Settings = &runnerproto.TurnSettings{Model: session.Model}
 			return write(m)
 		}
 		for {

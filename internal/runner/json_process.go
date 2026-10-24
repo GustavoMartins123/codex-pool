@@ -15,7 +15,7 @@ import (
 )
 
 type agentProcess interface {
-	StartTurn(string, string) error
+	StartTurn(string, string, runnerproto.TurnSettings) error
 	Cancel(string) error
 	Decide(string, string) error
 	Close()

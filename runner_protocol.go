@@ -274,7 +274,7 @@ func (b *sessionBroker) heartbeat(r *connectedRunner, ids []string) error {
 
 func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) error {
 	switch m.Type {
-	case "workspace.status", "turn.started", "turn.event", "turn.finished", "approval.request", "approval.cancelled", "process.exit", "agent.checkpoint":
+	case "workspace.status", "turn.started", "turn.event", "turn.finished", "approval.request", "approval.cancelled", "process.exit", "agent.checkpoint", "execution.error":
 	default:
 		return errors.New("unknown runner event")
 	}
@@ -325,6 +325,13 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 	var approval *approvalRecord
 	approvalExists := false
 	switch m.Type {
+	case "execution.error":
+		if m.TurnID == "" || m.TurnID != s.TurnID || m.Content == "" || len(m.Content) > 8<<10 {
+			return errors.New("invalid execution error")
+		}
+		event = "error"
+		payload = map[string]any{"message": m.Content}
+		action = "session.execution_error"
 	case "agent.checkpoint":
 		if !r.hello.PersistentSessions || s.State != "claimed" || s.Ready || !validAgentCheckpoint(m.Checkpoint) || m.Checkpoint.Ready {
 			return errors.New("unexpected native checkpoint")

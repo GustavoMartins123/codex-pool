@@ -591,13 +591,21 @@ func (s *localSession) initialize(credentialPath string) {
 					continue
 				}
 				s.lastTurn = command.TurnID
-				err = agent.StartTurn(command.TurnID, command.Input)
+				if command.Settings == nil {
+					err = errors.New("turn settings are missing")
+				} else {
+					err = agent.StartTurn(command.TurnID, command.Input, *command.Settings)
+				}
 			case "turn.cancel":
 				err = agent.Cancel(command.TurnID)
 			case "approval.decision":
 				err = agent.Decide(command.ApprovalID, command.Decision)
 			}
 			if err != nil {
+				failure := runnerproto.Frame("execution.error")
+				failure.TurnID = command.TurnID
+				failure.Content = err.Error()
+				_ = s.emit(failure)
 				agent.Close()
 				return
 			}

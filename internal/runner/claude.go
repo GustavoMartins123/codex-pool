@@ -72,7 +72,10 @@ func (a *claudeProcess) Close() { a.io.close() }
 func (a *claudeProcess) NativeCheckpoint() runnerproto.AgentCheckpoint {
 	return runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: a.session.ID, NativeLogID: a.session.ID}
 }
-func (a *claudeProcess) StartTurn(id, input string) error {
+func (a *claudeProcess) StartTurn(id, input string, settings runnerproto.TurnSettings) error {
+	if settings.Model == "" || !runnerproto.ValidReasoningEffort(settings.ReasoningEffort) || settings.ReasoningEffort == "none" || settings.ReasoningEffort == "minimal" {
+		return errors.New("invalid Claude turn settings")
+	}
 	a.mu.Lock()
 	if a.turn == id {
 		a.mu.Unlock()
@@ -82,6 +85,20 @@ func (a *claudeProcess) StartTurn(id, input string) error {
 		a.mu.Unlock()
 		return errors.New("agent turn already running")
 	}
+	previousModel, previousEffort := a.session.Model, a.session.ReasoningEffort
+	a.mu.Unlock()
+	if settings.Model != previousModel || settings.ReasoningEffort != previousEffort || settings.ReasoningEffort != "" {
+		var effort any
+		if settings.ReasoningEffort != "" {
+			effort = settings.ReasoningEffort
+		}
+		if _, err := a.control(map[string]any{"subtype": "apply_flag_settings", "settings": map[string]any{"model": settings.Model, "effortLevel": effort}}); err != nil {
+			return err
+		}
+	}
+	a.mu.Lock()
+	a.session.Model = settings.Model
+	a.session.ReasoningEffort = settings.ReasoningEffort
 	a.turn = id
 	a.started = time.Now()
 	a.cancelled = false

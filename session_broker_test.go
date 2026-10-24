@@ -46,6 +46,8 @@ func brokerSession(t *testing.T, b *sessionBroker, principal, client string) *ru
 	return s
 }
 
+func authorizeSyntheticSession(*runnerproto.CreateSession) error { return nil }
+
 func brokerEvent(t *testing.T, b *sessionBroker, r *connectedRunner, id, kind string, configure func(*runnerproto.Message)) {
 	t.Helper()
 	b.mu.Lock()
@@ -146,7 +148,7 @@ func TestSessionLeaseReattachApprovalTimeoutAndCancellation(t *testing.T) {
 	if state.State != "waiting_input" || state.Turns != 1 {
 		t.Fatal("turn did not complete")
 	}
-	if _, err := b.startTurn(principal, s.ID, "next input"); err != nil {
+	if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "next input"}, authorizeSyntheticSession); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.requestClose(principal, s.ID); err != nil {

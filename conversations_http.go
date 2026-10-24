@@ -172,7 +172,7 @@ func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Reques
 			sessionHTTPError(w, err)
 			return
 		}
-		if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, runnerproto.CreateSession{Agent: s.Agent, Model: s.Model, Workspace: s.Workspace, PermissionMode: s.PermissionMode}); err != nil {
+		if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, &runnerproto.CreateSession{Agent: s.Agent, Model: s.Model, ReasoningEffort: s.ReasoningEffort, Workspace: s.Workspace, PermissionMode: s.PermissionMode}); err != nil {
 			sessionHTTPError(w, err)
 			return
 		}

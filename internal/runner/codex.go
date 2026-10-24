@@ -128,7 +128,10 @@ func (a *codexProcess) NativeCheckpoint() runnerproto.AgentCheckpoint {
 	defer a.mu.Unlock()
 	return runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: a.thread, NativeLogID: a.nativeLogID}
 }
-func (a *codexProcess) StartTurn(id, input string) error {
+func (a *codexProcess) StartTurn(id, input string, settings runnerproto.TurnSettings) error {
+	if settings.Model == "" || !runnerproto.ValidReasoningEffort(settings.ReasoningEffort) {
+		return errors.New("invalid Codex turn settings")
+	}
 	a.mu.Lock()
 	if a.turn == id {
 		a.mu.Unlock()
@@ -138,19 +141,29 @@ func (a *codexProcess) StartTurn(id, input string) error {
 		a.mu.Unlock()
 		return errors.New("agent turn already running")
 	}
+	if a.session.ReasoningEffort != "" && settings.ReasoningEffort == "" {
+		a.mu.Unlock()
+		return errors.New("Codex requires an explicit reasoning effort after an override")
+	}
 	a.turn = id
 	a.agentTurn = ""
 	a.tokens = 0
 	a.started = time.Now()
 	a.textItems = map[string]bool{}
 	thread := a.thread
+	a.session.Model = settings.Model
+	a.session.ReasoningEffort = settings.ReasoningEffort
 	a.mu.Unlock()
 	m := runnerproto.Frame("turn.started")
 	m.TurnID = id
 	if err := a.emit(m); err != nil {
 		return err
 	}
-	result, err := a.call("turn/start", map[string]any{"threadId": thread, "input": []map[string]any{{"type": "text", "text": input}}})
+	params := map[string]any{"threadId": thread, "model": settings.Model, "input": []map[string]any{{"type": "text", "text": input}}}
+	if settings.ReasoningEffort != "" {
+		params["effort"] = settings.ReasoningEffort
+	}
+	result, err := a.call("turn/start", params)
 	if err != nil {
 		return err
 	}
