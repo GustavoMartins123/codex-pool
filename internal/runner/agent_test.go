@@ -33,6 +33,50 @@ func fakeAgent(codex bool) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	turn := 0
+	control := os.Getenv("CLAUDE_CONFIG_DIR")
+	nativeID := ""
+	resume := false
+	if codex {
+		control = os.Getenv("CODEX_HOME")
+		nativeID = "thread"
+	} else {
+		for i, arg := range os.Args {
+			if (arg == "--session-id" || arg == "--resume") && i+1 < len(os.Args) {
+				nativeID = os.Args[i+1]
+				resume = arg == "--resume"
+			}
+			if arg == "--no-session-persistence" {
+				os.Exit(20)
+			}
+		}
+	}
+	nativeLogID := nativeID
+	if codex {
+		nativeLogID = "thread-log"
+	}
+	nativePath := filepath.Join(control, "sessions", nativeLogID+".jsonl")
+	persist := func() {
+		if os.MkdirAll(filepath.Dir(nativePath), 0700) != nil {
+			os.Exit(21)
+		}
+		raw, _ := json.Marshal(turn)
+		if os.WriteFile(nativePath, raw, 0600) != nil {
+			os.Exit(22)
+		}
+	}
+	load := func() {
+		raw, err := os.ReadFile(nativePath)
+		if err != nil || json.Unmarshal(raw, &turn) != nil {
+			os.Exit(23)
+		}
+	}
+	if !codex {
+		if resume {
+			load()
+		} else {
+			persist()
+		}
+	}
 	send := func(value any) {
 		if encoder.Encode(value) != nil {
 			os.Exit(3)
@@ -63,15 +107,27 @@ func fakeAgent(codex bool) {
 			case "initialize":
 				send(map[string]any{"id": frame["id"], "result": map[string]any{}})
 			case "initialized":
-			case "thread/start":
+			case "thread/start", "thread/resume":
 				var params map[string]any
 				_ = json.Unmarshal(frame["params"], &params)
 				if (params["model"] != "synthetic-model" && params["model"] != "gpt-5.6-sol") || params["approvalPolicy"] != "untrusted" || params["sandbox"] != "workspace-write" {
 					os.Exit(5)
 				}
-				send(map[string]any{"id": frame["id"], "result": map[string]any{"thread": map[string]any{"id": "thread"}}})
+				if method == "thread/resume" {
+					if params["threadId"] != nativeID {
+						os.Exit(24)
+					}
+					load()
+				} else {
+					if params["ephemeral"] != false {
+						os.Exit(25)
+					}
+					persist()
+				}
+				send(map[string]any{"id": frame["id"], "result": map[string]any{"thread": map[string]any{"id": "thread", "sessionId": nativeLogID}}})
 			case "turn/start":
 				turn++
+				persist()
 				send(map[string]any{"id": frame["id"], "result": map[string]any{"turn": map[string]any{"id": "agent-turn"}}})
 				send(map[string]any{"method": "turn/started", "params": map[string]any{"turn": map[string]any{"id": "agent-turn"}}})
 				send(map[string]any{"id": "approval-request", "method": "item/commandExecution/requestApproval", "params": map[string]any{"command": "echo synthetic", "reason": "test permission"}})
@@ -106,6 +162,7 @@ func fakeAgent(codex bool) {
 				}
 			case "user":
 				turn++
+				persist()
 				send(map[string]any{"type": "control_request", "request_id": "permission-request", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "input": map[string]any{"command": "echo synthetic"}}})
 			case "control_response":
 				var response struct {

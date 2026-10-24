@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bufio"
+	"codex-pool-proxy/internal/runnerproto"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ type agentProcess interface {
 	Cancel(string) error
 	Decide(string, string) error
 	Close()
+	NativeCheckpoint() runnerproto.AgentCheckpoint
 }
 
 type rpcReply struct {

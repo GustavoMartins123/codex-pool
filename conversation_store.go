@@ -44,6 +44,7 @@ type conversationRecord struct {
 	Generation        uint64                `json:"generation"`
 	HistoryComplete   bool                  `json:"history_complete"`
 	Preview           []conversationPreview `json:"preview"`
+	ResumeAvailable   bool                  `json:"resume_available"`
 }
 
 func conversationIndexKey(at time.Time, id string) []byte {
@@ -174,6 +175,7 @@ func (b *sessionBroker) updateConversationTx(tx *bbolt.Tx, s *sessionRecord, eve
 		c.Generation++
 	}
 	c.SessionState = s.State
+	c.ResumeAvailable = s.State == "closed" && s.TurnID == "" && len(s.Approvals) == 0 && s.Checkpoint != nil && s.Checkpoint.Ready
 	c.EventCursor = s.EventCursor
 	c.HistoryComplete = s.HistoryComplete
 	return putConversationTx(tx, previous, &c)

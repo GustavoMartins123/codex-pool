@@ -39,6 +39,7 @@ type localSession struct {
 	agent    agentProcess
 	path     string
 	control  string
+	native   runnerproto.AgentCheckpoint
 	claimed  bool
 	sent     uint64
 	sequence uint64
@@ -183,7 +184,7 @@ func (d *daemon) connect() (bool, error) {
 	}
 	sort.Strings(agents)
 	hello := runnerproto.Frame("hello")
-	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths}
+	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths, PersistentSessions: true}
 	write := func(m runnerproto.Message) error {
 		data, err := json.Marshal(m)
 		if err != nil {
@@ -492,23 +493,44 @@ func (s *localSession) initialize(credentialPath string) {
 		fail()
 		return
 	}
+	var path, control string
+	var err error
+	if s.session.ResumeRequested {
+		checkpoint, loadErr := loadLocalCheckpoint(s.daemon.options, s.session)
+		if loadErr != nil {
+			fail()
+			return
+		}
+		path, control = checkpoint.Path, checkpoint.Control
+		s.mu.Lock()
+		s.path = path
+		s.control = control
+		s.native = runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: checkpoint.NativeSessionID, NativeLogID: checkpoint.NativeLogID}
+		s.mu.Unlock()
+	}
 	token, err := fetchCredential(s.ctx, s.daemon.options.HTTPClient, s.daemon.options.Config, s.session.Agent, credentialPath)
 	if err != nil {
 		fail()
 		return
 	}
-	path, err := prepareWorkspace(s.ctx, s.daemon.options.WorkspaceRoot, s.daemon.options.AllowedPaths, s.session)
-	if err != nil {
-		fail()
-		return
-	}
-	s.mu.Lock()
-	s.path = path
-	s.mu.Unlock()
-	control := filepath.Join(s.daemon.options.WorkspaceRoot, ".control-"+s.session.ID)
-	if err := os.Mkdir(control, 0700); err != nil {
-		fail()
-		return
+	if !s.session.ResumeRequested {
+		path, err = prepareWorkspace(s.ctx, s.daemon.options.WorkspaceRoot, s.daemon.options.AllowedPaths, s.session)
+		if err != nil {
+			fail()
+			return
+		}
+		s.mu.Lock()
+		s.path = path
+		s.mu.Unlock()
+		control, err = runtimePath(s.daemon.options.WorkspaceRoot, ".control-", s.session.ID)
+		if err != nil {
+			fail()
+			return
+		}
+		if err := os.Mkdir(control, 0700); err != nil {
+			fail()
+			return
+		}
 	}
 	s.mu.Lock()
 	s.control = control
@@ -530,10 +552,18 @@ func (s *localSession) initialize(credentialPath string) {
 	}
 	s.mu.Lock()
 	s.agent = agent
+	s.native = agent.NativeCheckpoint()
 	exited := s.exited
 	s.mu.Unlock()
 	if exited {
 		agent.Close()
+		return
+	}
+	m = runnerproto.Frame("agent.checkpoint")
+	native := agent.NativeCheckpoint()
+	m.Checkpoint = &native
+	if s.emit(m) != nil {
+		fail()
 		return
 	}
 	m = runnerproto.Frame("workspace.status")
@@ -583,21 +613,24 @@ func (s *localSession) finish(exit int) {
 		defer close(s.done)
 		s.mu.Lock()
 		s.exited = true
-		path, control, closing := s.path, s.control, s.closing
+		path, control, closing, native := s.path, s.control, s.closing, s.native
 		s.mu.Unlock()
 		s.cancel()
 		if closing {
 			exit = 0
 		}
-		if err := cleanupWorkspace(s.daemon.options.WorkspaceRoot, path, s.session.Workspace.Mode); err != nil {
-			exit = 1
-		}
-		if control != "" {
-			if err := cleanupWorkspace(s.daemon.options.WorkspaceRoot, control, "ephemeral"); err != nil {
+		m := runnerproto.Frame("process.exit")
+		// Closing execution retains the workspace and native transcript. Only
+		// an explicit conversation deletion may remove these persisted resources.
+		if native.NativeSessionID != "" {
+			checkpoint, err := saveLocalCheckpoint(s.daemon.options, s.session, path, control, native)
+			if err != nil {
 				exit = 1
+				m.Status = "checkpoint_failed"
+			} else {
+				m.Checkpoint = checkpoint
 			}
 		}
-		m := runnerproto.Frame("process.exit")
 		m.ExitCode = exit
 		_ = s.emit(m)
 	})

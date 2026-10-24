@@ -169,8 +169,11 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	if downloads.Load() != 1 {
 		t.Fatalf("session credential fetched %d times", downloads.Load())
 	}
-	if _, err := os.Stat(filepath.Join(root, session.ID)); !os.IsNotExist(err) {
-		t.Fatal("ephemeral workspace retained")
+	if _, err := os.Stat(filepath.Join(root, session.ID)); err != nil {
+		t.Fatal("workspace required for resume was removed")
+	}
+	if state.Checkpoint == nil || !state.Checkpoint.Ready {
+		t.Fatal("native checkpoint unavailable after close")
 	}
 	if deltas.Load() < 3 {
 		t.Fatal("agent output did not reach SSE")

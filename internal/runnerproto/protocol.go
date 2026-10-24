@@ -2,7 +2,7 @@ package runnerproto
 
 import "time"
 
-const Version = 1
+const Version = 2
 const MaxMessageBytes = 256 << 10
 const MaxInputBytes = 64 << 10
 
@@ -34,34 +34,45 @@ type TurnSummary struct {
 	ExitCode   int    `json:"exit_code"`
 }
 
+type AgentCheckpoint struct {
+	Version         int    `json:"version"`
+	NativeSessionID string `json:"native_session_id"`
+	NativeLogID     string `json:"native_log_id"`
+	Digest          string `json:"digest"`
+	Ready           bool   `json:"ready"`
+}
+
 type Session struct {
-	ID             string        `json:"id"`
-	ConversationID string        `json:"conversation_id"`
-	PrincipalID    string        `json:"principal_id"`
-	ClientID       string        `json:"client_id"`
-	Agent          string        `json:"agent"`
-	Model          string        `json:"model"`
-	Workspace      Workspace     `json:"workspace"`
-	PermissionMode string        `json:"permission_mode"`
-	State          string        `json:"state"`
-	RunnerID       string        `json:"runner_id,omitempty"`
-	LeaseExpiresAt time.Time     `json:"lease_expires_at"`
-	TurnID         string        `json:"turn_id,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	ClosedAt       *time.Time    `json:"closed_at,omitempty"`
-	Turns          int           `json:"turns"`
-	ClosedReason   string        `json:"closed_reason,omitempty"`
-	Approvals      []Approval    `json:"approvals"`
-	Summaries      []TurnSummary `json:"turn_summaries"`
+	ID              string           `json:"id"`
+	ConversationID  string           `json:"conversation_id"`
+	PrincipalID     string           `json:"principal_id"`
+	ClientID        string           `json:"client_id"`
+	Agent           string           `json:"agent"`
+	Model           string           `json:"model"`
+	Workspace       Workspace        `json:"workspace"`
+	PermissionMode  string           `json:"permission_mode"`
+	State           string           `json:"state"`
+	RunnerID        string           `json:"runner_id,omitempty"`
+	LeaseExpiresAt  time.Time        `json:"lease_expires_at"`
+	TurnID          string           `json:"turn_id,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+	ClosedAt        *time.Time       `json:"closed_at,omitempty"`
+	Turns           int              `json:"turns"`
+	ClosedReason    string           `json:"closed_reason,omitempty"`
+	Approvals       []Approval       `json:"approvals"`
+	Summaries       []TurnSummary    `json:"turn_summaries"`
+	Checkpoint      *AgentCheckpoint `json:"checkpoint,omitempty"`
+	ResumeRequested bool             `json:"resume_requested"`
 }
 
 type Hello struct {
-	Agents       []string `json:"agents"`
-	OS           string   `json:"os"`
-	Arch         string   `json:"arch"`
-	Labels       []string `json:"labels"`
-	AllowedPaths []string `json:"allowed_paths"`
+	Agents             []string `json:"agents"`
+	OS                 string   `json:"os"`
+	Arch               string   `json:"arch"`
+	Labels             []string `json:"labels"`
+	AllowedPaths       []string `json:"allowed_paths"`
+	PersistentSessions bool     `json:"persistent_sessions"`
 }
 
 type Runner struct {
@@ -79,27 +90,28 @@ type Runner struct {
 
 // Every frame carries a version. A connection never negotiates another protocol.
 type Message struct {
-	Version        int      `json:"version"`
-	Type           string   `json:"type"`
-	SessionID      string   `json:"session_id,omitempty"`
-	TurnID         string   `json:"turn_id,omitempty"`
-	Hello          *Hello   `json:"hello,omitempty"`
-	Session        *Session `json:"session,omitempty"`
-	Sessions       []string `json:"sessions,omitempty"`
-	CredentialPath string   `json:"credential_path,omitempty"`
-	Input          string   `json:"input,omitempty"`
-	Kind           string   `json:"kind,omitempty"`
-	Content        string   `json:"content,omitempty"`
-	ApprovalID     string   `json:"approval_id,omitempty"`
-	Command        string   `json:"command,omitempty"`
-	Context        string   `json:"context,omitempty"`
-	Decision       string   `json:"decision,omitempty"`
-	Status         string   `json:"status,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	Tokens         int64    `json:"tokens,omitempty"`
-	DurationMS     int64    `json:"duration_ms,omitempty"`
-	ExitCode       int      `json:"exit_code,omitempty"`
-	Sequence       uint64   `json:"sequence,omitempty"`
+	Version        int              `json:"version"`
+	Type           string           `json:"type"`
+	SessionID      string           `json:"session_id,omitempty"`
+	TurnID         string           `json:"turn_id,omitempty"`
+	Hello          *Hello           `json:"hello,omitempty"`
+	Session        *Session         `json:"session,omitempty"`
+	Checkpoint     *AgentCheckpoint `json:"checkpoint,omitempty"`
+	Sessions       []string         `json:"sessions,omitempty"`
+	CredentialPath string           `json:"credential_path,omitempty"`
+	Input          string           `json:"input,omitempty"`
+	Kind           string           `json:"kind,omitempty"`
+	Content        string           `json:"content,omitempty"`
+	ApprovalID     string           `json:"approval_id,omitempty"`
+	Command        string           `json:"command,omitempty"`
+	Context        string           `json:"context,omitempty"`
+	Decision       string           `json:"decision,omitempty"`
+	Status         string           `json:"status,omitempty"`
+	Reason         string           `json:"reason,omitempty"`
+	Tokens         int64            `json:"tokens,omitempty"`
+	DurationMS     int64            `json:"duration_ms,omitempty"`
+	ExitCode       int              `json:"exit_code,omitempty"`
+	Sequence       uint64           `json:"sequence,omitempty"`
 }
 
 func Frame(kind string) Message { return Message{Version: Version, Type: kind} }

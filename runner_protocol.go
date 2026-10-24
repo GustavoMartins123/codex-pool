@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -273,7 +274,7 @@ func (b *sessionBroker) heartbeat(r *connectedRunner, ids []string) error {
 
 func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) error {
 	switch m.Type {
-	case "workspace.status", "turn.started", "turn.event", "turn.finished", "approval.request", "approval.cancelled", "process.exit":
+	case "workspace.status", "turn.started", "turn.event", "turn.finished", "approval.request", "approval.cancelled", "process.exit", "agent.checkpoint":
 	default:
 		return errors.New("unknown runner event")
 	}
@@ -324,6 +325,16 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 	var approval *approvalRecord
 	approvalExists := false
 	switch m.Type {
+	case "agent.checkpoint":
+		if !r.hello.PersistentSessions || s.State != "claimed" || s.Ready || !validAgentCheckpoint(m.Checkpoint) || m.Checkpoint.Ready {
+			return errors.New("unexpected native checkpoint")
+		}
+		if s.ResumeRequested && (s.Checkpoint == nil || s.Checkpoint.NativeSessionID != m.Checkpoint.NativeSessionID || s.Checkpoint.NativeLogID != m.Checkpoint.NativeLogID) {
+			return errors.New("native resume checkpoint identity changed")
+		}
+		checkpoint := *m.Checkpoint
+		next.Checkpoint = &checkpoint
+		action = "session.native_checkpoint"
 	case "workspace.status":
 		if m.Status == "failed" {
 			if err := b.saveLocked(next, "", r.principal); err != nil {
@@ -427,6 +438,13 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		event = "approval.resolved"
 		payload = map[string]any{"approval_id": m.ApprovalID, "decision": "deny"}
 	case "process.exit":
+		if m.Checkpoint != nil {
+			if !r.hello.PersistentSessions || !validAgentCheckpoint(m.Checkpoint) || !m.Checkpoint.Ready || s.Checkpoint == nil || m.Checkpoint.NativeSessionID != s.Checkpoint.NativeSessionID || m.Checkpoint.NativeLogID != s.Checkpoint.NativeLogID {
+				return errors.New("invalid durable native checkpoint")
+			}
+			checkpoint := *m.Checkpoint
+			next.Checkpoint = &checkpoint
+		}
 		if err := b.saveLocked(next, "", r.principal); err != nil {
 			return err
 		}
@@ -436,6 +454,9 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		}
 		if m.ExitCode != 0 {
 			reason = "agent_failed"
+		}
+		if m.Status == "checkpoint_failed" {
+			reason = "checkpoint_failed"
 		}
 		return b.closeLocked(next, reason)
 	default:
@@ -475,6 +496,33 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		b.dispatchTurnLocked(next)
 	}
 	return nil
+}
+
+func validAgentCheckpoint(checkpoint *runnerproto.AgentCheckpoint) bool {
+	if checkpoint == nil || checkpoint.Version != 1 {
+		return false
+	}
+	if checkpoint.Ready {
+		if len(checkpoint.Digest) != 64 {
+			return false
+		}
+		if _, err := hex.DecodeString(checkpoint.Digest); err != nil {
+			return false
+		}
+	} else if checkpoint.Digest != "" {
+		return false
+	}
+	for _, id := range []string{checkpoint.NativeSessionID, checkpoint.NativeLogID} {
+		if len(id) == 0 || len(id) > 128 {
+			return false
+		}
+		for _, c := range id {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (b *sessionBroker) releaseClaim(r *connectedRunner, id string) error {

@@ -32,7 +32,15 @@ func startClaude(ctx context.Context, exe, workspace, control, origin, token str
 	if session.PermissionMode == "auto" {
 		mode = "bypassPermissions"
 	}
-	args := []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--include-partial-messages", "--no-session-persistence", "--bare", "--model", session.Model, "--permission-mode", mode, "--permission-prompt-tool", "stdio", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
+	args := []string{"-p", "--output-format", "stream-json", "--input-format", "stream-json", "--verbose", "--include-partial-messages", "--bare", "--model", session.Model, "--permission-mode", mode, "--permission-prompt-tool", "stdio", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
+	if session.ResumeRequested {
+		if session.Checkpoint == nil || session.Checkpoint.Version != 1 || session.Checkpoint.NativeSessionID != session.ID || session.Checkpoint.NativeLogID != session.ID {
+			return nil, errors.New("Claude resume requires its original native session checkpoint")
+		}
+		args = append(args, "--resume", session.Checkpoint.NativeSessionID)
+	} else {
+		args = append(args, "--session-id", session.ID)
+	}
 	command := exec.Command(exe, args...)
 	command.Dir = workspace
 	command.Env = cleanEnvironment(map[string]string{"CLAUDE_CONFIG_DIR": control, "ANTHROPIC_BASE_URL": origin, "ANTHROPIC_API_KEY": token, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_ENABLE_TELEMETRY": "0", "CLAUDE_CODE_SDK_READS_SESSION_STATE": "1", "GIT_TERMINAL_PROMPT": "0"})
@@ -61,6 +69,9 @@ func (a *claudeProcess) control(request any) (json.RawMessage, error) {
 	return a.io.call(id, map[string]any{"type": "control_request", "request_id": id, "request": request})
 }
 func (a *claudeProcess) Close() { a.io.close() }
+func (a *claudeProcess) NativeCheckpoint() runnerproto.AgentCheckpoint {
+	return runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: a.session.ID, NativeLogID: a.session.ID}
+}
 func (a *claudeProcess) StartTurn(id, input string) error {
 	a.mu.Lock()
 	if a.turn == id {

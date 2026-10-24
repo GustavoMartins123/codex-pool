@@ -156,6 +156,10 @@ func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
 
 func copySession(s *sessionRecord) *sessionRecord {
 	copy := *s
+	if s.Checkpoint != nil {
+		checkpoint := *s.Checkpoint
+		copy.Checkpoint = &checkpoint
+	}
 	copy.Approvals = append([]runnerproto.Approval{}, s.Approvals...)
 	copy.Summaries = append([]runnerproto.TurnSummary{}, s.Summaries...)
 	return &copy
@@ -376,7 +380,7 @@ func (b *sessionBroker) closeLocked(s *sessionRecord, reason string) error {
 	next.QueuedInput = ""
 	next.Approvals = []runnerproto.Approval{}
 	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": "closed"})}
-	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" {
+	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" || reason == "checkpoint_failed" {
 		events = append(events, newSessionEvent("error", map[string]any{"message": reason}))
 	}
 	events = append(events, newSessionEvent("session.closed", map[string]any{"reason": reason}))

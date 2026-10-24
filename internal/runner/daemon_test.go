@@ -104,7 +104,7 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 						return
 					}
 				}
-			case "workspace.status", "turn.started", "turn.event", "approval.request", "turn.finished", "process.exit":
+			case "workspace.status", "turn.started", "turn.event", "approval.request", "turn.finished", "process.exit", "agent.checkpoint":
 				if m.Sequence != sequence.Load()+1 {
 					fail(errors.New("unexpected event sequence"))
 					return
@@ -153,6 +153,10 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 					}
 				}
 				if m.Type == "process.exit" {
+					if m.Checkpoint == nil || !m.Checkpoint.Ready || m.Status == "checkpoint_failed" {
+						fail(errors.New("native checkpoint was not persisted"))
+						return
+					}
 					closeMessage := runnerproto.Frame("session.close")
 					closeMessage.SessionID = session.ID
 					_ = write(closeMessage)
@@ -195,7 +199,7 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 	if connections.Load() != 2 || downloads.Load() != 1 || finished.Load() != 2 {
 		t.Fatalf("connections=%d credentials=%d turns=%d", connections.Load(), downloads.Load(), finished.Load())
 	}
-	if _, err := os.Stat(filepath.Join(root, session.ID)); !os.IsNotExist(err) {
-		t.Fatal("ephemeral workspace was not cleaned")
+	if _, err := os.Stat(filepath.Join(root, session.ID)); err != nil {
+		t.Fatal("workspace required for resume was removed")
 	}
 }

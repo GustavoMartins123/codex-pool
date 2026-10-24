@@ -25,6 +25,7 @@ type codexProcess struct {
 	emit                    func(runnerproto.Message) error
 	mu                      sync.Mutex
 	thread, turn, agentTurn string
+	nativeLogID             string
 	started                 time.Time
 	tokens                  int64
 	permissions             map[string]codexApproval
@@ -82,22 +83,36 @@ func startCodex(ctx context.Context, exe, workspace, control, origin, token stri
 		policy = "never"
 		sandbox = "danger-full-access"
 	}
-	result, err := a.call("thread/start", map[string]any{"model": session.Model, "modelProvider": "pool", "cwd": workspace, "approvalPolicy": policy, "approvalsReviewer": "user", "sandbox": sandbox, "ephemeral": true, "serviceName": "codex-pool-runner"})
+	method := "thread/start"
+	params := map[string]any{"model": session.Model, "modelProvider": "pool", "cwd": workspace, "approvalPolicy": policy, "approvalsReviewer": "user", "sandbox": sandbox, "ephemeral": false, "serviceName": "codex-pool-runner"}
+	if session.ResumeRequested {
+		if session.Checkpoint == nil || session.Checkpoint.Version != 1 || session.Checkpoint.NativeSessionID == "" {
+			return nil, errors.New("Codex resume requires a native checkpoint")
+		}
+		method = "thread/resume"
+		params = map[string]any{"threadId": session.Checkpoint.NativeSessionID, "model": session.Model, "modelProvider": "pool", "cwd": workspace, "approvalPolicy": policy, "sandbox": sandbox, "excludeTurns": true}
+	}
+	result, err := a.call(method, params)
 	if err != nil {
 		process.close()
 		return nil, err
 	}
 	var response struct {
 		Thread struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			SessionID string `json:"sessionId"`
 		} `json:"thread"`
 	}
-	if json.Unmarshal(result, &response) != nil || response.Thread.ID == "" {
+	if json.Unmarshal(result, &response) != nil || response.Thread.ID == "" || response.Thread.SessionID == "" {
 		process.close()
 		return nil, errors.New("invalid Codex thread response")
 	}
+	if session.ResumeRequested && (response.Thread.ID != session.Checkpoint.NativeSessionID || response.Thread.SessionID != session.Checkpoint.NativeLogID) {
+		return nil, errors.New("Codex resumed a different native thread")
+	}
 	a.mu.Lock()
 	a.thread = response.Thread.ID
+	a.nativeLogID = response.Thread.SessionID
 	a.mu.Unlock()
 	ready = true
 	return a, nil
@@ -108,6 +123,11 @@ func (a *codexProcess) call(method string, params any) (json.RawMessage, error) 
 	return a.io.call(id, map[string]any{"id": id, "method": method, "params": params})
 }
 func (a *codexProcess) Close() { a.io.close() }
+func (a *codexProcess) NativeCheckpoint() runnerproto.AgentCheckpoint {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: a.thread, NativeLogID: a.nativeLogID}
+}
 func (a *codexProcess) StartTurn(id, input string) error {
 	a.mu.Lock()
 	if a.turn == id {
