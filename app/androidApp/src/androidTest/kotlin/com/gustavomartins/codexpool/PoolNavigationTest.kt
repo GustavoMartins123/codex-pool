@@ -1,38 +1,51 @@
 package com.gustavomartins.codexpool
 
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.gustavomartins.codexpool.data.*
 import com.gustavomartins.codexpool.ui.PoolApp
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
+import io.ktor.http.content.TextContent
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.koin.core.context.stopKoin
 
 @RunWith(AndroidJUnit4::class)
 class PoolNavigationTest {
     @get:Rule val compose = createComposeRule()
     private val client = HttpClient(MockEngine { request ->
-        val body = when (request.url.encodedPath) {
-            "/api/sessions" -> """{"sessions":[]}"""
-            "/api/pool/catalog" -> """{"models":[{"id":"test-model","protocol":"openai","available_now":true}]}"""
-            "/api/me/runners" -> """{"runners":[]}"""
-            "/api/me/quotas" -> """{"models":[],"generated_at":"2026-10-23T00:00:00Z"}"""
-            else -> error("Unexpected endpoint in UI test: ${request.url.encodedPath}")
+        if (request.url.encodedPath == "/api/auth/token" && request.method == HttpMethod.Delete) {
+            respond("", HttpStatusCode.NoContent)
+        } else {
+            val body = when (request.url.encodedPath) {
+                "/api/auth/token" -> {
+                    check(PoolJson.decodeFromString<LoginRequest>((request.body as TextContent).text) == LoginRequest("mobile-user", "test-password"))
+                    """{"token":"ui-test-token","client_id":"test-client"}"""
+                }
+                "/api/sessions" -> """{"sessions":[]}"""
+                "/api/pool/catalog" -> """{"models":[{"id":"test-model","protocol":"openai","available_now":true}]}"""
+                "/api/me/runners" -> """{"runners":[]}"""
+                "/api/me/quotas" -> """{"models":[],"generated_at":"2026-10-23T00:00:00Z"}"""
+                else -> error("Unexpected endpoint in UI test: ${request.url.encodedPath}")
+            }
+            respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
-        respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
     }) { poolConfiguration() }
     private val store = object : CredentialStore {
-        override suspend fun read() = Credentials("https://pool.example", "ui-test-token", "test-client")
+        override suspend fun read() = Credentials(AppBuildConfig.PoolUrl, "ui-test-token", "test-client")
         override suspend fun write(credentials: Credentials) {}
         override suspend fun clear() {}
     }
 
-    @After fun closeClient() { client.close() }
+    @After fun closeClient() {
+        stopKoin()
+        client.close()
+    }
 
     @Test fun authenticatedNavigationAndPathPermissionWorkOnDevice() {
         compose.setContent { PoolApp(store, client) }
@@ -49,8 +62,32 @@ class PoolNavigationTest {
         waitForText("Sem quotas disponíveis")
     }
 
+    @Test fun loginUsesWebsiteFieldsAndBuildOriginThenLogoutClearsCredential() {
+        var saved: Credentials? = null
+        val signedOutStore = object : CredentialStore {
+            override suspend fun read() = saved
+            override suspend fun write(credentials: Credentials) { saved = credentials }
+            override suspend fun clear() { saved = null }
+        }
+        compose.setContent { PoolApp(signedOutStore, client) }
+        waitForText("Usuário ou e-mail")
+        compose.onNodeWithText("URL do pool").assertDoesNotExist()
+        compose.onNodeWithText("Usuário ou e-mail").performTextInput("mobile-user")
+        compose.onNodeWithText("Senha").performTextInput("test-password")
+        compose.onNodeWithText("Entrar no pool").performScrollTo().performClick()
+        waitForText("Nenhuma sessão")
+        check(saved?.baseUrl == AppBuildConfig.PoolUrl)
+        compose.onNodeWithText("Sair").performClick()
+        waitForText("Entre com a mesma conta do site.")
+        check(saved == null)
+    }
+
     private fun waitForText(value: String) {
-        compose.waitUntil(10_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
+        try {
+            compose.waitUntil(10_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
+        } catch (failure: Throwable) {
+            throw AssertionError("Expected '$value'. UI: ${compose.onRoot(useUnmergedTree = true).printToString()}", failure)
+        }
         compose.onNodeWithText(value).assertIsDisplayed()
     }
 }

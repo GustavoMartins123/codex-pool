@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -6,6 +7,33 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.serialization)
+}
+
+val generatedPoolConfig = layout.buildDirectory.dir("generated/poolConfig/commonMain")
+val generatePoolConfig = tasks.register("generatePoolConfig") {
+    val environment = rootProject.layout.projectDirectory.file(".env")
+    inputs.files(environment)
+    outputs.dir(generatedPoolConfig)
+    doLast {
+        check(environment.asFile.isFile) { "Create app/.env with POOL_URL=https://your-pool-host before building the app." }
+        val entries = environment.asFile.readLines(Charsets.UTF_8)
+            .map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map { line ->
+                check('=' in line) { "Invalid entry in app/.env: expected KEY=value." }
+                line.substringBefore('=').trim() to line.substringAfter('=').trim()
+            }
+        val urls = entries.filter { it.first == "POOL_URL" }
+        check(urls.size == 1) { "app/.env must declare POOL_URL exactly once." }
+        val value = urls.single().second.removeSurrounding("\"").removeSurrounding("'")
+        val uri = URI(value)
+        check(uri.scheme == "https" && !uri.host.isNullOrBlank() && (uri.port == -1 || uri.port in 1..65535) && uri.rawUserInfo == null &&
+            uri.rawQuery == null && uri.rawFragment == null && (uri.rawPath.isEmpty() || uri.rawPath == "/")) {
+            "POOL_URL must be an HTTPS origin without credentials, path, query or fragment."
+        }
+        val target = generatedPoolConfig.get().file("com/gustavomartins/codexpool/data/AppBuildConfig.kt").asFile
+        target.parentFile.mkdirs()
+        target.writeText("package com.gustavomartins.codexpool.data\n\nobject AppBuildConfig { const val PoolUrl = \"${uri.toASCIIString().trimEnd('/')}\" }\n")
+    }
 }
 
 kotlin {
@@ -26,6 +54,7 @@ kotlin {
     // Runs shared contract and state tests on hosts without Xcode.
     jvm { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
     sourceSets {
+        commonMain { kotlin.srcDir(generatePoolConfig) }
         commonMain.dependencies {
             implementation(libs.compose.runtime)
             implementation(libs.compose.foundation)

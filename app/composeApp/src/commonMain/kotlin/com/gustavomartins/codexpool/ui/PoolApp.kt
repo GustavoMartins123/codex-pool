@@ -48,7 +48,7 @@ fun PoolApp(store: CredentialStore, client: HttpClient) {
         module {
             single<CredentialStore> { store }
             single { client }
-            viewModel { AuthViewModel(get(), get()) }
+            viewModel { AuthViewModel(get(), get(), AppBuildConfig.PoolUrl) }
             viewModel { parameters -> DashboardViewModel(parameters.get()) }
             viewModel { parameters -> SessionViewModel(parameters.get(), parameters.get()) }
         }

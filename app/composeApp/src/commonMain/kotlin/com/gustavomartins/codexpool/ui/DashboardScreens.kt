@@ -20,8 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.gustavomartins.codexpool.data.*
 
 @Composable
-fun LoginScreen(state: AuthState, login: (String, String, String) -> Unit, clear: () -> Unit) {
-    var url by rememberSaveable { mutableStateOf("") }
+fun LoginScreen(state: AuthState, login: (String, String) -> Unit, clear: () -> Unit) {
     var username by rememberSaveable { mutableStateOf("") }
     // Passwords are never saved into activity or navigation state.
     var password by remember { mutableStateOf("") }
@@ -32,14 +31,13 @@ fun LoginScreen(state: AuthState, login: (String, String, String) -> Unit, clear
         Spacer(Modifier.height(28.dp))
         Text("Seu código.\nSuas máquinas.", style = MaterialTheme.typography.headlineLarge)
         Text("Abra sessões de Codex e Claude nos runners conectados à sua conta.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth(), label = { Text("URL do pool") },
-            placeholder = { Text("https://pool.exemplo.com") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), enabled = !state.loading)
-        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Usuário") }, singleLine = true, enabled = !state.loading)
+        Text("Entre com a mesma conta do site.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Usuário ou e-mail") }, singleLine = true, enabled = !state.loading)
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Senha") }, singleLine = true,
             visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !state.loading)
         ErrorMessage(state.error)
-        Button(onClick = { login(url, username, password); password = "" }, Modifier.fillMaxWidth().height(52.dp),
-            enabled = !state.loading && url.isNotBlank() && username.isNotBlank() && password.isNotEmpty()) { Text("Entrar no pool") }
+        Button(onClick = { login(username, password); password = "" }, Modifier.fillMaxWidth().height(52.dp),
+            enabled = !state.loading && username.isNotBlank() && password.isNotEmpty()) { Text("Entrar no pool") }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (state.error != null) TextButton(onClick = clear, enabled = !state.loading) { Text("Limpar credencial salva") }
     }

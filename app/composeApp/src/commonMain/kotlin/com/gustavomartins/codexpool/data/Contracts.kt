@@ -71,7 +71,7 @@ data class Session(
 )
 
 @Serializable data class SessionList(val sessions: List<Session>)
-@Serializable data class LoginRequest(val username: String, val password: String)
+@Serializable data class LoginRequest(val email: String, val password: String)
 @Serializable data class LoginResponse(val token: String, @SerialName("client_id") val clientId: String)
 @Serializable data class Credentials(val baseUrl: String, val token: String, val clientId: String)
 @Serializable data class TurnInput(val input: String)

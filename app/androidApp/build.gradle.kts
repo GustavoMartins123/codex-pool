@@ -30,6 +30,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.compose.ui.test)
+    androidTestImplementation(libs.koin.core)
     androidTestImplementation(libs.ktor.client.mock)
     androidTestImplementation(libs.kotlinx.serialization.json)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

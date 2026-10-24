@@ -67,7 +67,7 @@ class PoolStateTest {
         }
         val client = HttpClient(MockEngine { error("No request expected") }) { poolConfiguration() }
         try {
-            val vm = AuthViewModel(store, client)
+            val vm = AuthViewModel(store, client, credentials.baseUrl)
             vm.state.test {
                 val failed = awaitItem()
                 assertNull(failed.credentials)
@@ -86,8 +86,8 @@ class PoolStateTest {
         val engine = MockEngine { respond("""{"token":"test-token","client_id":"mobile"}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
         val client = HttpClient(engine) { poolConfiguration() }
         try {
-            val vm = AuthViewModel(store, client)
-            vm.login(credentials.baseUrl, "user", "password")
+            val vm = AuthViewModel(store, client, credentials.baseUrl)
+            vm.login("user", "password")
             val failed = vm.state.first { !it.loading }
             assertNull(failed.credentials)
             assertNotNull(failed.error)
@@ -102,6 +102,64 @@ class PoolStateTest {
             val failed = vm.state.first { it.connection == StreamConnection.Disconnected && it.error != null }
             assertFalse(failed.canSend)
             assertNotNull(failed.error)
+        } finally { client.close() }
+    }
+
+    @Test fun credentialsForAnotherBuildOriginCannotAuthenticate() = runTest {
+        val store = object : CredentialStore {
+            override suspend fun read() = credentials.copy(baseUrl = "https://other.example")
+            override suspend fun write(credentials: Credentials) {}
+            override suspend fun clear() {}
+        }
+        val engine = MockEngine { error("The stored origin must never receive a request") }
+        val client = HttpClient(engine) { poolConfiguration() }
+        try {
+            val vm = AuthViewModel(store, client, credentials.baseUrl)
+            assertNull(vm.state.value.credentials)
+            assertNotNull(vm.state.value.error)
+            assertTrue(engine.requestHistory.isEmpty())
+        } finally { client.close() }
+    }
+
+    @Test fun logoutRevokesTheAppCredentialBeforeClearingStorage() = runTest {
+        var cleared = false
+        val store = object : CredentialStore {
+            override suspend fun read() = credentials
+            override suspend fun write(credentials: Credentials) {}
+            override suspend fun clear() { cleared = true }
+        }
+        val engine = MockEngine { request ->
+            assertFalse(cleared)
+            assertEquals(HttpMethod.Delete, request.method)
+            assertEquals("/api/auth/token", request.url.encodedPath)
+            assertEquals("Bearer test-token", request.headers[HttpHeaders.Authorization])
+            respond("", HttpStatusCode.NoContent)
+        }
+        val client = HttpClient(engine) { poolConfiguration() }
+        try {
+            val vm = AuthViewModel(store, client, credentials.baseUrl)
+            vm.logout()
+            val loggedOut = vm.state.first { !it.loading }
+            assertNull(loggedOut.credentials)
+            assertTrue(cleared)
+        } finally { client.close() }
+    }
+
+    @Test fun failedRevocationIsReportedAndKeepsTheCredential() = runTest {
+        var cleared = false
+        val store = object : CredentialStore {
+            override suspend fun read() = credentials
+            override suspend fun write(credentials: Credentials) {}
+            override suspend fun clear() { cleared = true }
+        }
+        val client = HttpClient(MockEngine { respond("", HttpStatusCode.ServiceUnavailable) }) { poolConfiguration() }
+        try {
+            val vm = AuthViewModel(store, client, credentials.baseUrl)
+            vm.logout()
+            val failed = vm.state.first { !it.loading }
+            assertEquals(credentials, failed.credentials)
+            assertNotNull(failed.error)
+            assertFalse(cleared)
         } finally { client.close() }
     }
 }

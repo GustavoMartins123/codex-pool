@@ -6,6 +6,7 @@ import io.ktor.client.engine.mock.*
 import io.ktor.http.*
 import io.ktor.http.content.TextContent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 
 class PoolApiTest {
@@ -20,6 +21,8 @@ class PoolApiTest {
             assertNull(request.headers[HttpHeaders.Authorization])
             val body = PoolJson.decodeFromString<LoginRequest>((request.body as TextContent).text)
             assertEquals(LoginRequest("user", "password"), body)
+            val keys = PoolJson.parseToJsonElement((request.body as TextContent).text).jsonObject.keys
+            assertEquals(setOf("email", "password"), keys)
             respond("""{"token":"test-token","client_id":"mobile"}""", HttpStatusCode.OK, jsonHeaders)
         }
         val client = HttpClient(engine) { poolConfiguration() }

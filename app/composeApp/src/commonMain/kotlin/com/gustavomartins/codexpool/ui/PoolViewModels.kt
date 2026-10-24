@@ -17,26 +17,29 @@ fun Throwable.userMessage(): String = when (this) {
 
 data class AuthState(val loading: Boolean = true, val credentials: Credentials? = null, val error: String? = null)
 
-class AuthViewModel(private val store: CredentialStore, private val client: HttpClient) : ViewModel() {
+class AuthViewModel(private val store: CredentialStore, private val client: HttpClient, private val poolUrl: String) : ViewModel() {
     private val mutable = MutableStateFlow(AuthState())
     val state = mutable.asStateFlow()
     init {
         viewModelScope.launch {
             try {
                 val credentials = store.read()
-                if (credentials != null) PoolApi(client, credentials)
+                if (credentials != null) {
+                    require(credentials.baseUrl == poolUrl) { "A credencial salva pertence a outro pool. Limpe a credencial para entrar novamente." }
+                    PoolApi(client, credentials)
+                }
                 mutable.value = AuthState(loading = false, credentials = credentials)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.value = AuthState(loading = false, error = e.userMessage()) }
         }
     }
 
-    fun login(url: String, username: String, password: String) {
+    fun login(username: String, password: String) {
         if (mutable.value.loading) return
         mutable.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
-                val credentials = PoolApi.login(client, url, username, password)
+                val credentials = PoolApi.login(client, poolUrl, username, password)
                 store.write(credentials)
                 mutable.value = AuthState(loading = false, credentials = credentials)
             } catch (e: CancellationException) { throw e }
@@ -48,7 +51,14 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
         if (mutable.value.loading) return
         mutable.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            try { store.clear(); mutable.value = AuthState(loading = false) }
+            try {
+                mutable.value.credentials?.let { credentials ->
+                    try { PoolApi(client, credentials).logout() }
+                    catch (e: PoolApiException) { if (e.status != 401) throw e }
+                }
+                store.clear()
+                mutable.value = AuthState(loading = false)
+            }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(loading = false, error = e.userMessage()) } }
         }

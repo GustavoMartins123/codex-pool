@@ -93,6 +93,7 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     suspend fun catalog(): List<CatalogModel> = client.get(endpoint("/api/pool/catalog")) { authorize() }
         .checked("/api/pool/catalog").body<Catalog>().models
     suspend fun quotas(): Quotas = client.get(endpoint("/api/me/quotas")) { authorize() }.checked("/api/me/quotas").body()
+    suspend fun logout() { client.delete(endpoint("/api/auth/token")) { authorize() }.checked("/api/auth/token") }
 
     fun events(id: String, onConnected: () -> Unit): Flow<SessionEvent> = flow {
         client.sse(request = { url(endpoint("${sessionPath(id)}/events")); authorize() }) {
