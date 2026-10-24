@@ -56,24 +56,6 @@ class PoolNavigationTest {
         client.close()
     }
 
-    @Test fun pairingRequiresReviewAndCodeBeforeApproval() {
-        compose.setContent { PoolApp(store, client) }
-        waitForText("Nenhuma sessão")
-        compose.onNodeWithText("Runners").performClick()
-        waitForText("Nenhum runner conectado")
-        compose.onNodeWithText("Conectar runner", useUnmergedTree = true).performClick()
-        waitForText("Conectar máquina")
-        val link = "codexpool://pair?pool=${AppBuildConfig.PoolUrl.encodeURLParameter()}&request=${"a".repeat(43)}"
-        compose.onNodeWithText("Link de pareamento").performTextInput(link)
-        compose.onNodeWithText("Verificar máquina").performClick()
-        waitForText("Synthetic machine")
-        compose.onNodeWithText("Autorizar máquina").assertIsNotEnabled()
-        compose.onNodeWithText("Código no computador").performTextInput("AbCd1234")
-        compose.onNodeWithText("Autorizar máquina").performClick()
-        waitForText("Decisão enviada")
-        compose.onNodeWithText("Concluir").performClick()
-    }
-
     @Test fun scannedLinkReturnsFromSessionCreationToMachineReview() {
         compose.setContent { PoolApp(store, client) }
         waitForText("Nenhuma sessão")

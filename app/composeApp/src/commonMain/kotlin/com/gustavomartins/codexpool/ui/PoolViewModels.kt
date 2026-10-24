@@ -130,9 +130,8 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         val pairing = api.reviewPairing(link)
         mutable.update { it.copy(pairing = pairing) }
     }
-    fun decidePairing(decision: Decision, code: String) = action {
-        val request = requireNotNull(mutable.value.pairing)
-        api.decidePairing(request.id, decision, code)
+    fun decidePairing(id: String, decision: Decision, code: String) = action {
+        api.decidePairing(id, decision, code)
         mutable.update { it.copy(pairing = null, pairingComplete = true) }
     }
     fun revoke(id: String) = action {

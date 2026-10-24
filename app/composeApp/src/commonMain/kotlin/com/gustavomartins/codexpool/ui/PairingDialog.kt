@@ -35,8 +35,8 @@ fun PairingDialog(state: DashboardState, vm: DashboardViewModel, onScan: (() -> 
                     OutlinedTextField(code, { code = it }, label = { Text("Código no computador") }, singleLine = true, enabled = !state.loading)
                     Text("Expira em ${machine.expiresAt}", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { vm.decidePairing(Decision.Deny, "") }, enabled = !state.loading) { Text("Negar") }
-                        Button(onClick = { vm.decidePairing(Decision.Approve, code.trim()) }, enabled = !state.loading && code.trim().length == 8) { Text("Autorizar máquina") }
+                        OutlinedButton(onClick = { vm.decidePairing(machine.id, Decision.Deny, "") }, enabled = !state.loading) { Text("Negar") }
+                        Button(onClick = { vm.decidePairing(machine.id, Decision.Approve, code.trim()) }, enabled = !state.loading && code.trim().length == 8) { Text("Autorizar máquina") }
                     }
                 }
                 ErrorMessage(state.error)
