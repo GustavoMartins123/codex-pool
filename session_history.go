@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"codex-pool-proxy/internal/runnerproto"
 	"go.etcd.io/bbolt"
 )
 
@@ -86,37 +85,4 @@ func (b *sessionBroker) readEventsLocked(s *sessionRecord, after, through uint64
 		return nil
 	})
 	return events, err
-}
-
-type sessionHistoryPage struct {
-	Session runnerproto.Session `json:"session"`
-	Events  []sessionEvent      `json:"events"`
-	Cursor  uint64              `json:"cursor"`
-	Through uint64              `json:"through"`
-	HasMore bool                `json:"has_more"`
-}
-
-func (b *sessionBroker) history(principal, id string, after uint64, through *uint64) (*sessionHistoryPage, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	s, err := b.ownedLocked(principal, id)
-	if err != nil {
-		return nil, err
-	}
-	if !s.HistoryComplete {
-		return nil, sessionError(409, "history was not recorded for this session")
-	}
-	end := s.EventCursor
-	if through != nil {
-		end = *through
-	}
-	events, err := b.readEventsLocked(s, after, end, 256)
-	if err != nil {
-		return nil, err
-	}
-	cursor := after
-	if len(events) > 0 {
-		cursor = events[len(events)-1].ID
-	}
-	return &sessionHistoryPage{copySession(s).Session, events, cursor, end, cursor < end}, nil
 }

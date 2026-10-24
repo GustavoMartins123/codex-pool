@@ -76,8 +76,8 @@ func TestSessionHistorySurvivesRestartAndReplaysPastMemoryRing(t *testing.T) {
 func TestSessionHistoryRejectsMissingRangesAndOldUnrecordedSessions(t *testing.T) {
 	h, b, login, principal := brokerFixture(t)
 	s := brokerSession(t, b, principal, login.ClientID)
-	response := appAuthRequest(h, "GET", "/api/sessions/"+s.ID+"/history?after=0", login.Token, "")
-	var page sessionHistoryPage
+	response := appAuthRequest(h, "GET", "/api/conversations/"+s.ConversationID+"/history?limit=256", login.Token, "")
+	var page conversationHistoryPage
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Events) != 2 {
 		t.Fatalf("history route: %d %s", response.Code, response.Body.String())
 	}

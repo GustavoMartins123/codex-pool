@@ -331,7 +331,7 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	if repeat := appAuthRequest(h, "GET", ack.CredentialPath, "", ""); repeat.Code != 404 {
 		t.Fatal("credential nonce reused")
 	}
-	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/sessions/"+session.ID+"/events", nil)
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/conversations/"+session.ConversationID+"/events", nil)
 	request.Header.Set("Authorization", "Bearer "+login.Token)
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {

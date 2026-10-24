@@ -131,8 +131,6 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/sessions")
 	if path == "" {
 		switch r.Method {
-		case http.MethodGet:
-			respondJSON(w, map[string]any{"sessions": b.list(principal.ID)})
 		case http.MethodPost:
 			var q runnerproto.CreateSession
 			if err := decodeSessionJSON(w, r, &q); err != nil {
@@ -156,7 +154,7 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
 			respondJSON(w, result)
 		default:
-			w.Header().Set("Allow", "GET, POST")
+			w.Header().Set("Allow", "POST")
 			respondJSONError(w, 405, "method not allowed")
 		}
 		return
@@ -190,43 +188,6 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", "GET, DELETE")
 			respondJSONError(w, 405, "method not allowed")
 		}
-		return
-	}
-	if len(parts) == 2 && parts[1] == "history" {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
-			respondJSONError(w, 405, "method not allowed")
-			return
-		}
-		after, err := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
-		if err != nil {
-			respondJSONError(w, 400, "history requires a valid after cursor")
-			return
-		}
-		var through *uint64
-		if raw := r.URL.Query().Get("through"); raw != "" {
-			value, err := strconv.ParseUint(raw, 10, 64)
-			if err != nil {
-				respondJSONError(w, 400, "invalid history boundary")
-				return
-			}
-			through = &value
-		}
-		page, err := b.history(principal.ID, id, after, through)
-		if err != nil {
-			sessionHTTPError(w, err)
-			return
-		}
-		respondJSON(w, page)
-		return
-	}
-	if len(parts) == 2 && parts[1] == "events" {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
-			respondJSONError(w, 405, "method not allowed")
-			return
-		}
-		h.serveSessionEvents(w, r, b, principal.ID, id)
 		return
 	}
 	if r.Method != http.MethodPost {

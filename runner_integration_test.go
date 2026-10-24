@@ -67,7 +67,7 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	}
 	var session runnerproto.Session
 	_ = json.Unmarshal(created.Body.Bytes(), &session)
-	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/sessions/"+session.ID+"/events", nil)
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/conversations/"+session.ConversationID+"/events", nil)
 	request.Header.Set("Authorization", "Bearer "+login.Token)
 	stream, err := server.Client().Do(request)
 	if err != nil {

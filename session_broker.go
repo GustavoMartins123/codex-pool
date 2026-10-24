@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -264,22 +263,6 @@ func (b *sessionBroker) ownedLocked(principal, id string) (*sessionRecord, error
 		return nil, sessionError(404, "session not found")
 	}
 	return s, nil
-}
-
-func (b *sessionBroker) list(principal string) []runnerproto.Session {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := []runnerproto.Session{}
-	for _, s := range b.sessions {
-		if s.PrincipalID == principal {
-			out = append(out, copySession(s).Session)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
-	if len(out) > 200 {
-		out = out[:200]
-	}
-	return out
 }
 
 func (b *sessionBroker) startTurn(principal, id, input string) (string, error) {

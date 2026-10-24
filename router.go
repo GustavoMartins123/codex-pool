@@ -371,6 +371,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleMyRunners(w, r)
 		return
 	}
+	if r.URL.Path == "/api/conversations" || strings.HasPrefix(r.URL.Path, "/api/conversations/") {
+		h.handleConversations(w, r)
+		return
+	}
 	if r.URL.Path == "/api/sessions" || strings.HasPrefix(r.URL.Path, "/api/sessions/") {
 		h.handleSessions(w, r)
 		return
@@ -751,7 +755,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
 		disabled := strings.HasSuffix(path, "/disable")
 		accountID := strings.TrimSuffix(strings.TrimSuffix(path, "/disable"), "/enable")
-		if !h.authorizeAccountManagement(w, r, accountID) { return }
+		if !h.authorizeAccountManagement(w, r, accountID) {
+			return
+		}
 		h.setAccountDisabled(w, accountID, disabled)
 		return
 	}
@@ -768,7 +774,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Extract account ID from path
 		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
 		accountID := strings.TrimSuffix(path, "/resurrect")
-		if !h.authorizeAccountManagement(w, r, accountID) { return }
+		if !h.authorizeAccountManagement(w, r, accountID) {
+			return
+		}
 		h.resurrectAccount(w, accountID)
 		return
 	}
@@ -784,7 +792,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
 		accountID := strings.TrimSuffix(path, "/refresh")
-		if !h.authorizeAccountManagement(w, r, accountID) { return }
+		if !h.authorizeAccountManagement(w, r, accountID) {
+			return
+		}
 		h.forceRefreshAccount(w, accountID)
 		return
 	}
