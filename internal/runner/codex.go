@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -31,6 +32,11 @@ type codexProcess struct {
 }
 
 func startCodex(ctx context.Context, exe, workspace, control, origin, token string, session runnerproto.Session, emit func(runnerproto.Message) error, onExit func(int)) (agentProcess, error) {
+	if session.PermissionMode == "gated" {
+		if err := checkCodexSandbox(ctx, exe, workspace, control); err != nil {
+			return nil, err
+		}
+	}
 	settings := []string{
 		`model_provider="pool"`, `model_providers.pool.name="codex-pool"`,
 		"model_providers.pool.base_url=" + strconv.Quote(origin+"/v1"),
@@ -38,6 +44,9 @@ func startCodex(ctx context.Context, exe, workspace, control, origin, token stri
 		`model_providers.pool.requires_openai_auth=false`, `cli_auth_credentials_store="ephemeral"`,
 		`mcp_servers={}`, `features.apps=false`, `features.remote_skills=false`, `features.shell_snapshot=false`,
 		`model_providers.pool.request_max_retries=0`, `model_providers.pool.stream_max_retries=0`,
+	}
+	if runtime.GOOS == "windows" && session.PermissionMode == "gated" {
+		settings = append(settings, `windows.sandbox="mxc"`)
 	}
 	args := []string{"app-server", "--listen", "stdio://"}
 	for _, setting := range settings {

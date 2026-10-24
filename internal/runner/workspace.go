@@ -119,7 +119,7 @@ func cleanupWorkspace(root, path, mode string) error {
 // Only operating-system essentials reach the CLI. Existing provider credentials,
 // proxy overrides, executable hooks and agent configuration are not inherited.
 func cleanEnvironment(extra map[string]string) []string {
-	keys := []string{"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "SHELL"}
+	keys := []string{"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "SHELL"}
 	result := []string{}
 	for _, key := range keys {
 		if value, ok := os.LookupEnv(key); ok {

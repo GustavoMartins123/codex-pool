@@ -14,6 +14,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 3 && os.Args[1] == "-c" && os.Args[3] == "sandbox" {
+		os.Exit(0)
+	}
 	if len(os.Args) > 1 && (os.Args[1] == "app-server" || os.Args[1] == "-p") {
 		fakeAgent(os.Args[1] == "app-server")
 		os.Exit(0)
