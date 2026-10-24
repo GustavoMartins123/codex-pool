@@ -61,10 +61,9 @@ func (d *daemon) purge(m runnerproto.Message) {
 	d.mu.Lock()
 	s := d.sessions[m.SessionID]
 	if s != nil {
-		s.mu.Lock()
-		exited := s.exited
-		s.mu.Unlock()
-		if !exited {
+		select {
+		case <-s.done:
+		default:
 			d.mu.Unlock()
 			d.command(result)
 			return

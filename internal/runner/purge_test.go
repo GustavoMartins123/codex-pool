@@ -2,6 +2,7 @@ package runner
 
 import (
 	"codex-pool-proxy/internal/runnerproto"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,5 +56,36 @@ func TestExplicitPurgeRemovesOnlyOwnedEphemeralAndControlDirectories(t *testing.
 				t.Fatal("purge retry failed:", err)
 			}
 		})
+	}
+}
+
+func TestPurgeWaitsUntilCheckpointPublicationIsComplete(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := runnerproto.Session{ID: "11111111-2222-4333-8444-555555555555", RunnerID: "original", State: "closed", Workspace: runnerproto.Workspace{Mode: "ephemeral"}}
+	options := Options{WorkspaceRoot: root, Config: Config{RunnerID: "original"}}
+	path, _ := runtimePath(root, "", session.ID)
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{options: options, ctx: context.Background(), commands: make(chan runnerproto.Message, 2), sessions: map[string]*localSession{}}
+	s := &localSession{exited: true, done: make(chan struct{})}
+	d.sessions[session.ID] = s
+	m := runnerproto.Frame("session.purge")
+	m.SessionID = session.ID
+	m.Session = &session
+	d.purge(m)
+	if result := <-d.commands; result.Status != "failed" {
+		t.Fatal("purge ran while checkpoint was still being published")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("checkpoint race removed workspace")
+	}
+	close(s.done)
+	d.purge(m)
+	if result := <-d.commands; result.Status != "deleted" {
+		t.Fatal("completed checkpoint blocked explicit purge")
 	}
 }
