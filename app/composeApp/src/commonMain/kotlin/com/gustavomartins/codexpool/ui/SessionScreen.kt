@@ -91,22 +91,10 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
                     }
                 }
             }
-            items(state.entries) { entry ->
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (entry.kind == "user") MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(when (entry.kind) {
-                            "user" -> "VOCÊ"
-                            "Text" -> "AGENTE"
-                            "Thinking" -> "RACIOCÍNIO"
-                            "ToolCall" -> "FERRAMENTA"
-                            "ToolResult" -> "RESULTADO"
-                            "summary" -> "TURNO CONCLUÍDO"
-                            else -> error("Tipo de transcrição inválido: ${entry.kind}")
-                        }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        SelectionContainer { Text(entry.content) }
-                    }
-                }
+            items(transcriptSections(state.entries)) { section ->
+                TranscriptSectionCard(section)
             }
+
         }
     }
     if (closeDialog) AlertDialog(onDismissRequest = { closeDialog = false }, title = { Text("Encerrar sessão?") },
