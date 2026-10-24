@@ -20,6 +20,20 @@ type Config struct {
 	Token    string `json:"token"`
 }
 
+// LaunchConfig is safe to keep beside the binary: it contains paths and labels,
+// never the runner credential. The credential remains in Config at StatePath.
+type LaunchConfig struct {
+	State      string   `json:"state"`
+	PoolURL    string   `json:"pool_url"`
+	Name       string   `json:"name"`
+	Workspaces string   `json:"workspaces"`
+	Codex      string   `json:"codex"`
+	Claude     string   `json:"claude"`
+	AllowPaths []string `json:"allow_paths"`
+	Labels     []string `json:"labels"`
+	QR         string   `json:"qr,omitempty"`
+}
+
 type Options struct {
 	Config        Config
 	WorkspaceRoot string
@@ -43,6 +57,54 @@ func DefaultStatePath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, "codex-pool", "runnerd", "runner.json"), nil
+}
+
+func ReadLaunchConfig(path string) (LaunchConfig, error) {
+	var cfg LaunchConfig
+	file, err := os.Open(path)
+	if err != nil {
+		return cfg, errors.New("runner launch config unavailable")
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return cfg, errors.New("invalid runner launch config")
+	}
+	if !filepath.IsAbs(cfg.State) || cfg.State == "" {
+		return cfg, errors.New("runner launch config requires an absolute state path")
+	}
+	if err := ValidateOrigin(cfg.PoolURL); err != nil {
+		return cfg, err
+	}
+	if cfg.Name == "" || strings.ContainsAny(cfg.Name, "\x00\r\n") || len(cfg.Name) > 256 {
+		return cfg, errors.New("runner launch config requires a valid name")
+	}
+	if !filepath.IsAbs(cfg.Workspaces) || cfg.Workspaces == "" {
+		return cfg, errors.New("runner launch config requires an absolute workspace root")
+	}
+	for _, path := range append(append([]string{cfg.Codex, cfg.Claude}, cfg.AllowPaths...), cfg.State, cfg.Workspaces) {
+		if path != "" && strings.ContainsAny(path, "\x00\r\n") {
+			return cfg, errors.New("runner launch config contains an invalid path")
+		}
+	}
+	if cfg.Codex == "" && cfg.Claude == "" {
+		return cfg, errors.New("runner launch config requires codex or claude")
+	}
+	for agent, executable := range map[string]string{"codex": cfg.Codex, "claude": cfg.Claude} {
+		if executable == "" {
+			continue
+		}
+		if !filepath.IsAbs(executable) {
+			return cfg, fmt.Errorf("%s executable path must be absolute", agent)
+		}
+	}
+	for _, path := range cfg.AllowPaths {
+		if !filepath.IsAbs(path) {
+			return cfg, errors.New("allowed workspace paths must be absolute")
+		}
+	}
+	return cfg, nil
 }
 
 func ReadConfig(path string) (Config, error) {

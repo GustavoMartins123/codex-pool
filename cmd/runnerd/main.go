@@ -44,6 +44,7 @@ func run() error {
 	case "pair", "rotate":
 		flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 		state := flags.String("state", defaultState, "runner credential file")
+		launch := flags.String("config", "", "runner launch JSON file (recommended)")
 		origin := flags.String("url", "", "HTTPS pool origin")
 		qr := flags.String("qr", "", "also save the pairing QR as a PNG")
 		name := flags.String("name", "", "runner name")
@@ -52,6 +53,9 @@ func run() error {
 		}
 		if flags.NArg() != 0 {
 			return errors.New("unexpected enrollment arguments")
+		}
+		if *launch != "" {
+			return runConfiguredEnrollment(ctx, os.Args[1], *launch, *qr)
 		}
 		unlock, err := runner.LockState(*state)
 		if err != nil {
@@ -90,6 +94,7 @@ func run() error {
 	case "run":
 		flags := flag.NewFlagSet("run", flag.ContinueOnError)
 		state := flags.String("state", defaultState, "runner credential file")
+		launch := flags.String("config", "", "runner launch JSON file (recommended)")
 		origin := flags.String("url", "", "HTTPS pool origin for first pairing")
 		name := flags.String("name", "", "machine name for first pairing")
 		root := flags.String("workspaces", "", "absolute workspace root")
@@ -103,6 +108,9 @@ func run() error {
 		}
 		if flags.NArg() != 0 {
 			return errors.New("unexpected runner arguments")
+		}
+		if *launch != "" {
+			return runConfiguredRunner(ctx, *launch)
 		}
 		unlock, err := runner.LockState(*state)
 		if err != nil {
@@ -147,6 +155,80 @@ func run() error {
 	default:
 		return errors.New("unknown runnerd command")
 	}
+}
+
+func runConfiguredEnrollment(ctx context.Context, command, path, qrPath string) error {
+	launch, err := runner.ReadLaunchConfig(path)
+	if err != nil {
+		return err
+	}
+	if err := runner.ValidateOrigin(launch.PoolURL); err != nil {
+		return err
+	}
+	unlock, err := runner.LockState(launch.State)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	rotating := command == "rotate"
+	var previous runner.Config
+	if rotating {
+		previous, err = runner.ReadConfig(launch.State)
+		if err != nil {
+			return err
+		}
+		if previous.PoolURL != launch.PoolURL {
+			return errors.New("rotation pool URL differs from enrolled state")
+		}
+	} else if _, err := os.Stat(launch.State); err == nil {
+		return errors.New("runner state already exists; revoke the old runner before replacing its credential")
+	}
+	config, err := pairMachine(ctx, launch.PoolURL, launch.Name, previous.Token, qrPathOrConfig(qrPath, launch.QR))
+	if err != nil {
+		return err
+	}
+	if rotating && config.RunnerID != previous.RunnerID {
+		return errors.New("rotation changed runner identity; revoke the issued credential")
+	}
+	if err := runner.WriteConfig(launch.State, config); err != nil {
+		return errors.New("enrollment succeeded but saving the runner credential failed; revoke this runner and enroll again")
+	}
+	fmt.Printf("Paired runner %s\n", config.RunnerID)
+	return nil
+}
+
+func qrPathOrConfig(cli, configured string) string {
+	if cli != "" {
+		return cli
+	}
+	return configured
+}
+
+func runConfiguredRunner(ctx context.Context, path string) error {
+	launch, err := runner.ReadLaunchConfig(path)
+	if err != nil {
+		return err
+	}
+	unlock, err := runner.LockState(launch.State)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	config, err := runner.ReadConfig(launch.State)
+	if err != nil {
+		return err
+	}
+	if config.PoolURL != launch.PoolURL {
+		return errors.New("launch config pool URL differs from enrolled state")
+	}
+	executables := map[string]string{}
+	if launch.Codex != "" {
+		executables["codex"] = launch.Codex
+	}
+	if launch.Claude != "" {
+		executables["claude"] = launch.Claude
+	}
+	return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: launch.Workspaces, AllowedPaths: launch.AllowPaths, Labels: launch.Labels, Executables: executables})
 }
 
 func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string) (runner.Config, error) {
