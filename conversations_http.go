@@ -72,35 +72,21 @@ func (b *sessionBroker) recentHistory(principal, id string, before, through *uin
 		if end == 0 {
 			return nil
 		}
-		journal := tx.Bucket([]byte(bucketSessionEvents)).Bucket([]byte(s.ID))
-		if journal == nil {
-			return errors.New("conversation journal missing")
-		}
-		cursor := journal.Cursor()
-		key, value := cursor.Seek(eventKey(start))
-		if key == nil {
-			key, value = cursor.Last()
-		} else {
-			key, value = cursor.Prev()
+		reader, err := newConversationEventReader(tx, &c)
+		if err != nil {
+			return err
 		}
 		expected := start - 1
-		bytes := 0
-		for expected > 0 && len(page.Events) < limit && bytes < 512<<10 {
-			if key == nil {
-				return errors.New("conversation journal range missing")
-			}
-			var event sessionEvent
-			if err := json.Unmarshal(value, &event); err != nil {
+		size := 0
+		for expected > 0 && len(page.Events) < limit && size < 512<<10 {
+			event, err := reader.event(expected)
+			if err != nil {
 				return err
 			}
-			if event.ID != expected || !slices.Equal(key, eventKey(expected)) || !json.Valid(event.Data) {
-				return errors.New("conversation journal gap or corruption")
-			}
 			page.Events = append(page.Events, event)
-			bytes += len(value)
+			size += len(event.Data)
 			page.Before = event.ID
 			expected--
-			key, value = cursor.Prev()
 		}
 		page.HasOlder = expected > 0
 		slices.Reverse(page.Events)
@@ -111,7 +97,7 @@ func (b *sessionBroker) recentHistory(principal, id string, before, through *uin
 
 func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	principal, _ := h.authenticateAppRequest(r)
+	principal, client := h.authenticateAppRequest(r)
 	if principal == nil {
 		respondJSONError(w, 401, "app authentication required")
 		return
@@ -165,6 +151,29 @@ func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Reques
 	}
 	if len(parts) != 2 {
 		http.NotFound(w, r)
+		return
+	}
+	if parts[1] == "resume" {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			respondJSONError(w, 405, "method not allowed")
+			return
+		}
+		s, err := b.session(principal.ID, c.SessionID)
+		if err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, runnerproto.CreateSession{Agent: s.Agent, Model: s.Model, Workspace: s.Workspace, PermissionMode: s.PermissionMode}); err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		resumed, err := b.resumeConversation(principal.ID, client.ID, c.ID)
+		if err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		respondJSON(w, resumed)
 		return
 	}
 	if r.Method != http.MethodGet {

@@ -45,6 +45,8 @@ type conversationRecord struct {
 	HistoryComplete   bool                  `json:"history_complete"`
 	Preview           []conversationPreview `json:"preview"`
 	ResumeAvailable   bool                  `json:"resume_available"`
+	ArchiveID         string                `json:"archive_id,omitempty"`
+	ArchivedThrough   uint64                `json:"archived_through"`
 }
 
 func conversationIndexKey(at time.Time, id string) []byte {
@@ -69,6 +71,10 @@ func (c *conversationRecord) applyEvent(event sessionEvent) error {
 	}
 	interacted := event.Type == "turn.input" || event.Type == "turn.finished" ||
 		(event.Type == "turn.delta" && data.Content != "") || (event.Type == "approval.resolved" && data.Source == "user")
+	if event.Type == "state" && data.Source == "user_resume" {
+		interacted = true
+		c.Storage = "active"
+	}
 	if interacted && !event.At.IsZero() {
 		at := event.At
 		c.LastInteractionAt = &at
@@ -138,7 +144,7 @@ func putConversationTx(tx *bbolt.Tx, previous *conversationRecord, next *convers
 	if err := bucket.Put(conversationIndexKey(next.OrderAt, next.ID), []byte(next.ID)); err != nil {
 		return err
 	}
-	if next.Storage == "active" {
+	if next.Storage == "active" && next.HistoryComplete && (next.SessionState == "closed" || next.SessionState == "waiting_input") {
 		if err := tx.Bucket([]byte(bucketConversationDue)).Put(conversationIndexKey(next.ArchiveAfter, next.ID), []byte(next.ID)); err != nil {
 			return err
 		}
@@ -187,7 +193,29 @@ func (b *sessionBroker) updateConversationTx(tx *bbolt.Tx, s *sessionRecord, eve
 func (b *sessionBroker) migrateConversationsTx(tx *bbolt.Tx) error {
 	schema := tx.Bucket([]byte(bucketConversationSchema))
 	if raw := schema.Get([]byte("version")); raw != nil {
-		if !bytes.Equal(raw, []byte("1")) {
+		if bytes.Equal(raw, []byte("1")) {
+			if err := tx.DeleteBucket([]byte(bucketConversationDue)); err != nil {
+				return err
+			}
+			due, err := tx.CreateBucket([]byte(bucketConversationDue))
+			if err != nil {
+				return err
+			}
+			if err := tx.Bucket([]byte(bucketConversations)).ForEach(func(_, raw []byte) error {
+				var c conversationRecord
+				if err := json.Unmarshal(raw, &c); err != nil {
+					return err
+				}
+				if c.Storage == "active" && c.HistoryComplete && (c.SessionState == "closed" || c.SessionState == "waiting_input") {
+					return due.Put(conversationIndexKey(c.ArchiveAfter, c.ID), []byte(c.ID))
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+			return schema.Put([]byte("version"), []byte("2"))
+		}
+		if !bytes.Equal(raw, []byte("2")) {
 			return errors.New("unsupported conversation schema")
 		}
 		return nil
@@ -245,7 +273,7 @@ func (b *sessionBroker) migrateConversationsTx(tx *bbolt.Tx) error {
 			return err
 		}
 	}
-	return schema.Put([]byte("version"), []byte("1"))
+	return schema.Put([]byte("version"), []byte("2"))
 }
 
 type conversationListCursor struct {

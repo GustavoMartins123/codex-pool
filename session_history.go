@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"go.etcd.io/bbolt"
 )
@@ -57,28 +56,26 @@ func (b *sessionBroker) readEventsLocked(s *sessionRecord, after, through uint64
 		if after == through {
 			return nil
 		}
-		journal := tx.Bucket([]byte(bucketSessionEvents)).Bucket([]byte(s.ID))
-		if journal == nil {
-			return errors.New("session event journal missing")
+		var c conversationRecord
+		if err := json.Unmarshal(tx.Bucket([]byte(bucketConversations)).Get([]byte(s.ConversationID)), &c); err != nil {
+			return err
 		}
-		cursor := journal.Cursor()
-		expected := after + 1
-		bytes := 0
-		for key, raw := cursor.Seek(eventKey(expected)); expected <= through; key, raw = cursor.Next() {
-			var event sessionEvent
-			if len(key) != 8 || binary.BigEndian.Uint64(key) != expected {
-				return fmt.Errorf("session event journal gap at %d", expected)
-			}
-			if err := json.Unmarshal(raw, &event); err != nil {
+		if c.PrincipalID != s.PrincipalID || c.SessionID != s.ID {
+			return errors.New("conversation ownership mismatch")
+		}
+		reader, err := newConversationEventReader(tx, &c)
+		if err != nil {
+			return err
+		}
+		size := 0
+		for expected := after + 1; expected <= through; expected++ {
+			event, err := reader.event(expected)
+			if err != nil {
 				return err
 			}
-			if event.ID != expected || event.Type == "" || !json.Valid(event.Data) {
-				return errors.New("invalid session event journal entry")
-			}
 			events = append(events, event)
-			expected++
-			bytes += len(raw)
-			if limit > 0 && (len(events) >= limit || bytes >= 512<<10) {
+			size += len(event.Data)
+			if limit > 0 && (len(events) >= limit || size >= 512<<10) {
 				break
 			}
 		}

@@ -78,12 +78,15 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 	}
 	b := &sessionBroker{store: store, now: func() time.Time { return time.Now().UTC() }, sessions: map[string]*sessionRecord{}, runners: map[string]*connectedRunner{}, streams: map[string]*sessionStream{}, stopped: make(chan struct{})}
 	err := store.db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals, bucketSessionEvents, bucketConversations, bucketConversationIndex, bucketConversationDue, bucketConversationSchema} {
+		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals, bucketSessionEvents, bucketConversations, bucketConversationIndex, bucketConversationDue, bucketConversationSchema, bucketConversationArchives} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return err
 			}
 		}
 		if err := b.migrateConversationsTx(tx); err != nil {
+			return err
+		}
+		if err := cleanupArchiveBuildsTx(tx); err != nil {
 			return err
 		}
 		return tx.Bucket([]byte(bucketRunnerSessions)).ForEach(func(_, raw []byte) error {
@@ -148,6 +151,28 @@ func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
 					b.stopOnce.Do(func() { close(b.stopped) })
 					return
 				}
+			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-b.stopped:
+				return
+			case <-ticker.C:
+			}
+			if err := b.archiveDueConversations(); err != nil {
+				b.mu.Lock()
+				for _, r := range b.runners {
+					r.stop()
+				}
+				b.mu.Unlock()
+				b.stopOnce.Do(func() { close(b.stopped) })
+				return
 			}
 		}
 	}()
