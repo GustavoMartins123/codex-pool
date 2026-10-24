@@ -10,7 +10,12 @@ import (
 func TestLaunchConfigRejectsSecretsAndRelativePaths(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "runner.json")
-	valid := `{"state":"C:\\runner\\state.json","pool_url":"https://pool.example","name":"desktop","workspaces":"C:\\runner\\workspaces","codex":"C:\\Users\\me\\codex.exe","claude":"","allow_paths":["C:\\repos"],"labels":["windows"]}`
+	escape := func(value string) string { return strings.ReplaceAll(value, `\`, `\\`) }
+	state := escape(filepath.Join(root, "state.json"))
+	workspaces := escape(filepath.Join(root, "workspaces"))
+	codex := escape(filepath.Join(root, "codex.exe"))
+	allowPath := escape(filepath.Join(root, "repos"))
+	valid := `{"state":"` + state + `","pool_url":"https://pool.example","name":"desktop","workspaces":"` + workspaces + `","codex":"` + codex + `","claude":"","allow_paths":["` + allowPath + `"],"labels":["windows"]}`
 	if err := os.WriteFile(path, []byte(valid), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -18,9 +23,9 @@ func TestLaunchConfigRejectsSecretsAndRelativePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []string{
-		`{"state":"state.json","pool_url":"https://pool.example","name":"desktop","workspaces":"C:\\work","codex":"C:\\codex.exe"}`,
-		`{"state":"C:\\state.json","pool_url":"https://pool.example","name":"desktop","workspaces":"C:\\work","codex":"C:\\codex.exe","token":"secret"}`,
-		`{"state":"C:\\state.json","pool_url":"http://pool.example","name":"desktop","workspaces":"C:\\work","codex":"C:\\codex.exe"}`,
+		`{"state":"state.json","pool_url":"https://pool.example","name":"desktop","workspaces":"` + workspaces + `","codex":"` + codex + `"}`,
+		`{"state":"` + state + `","pool_url":"https://pool.example","name":"desktop","workspaces":"` + workspaces + `","codex":"` + codex + `","token":"secret"}`,
+		`{"state":"` + state + `","pool_url":"http://pool.example","name":"desktop","workspaces":"` + workspaces + `","codex":"` + codex + `"}`,
 	} {
 		if err := os.WriteFile(path, []byte(value), 0600); err != nil {
 			t.Fatal(err)
