@@ -359,8 +359,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleRunnerWS(w, r)
 		return
 	}
-	if r.URL.Path == "/api/runner/enroll" {
-		h.handleRunnerEnrollment(w, r)
+	if r.URL.Path == "/api/runner/pairings" || strings.HasPrefix(r.URL.Path, "/api/runner/pairings/") {
+		h.handleRunnerPairing(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/me/runner-pairings/") {
+		h.handleAppRunnerPairing(w, r)
 		return
 	}
 	if r.URL.Path == "/api/me/runners" || strings.HasPrefix(r.URL.Path, "/api/me/runners/") {

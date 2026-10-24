@@ -76,7 +76,7 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 	}
 	b := &sessionBroker{store: store, now: func() time.Time { return time.Now().UTC() }, sessions: map[string]*sessionRecord{}, runners: map[string]*connectedRunner{}, streams: map[string]*sessionStream{}, stopped: make(chan struct{})}
 	err := store.db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range []string{bucketRunnerEnrollments, bucketRunners, bucketRunnerSessions, bucketSessionApprovals} {
+		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return err
 			}

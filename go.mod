@@ -11,6 +11,7 @@ require (
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/klauspost/compress v1.18.7
 	github.com/pion/rtp v1.10.4
 	github.com/pion/webrtc/v4 v4.2.17

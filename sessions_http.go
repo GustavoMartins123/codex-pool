@@ -34,31 +34,6 @@ func decodeSessionJSON(w http.ResponseWriter, r *http.Request, value any) error 
 	return nil
 }
 
-func (h *proxyHandler) handleRunnerEnrollment(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		respondJSONError(w, 405, "method not allowed")
-		return
-	}
-	b, err := h.sessionBroker()
-	if err != nil {
-		sessionHTTPError(w, err)
-		return
-	}
-	var q runnerproto.EnrollRequest
-	if err := decodeSessionJSON(w, r, &q); err != nil {
-		sessionHTTPError(w, err)
-		return
-	}
-	result, err := b.enroll(q)
-	if err != nil {
-		sessionHTTPError(w, err)
-		return
-	}
-	respondJSON(w, result)
-}
-
 func (h *proxyHandler) handleMyRunners(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	principal, session, _ := h.authenticateMemberRequest(r)
@@ -85,34 +60,13 @@ func (h *proxyHandler) handleMyRunners(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			respondJSON(w, map[string]any{"runners": items})
-		case http.MethodPost:
-			result, err := b.enrollment(principal.ID)
-			if err != nil {
-				sessionHTTPError(w, err)
-				return
-			}
-			respondJSON(w, result)
 		default:
-			w.Header().Set("Allow", "GET, POST")
+			w.Header().Set("Allow", "GET")
 			respondJSONError(w, 405, "method not allowed")
 		}
 		return
 	}
 	id := strings.TrimPrefix(path, "/")
-	if parts := strings.Split(id, "/"); len(parts) == 2 && parts[1] == "rotate" && parts[0] != "" {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			respondJSONError(w, 405, "method not allowed")
-			return
-		}
-		result, err := b.newEnrollment(principal.ID, parts[0])
-		if err != nil {
-			sessionHTTPError(w, err)
-			return
-		}
-		respondJSON(w, result)
-		return
-	}
 	if strings.Contains(id, "/") || id == "" {
 		http.NotFound(w, r)
 		return

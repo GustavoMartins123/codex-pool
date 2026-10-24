@@ -76,22 +76,6 @@ type Runner struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-type Enrollment struct {
-	Nonce     string    `json:"nonce"`
-	ExpiresAt time.Time `json:"expires_at"`
-	RunnerID  string    `json:"runner_id,omitempty"`
-}
-
-type EnrollRequest struct {
-	Nonce string `json:"nonce"`
-	Name  string `json:"name"`
-}
-
-type EnrollResponse struct {
-	RunnerID string `json:"runner_id"`
-	Token    string `json:"token"`
-}
-
 // Every frame carries a version. A connection never negotiates another protocol.
 type Message struct {
 	Version        int      `json:"version"`

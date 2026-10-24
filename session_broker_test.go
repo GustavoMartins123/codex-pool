@@ -7,15 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"codex-pool-proxy/internal/runnerproto"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"go.etcd.io/bbolt"
 )
 
 func brokerFixture(t *testing.T) (*proxyHandler, *sessionBroker, *appLoginResponse, string) {
@@ -32,14 +29,7 @@ func brokerFixture(t *testing.T) (*proxyHandler, *sessionBroker, *appLoginRespon
 
 func brokerRunner(t *testing.T, b *sessionBroker, principal string) *connectedRunner {
 	t.Helper()
-	enrollment, err := b.enrollment(principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credentials, err := b.enroll(runnerproto.EnrollRequest{Nonce: enrollment.Nonce, Name: "synthetic runner"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	credentials := pairedRunner(t, b, principal)
 	r := &connectedRunner{id: credentials.RunnerID, principal: principal, hello: runnerproto.Hello{Agents: []string{"codex", "claude"}, OS: "test", Arch: "test", AllowedPaths: []string{"/approved"}}, out: make(chan runnerproto.Message, 128), stop: func() {}, lastSeen: b.now()}
 	if err := b.connectRunner(r); err != nil {
 		t.Fatal(err)
@@ -70,107 +60,6 @@ func brokerEvent(t *testing.T, b *sessionBroker, r *connectedRunner, id, kind st
 	}
 	if err := b.runnerEvent(r, m); err != nil {
 		t.Fatalf("%s: %v", kind, err)
-	}
-}
-
-func TestRunnerEnrollmentIsSingleUseAndRevocable(t *testing.T) {
-	_, b, _, principal := brokerFixture(t)
-	e, err := b.enrollment(principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var won atomic.Int32
-	var token runnerproto.EnrollResponse
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for range 12 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			result, err := b.enroll(runnerproto.EnrollRequest{Nonce: e.Nonce, Name: "test"})
-			if err == nil {
-				won.Add(1)
-				mu.Lock()
-				token = *result
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-	if won.Load() != 1 {
-		t.Fatalf("successful enrollments=%d", won.Load())
-	}
-	r := httptest.NewRequest("GET", "/api/runner/ws", nil)
-	r.Header.Set("Authorization", "Bearer "+token.Token)
-	if _, err := b.runnerCredential(r); err != nil {
-		t.Fatal(err)
-	}
-	_ = b.store.db.View(func(tx *bbolt.Tx) error {
-		if strings.Contains(string(tx.Bucket([]byte(bucketRunners)).Get([]byte(token.RunnerID))), token.Token) {
-			t.Fatal("runner token persisted in plaintext")
-		}
-		return nil
-	})
-	if err := b.revokeRunner(principal, token.RunnerID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.runnerCredential(r); err == nil {
-		t.Fatal("revoked credential accepted")
-	}
-	e, err = b.enrollment(principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clock := b.now().Add(11 * time.Minute)
-	b.now = func() time.Time { return clock }
-	if _, err := b.enroll(runnerproto.EnrollRequest{Nonce: e.Nonce, Name: "test"}); err == nil {
-		t.Fatal("expired nonce accepted")
-	}
-}
-
-func TestRunnerCredentialRotationRequiresIdleRunnerAndInvalidatesOldToken(t *testing.T) {
-	_, b, login, principal := brokerFixture(t)
-	e, err := b.enrollment(principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old, err := b.enroll(runnerproto.EnrollRequest{Nonce: e.Nonce, Name: "runner"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotation, err := b.newEnrollment(principal, old.RunnerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated, err := b.enroll(runnerproto.EnrollRequest{Nonce: rotation.Nonce, Name: "renamed"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updated.RunnerID != old.RunnerID || updated.Token == old.Token {
-		t.Fatal("rotation did not preserve identity and change secret")
-	}
-	r := httptest.NewRequest("GET", "/api/runner/ws", nil)
-	r.Header.Set("Authorization", "Bearer "+old.Token)
-	if _, err := b.runnerCredential(r); err == nil {
-		t.Fatal("old runner token accepted")
-	}
-	r.Header.Set("Authorization", "Bearer "+updated.Token)
-	if _, err := b.runnerCredential(r); err != nil {
-		t.Fatal(err)
-	}
-	active := &connectedRunner{id: old.RunnerID, principal: principal, hello: runnerproto.Hello{Agents: []string{"claude"}, OS: "test", Arch: "test"}, out: make(chan runnerproto.Message, 128), stop: func() {}}
-	if err := b.connectRunner(active); err != nil {
-		t.Fatal(err)
-	}
-	s := brokerSession(t, b, principal, login.ClientID)
-	if err := b.claim(active, s.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.newEnrollment(principal, old.RunnerID); err == nil {
-		t.Fatal("rotation allowed with an active session")
-	}
-	if _, err := b.newEnrollment("different-principal", old.RunnerID); err == nil {
-		t.Fatal("cross principal rotation allowed")
 	}
 }
 
@@ -401,14 +290,7 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	b, _ := h.sessionBroker()
-	nonce, err := b.enrollment(principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	credential, err := b.enroll(runnerproto.EnrollRequest{Nonce: nonce.Nonce, Name: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	credential := pairedRunner(t, b, principal)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/api/runner/ws", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": []string{"Bearer " + credential.Token}}})

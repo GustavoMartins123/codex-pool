@@ -49,14 +49,16 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 		h.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	enrollment := appAuthRequest(h, "POST", "/api/me/runners", login.Token, "")
-	if enrollment.Code != 200 {
-		t.Fatal(enrollment.Code)
-	}
-	var nonce runnerproto.Enrollment
-	_ = json.Unmarshal(enrollment.Body.Bytes(), &nonce)
-	credential, err := runner.Enroll(ctx, server.Client(), server.URL, nonce.Nonce, "synthetic integration runner")
+	p, err := runner.BeginPairing(ctx, server.Client(), server.URL, runnerproto.PairingRequest{Name: "integration", OS: "test", Arch: "test"}, "")
 	if err != nil {
+		t.Fatal(err)
+	}
+	approval, _ := json.Marshal(runnerproto.PairingDecision{Decision: "approve", UserCode: p.UserCode})
+	if response := appAuthRequest(h, "POST", "/api/me/runner-pairings/"+p.ID, login.Token, string(approval)); response.Code != 204 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	credential, done, err := runner.CompletePairing(ctx, server.Client(), server.URL, *p)
+	if err != nil || !done {
 		t.Fatal(err)
 	}
 	created := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated","prompt":"synthetic input"}`)

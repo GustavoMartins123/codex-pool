@@ -1,15 +1,19 @@
 package main
 
 import (
+	"codex-pool-proxy/internal/runnerproto"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	qrcode "github.com/skip2/go-qrcode"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
+	"time"
 
 	"codex-pool-proxy/internal/runner"
 )
@@ -28,7 +32,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: runnerd enroll|rotate|run (use --help for flags)")
+		return errors.New("usage: runnerd pair|rotate|run (use --help for flags)")
 	}
 	defaultState, err := runner.DefaultStatePath()
 	if err != nil {
@@ -37,11 +41,11 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	switch os.Args[1] {
-	case "enroll", "rotate":
+	case "pair", "rotate":
 		flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 		state := flags.String("state", defaultState, "runner credential file")
 		origin := flags.String("url", "", "HTTPS pool origin")
-		nonce := flags.String("nonce", "", "single-use enrollment nonce")
+		qr := flags.String("qr", "", "also save the pairing QR as a PNG")
 		name := flags.String("name", "", "runner name")
 		if err := flags.Parse(os.Args[2:]); err != nil {
 			return err
@@ -71,21 +75,23 @@ func run() error {
 		if *name == "" {
 			return errors.New("--name is required")
 		}
-		config, err := runner.Enroll(ctx, nil, *origin, *nonce, *name)
+		config, err := pairMachine(ctx, *origin, *name, previous.Token, *qr)
 		if err != nil {
 			return err
 		}
 		if rotating && config.RunnerID != previous.RunnerID {
-			return errors.New("rotation nonce belongs to another runner; revoke the issued credential")
+			return errors.New("rotation changed runner identity; revoke the issued credential")
 		}
 		if err := runner.WriteConfig(*state, config); err != nil {
 			return errors.New("enrollment succeeded but saving the runner credential failed; revoke this runner and enroll again")
 		}
-		fmt.Printf("Enrolled runner %s\n", config.RunnerID)
+		fmt.Printf("Paired runner %s\n", config.RunnerID)
 		return nil
 	case "run":
 		flags := flag.NewFlagSet("run", flag.ContinueOnError)
 		state := flags.String("state", defaultState, "runner credential file")
+		origin := flags.String("url", "", "HTTPS pool origin for first pairing")
+		name := flags.String("name", "", "machine name for first pairing")
 		root := flags.String("workspaces", "", "absolute workspace root")
 		codex := flags.String("codex", "", "absolute native Codex executable")
 		claude := flags.String("claude", "", "absolute native Claude executable")
@@ -103,9 +109,29 @@ func run() error {
 			return err
 		}
 		defer unlock()
-		config, err := runner.ReadConfig(*state)
-		if err != nil {
-			return err
+		var config runner.Config
+		if *origin != "" {
+			if _, err := os.Stat(*state); !errors.Is(err, os.ErrNotExist) {
+				return errors.New("first pairing requires a new state file; use rotate for an existing runner")
+			}
+			if *name == "" {
+				return errors.New("--name is required for first pairing")
+			}
+			config, err = pairMachine(ctx, *origin, *name, "", "")
+			if err != nil {
+				return err
+			}
+			if err := runner.WriteConfig(*state, config); err != nil {
+				return errors.New("saving paired runner failed; revoke this runner before pairing again")
+			}
+		} else {
+			if *name != "" {
+				return errors.New("--name requires --url for first pairing")
+			}
+			config, err = runner.ReadConfig(*state)
+			if err != nil {
+				return err
+			}
 		}
 		if *root == "" {
 			*root = filepath.Join(filepath.Dir(*state), "workspaces")
@@ -121,4 +147,27 @@ func run() error {
 	default:
 		return errors.New("unknown runnerd command")
 	}
+}
+
+func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string) (runner.Config, error) {
+	p, err := runner.BeginPairing(ctx, nil, origin, runnerproto.PairingRequest{Name: name, OS: runtime.GOOS, Arch: runtime.GOARCH}, rotationToken)
+	if err != nil {
+		return runner.Config{}, err
+	}
+	link, err := runner.PairingLink(origin, p.ID)
+	if err != nil {
+		return runner.Config{}, err
+	}
+	qr, err := qrcode.New(link, qrcode.Medium)
+	if err != nil {
+		return runner.Config{}, err
+	}
+	fmt.Println(qr.ToSmallString(false))
+	fmt.Printf("Scan in the codex-pool app ? Runners ? Connect runner.\n%s\nMachine code: %s\nExpires: %s\nOnly approve a request you initiated. Waiting for confirmation?\n", link, p.UserCode, p.ExpiresAt.Local().Format(time.RFC3339))
+	if qrPath != "" {
+		if err := qr.WriteFile(512, qrPath); err != nil {
+			return runner.Config{}, err
+		}
+	}
+	return runner.AwaitPairing(ctx, nil, origin, *p)
 }

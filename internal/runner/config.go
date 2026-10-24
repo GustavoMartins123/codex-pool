@@ -12,8 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"codex-pool-proxy/internal/runnerproto"
 )
 
 type Config struct {
@@ -108,40 +106,6 @@ func httpClient(client *http.Client) *http.Client {
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &copy
-}
-
-func Enroll(ctx context.Context, client *http.Client, origin, nonce, name string) (Config, error) {
-	var cfg Config
-	if err := ValidateOrigin(origin); err != nil {
-		return cfg, err
-	}
-	body, err := json.Marshal(runnerproto.EnrollRequest{Nonce: nonce, Name: name})
-	if err != nil {
-		return cfg, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/api/runner/enroll", strings.NewReader(string(body)))
-	if err != nil {
-		return cfg, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := httpClient(client).Do(request)
-	if err != nil {
-		return cfg, errors.New("runner enrollment transport failed")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return cfg, fmt.Errorf("runner enrollment rejected (HTTP %d)", response.StatusCode)
-	}
-	var result runnerproto.EnrollResponse
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&result); err != nil {
-		return cfg, errors.New("invalid enrollment response")
-	}
-	if result.RunnerID == "" || !strings.HasPrefix(result.Token, "pool-runner-"+result.RunnerID+".") {
-		return cfg, errors.New("invalid enrollment credential")
-	}
-	return Config{PoolURL: origin, RunnerID: result.RunnerID, Token: result.Token}, nil
 }
 
 func fetchCredential(ctx context.Context, client *http.Client, cfg Config, agent, path string) (string, error) {
