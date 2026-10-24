@@ -54,7 +54,7 @@ func (h *proxyHandler) handleMyQuotas(w http.ResponseWriter, r *http.Request) {
 		respondJSONError(w, 503, "account authority unavailable")
 		return
 	}
-	principal, _ := h.passport.authenticate(r)
+	principal, _, identity := h.authenticateMemberRequest(r)
 	if principal == nil {
 		respondJSONError(w, 401, "authentication required")
 		return
@@ -68,7 +68,7 @@ func (h *proxyHandler) handleMyQuotas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	visible, err := h.memberQuotaSnapshot(principal.ID, now)
+	visible, err := h.memberQuotaSnapshot(identity, now)
 	if err != nil {
 		respondJSONError(w, 503, "quota authorization unavailable")
 		return

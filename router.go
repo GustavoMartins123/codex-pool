@@ -448,6 +448,9 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/auth/login":
 		h.handlePassportLogin(w, r)
 		return
+	case "/api/auth/token":
+		h.handleAppToken(w, r)
+		return
 	case "/api/auth/config":
 		h.handleAuthConfig(w, r)
 		return
@@ -593,6 +596,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleOperatorAccounts(w, r)
 		return
 	case "/api/pool/catalog":
+		if len(r.Header.Values("Authorization")) != 0 {
+			h.handleAppCatalog(w, r)
+			return
+		}
 		if !h.checkMemberOrAdminAuth(w, r) {
 			return
 		}

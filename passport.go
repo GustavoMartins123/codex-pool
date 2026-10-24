@@ -197,6 +197,7 @@ type ClientCredential struct {
 	ID                 string       `json:"id"`
 	PrincipalID        string       `json:"principal_id"`
 	Label              string       `json:"label"`
+	Purpose            string       `json:"purpose,omitempty"`
 	Status             string       `json:"status"`
 	ValidAfter         time.Time    `json:"valid_after,omitempty"`
 	ExpiresAt          *time.Time   `json:"expires_at,omitempty"`
@@ -575,6 +576,9 @@ func (p *PassportStore) markCredentialSeen(principalID, clientID string, now tim
 
 func (p *PassportStore) byLogin(login string) *Principal {
 	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return nil
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, principal := range p.principals {
@@ -665,12 +669,12 @@ func setSessionCookies(w http.ResponseWriter, token, csrf string) {
 	http.SetCookie(w, &http.Cookie{Name: "pool_csrf", Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
 }
 
-func (p *PassportStore) login(email, password string) (*Principal, string, string, error) {
+func (p *PassportStore) verifyLogin(email, password string) (*Principal, error) {
 	select {
 	case p.passwordWork <- struct{}{}:
 		defer func() { <-p.passwordWork }()
 	default:
-		return nil, "", "", errors.New("password verification busy")
+		return nil, errors.New("password verification busy")
 	}
 	pr := p.byLogin(email)
 	encoded := "$argon2id$v=19$m=65536,t=3,p=4$MDAwMDAwMDAwMDAwMDAwMA$XGlzLL5oqnlF1hNkoqRj3uiKgA4+J5l+6bV9rQ"
@@ -679,7 +683,15 @@ func (p *PassportStore) login(email, password string) (*Principal, string, strin
 	}
 	ok := verifyPassword(encoded, password)
 	if !ok || pr == nil || pr.Kind == PrincipalGuest || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
-		return nil, "", "", errors.New("invalid credentials")
+		return nil, errors.New("invalid credentials")
+	}
+	return pr, nil
+}
+
+func (p *PassportStore) login(email, password string) (*Principal, string, string, error) {
+	pr, err := p.verifyLogin(email, password)
+	if err != nil {
+		return nil, "", "", err
 	}
 	t, c, e := p.createSession(pr.ID)
 	return pr, t, c, e

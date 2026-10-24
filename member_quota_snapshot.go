@@ -28,7 +28,8 @@ func (a memberQuotaAccess) allows(model string) bool {
 // Authorization is read once per request, never retained across requests. All
 // resources and model grants come from the same database read transaction.
 func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poolState, error) {
-	principal, policy, _, err := h.passport.evaluateClientPolicy(identity, "", h.cfg.hotClientPolicies())
+	principalID, clientID := splitClientIdentity(identity)
+	principal, policy, _, err := h.passport.evaluateClientPolicy(principalID, clientID, h.cfg.hotClientPolicies())
 	if err != nil {
 		return nil, err
 	}

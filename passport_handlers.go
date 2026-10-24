@@ -125,20 +125,35 @@ func (h *proxyHandler) handleAuthConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Request) {
+	pr := h.passwordLoginPrincipal(w, r)
+	if pr == nil {
+		return
+	}
+	token, csrf, err := h.passport.createSession(pr.ID)
+	if err != nil {
+		h.passwordLoginFailed(w, r)
+		return
+	}
+	h.passwordLoginSucceeded(r)
+	setSessionCookies(w, token, csrf)
+	respondJSON(w, map[string]any{"principal": publicPrincipal(pr), "csrf": csrf})
+}
+
+func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Request) *Principal {
 	noStore(w)
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
-		return
+		return nil
 	}
 	if h.passport == nil {
 		respondJSONError(w, 503, "accounts unavailable")
-		return
+		return nil
 	}
 	ip := getClientIP(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		h.metrics.incPassport("sign_in_outcomes", "banned")
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
-		return
+		return nil
 	}
 	var q struct {
 		Email    string `json:"email"`
@@ -146,23 +161,29 @@ func (h *proxyHandler) handlePassportLogin(w http.ResponseWriter, r *http.Reques
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&q) != nil {
 		respondJSONError(w, 400, "invalid json")
-		return
+		return nil
 	}
-	pr, token, csrf, err := h.passport.login(q.Email, q.Password)
+	pr, err := h.passport.verifyLogin(q.Email, q.Password)
 	if err != nil {
-		if h.bruteForce != nil {
-			h.bruteForce.recordFailure(ip)
-		}
-		h.metrics.incPassport("sign_in_outcomes", "failed")
-		respondJSONError(w, 401, "email or password is incorrect")
-		return
+		h.passwordLoginFailed(w, r)
+		return nil
 	}
+	return pr
+}
+
+func (h *proxyHandler) passwordLoginFailed(w http.ResponseWriter, r *http.Request) {
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(ip)
+		h.bruteForce.recordFailure(getClientIP(r))
+	}
+	h.metrics.incPassport("sign_in_outcomes", "failed")
+	respondJSONError(w, 401, "email or password is incorrect")
+}
+
+func (h *proxyHandler) passwordLoginSucceeded(r *http.Request) {
+	if h.bruteForce != nil {
+		h.bruteForce.recordSuccess(getClientIP(r))
 	}
 	h.metrics.incPassport("sign_in_outcomes", "succeeded")
-	setSessionCookies(w, token, csrf)
-	respondJSON(w, map[string]any{"principal": publicPrincipal(pr), "csrf": csrf})
 }
 func publicPrincipal(p *Principal) map[string]any {
 	avatarURL := ""
@@ -199,7 +220,7 @@ func (h *proxyHandler) handlePassportLogout(w http.ResponseWriter, r *http.Reque
 
 func (h *proxyHandler) handlePassportMe(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	pr, session := h.passport.authenticate(r)
+	pr, session, _ := h.authenticateMemberRequest(r)
 	if pr == nil {
 		respondJSONError(w, 401, "unauthorized")
 		return
