@@ -23,11 +23,14 @@ android {
 
 dependencies {
     implementation(project(":composeApp"))
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation(libs.androidx.activity.compose)
     implementation(libs.compose.runtime)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.compose.foundation)
+    androidTestImplementation(libs.compose.material3)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.compose.ui.test)
     androidTestImplementation(libs.koin.core)

@@ -73,7 +73,9 @@ data class DashboardState(
     val runners: List<Runner>? = null,
     val quotas: Quotas? = null,
     val catalog: List<CatalogModel>? = null,
-    val enrollment: Enrollment? = null,
+    val pairingOpen: Boolean = false,
+    val pairing: PairingReview? = null,
+    val pairingComplete: Boolean = false,
     val error: String? = null,
 )
 
@@ -121,16 +123,17 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         onCreated(session.id)
     }
 
-    fun enroll() = action {
-        mutable.update { it.copy(enrollment = null) }
-        val enrollment = api.enroll()
-        mutable.update { it.copy(enrollment = enrollment) }
+    fun openPairing() { mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false, error = null) } }
+    fun dismissPairing() { if (!mutable.value.loading) mutable.update { it.copy(pairingOpen = false, pairing = null, pairingComplete = false, error = null) } }
+    fun reviewPairing(link: String) = action {
+        mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false) }
+        val pairing = api.reviewPairing(link)
+        mutable.update { it.copy(pairing = pairing) }
     }
-    fun dismissEnrollment() { mutable.update { it.copy(enrollment = null) } }
-    fun rotate(id: String) = action {
-        mutable.update { it.copy(enrollment = null) }
-        val enrollment = api.rotate(id)
-        mutable.update { it.copy(enrollment = enrollment) }
+    fun decidePairing(decision: Decision, code: String) = action {
+        val request = requireNotNull(mutable.value.pairing)
+        api.decidePairing(request.id, decision, code)
+        mutable.update { it.copy(pairing = null, pairingComplete = true) }
     }
     fun revoke(id: String) = action {
         api.revoke(id)

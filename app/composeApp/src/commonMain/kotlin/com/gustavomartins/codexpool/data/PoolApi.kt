@@ -46,7 +46,9 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
     401 -> "Autenticação recusada pelo pool (401). Entre novamente."
     403 -> "Acesso negado pelo pool (403)."
     404 -> "O pool não disponibiliza $endpoint (404)."
-    409 -> if (endpoint.endsWith("/rotate")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
+    410 -> "O pedido de pareamento expirou. Gere um novo QR no computador."
+    429 -> "Muitas tentativas. Aguarde antes de tentar novamente."
+    409 -> if (endpoint.contains("runner-pairings")) "Encerre as sessões desse runner antes de rotacionar sua credencial."
         else "O estado da sessão mudou no pool (409). Atualize e tente novamente."
     else -> "O pool recusou $endpoint (HTTP $status)."
 })
@@ -95,11 +97,20 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     }
     suspend fun runners(): List<Runner> = client.get(endpoint("/api/me/runners")) { authorize() }
         .checked("/api/me/runners").body<RunnerList>().runners
-    suspend fun enroll(): Enrollment = client.post(endpoint("/api/me/runners")) { authorize() }
-        .checked("/api/me/runners").body()
     suspend fun revoke(id: String) { client.delete(endpoint("/api/me/runners/${resourceId(id)}")) { authorize() }.checked("/api/me/runners") }
-    suspend fun rotate(id: String): Enrollment = client.post(endpoint("/api/me/runners/${resourceId(id)}/rotate")) { authorize() }
-        .checked("/api/me/runners/${resourceId(id)}/rotate").body()
+    suspend fun reviewPairing(link: String): PairingReview {
+        val id = pairingRequestId(link, credentials.baseUrl)
+        return client.get(endpoint("/api/me/runner-pairings/$id")) { authorize() }
+            .checked("/api/me/runner-pairings/$id").body<PairingReview>().also {
+                require(it.id == id) { "O pool retornou outro pedido de pareamento." }
+            }
+    }
+    suspend fun decidePairing(id: String, decision: Decision, code: String) {
+        require(decision == Decision.Deny || code.matches(Regex("[A-Za-z0-9_-]{8}"))) { "Informe o c?digo exibido no computador." }
+        client.post(endpoint("/api/me/runner-pairings/${resourceId(id)}")) {
+            authorize(); contentType(ContentType.Application.Json); setBody(PairingDecision(decision, code))
+        }.checked("/api/me/runner-pairings/$id")
+    }
     suspend fun catalog(): List<CatalogModel> = client.get(endpoint("/api/pool/catalog")) { authorize() }
         .checked("/api/pool/catalog").body<Catalog>().models
     suspend fun quotas(): Quotas = client.get(endpoint("/api/me/quotas")) { authorize() }.checked("/api/me/quotas").body()

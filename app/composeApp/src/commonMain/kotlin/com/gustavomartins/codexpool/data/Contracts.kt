@@ -90,9 +90,6 @@ data class Runner(
     @SerialName("allowed_paths") val allowedPaths: List<String> = emptyList(),
 )
 @Serializable data class RunnerList(val runners: List<Runner>)
-@Serializable data class Enrollment(val nonce: String, @SerialName("expires_at") val expiresAt: String,
-    @SerialName("runner_id") val runnerId: String? = null)
-
 @Serializable
 data class CatalogModel(val id: String, val name: String? = null, val protocol: String,
     @SerialName("available_now") val availableNow: Boolean)

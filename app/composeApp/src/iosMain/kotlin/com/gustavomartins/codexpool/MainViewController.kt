@@ -12,3 +12,5 @@ fun MainViewController(): platform.UIKit.UIViewController {
     val client = HttpClient(Darwin) { poolConfiguration() }
     return ComposeUIViewController { PoolApp(store, client) }
 }
+
+fun receivePairingLink(link: String) { com.gustavomartins.codexpool.data.PairingLinks.receive(link) }

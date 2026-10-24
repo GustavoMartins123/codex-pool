@@ -23,6 +23,14 @@ class PoolNavigationTest {
             respond("", HttpStatusCode.NoContent)
         } else {
             val body = when (request.url.encodedPath) {
+                "/api/me/runner-pairings/" + "a".repeat(43) -> {
+                    if (request.method == HttpMethod.Post) {
+                        val decision = PoolJson.decodeFromString<PairingDecision>((request.body as TextContent).text)
+                        check(decision == PairingDecision(Decision.Approve, "AbCd1234"))
+                        return@MockEngine respond("", HttpStatusCode.NoContent)
+                    }
+                    """{"id":"${"a".repeat(43)}","name":"Synthetic machine","os":"test","arch":"test","expires_at":"2026-10-24T04:00:00Z"}"""
+                }
                 "/api/auth/token" -> {
                     check(PoolJson.decodeFromString<LoginRequest>((request.body as TextContent).text) == LoginRequest("mobile-user", "test-password"))
                     """{"token":"ui-test-token","client_id":"test-client"}"""
@@ -43,9 +51,29 @@ class PoolNavigationTest {
     }
 
     @After fun closeClient() {
+        PairingLinks.clear()
         stopKoin()
         client.close()
     }
+
+    @Test fun pairingRequiresReviewAndCodeBeforeApproval() {
+        compose.setContent { PoolApp(store, client) }
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText("Runners").performClick()
+        waitForText("Nenhum runner conectado")
+        compose.onNodeWithText("Conectar runner", useUnmergedTree = true).performClick()
+        waitForText("Conectar máquina")
+        val link = "codexpool://pair?pool=${AppBuildConfig.PoolUrl.encodeURLParameter()}&request=${"a".repeat(43)}"
+        compose.onNodeWithText("Link de pareamento").performTextInput(link)
+        compose.onNodeWithText("Verificar máquina").performClick()
+        waitForText("Synthetic machine")
+        compose.onNodeWithText("Autorizar máquina").assertIsNotEnabled()
+        compose.onNodeWithText("Código no computador").performTextInput("AbCd1234")
+        compose.onNodeWithText("Autorizar máquina").performClick()
+        waitForText("Decisão enviada")
+        compose.onNodeWithText("Concluir").performClick()
+    }
+
 
     @Test fun authenticatedNavigationAndPathPermissionWorkOnDevice() {
         compose.setContent { PoolApp(store, client) }

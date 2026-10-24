@@ -6,7 +6,9 @@ import ComposeApp
 struct PoolApp: App {
     var body: some Scene {
         WindowGroup {
-            PoolView().ignoresSafeArea()
+            PoolView().ignoresSafeArea().onOpenURL { url in
+                MainViewControllerKt.receivePairingLink(link: url.absoluteString)
+            }
         }
     }
 }

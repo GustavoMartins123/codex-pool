@@ -45,7 +45,7 @@ fun LoginScreen(state: AuthState, login: (String, String) -> Unit, clear: () -> 
 
 @Composable
 fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: DashboardViewModel,
-    logout: () -> Unit, onCreate: () -> Unit, onOpen: (String) -> Unit) {
+    logout: () -> Unit, onScanPairing: (() -> Unit)?, onCreate: () -> Unit, onOpen: (String) -> Unit) {
     var revoke by remember { mutableStateOf<Runner?>(null) }
     Scaffold(
         topBar = { TopAppBar(title = { Brand() }, actions = {
@@ -63,7 +63,7 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
         },
         floatingActionButton = {
             if (state.tab == DashboardTab.Sessions) ExtendedFloatingActionButton(onClick = onCreate) { Text("+ Nova sessão") }
-            if (state.tab == DashboardTab.Runners) ExtendedFloatingActionButton(onClick = vm::enroll, expanded = !state.loading, text = { Text("Conectar runner") }, icon = { Text("+") })
+            if (state.tab == DashboardTab.Runners) ExtendedFloatingActionButton(onClick = vm::openPairing, expanded = true, text = { Text("Conectar runner") }, icon = { Text("+") })
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -98,7 +98,7 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
                                 if (runner.allowedPaths.isNotEmpty()) SelectionContainer { Text(runner.allowedPaths.joinToString("\n"), style = MaterialTheme.typography.labelSmall) }
                                 if (!runner.revoked) {
                                     TextButton(onClick = { revoke = runner }, enabled = !state.loading) { Text("Revogar runner", color = MaterialTheme.colorScheme.error) }
-                                    TextButton(onClick = { vm.rotate(runner.id) }, enabled = !state.loading) { Text("Rotacionar credencial") }
+
                                 }
                             }
                         }
@@ -130,18 +130,8 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
         text = { Text("Essa máquina perderá a autorização para executar sessões.") },
         confirmButton = { TextButton(onClick = { vm.revoke(runner.id); revoke = null }) { Text("Revogar") } },
         dismissButton = { TextButton(onClick = { revoke = null }) { Text("Voltar") } })
-    state.enrollment?.let { enrollment ->
-        AlertDialog(onDismissRequest = vm::dismissEnrollment, title = { Text(if (enrollment.runnerId == null) "Conectar uma máquina" else "Rotacionar credencial") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Execute na máquina com runnerd instalado:")
-                SelectionContainer { Text(
-                    if (enrollment.runnerId == null) "runnerd enroll --url $url --nonce ${enrollment.nonce} --name \"meu-runner\""
-                    else "runnerd rotate --nonce ${enrollment.nonce} --name \"meu-runner\"",
-                    style = MaterialTheme.typography.labelSmall) }
-                if (enrollment.runnerId != null) Text("Pare o runner antes de trocar sua credencial.")
-                Text("Uso único · expira em ${enrollment.expiresAt}")
-            } }, confirmButton = { TextButton(onClick = vm::dismissEnrollment) { Text("Concluir") } })
-    }
+    if (state.pairingOpen) PairingDialog(state, vm, onScanPairing)
+
 }
 
 @Composable

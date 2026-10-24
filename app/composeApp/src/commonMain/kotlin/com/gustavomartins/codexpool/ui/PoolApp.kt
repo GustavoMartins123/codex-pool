@@ -43,7 +43,7 @@ private val PoolColors = darkColorScheme(
 @Serializable private data class SessionRoute(val id: String)
 
 @Composable
-fun PoolApp(store: CredentialStore, client: HttpClient) {
+fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Unit)? = null) {
     val dependencies = remember(store, client) {
         module {
             single<CredentialStore> { store }
@@ -74,7 +74,7 @@ fun PoolApp(store: CredentialStore, client: HttpClient) {
                     DisposableEffect(viewModels) { onDispose { viewModels.clear() } }
                     CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
                         val api = remember { PoolApi(client, credentials) }
-                        AuthenticatedApp(api, state, auth::logout)
+                        AuthenticatedApp(api, state, auth::logout, onScanPairing)
                     }
                 }
             }
@@ -83,13 +83,22 @@ fun PoolApp(store: CredentialStore, client: HttpClient) {
 }
 
 @Composable
-private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit) {
+private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, onScanPairing: (() -> Unit)?) {
     val nav = rememberNavController()
     val dashboard = koinViewModel<DashboardViewModel>(parameters = { parametersOf(api) })
     val state by dashboard.state.collectAsStateWithLifecycle()
+    val pairingLink by PairingLinks.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(pairingLink, state.loading) {
+        val link = pairingLink
+        if (link != null && !state.loading) {
+            nav.popBackStack<DashboardRoute>(inclusive = false)
+            dashboard.reviewPairing(link)
+            PairingLinks.clear()
+        }
+    }
     NavHost(navController = nav, startDestination = DashboardRoute) {
         composable<DashboardRoute> {
-            DashboardScreen(state, api.credentials.baseUrl, auth, dashboard, logout,
+            DashboardScreen(state, api.credentials.baseUrl, auth, dashboard, logout, onScanPairing,
                 onCreate = { dashboard.loadCatalog(); nav.navigate(NewSessionRoute) },
                 onOpen = { nav.navigate(SessionRoute(it)) })
         }
