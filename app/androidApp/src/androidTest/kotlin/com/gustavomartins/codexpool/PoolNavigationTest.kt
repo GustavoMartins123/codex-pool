@@ -45,8 +45,8 @@ class PoolNavigationTest {
         }
     }) { poolConfiguration() }
     private val store = object : CredentialStore {
-        override suspend fun read() = Credentials(AppBuildConfig.PoolUrl, "ui-test-token", "test-client")
-        override suspend fun write(credentials: Credentials) {}
+        override suspend fun read() = PoolAccounts.initial(AppBuildConfig.PoolUrl).withCredentials(Credentials(AppBuildConfig.PoolUrl, "ui-test-token", "test-client"))
+        override suspend fun write(accounts: PoolAccounts) {}
         override suspend fun clear() {}
     }
 
@@ -104,10 +104,10 @@ class PoolNavigationTest {
     }
 
     @Test fun loginUsesWebsiteFieldsAndBuildOriginThenLogoutClearsCredential() {
-        var saved: Credentials? = null
+        var saved: PoolAccounts? = null
         val signedOutStore = object : CredentialStore {
             override suspend fun read() = saved
-            override suspend fun write(credentials: Credentials) { saved = credentials }
+            override suspend fun write(accounts: PoolAccounts) { saved = accounts }
             override suspend fun clear() { saved = null }
         }
         compose.setContent { PoolApp(signedOutStore, client) }
@@ -117,10 +117,41 @@ class PoolNavigationTest {
         compose.onNodeWithText("Senha").performTextInput("test-password")
         compose.onNodeWithText("Entrar no pool").performScrollTo().performClick()
         waitForText("Nenhuma sessão")
-        check(saved?.baseUrl == AppBuildConfig.PoolUrl)
+        check(saved?.selectedUrl == AppBuildConfig.PoolUrl)
+        compose.onNodeWithText("Conta").performClick()
         compose.onNodeWithText("Sair").performClick()
         waitForText("Entre com a mesma conta do site.")
-        check(saved == null)
+        check(saved?.selected?.credentials == null)
+    }
+
+    @Test fun providerDomainsStayInManagementAndSwitchingRestoresEachLogin() {
+        compose.setContent { PoolApp(store, client) }
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText(AppBuildConfig.PoolUrl).assertDoesNotExist()
+        compose.onNodeWithText("Conta").performClick()
+        compose.onNodeWithText("Provedores").performClick()
+        waitForText("Adicionar provedor")
+        compose.onNodeWithText(AppBuildConfig.PoolUrl).assertIsDisplayed()
+        compose.onNodeWithText("Nome do provedor").performScrollTo().performTextInput("Secondary")
+        compose.onNodeWithText("Domínio HTTPS").performScrollTo().performTextInput("https://secondary.example")
+        compose.onNodeWithText("Adicionar e selecionar").performScrollTo().performClick()
+        compose.onNodeWithText("Concluir").performScrollTo().performClick()
+        waitForText("Provedor: Secondary")
+        compose.onNodeWithText("Usuário ou e-mail").performScrollTo().performTextInput("mobile-user")
+        compose.onNodeWithText("Senha").performScrollTo().performTextInput("test-password")
+        compose.onNodeWithText("Entrar no pool").performScrollTo().performClick()
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText("https://secondary.example").assertDoesNotExist()
+        check(client.engine is MockEngine)
+        val engine = client.engine as MockEngine
+        check(engine.requestHistory.any { it.url.host == "secondary.example" && it.url.encodedPath == "/api/auth/token" })
+        compose.onNodeWithText("Conta").performClick()
+        compose.onNodeWithText("Provedores").performClick()
+        compose.onNodeWithText("Principal").performScrollTo().performClick()
+        compose.onNodeWithText("Concluir").performScrollTo().performClick()
+        waitForText("Nenhuma sessão")
+        compose.onNodeWithText("Principal").assertIsDisplayed()
+        compose.onNodeWithText(AppBuildConfig.PoolUrl).assertDoesNotExist()
     }
 
     private fun waitForText(value: String) {

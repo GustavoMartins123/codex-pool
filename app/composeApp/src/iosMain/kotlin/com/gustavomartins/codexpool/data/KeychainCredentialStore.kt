@@ -21,7 +21,13 @@ class KeychainCredentialStore : CredentialStore {
         }
     }
 
-    override suspend fun read(): Credentials? = query { query ->
+    override suspend fun read(): PoolAccounts? {
+        val decoded = readStored() ?: return null
+        if (decoded.migrated) write(decoded.accounts)
+        return decoded.accounts
+    }
+
+    private fun readStored(): DecodedAccounts? = query { query ->
         CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue)
         CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne)
         memScoped {
@@ -35,13 +41,13 @@ class KeychainCredentialStore : CredentialStore {
                 check(CFGetTypeID(raw) == CFDataGetTypeID()) { "O Keychain retornou um tipo de credencial inválido." }
                 val data: CFDataRef = raw.reinterpret()
                 val bytes = checkNotNull(CFDataGetBytePtr(data)).readBytes(CFDataGetLength(data).toInt())
-                PoolJson.decodeFromString<Credentials>(bytes.decodeToString())
+                decodeStoredAccounts(bytes.decodeToString())
             } finally { CFRelease(raw) }
         }
     }
 
-    override suspend fun write(credentials: Credentials) {
-        val bytes = PoolJson.encodeToString(credentials).encodeToByteArray()
+    override suspend fun write(accounts: PoolAccounts) {
+        val bytes = PoolJson.encodeToString(accounts.validate()).encodeToByteArray()
         bytes.usePinned { pinned ->
             val data = checkNotNull(CFDataCreate(null, pinned.addressOf(0).reinterpret(), bytes.size.toLong()))
             val attributes = checkNotNull(CFDictionaryCreateMutable(null, 0, null, null))

@@ -65,25 +65,29 @@ fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Un
             Surface(Modifier.fillMaxSize()) {
                 val auth = koinViewModel<AuthViewModel>()
                 val state by auth.state.collectAsStateWithLifecycle()
+                var providersOpen by remember { mutableStateOf(false) }
                 val credentials = state.credentials
                 if (credentials == null) {
-                    LoginScreen(state, auth::login, auth::logout)
+                    key(state.accounts?.selectedUrl) {
+                        LoginScreen(state, auth::login, auth::resetStorage, onProviders = { providersOpen = true })
+                    }
                 } else key(credentials) {
                     val viewModels = remember { ViewModelStore() }
                     val owner = remember { object : ViewModelStoreOwner { override val viewModelStore = viewModels } }
                     DisposableEffect(viewModels) { onDispose { viewModels.clear() } }
                     CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
                         val api = remember { PoolApi(client, credentials) }
-                        AuthenticatedApp(api, state, auth::logout, onScanPairing)
+                        AuthenticatedApp(api, state, auth::logout, onScanPairing, onProviders = { providersOpen = true })
                     }
                 }
+                if (providersOpen) ProviderDialog(state, auth::selectProvider, auth::addProvider) { providersOpen = false }
             }
         }
     }
 }
 
 @Composable
-private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, onScanPairing: (() -> Unit)?) {
+private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, onScanPairing: (() -> Unit)?, onProviders: () -> Unit) {
     val nav = rememberNavController()
     val dashboard = koinViewModel<DashboardViewModel>(parameters = { parametersOf(api) })
     val state by dashboard.state.collectAsStateWithLifecycle()
@@ -98,7 +102,7 @@ private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, 
     }
     NavHost(navController = nav, startDestination = DashboardRoute) {
         composable<DashboardRoute> {
-            DashboardScreen(state, api.credentials.baseUrl, auth, dashboard, logout, onScanPairing,
+            DashboardScreen(state, auth, dashboard, logout, onScanPairing, onProviders,
                 onCreate = { dashboard.loadCatalog(); nav.navigate(NewSessionRoute) },
                 onOpen = { nav.navigate(SessionRoute(it)) })
         }

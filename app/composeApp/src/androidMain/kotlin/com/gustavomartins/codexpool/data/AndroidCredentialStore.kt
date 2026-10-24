@@ -28,16 +28,19 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
         return keys.getKey(alias, null) as? SecretKey ?: error("A chave da credencial não está disponível. Saia para limpar a sessão.")
     }
 
-    override suspend fun read(): Credentials? = withContext(Dispatchers.IO) {
+    override suspend fun read(): PoolAccounts? = withContext(Dispatchers.IO) {
         val encoded = store.data.first()[entry] ?: return@withContext null
         val envelope = Base64.decode(encoded, Base64.NO_WRAP)
         require(envelope.size > 28) { "Credencial armazenada inválida." }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, existingKey(), GCMParameterSpec(128, envelope.copyOfRange(0, 12)))
-        PoolJson.decodeFromString<Credentials>(cipher.doFinal(envelope.copyOfRange(12, envelope.size)).decodeToString())
+        val decoded = decodeStoredAccounts(cipher.doFinal(envelope.copyOfRange(12, envelope.size)).decodeToString())
+        if (decoded.migrated) write(decoded.accounts)
+        decoded.accounts
     }
 
-    override suspend fun write(credentials: Credentials) = withContext(Dispatchers.IO) {
+    override suspend fun write(accounts: PoolAccounts) = withContext(Dispatchers.IO) {
+        accounts.validate()
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (!keys.containsAlias(alias)) {
             KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
@@ -49,7 +52,7 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
         }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, existingKey())
-        val encrypted = cipher.doFinal(PoolJson.encodeToString(credentials).encodeToByteArray())
+        val encrypted = cipher.doFinal(PoolJson.encodeToString(accounts).encodeToByteArray())
         store.edit { it[entry] = Base64.encodeToString(cipher.iv + encrypted, Base64.NO_WRAP) }
         Unit
     }

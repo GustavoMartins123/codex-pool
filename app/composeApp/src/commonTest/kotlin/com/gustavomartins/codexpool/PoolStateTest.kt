@@ -61,8 +61,8 @@ class PoolStateTest {
 
     @Test fun encryptedStorageFailureDoesNotAuthenticateTheApp() = runTest {
         val store = object : CredentialStore {
-            override suspend fun read(): Credentials? = error("unreadable ciphertext")
-            override suspend fun write(credentials: Credentials) = error("unavailable key")
+            override suspend fun read(): PoolAccounts? = error("unreadable ciphertext")
+            override suspend fun write(accounts: PoolAccounts) = error("unavailable key")
             override suspend fun clear() {}
         }
         val client = HttpClient(MockEngine { error("No request expected") }) { poolConfiguration() }
@@ -79,8 +79,8 @@ class PoolStateTest {
 
     @Test fun loginPublishesCredentialsOnlyAfterSecureStorageSucceeds() = runTest {
         val store = object : CredentialStore {
-            override suspend fun read(): Credentials? = null
-            override suspend fun write(credentials: Credentials) = error("write failed")
+            override suspend fun read(): PoolAccounts? = null
+            override suspend fun write(accounts: PoolAccounts) { if (accounts.selected.credentials != null) error("write failed") }
             override suspend fun clear() {}
         }
         val engine = MockEngine { respond("""{"token":"test-token","client_id":"mobile"}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
@@ -105,10 +105,10 @@ class PoolStateTest {
         } finally { client.close() }
     }
 
-    @Test fun credentialsForAnotherBuildOriginCannotAuthenticate() = runTest {
+    @Test fun credentialsForAnotherProviderCannotAuthenticate() = runTest {
         val store = object : CredentialStore {
-            override suspend fun read() = credentials.copy(baseUrl = "https://other.example")
-            override suspend fun write(credentials: Credentials) {}
+            override suspend fun read() = PoolAccounts(selectedUrl = credentials.baseUrl, providers = listOf(PoolProvider("Invalid", credentials.baseUrl, credentials.copy(baseUrl = "https://other.example"))))
+            override suspend fun write(accounts: PoolAccounts) {}
             override suspend fun clear() {}
         }
         val engine = MockEngine { error("The stored origin must never receive a request") }
@@ -121,12 +121,12 @@ class PoolStateTest {
         } finally { client.close() }
     }
 
-    @Test fun logoutRevokesTheAppCredentialBeforeClearingStorage() = runTest {
+    @Test fun logoutRevokesOnlyTheSelectedProviderBeforeClearingItsCredential() = runTest {
         var cleared = false
         val store = object : CredentialStore {
-            override suspend fun read() = credentials
-            override suspend fun write(credentials: Credentials) {}
-            override suspend fun clear() { cleared = true }
+            override suspend fun read() = PoolAccounts.initial(credentials.baseUrl).withCredentials(credentials)
+            override suspend fun write(accounts: PoolAccounts) { cleared = accounts.selected.credentials == null }
+            override suspend fun clear() = error("Do not erase providers on logout")
         }
         val engine = MockEngine { request ->
             assertFalse(cleared)
@@ -148,9 +148,9 @@ class PoolStateTest {
     @Test fun failedRevocationIsReportedAndKeepsTheCredential() = runTest {
         var cleared = false
         val store = object : CredentialStore {
-            override suspend fun read() = credentials
-            override suspend fun write(credentials: Credentials) {}
-            override suspend fun clear() { cleared = true }
+            override suspend fun read() = PoolAccounts.initial(credentials.baseUrl).withCredentials(credentials)
+            override suspend fun write(accounts: PoolAccounts) { cleared = accounts.selected.credentials == null }
+            override suspend fun clear() = error("Do not erase providers on logout")
         }
         val client = HttpClient(MockEngine { respond("", HttpStatusCode.ServiceUnavailable) }) { poolConfiguration() }
         try {

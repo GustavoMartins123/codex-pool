@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.gustavomartins.codexpool.data.*
 
 @Composable
-fun LoginScreen(state: AuthState, login: (String, String) -> Unit, clear: () -> Unit) {
+fun LoginScreen(state: AuthState, login: (String, String) -> Unit, clear: () -> Unit, onProviders: () -> Unit) {
     var username by rememberSaveable { mutableStateOf("") }
     // Passwords are never saved into activity or navigation state.
     var password by remember { mutableStateOf("") }
@@ -32,25 +32,35 @@ fun LoginScreen(state: AuthState, login: (String, String) -> Unit, clear: () -> 
         Text("Seu código.\nSuas máquinas.", style = MaterialTheme.typography.headlineLarge)
         Text("Abra sessões de Codex e Claude nos runners conectados à sua conta.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Entre com a mesma conta do site.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = onProviders, enabled = !state.loading && state.accounts != null) {
+            Text("Provedor: ${state.accounts?.selected?.name.orEmpty()}")
+        }
         OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Usuário ou e-mail") }, singleLine = true, enabled = !state.loading)
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Senha") }, singleLine = true,
             visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !state.loading)
         ErrorMessage(state.error)
         Button(onClick = { login(username, password); password = "" }, Modifier.fillMaxWidth().height(52.dp),
-            enabled = !state.loading && username.isNotBlank() && password.isNotEmpty()) { Text("Entrar no pool") }
+            enabled = !state.loading && state.accounts != null && username.isNotBlank() && password.isNotEmpty()) { Text("Entrar no pool") }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (state.error != null) TextButton(onClick = clear, enabled = !state.loading) { Text("Limpar credencial salva") }
+        if (state.error != null && state.accounts == null) TextButton(onClick = clear, enabled = !state.loading) { Text("Redefinir dados locais") }
     }
 }
 
 @Composable
-fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: DashboardViewModel,
-    logout: () -> Unit, onScanPairing: (() -> Unit)?, onCreate: () -> Unit, onOpen: (String) -> Unit) {
+fun DashboardScreen(state: DashboardState, auth: AuthState, vm: DashboardViewModel,
+    logout: () -> Unit, onScanPairing: (() -> Unit)?, onProviders: () -> Unit, onCreate: () -> Unit, onOpen: (String) -> Unit) {
     var revoke by remember { mutableStateOf<Runner?>(null) }
+    var menuOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = { TopAppBar(title = { Brand() }, actions = {
             TextButton(onClick = vm::refresh, enabled = !state.loading) { Text("Atualizar") }
-            TextButton(onClick = logout, enabled = !auth.loading) { Text("Sair") }
+            Box {
+                TextButton(onClick = { menuOpen = true }, enabled = !auth.loading) { Text("Conta") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text("Provedores") }, onClick = { menuOpen = false; onProviders() })
+                    DropdownMenuItem(text = { Text("Sair") }, onClick = { menuOpen = false; logout() })
+                }
+            }
         }) },
         bottomBar = {
             NavigationBar {
@@ -67,7 +77,7 @@ fun DashboardScreen(state: DashboardState, url: String, auth: AuthState, vm: Das
         },
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            item { Text(url, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text(auth.accounts?.selected?.name.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Text(when (state.tab) { DashboardTab.Sessions -> "Suas sessões"; DashboardTab.Runners -> "Suas máquinas"; DashboardTab.Quotas -> "Uso disponível" }, style = MaterialTheme.typography.headlineLarge) }
             if (state.loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             item { ErrorMessage(state.error); ErrorMessage(auth.error) }

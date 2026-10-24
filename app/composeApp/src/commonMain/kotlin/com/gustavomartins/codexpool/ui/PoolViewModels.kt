@@ -18,7 +18,9 @@ fun Throwable.userMessage(): String = when (this) {
     else -> "A operação falhou (${this::class.simpleName}). Verifique a conexão e tente novamente."
 }
 
-data class AuthState(val loading: Boolean = true, val credentials: Credentials? = null, val error: String? = null)
+data class AuthState(val loading: Boolean = true, val accounts: PoolAccounts? = null, val error: String? = null) {
+    val credentials get() = accounts?.selected?.credentials
+}
 
 class AuthViewModel(private val store: CredentialStore, private val client: HttpClient, private val poolUrl: String) : ViewModel() {
     private val mutable = MutableStateFlow(AuthState())
@@ -26,43 +28,69 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
     init {
         viewModelScope.launch {
             try {
-                val credentials = store.read()
-                if (credentials != null) {
-                    require(credentials.baseUrl == poolUrl) { "A credencial salva pertence a outro pool. Limpe a credencial para entrar novamente." }
-                    PoolApi(client, credentials)
+                var accounts = store.read()?.validate() ?: PoolAccounts.initial(poolUrl)
+                val defaultUrl = normalizePoolUrl(poolUrl)
+                if (accounts.providers.none { it.baseUrl == defaultUrl }) {
+                    accounts = accounts.copy(providers = accounts.providers + PoolProvider("Padrão", defaultUrl)).validate()
                 }
-                mutable.value = AuthState(loading = false, credentials = credentials)
+                store.write(accounts)
+                mutable.value = AuthState(loading = false, accounts = accounts)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.value = AuthState(loading = false, error = e.userMessage()) }
         }
     }
 
-    fun login(username: String, password: String) {
-        if (mutable.value.loading) return
+    fun login(username: String, password: String) = action { accounts ->
+        val credentials = PoolApi.login(client, accounts.selectedUrl, username, password)
+        accounts.withCredentials(credentials)
+    }
+
+    fun selectProvider(url: String) = action { accounts ->
+        require(accounts.providers.any { it.baseUrl == url }) { "Provedor não cadastrado." }
+        accounts.copy(selectedUrl = url).validate()
+    }
+
+    fun addProvider(name: String, url: String) = action { accounts ->
+        val base = normalizePoolUrl(url)
+        val label = name.trim()
+        require(label.isNotBlank() && label.length <= 60) { "Informe um nome com até 60 caracteres." }
+        require(accounts.providers.none { it.baseUrl == base }) { "Esse domínio já está cadastrado." }
+        require(accounts.providers.none { it.name.equals(label, ignoreCase = true) }) { "Esse nome já está em uso." }
+        accounts.copy(selectedUrl = base, providers = accounts.providers + PoolProvider(label, base)).validate()
+    }
+
+    fun logout() = action { accounts ->
+        accounts.selected.credentials?.let { credentials ->
+            try { PoolApi(client, credentials).logout() }
+            catch (e: PoolApiException) { if (e.status != 401) throw e }
+        }
+        accounts.withCredentials(null)
+    }
+
+    fun resetStorage() {
+        if (mutable.value.loading || mutable.value.accounts != null) return
         mutable.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
-                val credentials = PoolApi.login(client, poolUrl, username, password)
-                store.write(credentials)
-                mutable.value = AuthState(loading = false, credentials = credentials)
+                store.clear()
+                val accounts = PoolAccounts.initial(poolUrl)
+                store.write(accounts)
+                mutable.value = AuthState(loading = false, accounts = accounts)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(loading = false, error = e.userMessage()) } }
         }
     }
 
-    fun logout() {
-        if (mutable.value.loading) return
+    private fun action(block: suspend (PoolAccounts) -> PoolAccounts) {
+        if (mutable.value.loading || mutable.value.accounts == null) return
+        val accounts = requireNotNull(mutable.value.accounts)
         mutable.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
-                mutable.value.credentials?.let { credentials ->
-                    try { PoolApi(client, credentials).logout() }
-                    catch (e: PoolApiException) { if (e.status != 401) throw e }
-                }
-                store.clear()
-                mutable.value = AuthState(loading = false)
-            }
-            catch (e: CancellationException) { throw e }
+                val updated = block(accounts).validate()
+                store.write(updated)
+                mutable.value = AuthState(loading = false, accounts = updated)
+            } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(loading = false, error = e.userMessage()) } }
         }
     }

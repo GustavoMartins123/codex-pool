@@ -17,8 +17,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.transformWhile
 
 interface CredentialStore {
-    suspend fun read(): Credentials?
-    suspend fun write(credentials: Credentials)
+    suspend fun read(): PoolAccounts?
+    suspend fun write(accounts: PoolAccounts)
     suspend fun clear()
 }
 
