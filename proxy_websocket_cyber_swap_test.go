@@ -712,6 +712,218 @@ func summaries(frames []string) []string {
 	return out
 }
 
+func TestIsCodexQuotaExhaustedError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		frame string
+		want  bool
+	}{
+		{"usage limit code", `{"type":"error","error":{"type":"rate_limit_error","code":"usage_limit_reached","message":"You've hit your usage limit"}}`, true},
+		{"out of credits message", `{"type":"error","error":{"type":"rate_limit_error","code":"","message":"Your workspace is out of credits. Ask your workspace owner to refill in order to continue."}}`, true},
+		{"nested insufficient quota", `{"type":"response.failed","response":{"error":{"code":"insufficient_quota","message":"billing hard limit"}}}`, true},
+		{"assistant text quoting the phrase", `{"type":"response.output_text.delta","delta":"you may see usage limit reached in the docs"}`, false},
+		{"cyber policy is not quota", `{"type":"error","error":{"type":"invalid_request","code":"cyber_policy","message":"flagged"}}`, false},
+		{"capacity is not quota", `{"type":"error","error":{"type":"server_error","code":"server_overloaded","message":"Selected model is at capacity. Please try a different model."}}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isCodexQuotaExhaustedError([]byte(tc.frame)); got != tc.want {
+				t.Fatalf("isCodexQuotaExhaustedError = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// An open websocket pinned to an account that reaches the 95% usage
+// threshold must stop receiving turns: the next response.create is
+// silently replayed against another pool account.
+func TestQuotaThresholdSwapsBeforeTurn(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_drain_pre", func(ctx context.Context, conn *websocket.Conn) {
+		if _, data, err := conn.Read(ctx); err == nil && strings.Contains(string(data), "response.create") {
+			t.Errorf("exhausted account received the turn: %s", string(data))
+		}
+	})
+	var freshSawTurn atomic.Bool
+	upstream.on("acct_fresh_pre", func(ctx context.Context, conn *websocket.Conn) {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if strings.Contains(string(data), `"response.create"`) {
+			freshSawTurn.Store(true)
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_fresh_pre","status":"completed"}}`))
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_pre", PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_pre", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
+	fx.handler.pool.pin("conv-quota-pre", "drain")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "quota-pre-user")},
+		"session_id":    []string{"conv-quota-pre"},
+	})
+	drain.mu.Lock()
+	drain.Usage.PrimaryUsedPercent = 0.96
+	drain.Usage.PrimaryResetAt = time.Now().Add(time.Hour)
+	drain.mu.Unlock()
+
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5"}`)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	frames := mustReadUntil(t, conn, `"resp_fresh_pre"`, 5*time.Second)
+	if len(frames) == 0 {
+		t.Fatal("client did not receive the swapped-account completion")
+	}
+	if !freshSawTurn.Load() {
+		t.Fatal("replacement account never received the replayed turn")
+	}
+	joined := strings.Join(frames, "\n")
+	if strings.Contains(joined, "usage_limit_reached") || strings.Contains(joined, "out of credits") {
+		t.Fatalf("quota error leaked to client: %s", joined)
+	}
+
+	fx.handler.pool.mu.RLock()
+	pinned := fx.handler.pool.convPin["conv-quota-pre"]
+	fx.handler.pool.mu.RUnlock()
+	if pinned != "fresh" {
+		t.Fatalf("conversation pin = %q, want fresh", pinned)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
+}
+
+// A quota error frame from the active upstream must not reach the
+// client when another account can take the turn: the buffered request
+// is replayed against the replacement and the exhausted account is
+// marked so routing skips it.
+func TestQuotaErrorMidStreamSwapsAndReplays(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_drain_re", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"usage_limit_reached","message":"You've hit your usage limit"}}`))
+		_, _, _ = conn.Read(ctx)
+	})
+	var freshSawReplay atomic.Bool
+	upstream.on("acct_fresh_re", func(ctx context.Context, conn *websocket.Conn) {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if strings.Contains(string(data), `"response.create"`) {
+			freshSawReplay.Store(true)
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_fresh_re","status":"completed"}}`))
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_re", PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_re", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
+	fx.handler.pool.pin("conv-quota-re", "drain")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "quota-re-user")},
+		"session_id":    []string{"conv-quota-re"},
+	})
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5"}`)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+
+	frames := mustReadUntil(t, conn, `"resp_fresh_re"`, 5*time.Second)
+	joined := strings.Join(frames, "\n")
+	if !strings.Contains(joined, "resp_fresh_re") {
+		t.Fatalf("client never got the replacement completion; frames: %s", joined)
+	}
+	if strings.Contains(joined, "usage_limit_reached") {
+		t.Fatalf("quota error was not swallowed by the swap: %s", joined)
+	}
+	if !freshSawReplay.Load() {
+		t.Fatal("replacement account never received the replayed turn")
+	}
+
+	drain.mu.Lock()
+	rateLimited := drain.RateLimitUntil.After(time.Now())
+	primary := drain.Usage.PrimaryUsedPercent
+	drain.mu.Unlock()
+	if !rateLimited {
+		t.Fatal("exhausted account was not put on cooldown")
+	}
+	if primary < primaryHardExcludeThreshold {
+		t.Fatalf("exhausted account primary usage = %v, want >= %v", primary, primaryHardExcludeThreshold)
+	}
+
+	fx.handler.pool.mu.RLock()
+	pinned := fx.handler.pool.convPin["conv-quota-re"]
+	fx.handler.pool.mu.RUnlock()
+	if pinned != "fresh" {
+		t.Fatalf("conversation pin = %q, want fresh", pinned)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
+	if got := fx.handler.recent.snapshot(); len(got) != 0 {
+		t.Fatalf("successful quota swap must not log tunnel errors, got %v", got)
+	}
+}
+
+// With no replacement account the upstream's real quota error reaches
+// the client unchanged — the swap never fabricates or masks errors.
+func TestQuotaErrorWithoutReplacementForwardsUpstreamFrame(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_solo", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"","message":"Your workspace is out of credits. Ask your workspace owner to refill in order to continue."}}`))
+		_, _, _ = conn.Read(ctx)
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	solo := &Account{Type: AccountTypeCodex, ID: "solo", AccessToken: "solo-token", AccountID: "acct_solo", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{solo})
+	fx.handler.pool.pin("conv-quota-solo", "solo")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "quota-solo-user")},
+		"session_id":    []string{"conv-quota-solo"},
+	})
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5"}`)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	var frames []string
+	sawQuota := false
+	for time.Now().Before(deadline) {
+		readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, data, err := conn.Read(readCtx)
+		cancel()
+		if err != nil {
+			break
+		}
+		frames = append(frames, string(data))
+		if strings.Contains(string(data), "out of credits") {
+			sawQuota = true
+			break
+		}
+	}
+	if !sawQuota {
+		t.Fatalf("expected the real upstream quota error to be forwarded; frames: %s", strings.Join(summaries(frames), "\n"))
+	}
+	conn.CloseNow()
+	waitForZeroInflight(t, fx.handler, []*Account{solo})
+}
+
 func waitForZeroInflight(t *testing.T, h *proxyHandler, accts []*Account) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

@@ -50,14 +50,17 @@ type codexCyberSwapResult struct {
 }
 
 // swapPendingErr is returned from the upstream pump on a cyber_policy
-// hit. next is the swap target, or nil when no cyber_access candidate
-// was available; frame is the original upstream payload, forwarded to
-// the client when the swap is skipped or fails so the user sees the
-// real upstream error instead of a fabricated message.
+// hit or a quota-exhaustion error. next is the swap target, or nil when
+// no candidate was available; frame is the original upstream payload,
+// forwarded to the client when the swap is skipped or fails so the user
+// sees the real upstream error instead of a fabricated message. quota
+// marks a usage-threshold swap (any eligible account) as opposed to the
+// one-shot cyber_policy swap.
 type swapPendingErr struct {
 	next           *Account
 	frame          []byte
 	conversationID string
+	quota          bool
 }
 
 func (e *swapPendingErr) Error() string {
@@ -267,6 +270,11 @@ func (s *codexRelayState) run() (int, error) {
 					}
 					if len(swap.frame) == 0 {
 						return 101, doErr
+					}
+					if swap.quota {
+						log.Printf("[%s] quota swap dial failed: %v; forwarding upstream error frame", s.opts.ReqID, doErr)
+						s.forwardCyberPolicy(swap.frame)
+						return 101, nil
 					}
 					log.Printf("[%s] account swap dial failed: %v; forwarding upstream cyber_policy frame", s.opts.ReqID, doErr)
 					s.forwardCyberPolicy(swap.frame)
@@ -486,6 +494,17 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 	if changed {
 		data = filtered
 	}
+	if turn != nil && len(s.turns) == 1 && turn == s.turns[0] && isCodexQuotaExhaustedError(data) {
+		// Authoritative upstream signal: the account's quota is done.
+		// Record it so routing skips the account, then move the turn to
+		// any other eligible account by replaying the buffered request.
+		s.h.markQuotaExhausted(s.activeAccount)
+		if cand := s.pickQuotaSwapCandidate(turn.model); cand != nil {
+			log.Printf("[%s] quota exhausted on account %s; swapping to %s and replaying turn", s.opts.ReqID, s.activeAccount.ID, cand.ID)
+			return nil, &swapPendingErr{next: cand, frame: data, conversationID: turn.conversationID, quota: true}
+		}
+		log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
+	}
 	if !isCyberPolicyError(data) {
 		if isTerminalCodexWebSocketEvent(data) {
 			s.finishTurn(turn)
@@ -596,6 +615,12 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("no Codex account is entitled to websocket model %q", model)
 		}
 		return nil, &swapPendingErr{next: next}
+	}
+	if s.activeAccountUsageBlocksRouting() && len(s.turns) == 1 && turn == s.turns[0] {
+		if cand := s.pickQuotaSwapCandidate(model); cand != nil {
+			log.Printf("[%s] account %s is at the usage threshold before turn; swapping to %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
+			return nil, &swapPendingErr{next: cand, quota: true}
+		}
 	}
 	if modelRequiresHTTPProviderRoute(model) {
 		s.finishTurn(turn)
@@ -861,7 +886,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		newConn.CloseNow()
 		return fmt.Errorf("replay client request to swap upstream: %w", err)
 	}
-	log.Printf("[%s] silently swapping codex upstream to cyber account %s (was %s)", s.opts.ReqID, cand.ID, s.activeAccount.ID)
+	log.Printf("[%s] silently swapping codex upstream to account %s (was %s)", s.opts.ReqID, cand.ID, s.activeAccount.ID)
 	if s.h != nil && s.h.metrics != nil {
 		s.h.metrics.incCyberPolicy(cand.ID, "swap_succeeded")
 	}
@@ -893,6 +918,113 @@ func (s *codexRelayState) pickCyberAccessCandidate() *Account {
 		exclude[s.activeAccount.ID] = true
 	}
 	return s.h.pool.candidateWithCyberAccessForUser(s.opts.UserID, exclude, AccountTypeCodex, s.opts.RequiredPlan, s.opts.ClientIP)
+}
+
+// pickQuotaSwapCandidate returns any other routing-eligible Codex account
+// for a usage-threshold swap. Unlike the cyber swap this may run any
+// number of times over the life of the socket: each exhausted account is
+// skipped by availability, so long sessions can roll across the pool.
+func (s *codexRelayState) pickQuotaSwapCandidate(model string) *Account {
+	if s.h == nil || s.h.pool == nil {
+		return nil
+	}
+	exclude := map[string]bool{}
+	if s.activeAccount != nil {
+		exclude[s.activeAccount.ID] = true
+	}
+	next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTraceForUser(
+		s.opts.UserID,
+		s.activeConversationID,
+		exclude,
+		AccountTypeCodex,
+		s.opts.RequiredPlan,
+		s.opts.ClientIP,
+		model,
+		s.opts.RoutingProfile,
+	)
+	return next
+}
+
+// activeAccountUsageBlocksRouting reports whether the account currently
+// relaying this socket has hit the same usage thresholds the HTTP router
+// uses to disqualify accounts (95% primary / 99% secondary).
+func (s *codexRelayState) activeAccountUsageBlocksRouting() bool {
+	a := s.activeAccount
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	primary := a.Usage.PrimaryUsedPercent
+	if primary == 0 {
+		primary = a.Usage.PrimaryUsed
+	}
+	secondary := a.Usage.SecondaryUsedPercent
+	if secondary == 0 {
+		secondary = a.Usage.SecondaryUsed
+	}
+	a.mu.Unlock()
+	return primary >= primaryHardExcludeThreshold || secondary >= secondaryHardExcludeThreshold
+}
+
+// markQuotaExhausted records an authoritative quota rejection from the
+// upstream on the account: immediate rate-limit cooldown plus clamping
+// the primary usage snapshot to the routing exclusion threshold so
+// candidate selection and future turns skip the account until the next
+// quota refresh reports real numbers again.
+func (h *proxyHandler) markQuotaExhausted(a *Account) {
+	if a == nil || h == nil {
+		return
+	}
+	h.applyRateLimit(a, nil)
+	a.mu.Lock()
+	primary := a.Usage.PrimaryUsedPercent
+	if primary == 0 {
+		primary = a.Usage.PrimaryUsed
+	}
+	if primary < primaryHardExcludeThreshold {
+		a.Usage.PrimaryUsedPercent = primaryHardExcludeThreshold
+		a.Usage.PrimaryUsed = primaryHardExcludeThreshold
+	}
+	a.mu.Unlock()
+}
+
+// isCodexQuotaExhaustedError matches upstream Codex websocket error
+// frames that mean the account's quota is gone (usage limit, credits,
+// billing hard limit). Only the structured error envelope is inspected,
+// so assistant text quoting these phrases never triggers a swap.
+func isCodexQuotaExhaustedError(data []byte) bool {
+	if len(data) == 0 || data[0] != '{' || !bytes.Contains(data, []byte(`"error"`)) {
+		return false
+	}
+	var env struct {
+		Type  string `json:"type"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Response struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		return false
+	}
+	code := env.Error.Code
+	message := strings.ToLower(env.Error.Message)
+	if code == "" && message == "" {
+		code = env.Response.Error.Code
+		message = strings.ToLower(env.Response.Error.Message)
+	}
+	switch code {
+	case "usage_limit_reached", "usage_exhausted", "insufficient_quota",
+		"billing_hard_limit_reached", "quota_exceeded":
+		return true
+	}
+	return strings.Contains(message, "out of credits") ||
+		strings.Contains(message, "usage limit")
 }
 
 func (s *codexRelayState) legacyPin(conversationID string) {
