@@ -36,10 +36,14 @@ func (b *sessionBroker) recordEventsTx(tx *bbolt.Tx, s *sessionRecord, events []
 		for i := range events {
 			s.EventCursor++
 			events[i].ID = s.EventCursor
+			events[i].At = b.now()
 			if err := putJSON(journal, string(eventKey(s.EventCursor)), events[i]); err != nil {
 				return err
 			}
 		}
+	}
+	if err := b.updateConversationTx(tx, s, events); err != nil {
+		return err
 	}
 	return putJSON(tx.Bucket([]byte(bucketRunnerSessions)), s.ID, s)
 }

@@ -49,6 +49,7 @@ type sessionEvent struct {
 	ID   uint64          `json:"id"`
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
+	At   time.Time       `json:"at,omitzero"`
 }
 type sessionSubscription struct {
 	events chan sessionEvent
@@ -78,10 +79,13 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 	}
 	b := &sessionBroker{store: store, now: func() time.Time { return time.Now().UTC() }, sessions: map[string]*sessionRecord{}, runners: map[string]*connectedRunner{}, streams: map[string]*sessionStream{}, stopped: make(chan struct{})}
 	err := store.db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals, bucketSessionEvents} {
+		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals, bucketSessionEvents, bucketConversations, bucketConversationIndex, bucketConversationDue, bucketConversationSchema} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return err
 			}
+		}
+		if err := b.migrateConversationsTx(tx); err != nil {
+			return err
 		}
 		return tx.Bucket([]byte(bucketRunnerSessions)).ForEach(func(_, raw []byte) error {
 			var s sessionRecord
@@ -90,6 +94,9 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 			}
 			if !validSessionState(s.State) {
 				return fmt.Errorf("invalid persisted session state")
+			}
+			if s.ConversationID == "" || tx.Bucket([]byte(bucketConversations)).Get([]byte(s.ConversationID)) == nil {
+				return errors.New("session conversation is missing")
 			}
 			if s.State != "closed" && s.State != "pending_runner" && s.State != "closing" && s.State != "orphaned" {
 				s.ResumeState = s.State
@@ -196,6 +203,7 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 		s.TurnID = uuid.NewString()
 		s.QueuedInput = q.Prompt
 	}
+	s.ConversationID = s.ID
 	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State})}
 	if q.Prompt != "" {
 		events = append(events, newSessionEvent("turn.input", map[string]any{"turn_id": s.TurnID, "input": q.Prompt}))
@@ -482,7 +490,7 @@ func (b *sessionBroker) sweep() error {
 		}
 		for _, approval := range s.Approvals {
 			if !approval.ExpiresAt.After(now) {
-				if err := b.resolveApprovalLocked(s.PrincipalID, s.ID, approval.ID, "deny"); err != nil {
+				if err := b.resolveApprovalLocked(s.PrincipalID, s.ID, approval.ID, "deny", "timeout"); err != nil {
 					return err
 				}
 			}
@@ -494,9 +502,9 @@ func (b *sessionBroker) sweep() error {
 func (b *sessionBroker) resolveApproval(principal, id, aid, decision string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.resolveApprovalLocked(principal, id, aid, decision)
+	return b.resolveApprovalLocked(principal, id, aid, decision, "user")
 }
-func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision string) error {
+func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, source string) error {
 	s, err := b.ownedLocked(principal, id)
 	if err != nil {
 		return err
@@ -533,6 +541,7 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision strin
 		}
 		if !record.ExpiresAt.After(b.now()) {
 			decision = "deny"
+			source = "timeout"
 		}
 		record.Decision = decision
 		pending := []runnerproto.Approval{}
@@ -553,7 +562,7 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision strin
 			return err
 		}
 		events = []sessionEvent{
-			newSessionEvent("approval.resolved", map[string]any{"approval_id": aid, "decision": record.Decision}),
+			newSessionEvent("approval.resolved", map[string]any{"approval_id": aid, "decision": record.Decision, "source": source}),
 			newSessionEvent("state", map[string]any{"state": next.State}),
 		}
 		if err := b.recordEventsTx(tx, next, events); err != nil {

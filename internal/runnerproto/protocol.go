@@ -36,6 +36,7 @@ type TurnSummary struct {
 
 type Session struct {
 	ID             string        `json:"id"`
+	ConversationID string        `json:"conversation_id"`
 	PrincipalID    string        `json:"principal_id"`
 	ClientID       string        `json:"client_id"`
 	Agent          string        `json:"agent"`

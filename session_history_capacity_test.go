@@ -144,7 +144,7 @@ func historyStudyBroker(t *testing.T) (*sessionBroker, string) {
 
 func historyStudySeed(t *testing.T, broker *sessionBroker, id, principal string, events []sessionEvent) *sessionRecord {
 	t.Helper()
-	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: id, PrincipalID: principal, ClientID: "synthetic-client", Agent: "codex", Model: "synthetic-model", State: "closed", Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
+	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: id, ConversationID: id, CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), PrincipalID: principal, ClientID: "synthetic-client", Agent: "codex", Model: "synthetic-model", State: "closed", Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
 	if len(events) == 0 {
 		if err := broker.saveLocked(s, "", principal); err != nil {
 			t.Fatal(err)
