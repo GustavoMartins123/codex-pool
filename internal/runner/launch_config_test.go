@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,7 +34,8 @@ func TestLaunchConfigRejectsSecretsAndRelativePaths(t *testing.T) {
 func TestLaunchConfigDoesNotReadRunnerCredential(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "runner.json")
-	value := `{"state":"` + filepath.Join(root, "state.json") + `","pool_url":"https://pool.example","name":"desktop","workspaces":"` + filepath.Join(root, "workspaces") + `","codex":"` + filepath.Join(root, "codex.exe") + `"}`
+	escape := func(value string) string { return strings.ReplaceAll(value, `\`, `\\`) }
+	value := `{"state":"` + escape(filepath.Join(root, "state.json")) + `","pool_url":"https://pool.example","name":"desktop","workspaces":"` + escape(filepath.Join(root, "workspaces")) + `","codex":"` + escape(filepath.Join(root, "codex.exe")) + `"}`
 	if err := os.WriteFile(path, []byte(value), 0600); err != nil {
 		t.Fatal(err)
 	}
