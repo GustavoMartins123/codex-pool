@@ -2295,7 +2295,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		http.Error(w, "traffic shadow principal mismatch", http.StatusForbidden)
 		return
 	}
-	if r.Method != http.MethodGet || isWebSocketUpgradeRequest(r) {
+	if r.Method != http.MethodGet && !isWebSocketUpgradeRequest(r) {
 		release, err := h.admitQueuedRequest(r, principalID)
 		if err != nil {
 			respondPolicyError(w, err)

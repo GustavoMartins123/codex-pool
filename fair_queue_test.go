@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func awaitQueued(t *testing.T, q *fairQueue, count int) {
@@ -139,6 +145,68 @@ func TestFairQueueDefaultAllowsEightConcurrentRequestsPerPrincipal(t *testing.T)
 	defer q.mu.Unlock()
 	if q.active != 0 || q.waiting != 0 || len(q.inflight)+len(q.pending)+len(q.order) != 0 {
 		t.Fatal("leaked queue state")
+	}
+}
+
+func TestIdleWebSocketDoesNotHoldFairQueueCapacity(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isWebSocketUpgradeRequest(r) {
+			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+			if err != nil {
+				return
+			}
+			defer conn.CloseNow()
+			for {
+				if _, _, err = conn.Read(r.Context()); err != nil {
+					return
+				}
+			}
+		}
+		io.WriteString(w, `{"output":[]}`)
+	}))
+	defer upstream.Close()
+	base, _ := url.Parse(upstream.URL)
+	q := newFairQueue()
+	q.perPrincipal = 1
+	q.wait = 50 * time.Millisecond
+	h := &proxyHandler{cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, pool: newPoolState([]*Account{{ID: "codex", Type: AccountTypeCodex, AccessToken: "token", AccountID: "acct", PlanType: "pro"}}, false), registry: NewProviderRegistry(NewCodexProviderWithRealtime(base, base, base, base), nil, nil), transport: http.DefaultTransport, metrics: newMetrics(), recent: newRecentErrors(5), requestQueue: q}
+	h.queueOnce.Do(func() {})
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
+	defer proxy.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	idle, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(proxy.URL, "http")+"/v1/responses", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + generateClaudePoolToken("test-secret", "alice")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idle.CloseNow()
+	time.Sleep(100 * time.Millisecond)
+	q.mu.Lock()
+	active := q.active
+	q.mu.Unlock()
+	if active != 0 {
+		t.Fatalf("idle websocket consumed fair queue capacity: active=%d", active)
+	}
+	body := strings.NewReader(`{"model":"gpt-5.6-sol","input":"ping","stream":false}`)
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+"/v1/responses", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "alice"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("post blocked by idle websocket session: status=%d", resp.StatusCode)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.active != 0 || q.waiting != 0 {
+		t.Fatalf("leaked queue state: active=%d waiting=%d", q.active, q.waiting)
 	}
 }
 
