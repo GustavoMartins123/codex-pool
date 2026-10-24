@@ -238,10 +238,9 @@ For a VPS behind Traefik, see [Traefik deployment and migration](docs/deploy-tra
 
 ### Runner
 
-Para executar agentes em outra máquina, consulte o [guia do runner](docs/runner.md).
-As releases `runner-v*` publicam binários `runnerd` para Windows, Linux e macOS
-com `SHA256SUMS`. O pareamento e a execução usam um único arquivo
-`runner.launch.json`.
+To run agents on another machine, see the [runner guide](docs/runner.md).
+The `runner-v*` releases publish `runnerd` binaries for Windows, Linux, and macOS
+with `SHA256SUMS`. Pairing and execution use a single `runner.launch.json` file.
 
 ### 4. Point your CLI
 

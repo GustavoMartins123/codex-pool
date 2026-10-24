@@ -1,20 +1,20 @@
 # Runner
 
-O runner é um binário independente que mantém uma conexão WebSocket com o
-codex-pool e executa Codex CLI ou Claude Code na máquina autorizada. O app não
-executa os agentes; ele cria sessões, mostra eventos e decide aprovações.
+The runner is a standalone binary that maintains a WebSocket connection to
+codex-pool and runs Codex CLI or Claude Code on the authorized machine. The app
+creates sessions, displays events, and handles approvals.
 
 ## Releases
 
-Cada tag `runner-v*` publica `runnerd` para Windows, Linux e macOS, nos formatos
-ZIP ou TAR.GZ, além de `SHA256SUMS`. Confirme o SHA-256 antes de executar um
-binário baixado. O arquivo `.sh` é script de compilação; o processo executado é
-`runnerd` ou `runnerd.exe`.
+Each `runner-v*` tag publishes `runnerd` for Windows, Linux, and macOS as ZIP or
+TAR.GZ archives, together with `SHA256SUMS`. Verify the SHA-256 checksum before
+running a downloaded binary. The `.sh` files are build scripts; the executable
+is `runnerd` or `runnerd.exe`.
 
-## Arquivo único de configuração
+## Launch configuration
 
-Crie `runner.launch.json` fora do repositório. Ele contém apenas caminhos e
-opções; o token fica em um arquivo de estado separado.
+Create `runner.launch.json` outside the repository. It contains paths and
+options; the token is stored in a separate state file.
 
 ```json
 {
@@ -29,7 +29,7 @@ opções; o token fica em um arquivo de estado separado.
 }
 ```
 
-No Windows, use barras invertidas escapadas:
+On Windows, escape backslashes:
 
 ```json
 {
@@ -44,13 +44,13 @@ No Windows, use barras invertidas escapadas:
 }
 ```
 
-`state`, `workspaces`, executáveis e `allow_paths` precisam ser caminhos
-absolutos. Pelo menos um entre `codex` e `claude` deve existir. No Windows, os
-executáveis precisam ser `.exe` nativos; shell shims são rejeitados.
+`state`, `workspaces`, executable paths, and `allow_paths` must be absolute.
+At least one of `codex` or `claude` must point to an existing executable.
+On Windows, executables must be native `.exe` files; shell shims are rejected.
 
-## Parear e executar
+## Pair and run
 
-Extraia o binário e pareie a máquina:
+Extract the binary and pair the machine:
 
 ```bash
 ./runnerd pair --config /absolute/path/runner.launch.json
@@ -60,10 +60,11 @@ Extraia o binário e pareie a máquina:
 .\runnerd.exe pair --config C:\Users\me\runner.launch.json
 ```
 
-O terminal mostra QR e código. No app, abra **Runners → Conectar runner**, leia o
-QR, confira a máquina e autorize usando o código.
+The terminal displays a QR code and a verification code. In the app, open
+**Runners**, choose the option to connect a runner, scan the QR code, verify the
+machine, and authorize it using the verification code.
 
-Depois, o runner inicia com um único arquivo:
+Then start the runner using the same configuration file:
 
 ```bash
 ./runnerd run --config /absolute/path/runner.launch.json
@@ -73,44 +74,45 @@ Depois, o runner inicia com um único arquivo:
 .\runnerd.exe run --config C:\Users\me\runner.launch.json
 ```
 
-O processo fica em foreground e reconecta com backoff. Ainda não há instalador
-de serviço embutido; use systemd, launchd ou Task Scheduler apontando para esse
-comando se precisar de inicialização automática.
+The process runs in the foreground and reconnects with backoff. There is no
+built-in service installer; use systemd, launchd, or Task Scheduler with this
+command if you need automatic startup.
 
-Para rotacionar a credencial mantendo a identidade do runner:
+To rotate the credential while preserving the runner identity:
 
 ```bash
 ./runnerd rotate --config /absolute/path/runner.launch.json
 ```
 
-## Workspaces, histórico e retomada
+## Workspaces, history, and resume
 
-Workspaces efêmeros ficam em `workspaces/<session-id>` e são preservados quando
-a execução termina para permitir retomada. O Codex usa `thread/resume`; Claude
-usa `--resume` com o mesmo UUID. A retomada exige o runner original online, o
-workspace, o transcript nativo e os hashes do checkpoint íntegros.
+Ephemeral workspaces are stored in `workspaces/<session-id>` and preserved when
+execution ends so sessions can resume. Codex uses `thread/resume`; Claude uses
+`--resume` with the same UUID. Resuming requires the original runner to be
+online, the workspace and native transcript to be present, and checkpoint
+checksums to match.
 
-Se o checkpoint faltar ou estiver corrompido, o histórico continua consultável,
-mas a execução não é retomada e nenhuma thread nova é criada. A exclusão
-permanente é uma ação separada: remove workspace efêmero, recibo e controle
-nativo. Workspaces por caminho e repositórios do usuário não são removidos.
+If the checkpoint is missing or corrupted, history remains available, but
+execution cannot resume and no new thread is created. Permanent deletion is a
+separate action: it removes the ephemeral workspace, checkpoint receipt, and
+native agent state. User path and repository workspaces are preserved.
 
-## Diagnóstico
+## Troubleshooting
 
-- `runner state unavailable`: pareie a máquina ou corrija o caminho `state`.
-- `runner credential rejected`: a credencial foi revogada, rotacionada ou pertence
-  a outro pool.
-- `agent executable unavailable`: corrija o caminho absoluto no JSON.
-- `workspace path is not in the runner allowlist`: adicione o diretório existente
-  em `allow_paths`.
-- `original runner must be online`: retomada e exclusão dependem da máquina que
-  possui o workspace e o estado nativo.
-- `checkpoint unavailable` ou `checkpoint checksum mismatch`: a consulta do
-  histórico continua disponível, mas a retomada falha explicitamente.
+- `runner state unavailable`: pair the machine or correct the `state` path.
+- `runner credential rejected`: the credential was revoked, rotated, or belongs
+  to another pool.
+- `agent executable unavailable`: correct the absolute executable path in JSON.
+- `workspace path is not in the runner allowlist`: add the existing directory
+  to `allow_paths`.
+- `original runner must be online`: resuming and deleting require the machine
+  that holds the workspace and native state.
+- `checkpoint unavailable` or `checkpoint checksum mismatch`: history remains
+  available, but resuming fails explicitly.
 
-## Compilar
+## Build
 
-Todos os alvos:
+All targets:
 
 ```bash
 ./scripts/build-runner.sh
@@ -124,5 +126,5 @@ PowerShell:
 .\scripts\build-runner-release.ps1
 ```
 
-O workflow `.github/workflows/runner-release.yml` gera os binários a partir de
-tags `runner-v*`; eles não são versionados no repositório.
+The `.github/workflows/runner-release.yml` workflow builds binaries from
+`runner-v*` tags. Generated binaries are not tracked in the repository.
