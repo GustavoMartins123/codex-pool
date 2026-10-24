@@ -603,7 +603,7 @@ func (s *localSession) initialize(credentialPath string) {
 			}
 			if err != nil {
 				failure := runnerproto.Frame("execution.error")
-				failure.TurnID = command.TurnID
+				failure.TurnID = s.lastTurn
 				failure.Content = err.Error()
 				_ = s.emit(failure)
 				agent.Close()
