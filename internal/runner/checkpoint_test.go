@@ -145,3 +145,25 @@ func TestNativeAgentsResumeTheirOriginalSessionAfterProcessRestart(t *testing.T)
 		})
 	}
 }
+
+func TestMissingResumeCheckpointReportsFailureWithoutCreatingWorkspace(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &daemon{options: Options{WorkspaceRoot: root, Config: Config{PoolURL: "https://pool.example", RunnerID: "runner"}}, notify: make(chan struct{}, 1)}
+	s := &localSession{daemon: d, ctx: ctx, cancel: cancel, done: make(chan struct{}), session: runnerproto.Session{ID: "11111111-2222-4333-8444-555555555555", Agent: "codex", ResumeRequested: true, Checkpoint: &runnerproto.AgentCheckpoint{Version: 1, NativeSessionID: "native", NativeLogID: "log", Digest: "digest", Ready: true}, Workspace: runnerproto.Workspace{Mode: "ephemeral"}}}
+	s.initialize("/config/codex/unused")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last := s.pending[len(s.pending)-1]
+	if last.Type != "process.exit" || last.Status != "checkpoint_failed" || last.Checkpoint != nil {
+		t.Fatal("missing native state was not reported explicitly")
+	}
+	path, _ := runtimePath(root, "", s.session.ID)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("missing checkpoint silently created a fresh workspace")
+	}
+}

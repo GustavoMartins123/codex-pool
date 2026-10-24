@@ -31,26 +31,27 @@ type daemon struct {
 }
 
 type localSession struct {
-	daemon   *daemon
-	session  runnerproto.Session
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	agent    agentProcess
-	path     string
-	control  string
-	native   runnerproto.AgentCheckpoint
-	claimed  bool
-	sent     uint64
-	sequence uint64
-	pending  []runnerproto.Message
-	bytes    int
-	exited   bool
-	closing  bool
-	lastTurn string
-	exitOnce sync.Once
-	done     chan struct{}
-	commands chan runnerproto.Message
+	daemon           *daemon
+	session          runnerproto.Session
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.Mutex
+	agent            agentProcess
+	path             string
+	control          string
+	native           runnerproto.AgentCheckpoint
+	checkpointFailed bool
+	claimed          bool
+	sent             uint64
+	sequence         uint64
+	pending          []runnerproto.Message
+	bytes            int
+	exited           bool
+	closing          bool
+	lastTurn         string
+	exitOnce         sync.Once
+	done             chan struct{}
+	commands         chan runnerproto.Message
 }
 
 func Run(ctx context.Context, options Options) error {
@@ -501,6 +502,9 @@ func (s *localSession) initialize(credentialPath string) {
 	if s.session.ResumeRequested {
 		checkpoint, loadErr := loadLocalCheckpoint(s.daemon.options, s.session)
 		if loadErr != nil {
+			s.mu.Lock()
+			s.checkpointFailed = true
+			s.mu.Unlock()
 			fail()
 			return
 		}
@@ -616,13 +620,17 @@ func (s *localSession) finish(exit int) {
 		defer close(s.done)
 		s.mu.Lock()
 		s.exited = true
-		path, control, closing, native := s.path, s.control, s.closing, s.native
+		path, control, closing, native, checkpointFailed := s.path, s.control, s.closing, s.native, s.checkpointFailed
 		s.mu.Unlock()
 		s.cancel()
 		if closing {
 			exit = 0
 		}
 		m := runnerproto.Frame("process.exit")
+		if checkpointFailed {
+			m.Status = "checkpoint_failed"
+			exit = 1
+		}
 		// Closing execution retains the workspace and native transcript. Only
 		// an explicit conversation deletion may remove these persisted resources.
 		if native.NativeSessionID != "" {

@@ -438,6 +438,10 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		event = "approval.resolved"
 		payload = map[string]any{"approval_id": m.ApprovalID, "decision": "deny"}
 	case "process.exit":
+		if m.Status == "checkpoint_failed" && next.Checkpoint != nil {
+			next.Checkpoint.Ready = false
+			next.Checkpoint.Digest = ""
+		}
 		if m.Checkpoint != nil {
 			if !r.hello.PersistentSessions || !validAgentCheckpoint(m.Checkpoint) || !m.Checkpoint.Ready || s.Checkpoint == nil || m.Checkpoint.NativeSessionID != s.Checkpoint.NativeSessionID || m.Checkpoint.NativeLogID != s.Checkpoint.NativeLogID {
 				return errors.New("invalid durable native checkpoint")
