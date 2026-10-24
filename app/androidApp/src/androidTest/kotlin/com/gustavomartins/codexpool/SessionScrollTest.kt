@@ -22,16 +22,16 @@ class SessionScrollTest {
 
     @Test fun growingStreamFollowsTheBottomUntilTheUserScrollsUp() {
         var state by mutableStateOf(SessionScreenState(
-            entries = listOf(TranscriptEntry("t", "Text", (1..40).joinToString("\n") { "Stream line $it" })),
+            entries = listOf(TranscriptEntry("t", "Text", (1..40).joinToString("\n") { "Stream line $it" }, 1L)),
         ))
         compose.setContent {
-            MaterialTheme { SessionEventList(state, Modifier.height(220.dp), onReconnect = {}, onDecision = { _, _ -> }) }
+            MaterialTheme { SessionEventList(state, Modifier.height(220.dp), onReconnect = {}, onDecision = { _, _ -> }, onLoadOlder = {}) }
         }
         compose.waitForIdle()
         compose.onNodeWithTag("session-latest").assertIsDisplayed()
         compose.runOnIdle {
             state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t", DeltaKind.Text,
-                (41..60).joinToString("\n", prefix = "\n") { "Stream line $it" })))
+                (41..60).joinToString("\n", prefix = "\n") { "Stream line $it" })), 1L)
             assertEquals(1, state.entries.size)
         }
         compose.waitForIdle()
@@ -43,7 +43,7 @@ class SessionScrollTest {
         val position = scrollPosition()
         compose.runOnIdle {
             state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t", DeltaKind.Text,
-                (61..80).joinToString("\n", prefix = "\n") { "Stream line $it" })))
+                (61..80).joinToString("\n", prefix = "\n") { "Stream line $it" })), 2L)
         }
         compose.waitForIdle()
         compose.onNodeWithTag("session-latest").assertIsNotDisplayed()

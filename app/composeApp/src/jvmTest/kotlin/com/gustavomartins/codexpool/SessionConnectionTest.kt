@@ -109,16 +109,17 @@ class SessionConnectionTest {
         private val executor = Executors.newCachedThreadPool()
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             this.executor = this@Fixture.executor
-            createContext("/api/sessions/s") { exchange ->
+            createContext("/api/") { exchange ->
                 check(exchange.requestHeaders.getFirst("Authorization") == "Bearer synthetic-token")
                 if (exchange.requestURI.path.endsWith("/events")) {
                     streams += exchange.requestHeaders.getFirst("Last-Event-ID")
                     stream(exchange)
                 } else {
                     val state = if (closed.get()) "closed" else "running"
-                    val session = """{"id":"s","agent":"codex","model":"synthetic","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"$state","approvals":[]}"""
+                    val session = """{"id":"s","conversation_id":"s","agent":"codex","model":"synthetic","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"$state","approvals":[]}"""
+                    val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"synthetic","title":"","storage":"active","session_state":"$state","last_interaction_at":null,"preview":[]}"""
                     val data = (if (exchange.requestURI.path.endsWith("/history")) {
-                        """{"session":$session,"events":[],"cursor":0,"through":0,"has_more":false}"""
+                        """{"conversation":$conversation,"session":$session,"events":[],"before":1,"through":0,"has_older":false}"""
                     } else session).toByteArray()
                     exchange.responseHeaders.set("Content-Type", "application/json")
                     exchange.sendResponseHeaders(200, data.size.toLong())

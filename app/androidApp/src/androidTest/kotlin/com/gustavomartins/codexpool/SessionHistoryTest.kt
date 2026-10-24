@@ -19,13 +19,14 @@ import org.koin.core.context.stopKoin
 class SessionHistoryTest {
     @get:Rule val compose = createComposeRule()
     private val historyReads = AtomicInteger()
-    private val session = """{"id":"s","agent":"codex","model":"history-model","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"closed"}"""
+    private val session = """{"id":"s","conversation_id":"s","agent":"codex","model":"history-model","workspace":{"mode":"ephemeral"},"permission_mode":"gated","state":"closed"}"""
+    private val conversation = """{"id":"s","session_id":"s","agent":"codex","model":"history-model","title":"","storage":"active","session_state":"closed","last_interaction_at":null,"preview":[]}"""
     private val client = HttpClient(MockEngine { request ->
         val body = when (request.url.encodedPath) {
-            "/api/sessions" -> """{"sessions":[$session]}"""
-            "/api/sessions/s/history" -> {
+            "/api/conversations" -> """{"conversations":[$conversation]}"""
+            "/api/conversations/s/history" -> {
                 historyReads.incrementAndGet()
-                """{"session":$session,"cursor":4,"through":4,"has_more":false,"events":[
+                """{"conversation":$conversation,"session":$session,"before":1,"through":4,"has_older":false,"events":[
                   {"id":1,"type":"turn.input","data":{"turn_id":"t","input":"Pergunta persistida"}},
                   {"id":2,"type":"turn.delta","data":{"turn_id":"t","kind":"thinking","content":"Pensamento persistido"}},
                   {"id":3,"type":"turn.delta","data":{"turn_id":"t","kind":"text","content":"Resposta persistida"}},

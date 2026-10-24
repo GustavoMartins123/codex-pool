@@ -16,9 +16,9 @@ import org.junit.runner.RunWith
 class TranscriptPresentationTest {
     @get:Rule val compose = createComposeRule()
     @Test fun thinkingIsVisibleAndCanBeCollapsedWhileToolsStartCollapsed() {
-        val sections = transcriptSections(listOf(TranscriptEntry("t", "Thinking", "private-ui-reason"),
-            TranscriptEntry("t", "ToolCall", "synthetic command"), TranscriptEntry("t", "ToolResult", "synthetic output"),
-            TranscriptEntry("t", "Text", "Resposta legível")))
+        val sections = transcriptSections(listOf(TranscriptEntry("t", "Thinking", "private-ui-reason", 1L),
+            TranscriptEntry("t", "ToolCall", "synthetic command", 2L), TranscriptEntry("t", "ToolResult", "synthetic output", 3L),
+            TranscriptEntry("t", "Text", "Resposta legível", 4L)))
         compose.setContent { MaterialTheme { Column { sections.forEach { TranscriptSectionCard(it) } } } }
         compose.onNodeWithText("Resposta legível").assertIsDisplayed()
         compose.onNodeWithText("private-ui-reason").assertIsDisplayed()

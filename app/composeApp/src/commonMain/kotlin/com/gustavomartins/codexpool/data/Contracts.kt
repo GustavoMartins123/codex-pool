@@ -69,9 +69,17 @@ data class Session(
     @SerialName("turn_id") val turnId: String? = null,
     @SerialName("closed_reason") val closedReason: String? = null,
     val approvals: List<Approval> = emptyList(),
+    @SerialName("conversation_id") val conversationId: String,
 )
 
-@Serializable data class SessionList(val sessions: List<Session>)
+@Serializable enum class ConversationStorage { @SerialName("active") Active, @SerialName("archived") Archived }
+@Serializable data class MessagePreview(@SerialName("turn_id") val turnId: String, val role: String, val text: String)
+@Serializable data class Conversation(
+    val id: String, @SerialName("session_id") val sessionId: String, val agent: Agent, val model: String,
+    val title: String, val storage: ConversationStorage, @SerialName("session_state") val sessionState: SessionState,
+    @SerialName("last_interaction_at") val lastInteractionAt: String?, val preview: List<MessagePreview>,
+)
+@Serializable data class ConversationPage(val conversations: List<Conversation>, @SerialName("next_cursor") val nextCursor: String? = null)
 @Serializable data class LoginRequest(val email: String, val password: String)
 @Serializable data class LoginResponse(val token: String, @SerialName("client_id") val clientId: String)
 @Serializable data class Credentials(val baseUrl: String, val token: String, val clientId: String)
@@ -79,10 +87,10 @@ data class Session(
 @Serializable data class TurnMessage(@SerialName("turn_id") val turnId: String, val input: String)
 @Serializable data class HistoryEvent(val id: Long, val type: String, val data: JsonElement)
 @Serializable data class HistoryPage(
-    val session: Session, val events: List<HistoryEvent>, val cursor: Long, val through: Long,
-    @SerialName("has_more") val hasMore: Boolean,
+    val conversation: Conversation, val session: Session, val events: List<HistoryEvent>, val before: Long, val through: Long,
+    @SerialName("has_older") val hasOlder: Boolean,
 )
-data class SessionHistory(val session: Session, val cursor: Long, val events: List<SessionEvent>)
+data class SequencedSessionEvent(val id: Long?, val event: SessionEvent)
 @Serializable data class TurnStarted(@SerialName("turn_id") val turnId: String)
 @Serializable enum class Decision { @SerialName("approve") Approve, @SerialName("deny") Deny }
 @Serializable data class ApprovalDecision(val decision: Decision)

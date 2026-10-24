@@ -10,7 +10,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
 enum class TranscriptTopic { User, Thinking, Tools, Answer, Summary }
-data class TranscriptSection(val id: Int, val turnId: String, val topic: TranscriptTopic, val entries: List<TranscriptEntry>)
+data class TranscriptSection(val id: Long, val turnId: String, val topic: TranscriptTopic, val entries: List<TranscriptEntry>)
 
 fun transcriptSections(entries: List<TranscriptEntry>): List<TranscriptSection> {
     val sections = mutableListOf<TranscriptSection>()
@@ -26,7 +26,7 @@ fun transcriptSections(entries: List<TranscriptEntry>): List<TranscriptSection> 
         val last = sections.lastOrNull()
         if (last?.turnId == entry.turnId && last.topic == topic) {
             sections[sections.lastIndex] = last.copy(entries = last.entries + entry)
-        } else sections += TranscriptSection(sections.size, entry.turnId, topic, listOf(entry))
+        } else sections += TranscriptSection(entry.keyEventId, entry.turnId, topic, listOf(entry))
     }
     return sections
 }

@@ -83,17 +83,35 @@ fun DashboardScreen(state: DashboardState, auth: AuthState, vm: DashboardViewMod
             item { ErrorMessage(state.error); ErrorMessage(auth.error) }
             when (state.tab) {
                 DashboardTab.Sessions -> {
-                    if (state.sessions?.isEmpty() == true) item { EmptyCard("Nenhuma sessão", "Conecte um runner e abra sua primeira sessão de código.") }
-                    items(state.sessions.orEmpty(), key = { it.id }) { session ->
-                        Card(onClick = { onOpen(session.id) }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("${session.agent.name} · ${session.model}", style = MaterialTheme.typography.titleLarge)
-                                Text(session.state.label(), color = MaterialTheme.colorScheme.primary)
-                                Text(session.id, style = MaterialTheme.typography.labelSmall)
-                                Text(session.runnerId?.let { "Runner: $it" } ?: "Ainda sem runner", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                session.closedReason?.let { Text("Motivo: $it") }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ConversationStorage.entries.forEach { storage ->
+                                FilterChip(selected = state.storage == storage, enabled = !state.loading,
+                                    onClick = { vm.selectStorage(storage) }, label = { Text(if (storage == ConversationStorage.Active) "Ativas" else "Arquivadas") })
                             }
                         }
+                    }
+                    if (state.conversations?.isEmpty() == true) item { EmptyCard(
+                        if (state.storage == ConversationStorage.Active) "Nenhuma sessão" else "Nenhuma conversa arquivada",
+                        if (state.storage == ConversationStorage.Active) "Conecte um runner e abra sua primeira sessão de código." else "Conversas inativas serão guardadas aqui com o histórico completo.") }
+                    items(state.conversations.orEmpty(), key = { it.id }) { conversation ->
+                        Card(onClick = { onOpen(conversation.id) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("${conversation.agent.name} · ${conversation.model}", style = MaterialTheme.typography.titleLarge)
+                                if (conversation.title.isNotBlank()) Text(conversation.title, style = MaterialTheme.typography.titleMedium)
+                                Text(conversation.sessionState.label(), color = MaterialTheme.colorScheme.primary)
+                                Text(conversation.id, style = MaterialTheme.typography.labelSmall)
+                                conversation.lastInteractionAt?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                                conversation.preview.forEach { message ->
+                                    Text(if (message.role == "user") "Você" else "Agente", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                    Text(message.text, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                    if (state.nextCursor != null) item {
+                        OutlinedButton(onClick = vm::loadMoreConversations, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text("Carregar mais conversas") }
                     }
                 }
                 DashboardTab.Runners -> {

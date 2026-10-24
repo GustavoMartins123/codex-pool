@@ -20,6 +20,7 @@ fun SessionEventList(
     modifier: Modifier = Modifier,
     onReconnect: () -> Unit,
     onDecision: (String, Decision) -> Unit,
+    onLoadOlder: () -> Unit,
 ) {
     val scroll = rememberLazyListState()
     val sections = remember(state.entries) { transcriptSections(state.entries) }
@@ -68,7 +69,10 @@ fun SessionEventList(
                     OutlinedButton(onClick = onReconnect) { Text("Reconectar") }
                 }
                 if (state.connection == StreamConnection.Connecting || state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text("Eventos recebidos nesta tela. O agente executa na sua máquina.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                ErrorMessage(state.historyError)
+                if (state.hasOlder) OutlinedButton(onClick = onLoadOlder, enabled = !state.loadingOlder) {
+                    Text(if (state.loadingOlder) "Carregando…" else "Carregar mensagens anteriores")
+                }
             }
         }
         items(state.approvals, key = { "approval/${it.approvalId}" }) { approval ->

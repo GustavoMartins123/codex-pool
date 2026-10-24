@@ -78,36 +78,31 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     private fun endpoint(path: String) = credentials.baseUrl + path
     private fun HttpRequestBuilder.authorize() { bearerAuth(credentials.token) }
     private fun sessionPath(id: String): String = "/api/sessions/${resourceId(id)}"
-    suspend fun sessions(): List<Session> = client.get(endpoint("/api/sessions")) { authorize() }
-        .checked("/api/sessions").body<SessionList>().sessions
+    private fun conversationPath(id: String): String = "/api/conversations/${resourceId(id)}"
+    suspend fun conversations(storage: ConversationStorage, cursor: String? = null): ConversationPage = client.get(endpoint("/api/conversations")) {
+        authorize(); parameter("storage", if (storage == ConversationStorage.Active) "active" else "archived"); parameter("limit", 50)
+        cursor?.let { parameter("cursor", it) }
+    }.checked("/api/conversations").body<ConversationPage>().also { page ->
+        require(page.conversations.all { it.storage == storage } && page.conversations.map { it.id }.distinct().size == page.conversations.size) {
+            "O pool retornou uma lista de conversas inconsistente."
+        }
+    }
     suspend fun session(id: String): Session = client.get(endpoint(sessionPath(id))) { authorize() }
         .checked(sessionPath(id)).body()
-    suspend fun history(id: String): SessionHistory {
-        val path = "${sessionPath(id)}/history"
-        var cursor = 0L
-        var through: Long? = null
-        var snapshot: Session? = null
-        val events = mutableListOf<SessionEvent>()
-        do {
-            val page = client.get(endpoint(path)) {
-                authorize(); parameter("after", cursor)
-                through?.let { parameter("through", it) }
-            }.checked(path).body<HistoryPage>()
-            require(page.session.id == id && page.through >= cursor && (through == null || page.through == through)) {
-                "O pool retornou um histórico de sessão inconsistente."
-            }
-            if (snapshot == null) snapshot = page.session
-            through = page.through
-            for (event in page.events) {
-                require(event.id == cursor + 1 && event.id <= page.through) { "O histórico contém uma lacuna ou eventos fora de ordem." }
-                events += decodeEvent(event.type, event.data.toString())
-                cursor = event.id
-            }
-            require(page.cursor == cursor && page.hasMore == (cursor < page.through) && (!page.hasMore || page.events.isNotEmpty())) {
-                "A paginação do histórico é inválida."
-            }
-        } while (page.hasMore)
-        return SessionHistory(requireNotNull(snapshot), cursor, events)
+    suspend fun history(id: String, before: Long? = null, through: Long? = null): HistoryPage {
+        val path = "${conversationPath(id)}/history"
+        val page = client.get(endpoint(path)) {
+            authorize(); parameter("limit", 256)
+            before?.let { parameter("before", it) }; through?.let { parameter("through", it) }
+        }.checked(path).body<HistoryPage>()
+        require(page.conversation.id == id && page.session.id == page.conversation.sessionId && page.session.conversationId == id &&
+            page.through >= 0 && (through == null || through == page.through)) { "O pool retornou um histórico de conversa inconsistente." }
+        val end = before ?: (page.through + 1)
+        require(end in 1..(page.through + 1) && page.before in 1..end && page.hasOlder == (page.before > 1)) { "A paginação do histórico é inválida." }
+        require(page.events.size.toLong() == end - page.before) { "O histórico contém uma lacuna." }
+        page.events.forEachIndexed { index, event -> require(event.id == page.before + index) { "O histórico contém eventos fora de ordem." } }
+        require(!page.hasOlder || page.events.isNotEmpty()) { "A página de histórico está incompleta." }
+        return page
     }
     suspend fun create(request: CreateSession): Session {
         request.validate()
@@ -149,9 +144,9 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     suspend fun quotas(): Quotas = client.get(endpoint("/api/me/quotas")) { authorize() }.checked("/api/me/quotas").body()
     suspend fun logout() { client.delete(endpoint("/api/auth/token")) { authorize() }.checked("/api/auth/token") }
 
-    fun events(id: String, lastEventId: String? = null, onCursor: (String) -> Unit = {}, onConnected: () -> Unit): Flow<SessionEvent> = flow {
+    fun events(id: String, lastEventId: String? = null, onCursor: (String) -> Unit = {}, onConnected: () -> Unit): Flow<SequencedSessionEvent> = flow {
         var cursor = lastEventId?.toLong()
-        val path = "${sessionPath(id)}/events"
+        val path = "${conversationPath(id)}/events"
         try {
             client.sse(request = {
                 url(endpoint(path)); authorize()
@@ -164,11 +159,11 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
                         val type = requireNotNull(event.event) { "Evento SSE sem tipo." }
                         val next = event.id?.let { raw ->
                             val value = requireNotNull(raw.toLongOrNull()) { "Cursor SSE inválido." }
-                            require(value > 0 && (cursor == null || value > cursor!!)) { "Cursor SSE fora de ordem." }
+                            require(value > 0 && (cursor == null || value == cursor!! + 1)) { "Cursor SSE fora de ordem ou com lacuna." }
                             value
                         }
                         val decoded = decodeEvent(type, data)
-                        emit(decoded)
+                        emit(SequencedSessionEvent(next, decoded))
                         if (next != null) { cursor = next; onCursor(next.toString()) }
                         decoded !is SessionEvent.Closed && decoded !is SessionEvent.Error
                     } else true

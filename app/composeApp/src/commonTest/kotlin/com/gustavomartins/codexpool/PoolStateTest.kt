@@ -14,29 +14,29 @@ import kotlinx.coroutines.test.*
 import kotlin.test.*
 
 class PoolStateTest {
-    private val session = Session("s-1", Agent.Codex, "m", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.Running)
+    private val session = Session("s-1", Agent.Codex, "m", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.Running, conversationId = "s-1")
     private val credentials = Credentials("https://pool.example", "test-token", "app-client")
     @BeforeTest fun mainDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @AfterTest fun resetMainDispatcher() { Dispatchers.resetMain() }
 
     @Test fun turnDeltasMergeOnlyWithinSameTurnAndKind() {
         var state = SessionScreenState(session = session)
-        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.Text, "hel")))
-        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.Text, "lo")))
-        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.ToolCall, "ls")))
-        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-2", DeltaKind.Text, "new")))
+        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.Text, "hel")), 1L)
+        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.Text, "lo")), 2L)
+        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-1", DeltaKind.ToolCall, "ls")), 3L)
+        state = reduceEvent(state, SessionEvent.Delta(TurnDelta("t-2", DeltaKind.Text, "new")), 4L)
         assertEquals(listOf("hello", "ls", "new"), state.entries.map { it.content })
     }
 
     @Test fun approvalsAreDeduplicatedAndResolvedByAuthoritativeEvents() {
         val approval = Approval("a-1", "git status", "Workspace /work")
         var state = SessionScreenState(session = session)
-        repeat(2) { state = reduceEvent(state, SessionEvent.Requested(approval)) }
+        repeat(2) { state = reduceEvent(state, SessionEvent.Requested(approval), 5L) }
         assertEquals(SessionState.WaitingApproval, state.session?.state)
         assertEquals(1, state.approvals.size)
-        state = reduceEvent(state, SessionEvent.Resolved(ApprovalResolved("a-1", Decision.Deny)))
+        state = reduceEvent(state, SessionEvent.Resolved(ApprovalResolved("a-1", Decision.Deny)), 6L)
         assertTrue(state.approvals.isEmpty())
-        state = reduceEvent(state, SessionEvent.State(StateEvent(SessionState.Running)))
+        state = reduceEvent(state, SessionEvent.State(StateEvent(SessionState.Running)), 7L)
         assertEquals(SessionState.Running, state.session?.state)
     }
 
@@ -51,7 +51,7 @@ class PoolStateTest {
 
     @Test fun closedSessionClearsPendingApprovalsAndDisablesInput() {
         val state = reduceEvent(SessionScreenState(session = session, connection = StreamConnection.Live,
-            approvals = listOf(Approval("a", "command", "context"))), SessionEvent.Closed(ClosedEvent("process_exit")))
+            approvals = listOf(Approval("a", "command", "context"))), SessionEvent.Closed(ClosedEvent("process_exit")), 8L)
         assertEquals(SessionState.Closed, state.session?.state)
         assertEquals("process_exit", state.session?.closedReason)
         assertTrue(state.approvals.isEmpty())

@@ -42,7 +42,7 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
             }
         }
     }) { padding ->
-        SessionEventList(state, Modifier.padding(padding).consumeWindowInsets(padding), vm::connect, vm::decide)
+        SessionEventList(state, Modifier.padding(padding).consumeWindowInsets(padding), vm::connect, vm::decide, vm::loadOlder)
 
     }
     if (closeDialog) AlertDialog(onDismissRequest = { closeDialog = false }, title = { Text("Encerrar sessão?") },

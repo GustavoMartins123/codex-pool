@@ -14,19 +14,20 @@ import kotlin.test.*
 
 class SessionHistoryTest {
     private val credentials = Credentials("https://pool.example", "history-token", "client")
-    private val session = Session("s", Agent.Codex, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.Closed)
+    private val session = Session("s", Agent.Codex, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.Closed, conversationId = "s")
+    private val conversation = Conversation("s", "s", Agent.Codex, "model", "", ConversationStorage.Active, SessionState.Closed, null, emptyList())
     private val headers = headersOf(HttpHeaders.ContentType, "application/json")
     @BeforeTest fun mainDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @AfterTest fun resetDispatcher() { Dispatchers.resetMain() }
 
-    @Test fun reopeningClosedSessionLoadsEveryPageAndRestoresUserThinkingToolsReplyAndSummary() = runTest {
+    @Test fun reopeningClosedSessionLoadsRecentMessagesFirstAndEarlierPagesOnDemand() = runTest {
         var requests = 0
         val engine = MockEngine { request ->
-            assertEquals("/api/sessions/s/history", request.url.encodedPath)
+            assertEquals("/api/conversations/s/history", request.url.encodedPath)
             assertEquals("Bearer history-token", request.headers[HttpHeaders.Authorization])
-            val first = request.url.parameters["after"] == "0"
+            val first = request.url.parameters["before"] == null
             if (first) assertNull(request.url.parameters["through"]) else assertEquals("5", request.url.parameters["through"])
-            val events = if (first) """[
+            val events = if (!first) """[
                 {"id":1,"type":"turn.input","data":{"turn_id":"t","input":"User question"}},
                 {"id":2,"type":"turn.delta","data":{"turn_id":"t","kind":"thinking","content":"Analysis"}}
             ]""" else """[
@@ -35,7 +36,7 @@ class SessionHistoryTest {
                 {"id":5,"type":"turn.finished","data":{"turn_id":"t","tokens":42,"duration_ms":123}}
             ]"""
             requests++
-            respond("""{"session":${PoolJson.encodeToString(session)},"events":$events,"cursor":${if (first) 2 else 5},"through":5,"has_more":$first}""", HttpStatusCode.OK, headers)
+            respond("""{"conversation":${PoolJson.encodeToString(conversation)},"session":${PoolJson.encodeToString(session)},"events":$events,"before":${if (first) 3 else 1},"through":5,"has_older":$first}""", HttpStatusCode.OK, headers)
         }
         val client = HttpClient(engine) { poolConfiguration() }
         try {
@@ -43,6 +44,10 @@ class SessionHistoryTest {
                 val vm = SessionViewModel(PoolApi(client, credentials), "s")
                 vm.connect()
                 vm.state.first { it.connection == StreamConnection.Disconnected && it.session != null }
+                assertEquals(listOf("ToolCall", "Text", "summary"), vm.state.value.entries.map { it.kind })
+                assertTrue(vm.state.value.hasOlder)
+                vm.loadOlder()
+                vm.state.first { !it.loadingOlder }
                 assertEquals(listOf("user", "Thinking", "ToolCall", "Text", "summary"), vm.state.value.entries.map { it.kind })
                 assertEquals(listOf("User question", "Analysis", "Tool", "Answer"), vm.state.value.entries.take(4).map { it.content })
                 assertEquals(SessionState.Closed, vm.state.value.session?.state)
@@ -57,7 +62,7 @@ class SessionHistoryTest {
     @Test fun gapsAndUnavailableHistoryFailBeforeOpeningAnyOtherEndpoint() = runTest {
         for (status in listOf(HttpStatusCode.OK, HttpStatusCode.Conflict, HttpStatusCode.NotFound)) {
             val engine = MockEngine {
-                respond("""{"session":${PoolJson.encodeToString(session)},"events":[{"id":2,"type":"state","data":{"state":"closed"}}],"cursor":2,"through":2,"has_more":false}""", status, headers)
+                respond("""{"conversation":${PoolJson.encodeToString(conversation)},"session":${PoolJson.encodeToString(session)},"events":[{"id":2,"type":"state","data":{"state":"closed"}}],"before":1,"through":2,"has_older":false}""", status, headers)
             }
             val client = HttpClient(engine) { poolConfiguration() }
             try {

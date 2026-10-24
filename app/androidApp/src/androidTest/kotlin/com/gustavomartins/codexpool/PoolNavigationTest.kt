@@ -35,7 +35,7 @@ class PoolNavigationTest {
                     check(PoolJson.decodeFromString<LoginRequest>((request.body as TextContent).text) == LoginRequest("mobile-user", "test-password"))
                     """{"token":"ui-test-token","client_id":"test-client"}"""
                 }
-                "/api/sessions" -> """{"sessions":[]}"""
+                "/api/conversations" -> """{"conversations":[]}"""
                 "/api/pool/catalog" -> """{"models":[{"id":"test-model","protocol":"openai","available_now":true}]}"""
                 "/api/me/runners" -> """{"runners":[]}"""
                 "/api/me/quotas" -> """{"models":[],"generated_at":"2026-10-23T00:00:00Z"}"""

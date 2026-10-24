@@ -5,8 +5,8 @@ import kotlin.test.*
 
 class TranscriptSectionTest {
     @Test fun transcriptKeepsAnswerSeparateAndToolResultsTogetherWithoutMixingTurns() {
-        val entries = listOf(TranscriptEntry("one", "Thinking", "reason"), TranscriptEntry("one", "ToolCall", "command"),
-            TranscriptEntry("one", "ToolResult", "output"), TranscriptEntry("one", "Text", "answer"), TranscriptEntry("two", "Text", "next answer"))
+        val entries = listOf(TranscriptEntry("one", "Thinking", "reason", 1L), TranscriptEntry("one", "ToolCall", "command", 2L),
+            TranscriptEntry("one", "ToolResult", "output", 3L), TranscriptEntry("one", "Text", "answer", 4L), TranscriptEntry("two", "Text", "next answer", 5L))
         val sections = transcriptSections(entries)
         assertEquals(listOf(TranscriptTopic.Thinking, TranscriptTopic.Tools, TranscriptTopic.Answer, TranscriptTopic.Answer), sections.map { it.topic })
         assertEquals(listOf("command", "output"), sections[1].entries.map { it.content })
@@ -16,8 +16,8 @@ class TranscriptSectionTest {
 
     @Test fun completedTurnIsASeparateLowPriorityMetadataSection() {
         val sections = transcriptSections(listOf(
-            TranscriptEntry("one", "Text", "answer"),
-            TranscriptEntry("one", "summary", "12 tokens · 340 ms"),
+            TranscriptEntry("one", "Text", "answer", 6L),
+            TranscriptEntry("one", "summary", "12 tokens · 340 ms", 7L),
         ))
         assertEquals(TranscriptTopic.Answer, sections[0].topic)
         assertEquals(TranscriptTopic.Summary, sections[1].topic)

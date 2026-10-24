@@ -100,7 +100,9 @@ enum class DashboardTab { Sessions, Runners, Quotas }
 data class DashboardState(
     val tab: DashboardTab = DashboardTab.Sessions,
     val loading: Boolean = false,
-    val sessions: List<Session>? = null,
+    val conversations: List<Conversation>? = null,
+    val storage: ConversationStorage = ConversationStorage.Active,
+    val nextCursor: String? = null,
     val runners: List<Runner>? = null,
     val quotas: Quotas? = null,
     val catalog: List<CatalogModel>? = null,
@@ -124,9 +126,9 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
     fun refresh() = action {
         when (mutable.value.tab) {
             DashboardTab.Sessions -> {
-                mutable.update { it.copy(sessions = null) }
-                val sessions = api.sessions()
-                mutable.update { it.copy(sessions = sessions) }
+                mutable.update { it.copy(conversations = null, nextCursor = null) }
+                val page = api.conversations(mutable.value.storage)
+                mutable.update { it.copy(conversations = page.conversations, nextCursor = page.nextCursor) }
             }
             DashboardTab.Runners -> {
                 mutable.update { it.copy(runners = null) }
@@ -141,6 +143,21 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         }
     }
 
+    fun selectStorage(storage: ConversationStorage) {
+        if (mutable.value.loading || mutable.value.storage == storage) return
+        mutable.update { it.copy(storage = storage) }
+        refresh()
+    }
+
+    fun loadMoreConversations() = action {
+        val cursor = requireNotNull(mutable.value.nextCursor)
+        val page = api.conversations(mutable.value.storage, cursor)
+        require(page.nextCursor != cursor) { "O cursor da lista não avançou." }
+        val combined = mutable.value.conversations.orEmpty() + page.conversations
+        require(combined.map { it.id }.distinct().size == combined.size) { "A lista retornou conversas repetidas." }
+        mutable.update { it.copy(conversations = combined, nextCursor = page.nextCursor) }
+    }
+
     fun loadCatalog() = action {
         mutable.update { it.copy(catalog = null) }
         val models = api.catalog()
@@ -151,7 +168,7 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
         request.validate()
         require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
         val session = api.create(request)
-        onCreated(session.id)
+        onCreated(session.conversationId)
     }
 
     fun openPairing() { mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false, error = null) } }
@@ -185,9 +202,10 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
 }
 
 enum class StreamConnection { Disconnected, Connecting, Live }
-data class TranscriptEntry(val turnId: String, val kind: String, val content: String)
+data class TranscriptEntry(val turnId: String, val kind: String, val content: String, val keyEventId: Long)
 data class SessionScreenState(
     val session: Session? = null,
+    val conversation: Conversation? = null,
     val connection: StreamConnection = StreamConnection.Disconnected,
     val entries: List<TranscriptEntry> = emptyList(),
     val approvals: List<Approval> = emptyList(),
@@ -195,14 +213,19 @@ data class SessionScreenState(
     val busy: Boolean = false,
     val error: String? = null,
     val eventRevision: Long = 0,
+    val historyBefore: Long? = null,
+    val historyThrough: Long? = null,
+    val hasOlder: Boolean = false,
+    val loadingOlder: Boolean = false,
+    val historyError: String? = null,
 ) {
     val canSend get() = session?.state == SessionState.WaitingInput && connection == StreamConnection.Live && !busy
     val canCancel get() = session?.state in listOf(SessionState.Running, SessionState.WaitingApproval) && connection == StreamConnection.Live && !busy
 }
 
-fun reduceEvent(state: SessionScreenState, event: SessionEvent): SessionScreenState = when (event) {
+fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?): SessionScreenState = when (event) {
     is SessionEvent.Input -> state.copy(entries = state.entries.filterNot { it.kind == "user" && it.turnId == event.value.turnId } +
-        TranscriptEntry(event.value.turnId, "user", event.value.input))
+        TranscriptEntry(event.value.turnId, "user", event.value.input, requireNotNull(eventId)))
     is SessionEvent.State -> state.copy(session = state.session?.copy(state = event.value.state))
     is SessionEvent.Started -> state.copy(session = state.session?.copy(state = SessionState.Running, turnId = event.value.turnId))
     is SessionEvent.Delta -> {
@@ -211,7 +234,7 @@ fun reduceEvent(state: SessionScreenState, event: SessionEvent): SessionScreenSt
         val last = state.entries.lastOrNull()
         val entries = if (last?.turnId == delta.turnId && last.kind == kind) {
             state.entries.dropLast(1) + last.copy(content = last.content + delta.content)
-        } else state.entries + TranscriptEntry(delta.turnId, kind, delta.content)
+        } else state.entries + TranscriptEntry(delta.turnId, kind, delta.content, requireNotNull(eventId))
         state.copy(entries = entries)
     }
     is SessionEvent.Finished -> state.copy(
@@ -221,7 +244,7 @@ fun reduceEvent(state: SessionScreenState, event: SessionEvent): SessionScreenSt
                 0 -> ""
                 130 -> " · cancelado"
                 else -> " · falha (código ${event.value.exitCode})"
-            }),
+            }, requireNotNull(eventId)),
     )
     is SessionEvent.Requested -> state.copy(
         session = state.session?.copy(state = SessionState.WaitingApproval),
@@ -239,6 +262,7 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
     private var stream: Job? = null
     private var streamGeneration = 0L
     private var lastEventId: String? = null
+    private var older: Job? = null
 
     fun connect() {
         if (stream?.isActive == true) return
@@ -253,12 +277,15 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                         val session = if (loadingHistory) {
                             val history = api.history(id)
                             if (generation != streamGeneration) return@launch
-                            val restored = history.events.fold(SessionScreenState(session = history.session), ::reduceEvent)
-                            lastEventId = history.cursor.toString()
+                            val restored = history.events.fold(SessionScreenState(session = history.session, conversation = history.conversation)) { state, event ->
+                                reduceEvent(state, decodeEvent(event.type, event.data.toString()), event.id)
+                            }
+                            lastEventId = history.through.toString()
                             mutable.update { restored.copy(session = history.session, approvals = history.session.approvals,
+                                historyBefore = history.before, historyThrough = history.through, hasOlder = history.hasOlder,
                                 connection = StreamConnection.Connecting, eventRevision = it.eventRevision + 1) }
                             history.session
-                        } else api.session(id)
+                        } else api.session(requireNotNull(mutable.value.session).id)
                         if (generation != streamGeneration) return@launch
                         mutable.update { it.copy(session = session, approvals = session.approvals) }
                         // Replay the last deltas even if the session closed while offline.
@@ -269,9 +296,10 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                             if (generation == streamGeneration) mutable.update {
                                 it.copy(connection = StreamConnection.Live, error = null)
                             }
-                        }.collect { event ->
+                        }.collect { frame ->
+                            val event = frame.event
                             if (generation == streamGeneration) {
-                                mutable.update { reduceEvent(it, event).copy(eventRevision = it.eventRevision + 1) }
+                                mutable.update { reduceEvent(it, event, frame.id).copy(eventRevision = it.eventRevision + 1) }
                                 reconnectDelay = 500L
                                 if (event is SessionEvent.Error) throw SessionProtocolException(event.value.message)
                             }
@@ -302,29 +330,51 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         streamGeneration++
         stream?.cancel()
         stream = null
-        mutable.update { it.copy(connection = StreamConnection.Disconnected) }
+        older?.cancel()
+        mutable.update { it.copy(connection = StreamConnection.Disconnected, loadingOlder = false) }
+    }
+
+    fun loadOlder() {
+        if (!mutable.value.hasOlder || mutable.value.loadingOlder) return
+        val generation = streamGeneration
+        val before = requireNotNull(mutable.value.historyBefore)
+        val through = requireNotNull(mutable.value.historyThrough)
+        mutable.update { it.copy(loadingOlder = true, historyError = null) }
+        older = viewModelScope.launch {
+            try {
+                val page = api.history(id, before, through)
+                val historical = page.events.fold(SessionScreenState()) { state, event ->
+                    reduceEvent(state, decodeEvent(event.type, event.data.toString()), event.id)
+                }.entries
+                if (generation == streamGeneration) mutable.update {
+                    it.copy(entries = prependTranscript(historical, it.entries), historyBefore = page.before, hasOlder = page.hasOlder)
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { if (generation == streamGeneration) mutable.update { it.copy(historyError = e.userMessage()) } }
+            finally { if (generation == streamGeneration) mutable.update { it.copy(loadingOlder = false) } }
+        }
     }
 
     fun send(input: String, onSent: () -> Unit) {
         if (!mutable.value.canSend) return
         action {
             val revision = mutable.value.eventRevision
-            val turn = api.turn(id, input)
+            val turn = api.turn(requireNotNull(mutable.value.session).id, input)
             mutable.update {
                 it.copy(session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId) else it.session)
             }
             onSent()
         }
     }
-    fun cancel() = action { api.cancel(id) }
+    fun cancel() = action { api.cancel(requireNotNull(mutable.value.session).id) }
     fun close() = action {
         val revision = mutable.value.eventRevision
-        api.close(id)
+        api.close(requireNotNull(mutable.value.session).id)
         mutable.update { if (it.eventRevision == revision) it.copy(session = it.session?.copy(state = SessionState.Closing)) else it }
     }
     fun decide(approvalId: String, decision: Decision) = action {
         require(mutable.value.approvals.any { it.approvalId == approvalId }) { "A aprovação não está pendente." }
-        api.decide(id, approvalId, decision)
+        api.decide(requireNotNull(mutable.value.session).id, approvalId, decision)
         // Only the authoritative SSE event removes the pending approval.
     }
 
@@ -339,4 +389,13 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
             finally { mutable.update { it.copy(busy = false) } }
         }
     }
+}
+
+fun prependTranscript(older: List<TranscriptEntry>, current: List<TranscriptEntry>): List<TranscriptEntry> {
+    val last = older.lastOrNull()
+    val first = current.firstOrNull()
+    return if (last != null && first != null && last.turnId == first.turnId && last.kind == first.kind &&
+        first.kind in listOf("Text", "Thinking", "ToolCall", "ToolResult")) {
+        older.dropLast(1) + first.copy(content = last.content + first.content) + current.drop(1)
+    } else older + current
 }

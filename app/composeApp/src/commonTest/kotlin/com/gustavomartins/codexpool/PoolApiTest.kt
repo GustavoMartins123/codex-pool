@@ -11,7 +11,7 @@ import kotlin.test.*
 
 class PoolApiTest {
     private val credentials = Credentials("https://pool.example", "test-session-token", "app-client")
-    private val session = Session("s-1", Agent.Codex, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.WaitingInput)
+    private val session = Session("s-1", Agent.Codex, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, SessionState.WaitingInput, conversationId = "s-1")
     private val jsonHeaders = headersOf(HttpHeaders.ContentType, "application/json")
 
     @Test fun loginUsesDedicatedTokenEndpointWithoutBearer() = runTest {
