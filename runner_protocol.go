@@ -61,8 +61,6 @@ func (b *sessionBroker) claim(r *connectedRunner, id string) error {
 		m.CredentialPath = "/config/" + s.Agent + "/" + nonce
 	}
 	b.sendLocked(r, m)
-	b.publishLocked(id, "runner.status", map[string]any{"status": "reconnected"})
-	b.publishLocked(id, "state", map[string]any{"state": next.State})
 	if next.State == "closing" {
 		close := runnerproto.Frame("session.close")
 		close.SessionID = id
@@ -152,6 +150,10 @@ func (b *sessionBroker) claimCredentialLocked(s *sessionRecord) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	events := []sessionEvent{
+		newSessionEvent("runner.status", map[string]any{"status": "reconnected"}),
+		newSessionEvent("state", map[string]any{"state": s.State}),
+	}
 	err = p.db.Update(func(tx *bbolt.Tx) error {
 		nonces := tx.Bucket([]byte(bucketConfigNonces))
 		cursor := nonces.Cursor()
@@ -172,7 +174,7 @@ func (b *sessionBroker) claimCredentialLocked(s *sessionRecord) (string, error) 
 		if err := putJSON(tx.Bucket([]byte(bucketConfigNonces)), tokenDigest(nonce), configDownloadNonce{ClientID: client.ID, PrincipalID: s.PrincipalID, ExpiresAt: b.now().Add(configDownloadNonceTTL)}); err != nil {
 			return err
 		}
-		if err := putJSON(tx.Bucket([]byte(bucketRunnerSessions)), s.ID, s); err != nil {
+		if err := b.recordEventsTx(tx, s, events); err != nil {
 			return err
 		}
 		return p.audit(tx, s.PrincipalID, "session.claim", s.ID, s.RunnerID)
@@ -181,6 +183,7 @@ func (b *sessionBroker) claimCredentialLocked(s *sessionRecord) (string, error) 
 		return "", err
 	}
 	p.clients[client.ID] = client
+	b.broadcastEventsLocked(s.ID, events)
 	return nonce, nil
 }
 
@@ -438,6 +441,13 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 	default:
 		return errors.New("unknown runner event")
 	}
+	var events []sessionEvent
+	if event != "" {
+		events = append(events, newSessionEvent(event, payload))
+	}
+	if next.State != s.State {
+		events = append(events, newSessionEvent("state", map[string]any{"state": next.State}))
+	}
 	if approval != nil {
 		if err := b.store.db.Update(func(tx *bbolt.Tx) error {
 			bucket := tx.Bucket([]byte(bucketSessionApprovals))
@@ -447,7 +457,7 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 			if err := putJSON(bucket, approval.ID, approval); err != nil {
 				return err
 			}
-			if err := putJSON(tx.Bucket([]byte(bucketRunnerSessions)), s.ID, next); err != nil {
+			if err := b.recordEventsTx(tx, next, events); err != nil {
 				return err
 			}
 			return b.store.audit(tx, r.principal, action, s.ID, "")
@@ -455,14 +465,9 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 			return err
 		}
 		b.sessions[s.ID] = next
-	} else if err := b.saveLocked(next, action, r.principal); err != nil {
+		b.broadcastEventsLocked(s.ID, events)
+	} else if err := b.saveLocked(next, action, r.principal, events...); err != nil {
 		return err
-	}
-	if event != "" {
-		b.publishLocked(s.ID, event, payload)
-	}
-	if next.State != s.State {
-		b.publishLocked(s.ID, "state", map[string]any{"state": next.State})
 	}
 	ack.Sequence = next.LastSequence
 	b.sendLocked(r, ack)
@@ -495,10 +500,9 @@ func (b *sessionBroker) releaseClaim(r *connectedRunner, id string) error {
 	next.LastSequence = 0
 	next.LeaseExpiresAt = time.Time{}
 	next.UpdatedAt = b.now()
-	if err := b.saveLocked(next, "session.claim_released", r.principal); err != nil {
+	if err := b.saveLocked(next, "session.claim_released", r.principal, newSessionEvent("state", map[string]any{"state": next.State})); err != nil {
 		return err
 	}
-	b.publishLocked(id, "state", map[string]any{"state": next.State})
 	b.offerLocked(next)
 	return nil
 }

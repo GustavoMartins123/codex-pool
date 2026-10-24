@@ -192,6 +192,34 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if len(parts) == 2 && parts[1] == "history" {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			respondJSONError(w, 405, "method not allowed")
+			return
+		}
+		after, err := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+		if err != nil {
+			respondJSONError(w, 400, "history requires a valid after cursor")
+			return
+		}
+		var through *uint64
+		if raw := r.URL.Query().Get("through"); raw != "" {
+			value, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				respondJSONError(w, 400, "invalid history boundary")
+				return
+			}
+			through = &value
+		}
+		page, err := b.history(principal.ID, id, after, through)
+		if err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		respondJSON(w, page)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "events" {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
@@ -283,19 +311,24 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 		respondJSONError(w, 429, "too many event subscriptions")
 		return
 	}
-	if cursor > stream.next || (cursor > 0 && len(stream.history) > 0 && cursor+1 < stream.history[0].ID) {
+	if cursor > s.EventCursor {
 		b.mu.Unlock()
 		respondJSONError(w, 409, "event cursor expired; reload session")
 		return
 	}
 	sub := &sessionSubscription{events: make(chan sessionEvent, 128), failed: make(chan struct{})}
-	stream.subscribers[sub] = struct{}{}
 	initial := []sessionEvent{}
-	if cursor > 0 {
-		for _, event := range stream.history {
-			if event.ID > cursor {
-				initial = append(initial, event)
-			}
+	if r.Header.Get("Last-Event-ID") != "" {
+		initial, err = b.readEventsLocked(s, cursor, s.EventCursor, 4096)
+		if err != nil {
+			b.mu.Unlock()
+			sessionHTTPError(w, err)
+			return
+		}
+		if len(initial) > 0 && initial[len(initial)-1].ID != s.EventCursor {
+			b.mu.Unlock()
+			respondJSONError(w, 409, "event replay too large; reload history")
+			return
 		}
 	} else {
 		data, _ := json.Marshal(map[string]any{"state": s.State})
@@ -309,6 +342,8 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 			initial = append(initial, sessionEvent{Type: "session.closed", Data: data})
 		}
 	}
+	stream.next = s.EventCursor
+	stream.subscribers[sub] = struct{}{}
 	b.mu.Unlock()
 	defer func() { b.mu.Lock(); delete(stream.subscribers, sub); b.mu.Unlock() }()
 	w.Header().Set("Content-Type", "text/event-stream")

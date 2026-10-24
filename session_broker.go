@@ -34,6 +34,8 @@ type sessionRecord struct {
 	ResumeState     string `json:"resume_state,omitempty"`
 	CancelRequested bool   `json:"cancel_requested"`
 	LastSequence    uint64 `json:"last_sequence"`
+	EventCursor     uint64 `json:"event_cursor"`
+	HistoryComplete bool   `json:"history_complete"`
 }
 
 type approvalRecord struct {
@@ -44,9 +46,9 @@ type approvalRecord struct {
 }
 
 type sessionEvent struct {
-	ID   uint64
-	Type string
-	Data json.RawMessage
+	ID   uint64          `json:"id"`
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
 }
 type sessionSubscription struct {
 	events chan sessionEvent
@@ -76,7 +78,7 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 	}
 	b := &sessionBroker{store: store, now: func() time.Time { return time.Now().UTC() }, sessions: map[string]*sessionRecord{}, runners: map[string]*connectedRunner{}, streams: map[string]*sessionStream{}, stopped: make(chan struct{})}
 	err := store.db.Update(func(tx *bbolt.Tx) error {
-		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals} {
+		for _, name := range []string{bucketRunnerPairings, bucketRunners, bucketRunnerSessions, bucketSessionApprovals, bucketSessionEvents} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return err
 			}
@@ -93,7 +95,7 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 				s.ResumeState = s.State
 				s.State = "orphaned"
 				s.UpdatedAt = b.now()
-				if err := putJSON(tx.Bucket([]byte(bucketRunnerSessions)), s.ID, s); err != nil {
+				if err := b.recordEventsTx(tx, &s, []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State})}); err != nil {
 					return err
 				}
 			}
@@ -153,9 +155,9 @@ func copySession(s *sessionRecord) *sessionRecord {
 	return &copy
 }
 
-func (b *sessionBroker) saveLocked(s *sessionRecord, action, actor string) error {
+func (b *sessionBroker) saveLocked(s *sessionRecord, action, actor string, events ...sessionEvent) error {
 	if err := b.store.db.Update(func(tx *bbolt.Tx) error {
-		if err := putJSON(tx.Bucket([]byte(bucketRunnerSessions)), s.ID, s); err != nil {
+		if err := b.recordEventsTx(tx, s, events); err != nil {
 			return err
 		}
 		if action != "" {
@@ -166,6 +168,7 @@ func (b *sessionBroker) saveLocked(s *sessionRecord, action, actor string) error
 		return err
 	}
 	b.sessions[s.ID] = s
+	b.broadcastEventsLocked(s.ID, events)
 	return nil
 }
 
@@ -187,16 +190,19 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 		return nil, sessionError(409, "active session limit reached")
 	}
 	now := b.now()
-	s := &sessionRecord{Session: runnerproto.Session{ID: uuid.NewString(), PrincipalID: principal, ClientID: client, Agent: q.Agent, Model: q.Model, Workspace: q.Workspace,
+	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: uuid.NewString(), PrincipalID: principal, ClientID: client, Agent: q.Agent, Model: q.Model, Workspace: q.Workspace,
 		PermissionMode: q.PermissionMode, State: "pending_runner", CreatedAt: now, UpdatedAt: now, Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
 	if q.Prompt != "" {
 		s.TurnID = uuid.NewString()
 		s.QueuedInput = q.Prompt
 	}
-	if err := b.saveLocked(s, "session.created", principal); err != nil {
+	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State})}
+	if q.Prompt != "" {
+		events = append(events, newSessionEvent("turn.input", map[string]any{"turn_id": s.TurnID, "input": q.Prompt}))
+	}
+	if err := b.saveLocked(s, "session.created", principal, events...); err != nil {
 		return nil, err
 	}
-	b.publishLocked(s.ID, "state", map[string]any{"state": s.State})
 	b.offerLocked(s)
 	return &copySession(s).Session, nil
 }
@@ -284,10 +290,11 @@ func (b *sessionBroker) startTurn(principal, id, input string) (string, error) {
 	next.State = "running"
 	next.UpdatedAt = b.now()
 	next.CancelRequested = false
-	if err := b.saveLocked(next, "session.turn", principal); err != nil {
+	if err := b.saveLocked(next, "session.turn", principal,
+		newSessionEvent("state", map[string]any{"state": next.State}),
+		newSessionEvent("turn.input", map[string]any{"turn_id": next.TurnID, "input": input})); err != nil {
 		return "", err
 	}
-	b.publishLocked(id, "state", map[string]any{"state": next.State})
 	b.dispatchTurnLocked(next)
 	return next.TurnID, nil
 }
@@ -343,13 +350,12 @@ func (b *sessionBroker) requestClose(principal, id string) error {
 	next.State = "closing"
 	next.ClosedReason = "cancelled"
 	next.UpdatedAt = b.now()
-	if err := b.saveLocked(next, "session.closing", principal); err != nil {
+	if err := b.saveLocked(next, "session.closing", principal, newSessionEvent("state", map[string]any{"state": "closing"})); err != nil {
 		return err
 	}
 	if err := b.revokeSessionClient(next); err != nil {
 		return err
 	}
-	b.publishLocked(id, "state", map[string]any{"state": "closing"})
 	m := runnerproto.Frame("session.close")
 	m.SessionID = id
 	b.sendLocked(b.runners[next.RunnerID], m)
@@ -378,34 +384,35 @@ func (b *sessionBroker) closeLocked(s *sessionRecord, reason string) error {
 	next.UpdatedAt = now
 	next.QueuedInput = ""
 	next.Approvals = []runnerproto.Approval{}
-	if err := b.saveLocked(next, "session.closed", s.PrincipalID); err != nil {
+	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": "closed"})}
+	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" {
+		events = append(events, newSessionEvent("error", map[string]any{"message": reason}))
+	}
+	events = append(events, newSessionEvent("session.closed", map[string]any{"reason": reason}))
+	if err := b.saveLocked(next, "session.closed", s.PrincipalID, events...); err != nil {
 		return err
 	}
-	b.publishLocked(s.ID, "state", map[string]any{"state": "closed"})
-	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" {
-		b.publishLocked(s.ID, "error", map[string]any{"message": reason})
-	}
-	b.publishLocked(s.ID, "session.closed", map[string]any{"reason": reason})
 	m := runnerproto.Frame("session.close")
 	m.SessionID = s.ID
 	b.sendLocked(b.runners[s.RunnerID], m)
 	return nil
 }
 
-func (b *sessionBroker) publishLocked(id, kind string, value any) {
+func (b *sessionBroker) broadcastEventsLocked(id string, events []sessionEvent) {
+	for _, event := range events {
+		b.broadcastLocked(id, event)
+	}
+}
+
+func (b *sessionBroker) broadcastLocked(id string, event sessionEvent) {
 	stream := b.streams[id]
 	if stream == nil {
 		stream = &sessionStream{subscribers: map[*sessionSubscription]struct{}{}}
 		b.streams[id] = stream
 	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	stream.next++
-	event := sessionEvent{stream.next, kind, data}
+	stream.next = event.ID
 	stream.history = append(stream.history, event)
-	stream.bytes += len(data)
+	stream.bytes += len(event.Data)
 	for len(stream.history) > 512 || stream.bytes > 2<<20 {
 		stream.bytes -= len(stream.history[0].Data)
 		stream.history = stream.history[1:]
@@ -467,11 +474,11 @@ func (b *sessionBroker) sweep() error {
 			next.ResumeState = s.State
 			next.State = "orphaned"
 			next.UpdatedAt = now
-			if err := b.saveLocked(next, "session.orphaned", s.PrincipalID); err != nil {
+			if err := b.saveLocked(next, "session.orphaned", s.PrincipalID,
+				newSessionEvent("state", map[string]any{"state": "orphaned"}),
+				newSessionEvent("runner.status", map[string]any{"status": "offline"})); err != nil {
 				return err
 			}
-			b.publishLocked(s.ID, "state", map[string]any{"state": "orphaned"})
-			b.publishLocked(s.ID, "runner.status", map[string]any{"status": "offline"})
 		}
 		for _, approval := range s.Approvals {
 			if !approval.ExpiresAt.After(now) {
@@ -502,6 +509,7 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision strin
 	}
 	next := copySession(s)
 	var record approvalRecord
+	var events []sessionEvent
 	err = b.store.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketSessionApprovals))
 		raw := bucket.Get([]byte(aid))
@@ -544,7 +552,11 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision strin
 		if err := putJSON(bucket, aid, record); err != nil {
 			return err
 		}
-		if err := putJSON(tx.Bucket([]byte(bucketRunnerSessions)), id, next); err != nil {
+		events = []sessionEvent{
+			newSessionEvent("approval.resolved", map[string]any{"approval_id": aid, "decision": record.Decision}),
+			newSessionEvent("state", map[string]any{"state": next.State}),
+		}
+		if err := b.recordEventsTx(tx, next, events); err != nil {
 			return err
 		}
 		return b.store.audit(tx, principal, "session.approval", id, decision)
@@ -553,8 +565,7 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision strin
 		return err
 	}
 	b.sessions[id] = next
-	b.publishLocked(id, "approval.resolved", map[string]any{"approval_id": aid, "decision": record.Decision})
-	b.publishLocked(id, "state", map[string]any{"state": next.State})
+	b.broadcastEventsLocked(id, events)
 	m := runnerproto.Frame("approval.decision")
 	m.SessionID = id
 	m.TurnID = record.TurnID

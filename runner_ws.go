@@ -208,7 +208,13 @@ func (b *sessionBroker) disconnectRunner(r *connectedRunner) {
 	delete(b.runners, r.id)
 	for _, s := range b.sessions {
 		if s.RunnerID == r.id && s.State != "closed" {
-			b.publishLocked(s.ID, "runner.status", map[string]any{"status": "offline"})
+			if err := b.saveLocked(copySession(s), "", r.principal, newSessionEvent("runner.status", map[string]any{"status": "offline"})); err != nil {
+				for _, runner := range b.runners {
+					runner.stop()
+				}
+				b.stopOnce.Do(func() { close(b.stopped) })
+				return
+			}
 		}
 	}
 }
