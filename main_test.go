@@ -1966,9 +1966,14 @@ func TestImageFanoutUsesLoopbackEndpoint(t *testing.T) {
 	t.Parallel()
 
 	h := &proxyHandler{cfg: &config{listenAddr: "0.0.0.0:14430"}}
-	req := httptest.NewRequest(http.MethodPost, "https://codex.ppflix.net/v1/images/generations", nil)
-	if got := h.imageFanoutEndpoint(req); got != "http://127.0.0.1:14430/v1/images/generations" {
-		t.Fatalf("fanout endpoint = %q", got)
+	if got, err := h.imageFanoutEndpoint(); err != nil || got != "http://127.0.0.1:14430/v1/images/generations" {
+		t.Fatalf("fanout endpoint = %q, %v", got, err)
+	}
+	for _, address := range []string{"", "invalid", "0.0.0.0:0", "0.0.0.0:99999"} {
+		h.cfg.listenAddr = address
+		if got, err := h.imageFanoutEndpoint(); err == nil || got != "" {
+			t.Fatalf("invalid address %q produced an endpoint: %q, %v", address, got, err)
+		}
 	}
 }
 

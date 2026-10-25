@@ -1115,7 +1115,11 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 		http.Error(w, "n must be between 1 and 10", http.StatusBadRequest)
 		return true
 	}
-	endpoint := h.imageFanoutEndpoint(r)
+	endpoint, err := h.imageFanoutEndpoint()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return true
+	}
 	oneBody := setImagesGenerationCount(body, 1)
 	ctx := r.Context()
 	client := &http.Client{Transport: h.transport, Timeout: clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, oneBody)}
@@ -1228,14 +1232,19 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 	return true
 }
 
-func (h *proxyHandler) imageFanoutEndpoint(r *http.Request) string {
-	if h != nil && h.cfg != nil {
-		if _, port, err := net.SplitHostPort(h.cfg.listenAddr); err == nil && port != "" {
-			return "http://127.0.0.1:" + port + "/v1/images/generations"
-		}
+func (h *proxyHandler) imageFanoutEndpoint() (string, error) {
+	if h == nil || h.cfg == nil {
+		return "", fmt.Errorf("image fanout listen address unavailable")
 	}
-	baseURL := h.getEffectivePublicURL(r)
-	return strings.TrimRight(baseURL, "/") + "/v1/images/generations"
+	_, port, err := net.SplitHostPort(h.cfg.listenAddr)
+	if err != nil {
+		return "", fmt.Errorf("invalid image fanout listen address")
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return "", fmt.Errorf("invalid image fanout listen port")
+	}
+	return "http://127.0.0.1:" + port + "/v1/images/generations", nil
 }
 
 func (h *proxyHandler) getFanoutToken() string {

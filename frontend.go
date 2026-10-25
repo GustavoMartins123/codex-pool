@@ -7,10 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"mime"
+	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -83,9 +86,11 @@ func (h *proxyHandler) serveHeroImage(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (h *proxyHandler) getEffectivePublicURL(r *http.Request) string {
+var errInvalidPublicHost = errors.New("invalid request Host; configure PUBLIC_URL or send a valid Host header")
+
+func (h *proxyHandler) getEffectivePublicURL(r *http.Request) (string, error) {
 	if u := getPublicURL(); u != "" {
-		return u
+		return u, nil
 	}
 	// Infer from request
 	scheme := "http"
@@ -96,9 +101,20 @@ func (h *proxyHandler) getEffectivePublicURL(r *http.Request) string {
 	// The inferred URL is interpolated into setup scripts, and Go accepts
 	// shell metacharacters such as $, ( and ' in Host headers.
 	if !inferredHostPattern.MatchString(host) {
-		host = "localhost:8989"
+		return "", errInvalidPublicHost
 	}
-	return fmt.Sprintf("%s://%s", scheme, host)
+	origin := scheme + "://" + host
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Hostname() == "" || strings.HasPrefix(host, "[") && net.ParseIP(parsed.Hostname()) == nil {
+		return "", errInvalidPublicHost
+	}
+	if port := parsed.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return "", errInvalidPublicHost
+		}
+	}
+	return origin, nil
 }
 
 var inferredHostPattern = regexp.MustCompile(`^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?$`)
@@ -143,7 +159,11 @@ func (h *proxyHandler) serveCuteCodeLanding(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "internal error: template parse failed", http.StatusInternalServerError)
 		return
 	}
-	publicURL := h.getEffectivePublicURL(r)
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var page bytes.Buffer
 	if err := tmpl.Execute(&page, map[string]string{"PublicURL": publicURL}); err != nil {
 		http.Error(w, "internal error: template render failed", http.StatusInternalServerError)
@@ -173,6 +193,10 @@ func inlineScriptHashes(page []byte) string {
 }
 
 func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Request) ([]byte, error) {
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		return nil, err
+	}
 	secret := getPoolJWTSecret()
 	if secret == "" {
 		return nil, fmt.Errorf("JWT secret not configured")
@@ -191,7 +215,7 @@ func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Re
 	if err != nil {
 		return nil, err
 	}
-	return generateCuteCodeSettingsJSON(h.getEffectivePublicURL(r), claudeAuth.AccessToken)
+	return generateCuteCodeSettingsJSON(publicURL, claudeAuth.AccessToken)
 }
 
 func (h *proxyHandler) serveCuteCodeSettingsConfig(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +227,10 @@ func (h *proxyHandler) serveCuteCodeSettingsConfig(w http.ResponseWriter, r *htt
 	}
 	settingsJSON, err := h.generateCuteCodeSettingsForToken(token, r)
 	if err != nil {
+		if errors.Is(err, errInvalidPublicHost) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -226,7 +254,11 @@ func (h *proxyHandler) serveCuteCodeSetupScript(w http.ResponseWriter, r *http.R
 		http.Error(w, "invalid token", http.StatusNotFound)
 		return
 	}
-	publicURL := h.getEffectivePublicURL(r)
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if wantsPowerShell(r) {
 		script := fmt.Sprintf(`#requires -Version 5.1
@@ -335,7 +367,11 @@ func (h *proxyHandler) serveCodexSetupScript(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
-	publicURL := h.getEffectivePublicURL(r)
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if wantsPowerShell(r) {
 		script := fmt.Sprintf(`#requires -Version 5.1
@@ -1167,6 +1203,11 @@ func (h *proxyHandler) serveGeminiSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if h.passport == nil {
 		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
@@ -1191,8 +1232,6 @@ func (h *proxyHandler) serveGeminiSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	publicURL := h.getEffectivePublicURL(r)
 
 	// Script sets env vars to bypass Google OAuth validation and route through proxy
 	// Uses GOOGLE_GENAI_USE_GCA + GOOGLE_CLOUD_ACCESS_TOKEN to skip getTokenInfo() check
@@ -1337,6 +1376,11 @@ func (h *proxyHandler) serveAntigravitySetupScript(w http.ResponseWriter, r *htt
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if h.passport == nil {
 		http.Error(w, "passport not configured", http.StatusServiceUnavailable)
@@ -1356,8 +1400,6 @@ func (h *proxyHandler) serveAntigravitySetupScript(w http.ResponseWriter, r *htt
 		return
 	}
 	apiKey := generateGeminiAPIKey(secret, user)
-
-	publicURL := h.getEffectivePublicURL(r)
 
 	noStore(w)
 
@@ -1621,6 +1663,11 @@ func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Validate token and get user
 	if h.passport == nil {
@@ -1646,8 +1693,6 @@ func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	publicURL := h.getEffectivePublicURL(r)
 
 	if wantsPowerShell(r) {
 		script := fmt.Sprintf(`#requires -Version 5.1

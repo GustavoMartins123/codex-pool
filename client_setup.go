@@ -13,7 +13,12 @@ func (h *proxyHandler) serveGrokSetupScript(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
-	baseURL := strings.TrimRight(h.getEffectivePublicURL(r), "/")
+	baseURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
 	setupModels := grokSetupModels()
 
 	if wantsPowerShell(r) {
@@ -176,7 +181,12 @@ func (h *proxyHandler) servePiSetupScript(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
-	baseURL := strings.TrimRight(h.getEffectivePublicURL(r), "/")
+	baseURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
 
 	if wantsPowerShell(r) {
 		script := fmt.Sprintf(`#requires -Version 5.1

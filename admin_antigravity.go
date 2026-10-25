@@ -142,7 +142,11 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	session.RedirectURI = redirectURI
-	session.TargetOrigin = antigravityOAuthTargetOrigin(r, h)
+	session.TargetOrigin, err = antigravityOAuthTargetOrigin(r, h)
+	if err != nil {
+		respondJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	challenge := sha256.Sum256([]byte(session.Verifier))
 	u, _ := url.Parse(antigravityOAuthAuthorizeURL)
 	query := u.Query()
@@ -355,18 +359,25 @@ func isAntigravityLoopbackRedirect(raw string) bool {
 	return parsed.Scheme == "http" && (hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1")
 }
 
-func antigravityOAuthTargetOrigin(r *http.Request, h *proxyHandler) string {
+func antigravityOAuthTargetOrigin(r *http.Request, h *proxyHandler) (string, error) {
 	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
-		if parsed, err := url.Parse(origin); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
-			return parsed.Scheme + "://" + parsed.Host
+		if parsed, err := url.Parse(origin); err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" && (parsed.Path == "" || parsed.Path == "/") {
+			return parsed.Scheme + "://" + parsed.Host, nil
 		}
+		return "", errors.New("invalid OAuth request Origin")
 	}
-	if h != nil {
-		if parsed, err := url.Parse(h.getEffectivePublicURL(r)); err == nil && parsed.Host != "" {
-			return parsed.Scheme + "://" + parsed.Host
-		}
+	if h == nil {
+		return "", errors.New("OAuth public origin unavailable")
 	}
-	return ""
+	base, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(base)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("invalid OAuth public origin")
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func ensureAntigravityLoopbackListener(h *proxyHandler, rawRedirect string) error {

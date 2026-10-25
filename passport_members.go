@@ -498,10 +498,6 @@ func (p *PassportStore) bootstrapOperator(username, email, displayName, password
 	return copyPrincipal(&updated), nil
 }
 
-func memberLinkURL(h *proxyHandler, r *http.Request, token string) string {
-	return strings.TrimRight(h.getEffectivePublicURL(r), "/") + "/recover#" + token
-}
-
 func (h *proxyHandler) handleConsoleMembers(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	operator, session, ok := h.requireOperator(w, r)
@@ -524,6 +520,11 @@ func (h *proxyHandler) handleConsoleMembers(w http.ResponseWriter, r *http.Reque
 	if input.Purpose == "" {
 		input.Purpose = "onboard"
 	}
+	base, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		respondJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	result, err := h.passport.createMemberLink(operator.ID, input.Email, input.DisplayName, input.Purpose)
 	if err != nil {
 		respondJSONError(w, http.StatusBadRequest, err.Error())
@@ -531,7 +532,7 @@ func (h *proxyHandler) handleConsoleMembers(w http.ResponseWriter, r *http.Reque
 	}
 	respondJSON(w, map[string]any{
 		"principal":  publicPrincipal(result.Principal),
-		"link":       memberLinkURL(h, r, result.Token),
+		"link":       strings.TrimRight(base, "/") + "/recover#" + result.Token,
 		"expires_at": result.ExpiresAt,
 	})
 }

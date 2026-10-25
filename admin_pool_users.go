@@ -78,6 +78,11 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusBadRequest, "invalid token")
 		return
 	}
+	publicURL, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		respondJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	var user *PoolUser
 	if client := h.passport.redeemConfigDownloadNonce(token); client != nil {
@@ -117,7 +122,7 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		json.NewEncoder(w).Encode(auth)
 	case "antigravity":
 		apiKey := generateGeminiAPIKey(secret, user)
-		baseURL := strings.TrimRight(h.getEffectivePublicURL(r), "/")
+		baseURL := strings.TrimRight(publicURL, "/")
 		respondJSON(w, map[string]any{
 			"api_key":       apiKey,
 			"base_url":      baseURL,
@@ -146,7 +151,6 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 			respondJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		publicURL := h.getEffectivePublicURL(r)
 		codexAccessToken := ""
 		if codexAuth.Tokens != nil {
 			codexAccessToken = codexAuth.Tokens.AccessToken
@@ -165,7 +169,7 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		}
 		respondJSON(w, map[string]any{
 			"api_key":        auth.AccessToken,
-			"base_url":       strings.TrimRight(h.getEffectivePublicURL(r), "/") + "/v1",
+			"base_url":       strings.TrimRight(publicURL, "/") + "/v1",
 			"model":          "grok-4.5",
 			"api_backend":    "responses",
 			"context_window": 500000,

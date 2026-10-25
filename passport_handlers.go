@@ -269,10 +269,13 @@ func (h *proxyHandler) passportCSRF(r *http.Request, s *passportSession) bool {
 	return x == s.CSRFHash
 }
 func (h *proxyHandler) mintSetupURLs(r *http.Request, client *ClientCredential) (map[string]string, time.Time, error) {
+	base, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
 	if err := h.passport.revokeClientConfigNonces(client.ID); err != nil {
 		return nil, time.Time{}, err
 	}
-	base := h.getEffectivePublicURL(r)
 	paths := []string{"codex", "gemini", "antigravity", "claude", "pi", "grok", "cute-code"}
 	urls := make(map[string]string, len(paths))
 	var expires time.Time

@@ -113,7 +113,10 @@ func (u *passportWebAuthnUser) WebAuthnDisplayName() string {
 func (u *passportWebAuthnUser) WebAuthnCredentials() []wa.Credential { return u.credentials }
 
 func (h *proxyHandler) webAuthnForRequest(r *http.Request) (*wa.WebAuthn, error) {
-	origin := h.getEffectivePublicURL(r)
+	origin, err := h.getEffectivePublicURL(r)
+	if err != nil {
+		return nil, err
+	}
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Hostname() == "" {
 		return nil, errors.New("invalid public URL for passkeys")
