@@ -148,3 +148,7 @@ type Message struct {
 }
 
 func Frame(kind string) Message { return Message{Version: Version, Type: kind} }
+
+// ExitAutoPermissionsDisabled is the process.exit status of a session the
+// runner refused because its launch config does not allow auto permissions.
+const ExitAutoPermissionsDisabled = "auto_permissions_disabled"

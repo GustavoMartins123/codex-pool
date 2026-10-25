@@ -471,6 +471,9 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		if m.Status == "checkpoint_failed" {
 			reason = "checkpoint_failed"
 		}
+		if m.Status == runnerproto.ExitAutoPermissionsDisabled {
+			reason = runnerproto.ExitAutoPermissionsDisabled
+		}
 		return b.closeLocked(next, reason)
 	default:
 		return errors.New("unknown runner event")

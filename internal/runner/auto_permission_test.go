@@ -96,8 +96,8 @@ func runAutoSession(t *testing.T, allow bool) (runnerproto.Message, bool, string
 
 func TestRunnerRefusesAutoSessionsWithoutLocalOptIn(t *testing.T) {
 	event, downloaded, workspace := runAutoSession(t, false)
-	if event.Type != "process.exit" || event.ExitCode == 0 {
-		t.Fatalf("first event = %s exit=%d, want a failed process.exit", event.Type, event.ExitCode)
+	if event.Type != "process.exit" || event.ExitCode == 0 || event.Status != runnerproto.ExitAutoPermissionsDisabled {
+		t.Fatalf("first event = %s exit=%d status=%q, want a failed process.exit explaining the refusal", event.Type, event.ExitCode, event.Status)
 	}
 	if downloaded {
 		t.Fatal("refused auto session still fetched agent credentials")

@@ -45,6 +45,8 @@ type localSession struct {
 	control          string
 	native           runnerproto.AgentCheckpoint
 	checkpointFailed bool
+	// exitStatus explains to the pool why the session ended early.
+	exitStatus       string
 	claimed          bool
 	sent             uint64
 	sequence         uint64
@@ -518,6 +520,9 @@ func (s *localSession) initialize(credentialPath string) {
 	fail := func() { s.cancel(); s.finish(1) }
 	if s.session.PermissionMode == "auto" && !s.daemon.options.AllowAutoPermissions {
 		log.Printf("runner: refusing session %s: auto permissions are disabled; set allow_auto in the launch config to accept them", s.session.ID)
+		s.mu.Lock()
+		s.exitStatus = runnerproto.ExitAutoPermissionsDisabled
+		s.mu.Unlock()
 		fail()
 		return
 	}
@@ -669,13 +674,14 @@ func (s *localSession) finish(exit int) {
 		defer close(s.done)
 		s.mu.Lock()
 		s.exited = true
-		path, control, closing, native, checkpointFailed := s.path, s.control, s.closing, s.native, s.checkpointFailed
+		path, control, closing, native, checkpointFailed, status := s.path, s.control, s.closing, s.native, s.checkpointFailed, s.exitStatus
 		s.mu.Unlock()
 		s.cancel()
 		if closing {
 			exit = 0
 		}
 		m := runnerproto.Frame("process.exit")
+		m.Status = status
 		if checkpointFailed {
 			m.Status = "checkpoint_failed"
 			exit = 1

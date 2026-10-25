@@ -433,3 +433,20 @@ func TestBrokerRelaysOnlyTheReceivingRunnersCommandSignature(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerRefusalReasonClosesTheSession(t *testing.T) {
+	_, b, login, principal := brokerFixture(t)
+	r := brokerRunner(t, b, principal)
+	s := brokerSession(t, b, principal, login.ClientID)
+	if err := b.claim(r, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "process.exit", func(m *runnerproto.Message) {
+		m.ExitCode = 1
+		m.Status = runnerproto.ExitAutoPermissionsDisabled
+	})
+	state, _ := b.session(principal, s.ID)
+	if state.State != "closed" || state.ClosedReason != runnerproto.ExitAutoPermissionsDisabled {
+		t.Fatalf("close=%s/%s, want the runner's refusal reason", state.State, state.ClosedReason)
+	}
+}
