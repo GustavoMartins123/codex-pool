@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -118,13 +120,21 @@ func TestEmitTracksPendingApprovalCommands(t *testing.T) {
 	}
 }
 
-func TestLegacyRunnerSkipsSignatureChecks(t *testing.T) {
+func TestRunnerRequiresACommandKey(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Run(context.Background(), Options{Config: Config{PoolURL: "https://pool.example", RunnerID: "runner", Token: "token"}, WorkspaceRoot: t.TempDir(), Executables: map[string]string{"claude": exe}})
+	if err == nil || !strings.Contains(err.Error(), "runnerd rotate") {
+		t.Fatalf("Run without a command key = %v, want a rotate hint", err)
+	}
 	s, _ := signedTestSession(t)
 	s.daemon.commandKey, s.daemon.commandKeyID = nil, ""
 	m := runnerproto.Frame("turn.start")
 	m.TurnID, m.Input = "turn-1", "run tests"
-	if err := s.verifyTurn(m, time.Now()); err != nil {
-		t.Fatalf("runner without a command key rejected an unsigned turn: %v", err)
+	if err := s.verifyTurn(m, time.Now()); err == nil {
+		t.Fatal("session without a command key accepted an unsigned turn")
 	}
 }
 

@@ -76,10 +76,14 @@ func runAutoSession(t *testing.T, allow bool) (runnerproto.Message, bool, string
 	if err != nil {
 		t.Fatal(err)
 	}
+	commandKey, err := NewCommandKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(ctx, Options{Config: Config{PoolURL: server.URL, RunnerID: session.RunnerID, Token: "pool-runner-" + session.RunnerID + ".synthetic"}, WorkspaceRoot: root, Executables: map[string]string{"claude": exe}, HTTPClient: server.Client(), AllowAutoPermissions: allow})
+		result <- Run(ctx, Options{Config: Config{PoolURL: server.URL, RunnerID: session.RunnerID, Token: "pool-runner-" + session.RunnerID + ".synthetic", CommandKey: commandKey}, WorkspaceRoot: root, Executables: map[string]string{"claude": exe}, HTTPClient: server.Client(), AllowAutoPermissions: allow})
 	}()
 	var event runnerproto.Message
 	select {

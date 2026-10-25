@@ -28,8 +28,8 @@ type daemon struct {
 	claims   map[string]bool
 	commands chan runnerproto.Message
 	notify   chan struct{}
-	// commandKey, set for runners paired with a command key, makes the
-	// runner refuse prompts and approvals the paired device did not sign.
+	// commandKey makes the runner refuse prompts and approvals the paired
+	// device did not sign.
 	commandKey   []byte
 	commandKeyID string
 }
@@ -108,15 +108,14 @@ func Run(ctx context.Context, options Options) error {
 		options.AllowedPaths[i] = canonical
 	}
 	d := &daemon{options: options, ctx: ctx, sessions: map[string]*localSession{}, claims: map[string]bool{}, commands: make(chan runnerproto.Message, 128), notify: make(chan struct{}, 1)}
-	if options.Config.CommandKey != "" {
-		key, err := decodeCommandKey(options.Config.CommandKey)
-		if err != nil {
-			return err
-		}
-		d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
-	} else {
-		log.Printf("runner: no command key; prompts and approvals relayed by the pool are not signature-checked. Run `runnerd rotate` and scan the new QR to require signed commands")
+	if options.Config.CommandKey == "" {
+		return errors.New("runner has no command key; run `runnerd rotate` and scan the new QR")
 	}
+	key, err := decodeCommandKey(options.Config.CommandKey)
+	if err != nil {
+		return err
+	}
+	d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
 	defer func() {
 		d.mu.Lock()
 		sessions := []*localSession{}

@@ -48,12 +48,9 @@ func commandFresh(issuedAt int64, now time.Time) bool {
 
 // verifyTurn admits a turn only when the paired device signed this prompt
 // for this session and its permission settings, recently, and after every
-// turn already accepted. Runners paired before command keys skip the check.
+// turn already accepted.
 func (s *localSession) verifyTurn(m runnerproto.Message, now time.Time) error {
 	d := s.daemon
-	if d.commandKey == nil {
-		return nil
-	}
 	signature := m.Signatures[d.commandKeyID]
 	if signature == "" {
 		return errUnsignedCommand
@@ -81,9 +78,6 @@ func (s *localSession) verifyTurn(m runnerproto.Message, now time.Time) error {
 // signed it for the exact command this runner asked about.
 func (s *localSession) verifyApproval(m runnerproto.Message, command string, now time.Time) error {
 	d := s.daemon
-	if d.commandKey == nil {
-		return nil
-	}
 	signature := m.Signatures[d.commandKeyID]
 	if signature == "" {
 		return errUnsignedCommand
