@@ -28,8 +28,8 @@ type daemon struct {
 	claims   map[string]bool
 	commands chan runnerproto.Message
 	notify   chan struct{}
-	// commandKey, set for runners paired with a command key, makes the
-	// runner refuse prompts and approvals the paired device did not sign.
+	// commandKey makes the runner refuse prompts and approvals the paired
+	// device did not sign.
 	commandKey   []byte
 	commandKeyID string
 }
@@ -45,6 +45,8 @@ type localSession struct {
 	control          string
 	native           runnerproto.AgentCheckpoint
 	checkpointFailed bool
+	// exitStatus explains to the pool why the session ended early.
+	exitStatus       string
 	claimed          bool
 	sent             uint64
 	sequence         uint64
@@ -106,15 +108,14 @@ func Run(ctx context.Context, options Options) error {
 		options.AllowedPaths[i] = canonical
 	}
 	d := &daemon{options: options, ctx: ctx, sessions: map[string]*localSession{}, claims: map[string]bool{}, commands: make(chan runnerproto.Message, 128), notify: make(chan struct{}, 1)}
-	if options.Config.CommandKey != "" {
-		key, err := decodeCommandKey(options.Config.CommandKey)
-		if err != nil {
-			return err
-		}
-		d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
-	} else {
-		log.Printf("runner: no command key; prompts and approvals relayed by the pool are not signature-checked. Run `runnerd rotate` and scan the new QR to require signed commands")
+	if options.Config.CommandKey == "" {
+		return errors.New("runner has no command key; run `runnerd rotate` and scan the new QR")
 	}
+	key, err := decodeCommandKey(options.Config.CommandKey)
+	if err != nil {
+		return err
+	}
+	d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
 	defer func() {
 		d.mu.Lock()
 		sessions := []*localSession{}
@@ -518,6 +519,9 @@ func (s *localSession) initialize(credentialPath string) {
 	fail := func() { s.cancel(); s.finish(1) }
 	if s.session.PermissionMode == "auto" && !s.daemon.options.AllowAutoPermissions {
 		log.Printf("runner: refusing session %s: auto permissions are disabled; set allow_auto in the launch config to accept them", s.session.ID)
+		s.mu.Lock()
+		s.exitStatus = runnerproto.ExitAutoPermissionsDisabled
+		s.mu.Unlock()
 		fail()
 		return
 	}
@@ -669,13 +673,14 @@ func (s *localSession) finish(exit int) {
 		defer close(s.done)
 		s.mu.Lock()
 		s.exited = true
-		path, control, closing, native, checkpointFailed := s.path, s.control, s.closing, s.native, s.checkpointFailed
+		path, control, closing, native, checkpointFailed, status := s.path, s.control, s.closing, s.native, s.checkpointFailed, s.exitStatus
 		s.mu.Unlock()
 		s.cancel()
 		if closing {
 			exit = 0
 		}
 		m := runnerproto.Frame("process.exit")
+		m.Status = status
 		if checkpointFailed {
 			m.Status = "checkpoint_failed"
 			exit = 1

@@ -19,7 +19,6 @@ type Config struct {
 	RunnerID string `json:"runner_id"`
 	Token    string `json:"token"`
 	// CommandKey is shown once in the pairing QR and never sent to the pool.
-	// Runners paired before command keys existed have none.
 	CommandKey string `json:"command_key,omitempty"`
 }
 

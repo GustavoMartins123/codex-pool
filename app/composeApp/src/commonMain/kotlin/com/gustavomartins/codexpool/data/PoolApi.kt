@@ -137,8 +137,7 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
         require(input.isNotBlank()) { "O turno não pode estar vazio." }
         return client.post(endpoint("${sessionPath(id)}/turns")) {
             authorize(); contentType(ContentType.Application.Json)
-            if (signed == null) setBody(TurnInput(input, settings?.model, settings?.reasoningEffort))
-            else setBody(SignedTurnInput(input, settings?.model, settings?.reasoningEffort, signed.issuedAt, signed.signatures))
+            setBody(TurnInput(input, settings?.model, settings?.reasoningEffort, signed?.issuedAt ?: 0, signed?.signatures.orEmpty()))
         }.checked("${sessionPath(id)}/turns").body()
     }
     suspend fun cancel(id: String) { client.post(endpoint("${sessionPath(id)}/turns:cancel")) { authorize() }.checked(sessionPath(id)) }
@@ -146,8 +145,7 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     suspend fun decide(id: String, approvalId: String, decision: Decision, signed: SignedCommand? = null) {
         client.post(endpoint("${sessionPath(id)}/approvals/${resourceId(approvalId)}")) {
             authorize(); contentType(ContentType.Application.Json)
-            if (signed == null) setBody(ApprovalDecision(decision))
-            else setBody(SignedApprovalDecision(decision, signed.issuedAt, signed.signatures))
+            setBody(ApprovalDecision(decision, signed?.issuedAt ?: 0, signed?.signatures.orEmpty()))
         }.checked("${sessionPath(id)}/approvals")
     }
     suspend fun runners(): List<Runner> = client.get(endpoint("/api/me/runners")) { authorize() }

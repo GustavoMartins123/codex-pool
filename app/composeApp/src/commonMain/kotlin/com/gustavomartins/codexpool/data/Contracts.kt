@@ -2,6 +2,7 @@ package com.gustavomartins.codexpool.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
@@ -42,7 +43,8 @@ data class CreateSession(
     val model: String,
     val workspace: Workspace,
     @SerialName("permission_mode") val permissionMode: PermissionMode,
-    val prompt: String? = null,
+    // Stays on the device: runners only run prompts signed for an existing session.
+    @Transient val prompt: String? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String = "",
 ) {
     fun validate() {
@@ -90,11 +92,8 @@ data class Session(
 @Serializable data class LoginResponse(val token: String, @SerialName("client_id") val clientId: String)
 @Serializable data class Credentials(val baseUrl: String, val token: String, val clientId: String)
 @Serializable data class TurnInput(val input: String, val model: String? = null,
-    @SerialName("reasoning_effort") val reasoningEffort: String? = null)
-// Separate signed bodies keep unsigned requests byte-identical for pools that predate signing.
-@Serializable data class SignedTurnInput(val input: String, val model: String? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String? = null,
-    @SerialName("issued_at") val issuedAt: Long, val signatures: Map<String, String>)
+    @SerialName("issued_at") val issuedAt: Long = 0, val signatures: Map<String, String> = emptyMap())
 @Serializable data class TurnMessage(@SerialName("turn_id") val turnId: String, val input: String)
 @Serializable data class HistoryEvent(val id: Long, val type: String, val data: JsonElement)
 @Serializable data class HistoryPage(
@@ -104,9 +103,8 @@ data class Session(
 data class SequencedSessionEvent(val id: Long?, val event: SessionEvent)
 @Serializable data class TurnStarted(@SerialName("turn_id") val turnId: String)
 @Serializable enum class Decision { @SerialName("approve") Approve, @SerialName("deny") Deny }
-@Serializable data class ApprovalDecision(val decision: Decision)
-@Serializable data class SignedApprovalDecision(val decision: Decision, @SerialName("issued_at") val issuedAt: Long,
-    val signatures: Map<String, String>)
+@Serializable data class ApprovalDecision(val decision: Decision, @SerialName("issued_at") val issuedAt: Long = 0,
+    val signatures: Map<String, String> = emptyMap())
 
 @Serializable
 data class Runner(

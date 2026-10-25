@@ -82,3 +82,21 @@ func TestConfigDownloadRejectsHostileTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestInferredPublicURLRejectsHostileHosts(t *testing.T) {
+	t.Setenv("PUBLIC_URL", "")
+	h := &proxyHandler{}
+	for host, want := range map[string]string{
+		"pool.example:8989": "http://pool.example:8989",
+		"[::1]:8989":        "http://[::1]:8989",
+		"$(id)":             "http://localhost:8989",
+		"x';calc;'":         "http://localhost:8989",
+		"":                  "http://localhost:8989",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token", nil)
+		req.Host = host
+		if got := h.getEffectivePublicURL(req); got != want {
+			t.Errorf("Host %q inferred %q, want %q", host, got, want)
+		}
+	}
+}

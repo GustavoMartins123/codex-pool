@@ -38,6 +38,7 @@ class CommandKeyStorageTest {
         val requestId = "a".repeat(43)
         val events = mutableListOf<String>()
         var created: CreateSession? = null
+        var createdBody: String? = null
         val headers = headersOf(HttpHeaders.ContentType, "application/json")
         val engine = MockEngine { request ->
             when (request.url.encodedPath) {
@@ -47,7 +48,8 @@ class CommandKeyStorageTest {
                 } else { events += "approved"; respond("", HttpStatusCode.NoContent) }
                 "/api/pool/catalog" -> respond(PoolJson.encodeToString(Catalog(listOf(CatalogModel("model-1", protocol = "anthropic", availableNow = true)))), HttpStatusCode.OK, headers)
                 "/api/sessions" -> {
-                    created = PoolJson.decodeFromString<CreateSession>((request.body as TextContent).text)
+                    createdBody = (request.body as TextContent).text
+                    created = PoolJson.decodeFromString<CreateSession>(createdBody!!)
                     respond(PoolJson.encodeToString(Session("s-1", Agent.Claude, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
                         SessionState.PendingRunner, conversationId = "s-1")), HttpStatusCode.Created, headers)
                 }
@@ -73,6 +75,7 @@ class CommandKeyStorageTest {
             vm.create(CreateSession(Agent.Claude, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, prompt = "list files")) { opened = it }
             vm.state.first { opened != null && !it.loading }
             assertNull(created?.prompt)
+            assertFalse("prompt" in requireNotNull(createdBody))
             assertEquals("list files", PendingPrompts.take("s-1"))
         } finally { client.close() }
     }

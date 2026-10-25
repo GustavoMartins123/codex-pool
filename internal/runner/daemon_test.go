@@ -22,7 +22,17 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 	defer cancel()
 	var connections, downloads, finished atomic.Int32
 	var sequence atomic.Uint64
-	var pendingApproval atomic.Value
+	var pendingApproval, pendingCommand atomic.Value
+	commandKey, err := NewCommandKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := decodeCommandKey(commandKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A redelivered turn keeps the issue time it was signed with.
+	issuedAt := map[string]int64{"turn-one": time.Now().UnixMilli(), "turn-two": time.Now().UnixMilli() + 1}
 	completed := make(chan struct{})
 	failures := make(chan error, 4)
 	session := runnerproto.Session{ID: "11f168da-5cc4-415e-b25f-a41514a56812", RunnerID: "b4625b08-b9c3-4498-8a4c-81e408444ec3", Agent: "claude", Model: "synthetic-model", PermissionMode: "gated", Workspace: runnerproto.Workspace{Mode: "ephemeral"}, State: "claimed", TurnID: "turn-one"}
@@ -63,6 +73,8 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 			m.TurnID = turn
 			m.Input = "synthetic"
 			m.Settings = &runnerproto.TurnSettings{Model: session.Model}
+			m.IssuedAt = issuedAt[turn]
+			m.Signatures = map[string]string{runnerproto.CommandKeyID(key): runnerproto.SignCommand(key, runnerproto.TurnSigningInput(session.ID, m.IssuedAt, session.Agent, session.PermissionMode, session.Workspace, m.Input))}
 			return write(m)
 		}
 		for {
@@ -101,6 +113,8 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 					decision.SessionID = session.ID
 					decision.ApprovalID = pendingApproval.Load().(string)
 					decision.Decision = "approve"
+					decision.IssuedAt = time.Now().UnixMilli()
+					decision.Signatures = map[string]string{runnerproto.CommandKeyID(key): runnerproto.SignCommand(key, runnerproto.ApprovalSigningInput(session.ID, decision.ApprovalID, decision.Decision, decision.IssuedAt, pendingCommand.Load().(string)))}
 					if !write(decision) {
 						return
 					}
@@ -113,6 +127,7 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 				sequence.Store(m.Sequence)
 				if connection == 1 && m.Type == "approval.request" { // The event committed, but its ACK is lost.
 					pendingApproval.Store(m.ApprovalID)
+					pendingCommand.Store(m.Command)
 					conn.CloseNow()
 					return
 				}
@@ -182,7 +197,7 @@ func TestDaemonReattachesWithoutRestartingOrRepeatingTurns(t *testing.T) {
 	root := t.TempDir()
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(ctx, Options{Config: Config{PoolURL: server.URL, RunnerID: session.RunnerID, Token: "pool-runner-" + session.RunnerID + ".synthetic"}, WorkspaceRoot: root, Executables: map[string]string{"claude": exe}, HTTPClient: server.Client()})
+		result <- Run(ctx, Options{Config: Config{PoolURL: server.URL, RunnerID: session.RunnerID, Token: "pool-runner-" + session.RunnerID + ".synthetic", CommandKey: commandKey}, WorkspaceRoot: root, Executables: map[string]string{"claude": exe}, HTTPClient: server.Client()})
 	}()
 	select {
 	case <-completed:

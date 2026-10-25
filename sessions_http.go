@@ -226,8 +226,8 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, 400, "invalid turn input")
 			return
 		}
-		if !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
-			respondJSONError(w, 400, "invalid command signatures")
+		if len(q.Signatures) == 0 || !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
+			respondJSONError(w, 400, "turn must be signed by the device paired with the runner")
 			return
 		}
 		turn, err := b.startTurn(principal.ID, id, q, func(settings *runnerproto.CreateSession) error {
@@ -254,8 +254,8 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			sessionHTTPError(w, err)
 			return
 		}
-		if !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
-			respondJSONError(w, 400, "invalid command signatures")
+		if !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) || q.Decision == "approve" && len(q.Signatures) == 0 {
+			respondJSONError(w, 400, "approval must be signed by the device paired with the runner")
 			return
 		}
 		if err := b.resolveSignedApproval(principal.ID, id, parts[2], q); err != nil {

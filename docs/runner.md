@@ -68,7 +68,8 @@ launch configuration:
 ```
 
 Without this setting, an auto session ends before any credential is fetched or
-workspace is created, and the runner logs `auto permissions are disabled`.
+workspace is created: the app shows it closed with `auto_permissions_disabled`,
+and the runner logs `auto permissions are disabled`.
 Path workspaces always require gated permissions.
 
 ## Signed commands
@@ -78,8 +79,8 @@ only inside the QR code: the app that scans it stores the key with its
 credentials, and the pool never receives it. The QR image saved with `--qr` or
 `qr` is deleted when pairing ends.
 
-A runner with a command key accepts a prompt only when the paired device
-signed it for that session, its agent, its permission mode and its workspace,
+Every runner has a command key and refuses to start without one. It accepts a
+prompt only when the paired device signed it for that session, its agent, its permission mode and its workspace,
 and accepts an approval only when the device signed it for the exact command
 the runner asked about. A compromised pool, or someone holding a stolen app
 token, can therefore no longer make the runner execute anything. Denials,
@@ -91,13 +92,9 @@ cancellation and closing stay unsigned because they are always safe.
 - Signed prompts must reach the runner within 10 minutes of being sent, and
   each must be newer than the last one the session accepted. Keep the device
   and runner clocks in sync.
-- With a signing device, the app sends a new session's first message as a
-  signed turn once the runner is ready, instead of with the session request.
-- Runners paired before command keys existed keep accepting unsigned commands
-  and log how to upgrade. Run `runnerd rotate` on each of them and scan the
-  new QR to require signatures.
-- Update the pool before runners and the app: a runner with a command key and
-  the app's signed requests use protocol fields that older pools reject.
+- The app keeps a new session's first message on the device and sends it as
+  a signed turn once the runner is ready. The pool refuses unsigned prompts
+  and approvals, and runners that do not announce a command key.
 
 ## Pair and run
 
@@ -151,6 +148,8 @@ native agent state. User path and repository workspaces are preserved.
 ## Troubleshooting
 
 - `runner state unavailable`: pair the machine or correct the `state` path.
+- `runner has no command key`: the machine was paired before command keys
+  existed. Run `runnerd rotate` and scan the new QR in the app.
 - `runner credential rejected`: the credential was revoked, rotated, or belongs
   to another pool.
 - `agent executable unavailable`: correct the absolute executable path in JSON.

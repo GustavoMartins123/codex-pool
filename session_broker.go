@@ -362,12 +362,11 @@ func (b *sessionBroker) dispatchTurnLocked(s *sessionRecord) {
 	b.sendLocked(r, m)
 }
 
-// attachCommandSignature copies into m the app signature meant for r. Only
-// runners that announced a command key receive the fields: older runner
-// binaries reject unknown frame fields. The pool never checks signatures; a
-// runner that requires them refuses commands that lack a valid one.
+// attachCommandSignature copies into m the app signature meant for r. The
+// pool never checks signatures; the runner refuses commands that lack a
+// valid one.
 func attachCommandSignature(m *runnerproto.Message, r *connectedRunner, issuedAt int64, signatures map[string]string) {
-	if r == nil || r.hello.CommandKeyID == "" {
+	if r == nil {
 		return
 	}
 	if signature, ok := signatures[r.hello.CommandKeyID]; ok {
