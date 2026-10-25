@@ -131,13 +131,18 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
         request.validate()
         return client.post(endpoint("/api/sessions")) {
             authorize(); contentType(ContentType.Application.Json); setBody(request)
-        }.checked("/api/sessions").body()
+        }.checked("/api/sessions").body<Session>().also { session ->
+            require(request.prompt.isNullOrEmpty() || session.pendingInput?.let { it.id.isNotBlank() && it.input == request.prompt } == true) {
+                "O pool não confirmou o armazenamento da primeira mensagem."
+            }
+        }
     }
-    suspend fun turn(id: String, input: String, settings: TurnSettings? = null, signed: SignedCommand? = null): TurnStarted {
+    suspend fun turn(id: String, input: String, settings: TurnSettings? = null, signed: SignedCommand? = null,
+        pendingInputId: String? = null): TurnStarted {
         require(input.isNotBlank()) { "O turno não pode estar vazio." }
         return client.post(endpoint("${sessionPath(id)}/turns")) {
             authorize(); contentType(ContentType.Application.Json)
-            setBody(TurnInput(input, settings?.model, settings?.reasoningEffort, signed?.issuedAt ?: 0, signed?.signatures.orEmpty()))
+            setBody(TurnInput(input, settings?.model, settings?.reasoningEffort, signed?.issuedAt ?: 0, signed?.signatures.orEmpty(), pendingInputId))
         }.checked("${sessionPath(id)}/turns").body()
     }
     suspend fun cancel(id: String) { client.post(endpoint("${sessionPath(id)}/turns:cancel")) { authorize() }.checked(sessionPath(id)) }

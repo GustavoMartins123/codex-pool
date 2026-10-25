@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,8 +40,17 @@ type sessionRecord struct {
 	DeleteError     string `json:"delete_error,omitempty"`
 
 	// The app's signatures for QueuedInput, relayed verbatim to the runner.
-	QueuedIssuedAt   int64             `json:"queued_issued_at,omitempty"`
-	QueuedSignatures map[string]string `json:"queued_signatures,omitempty"`
+	QueuedIssuedAt   int64                `json:"queued_issued_at,omitempty"`
+	QueuedSignatures map[string]string    `json:"queued_signatures,omitempty"`
+	InitialReceipt   *initialInputReceipt `json:"initial_receipt,omitempty"`
+}
+
+type initialInputReceipt struct {
+	ID              string   `json:"id"`
+	TurnID          string   `json:"turn_id"`
+	InputHash       [32]byte `json:"input_hash"`
+	Model           string   `json:"model"`
+	ReasoningEffort string   `json:"reasoning_effort"`
 }
 
 type approvalRecord struct {
@@ -190,6 +200,10 @@ func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
 
 func copySession(s *sessionRecord) *sessionRecord {
 	copy := *s
+	if s.PendingInput != nil {
+		pending := *s.PendingInput
+		copy.PendingInput = &pending
+	}
 	if s.Checkpoint != nil {
 		checkpoint := *s.Checkpoint
 		copy.Checkpoint = &checkpoint
@@ -236,15 +250,11 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 	now := b.now()
 	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: uuid.NewString(), PrincipalID: principal, ClientID: client, Agent: q.Agent, Model: q.Model, Workspace: q.Workspace,
 		ReasoningEffort: q.ReasoningEffort, PermissionMode: q.PermissionMode, State: "pending_runner", CreatedAt: now, UpdatedAt: now, Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
-	if q.Prompt != "" {
-		s.TurnID = uuid.NewString()
-		s.QueuedInput = q.Prompt
+	if q.InitialInput != "" {
+		s.PendingInput = &runnerproto.PendingInput{ID: uuid.NewString(), Input: q.InitialInput}
 	}
 	s.ConversationID = s.ID
 	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State}), newSessionEvent("session.settings", runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})}
-	if q.Prompt != "" {
-		events = append(events, newSessionEvent("turn.input", map[string]any{"turn_id": s.TurnID, "input": q.Prompt}))
-	}
 	if err := b.saveLocked(s, "session.created", principal, events...); err != nil {
 		return nil, err
 	}
@@ -310,6 +320,22 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 	if err != nil {
 		return "", err
 	}
+	if input.PendingInputID != "" && s.InitialReceipt != nil {
+		receipt := s.InitialReceipt
+		if input.PendingInputID != receipt.ID || sha256.Sum256([]byte(input.Input)) != receipt.InputHash ||
+			input.Model != nil && *input.Model != receipt.Model ||
+			input.ReasoningEffort != nil && *input.ReasoningEffort != receipt.ReasoningEffort {
+			return "", sessionError(409, "pending input was already submitted with different content or settings")
+		}
+		return receipt.TurnID, nil
+	}
+	if s.PendingInput != nil {
+		if input.PendingInputID != s.PendingInput.ID || input.Input != s.PendingInput.Input {
+			return "", sessionError(409, "submit the pending initial input first")
+		}
+	} else if input.PendingInputID != "" {
+		return "", sessionError(409, "pending input not found")
+	}
 	if s.State != "waiting_input" || s.TurnID != "" || !s.LeaseExpiresAt.After(b.now()) || b.runners[s.RunnerID] == nil {
 		return "", sessionError(409, "session is not ready for input")
 	}
@@ -332,6 +358,11 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 		return "", sessionError(400, "select an explicit reasoning effort; the model default is unavailable")
 	}
 	next.TurnID = uuid.NewString()
+	if next.PendingInput != nil {
+		next.InitialReceipt = &initialInputReceipt{ID: next.PendingInput.ID, TurnID: next.TurnID,
+			InputHash: sha256.Sum256([]byte(input.Input)), Model: next.Model, ReasoningEffort: next.ReasoningEffort}
+		next.PendingInput = nil
+	}
 	next.QueuedInput = input.Input
 	next.QueuedIssuedAt = input.IssuedAt
 	next.QueuedSignatures = input.Signatures

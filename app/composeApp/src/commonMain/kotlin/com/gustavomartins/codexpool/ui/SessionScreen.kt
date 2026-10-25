@@ -47,10 +47,16 @@ fun SessionScreen(vm: SessionViewModel, onBack: () -> Unit) {
                         Text(state.turnSettings?.let { "${it.model} · ${effortLabel(it.reasoningEffort)}" } ?: "Modelo e raciocínio",
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth().heightIn(max = 180.dp), label = { Text("Mensagem para o agente") }, enabled = state.canSend)
+                    val pending = state.session?.pendingInput
+                    if (pending != null) {
+                        Text("Primeira mensagem pendente", style = MaterialTheme.typography.labelMedium)
+                        Text(pending.input, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    } else OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth().heightIn(max = 180.dp), label = { Text("Mensagem para o agente") }, enabled = state.canSend)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         OutlinedButton(onClick = vm::cancel, enabled = state.canCancel) { Text("Cancelar turno") }
-                        Button(onClick = { vm.send(input) { input = "" } }, enabled = state.canSend && input.isNotBlank()) { Text("Enviar") }
+                        Button(onClick = { vm.send(pending?.input ?: input) { input = "" } }, enabled = state.canSend && (pending != null || input.isNotBlank())) {
+                            Text(if (pending != null) "Enviar primeira mensagem" else "Enviar")
+                        }
                     }
                 }
             }

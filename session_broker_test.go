@@ -40,10 +40,20 @@ func brokerRunner(t *testing.T, b *sessionBroker, principal string) *connectedRu
 
 func brokerSession(t *testing.T, b *sessionBroker, principal, client string) *runnerproto.Session {
 	t.Helper()
-	s, err := b.create(principal, client, runnerproto.CreateSession{Agent: "claude", Model: "synthetic-model", Workspace: runnerproto.Workspace{Mode: "ephemeral"}, PermissionMode: "gated", Prompt: "synthetic input"})
+	s, err := b.create(principal, client, runnerproto.CreateSession{Agent: "claude", Model: "synthetic-model", Workspace: runnerproto.Workspace{Mode: "ephemeral"}, PermissionMode: "gated"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Seed an already-authorized turn for broker lifecycle tests.
+	b.mu.Lock()
+	next := copySession(b.sessions[s.ID])
+	next.TurnID, next.QueuedInput = "initial-"+s.ID, "synthetic input"
+	err = b.saveLocked(next, "", "", newSessionEvent("turn.input", map[string]any{"turn_id": next.TurnID, "input": next.QueuedInput}))
+	b.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = &copySession(next).Session
 	return s
 }
 

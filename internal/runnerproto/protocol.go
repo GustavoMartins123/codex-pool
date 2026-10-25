@@ -18,6 +18,7 @@ type CreateSession struct {
 	Workspace       Workspace `json:"workspace"`
 	PermissionMode  string    `json:"permission_mode"`
 	Prompt          string    `json:"prompt,omitempty"`
+	InitialInput    string    `json:"initial_input,omitempty"`
 }
 
 type TurnSettings struct {
@@ -27,6 +28,7 @@ type TurnSettings struct {
 
 type TurnInput struct {
 	Input           string  `json:"input"`
+	PendingInputID  string  `json:"pending_input_id,omitempty"`
 	Model           *string `json:"model,omitempty"`
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 	// IssuedAt (Unix milliseconds) and Signatures, keyed by CommandKeyID,
@@ -66,6 +68,12 @@ type AgentCheckpoint struct {
 	Ready           bool   `json:"ready"`
 }
 
+// PendingInput is durable draft text. It never authorizes runner execution.
+type PendingInput struct {
+	ID    string `json:"id"`
+	Input string `json:"input"`
+}
+
 type Session struct {
 	ID              string           `json:"id"`
 	ConversationID  string           `json:"conversation_id"`
@@ -89,6 +97,7 @@ type Session struct {
 	Summaries       []TurnSummary    `json:"turn_summaries"`
 	Checkpoint      *AgentCheckpoint `json:"checkpoint,omitempty"`
 	ResumeRequested bool             `json:"resume_requested"`
+	PendingInput    *PendingInput    `json:"pending_input,omitempty"`
 }
 
 type Hello struct {

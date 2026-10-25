@@ -2,7 +2,6 @@ package com.gustavomartins.codexpool.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
@@ -43,8 +42,8 @@ data class CreateSession(
     val model: String,
     val workspace: Workspace,
     @SerialName("permission_mode") val permissionMode: PermissionMode,
-    // Stays on the device: runners only run prompts signed for an existing session.
-    @Transient val prompt: String? = null,
+    // Stored as a draft; only a later signed turn can authorize its execution.
+    @SerialName("initial_input") val prompt: String? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String = "",
 ) {
     fun validate() {
@@ -74,7 +73,10 @@ data class Session(
     val approvals: List<Approval> = emptyList(),
     @SerialName("conversation_id") val conversationId: String,
     @SerialName("reasoning_effort") val reasoningEffort: String = "",
+    @SerialName("pending_input") val pendingInput: PendingInput? = null,
 )
+
+@Serializable data class PendingInput(val id: String, val input: String)
 
 @Serializable data class TurnSettings(val model: String, @SerialName("reasoning_effort") val reasoningEffort: String = "")
 
@@ -93,7 +95,8 @@ data class Session(
 @Serializable data class Credentials(val baseUrl: String, val token: String, val clientId: String)
 @Serializable data class TurnInput(val input: String, val model: String? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String? = null,
-    @SerialName("issued_at") val issuedAt: Long = 0, val signatures: Map<String, String> = emptyMap())
+    @SerialName("issued_at") val issuedAt: Long = 0, val signatures: Map<String, String> = emptyMap(),
+    @SerialName("pending_input_id") val pendingInputId: String? = null)
 @Serializable data class TurnMessage(@SerialName("turn_id") val turnId: String, val input: String)
 @Serializable data class HistoryEvent(val id: Long, val type: String, val data: JsonElement)
 @Serializable data class HistoryPage(

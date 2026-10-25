@@ -586,6 +586,9 @@ func validateSessionRequest(q runnerproto.CreateSession) error {
 	if q.Prompt != "" {
 		return sessionError(400, "send the first prompt as a signed turn")
 	}
+	if len(q.InitialInput) > runnerproto.MaxInputBytes || q.InitialInput != "" && strings.TrimSpace(q.InitialInput) == "" {
+		return sessionError(400, "invalid initial input")
+	}
 	switch q.Workspace.Mode {
 	case "ephemeral":
 		if q.Workspace.Target != "" {

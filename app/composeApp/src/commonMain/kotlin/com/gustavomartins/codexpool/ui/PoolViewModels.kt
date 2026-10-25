@@ -176,11 +176,10 @@ class DashboardViewModel(private val api: PoolApi, private val signer: CommandSi
     fun create(request: CreateSession, onCreated: (String) -> Unit) = action {
         request.validate()
         require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
-        // Runners only run prompts signed for an existing session, so the first
-        // prompt is held back and sent as a signed turn once the runner is ready.
+        // The pool persists the draft before acknowledging session creation.
+        // Execution still waits for a signed turn bound to the returned session.
         check(signer.enabled) { CommandSigner.MISSING_KEY }
         val session = api.create(request)
-        request.prompt?.let { PendingPrompts.put(session.id, it) }
         onCreated(session.conversationId)
     }
 
@@ -448,10 +447,20 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
             val revision = mutable.value.eventRevision
             val selected = requireNotNull(mutable.value.turnSettings)
             val session = requireNotNull(mutable.value.session)
-            val turn = api.turn(session.id, input, selected, signer.signTurn(session, input))
+            val pending = session.pendingInput
+            require(pending == null || input == pending.input) { "Envie a primeira mensagem pendente antes de outra mensagem." }
+            val turn = api.turn(session.id, input, selected, signer.signTurn(session, input), pending?.id)
+            // A retry may acknowledge a turn that already finished. Read its
+            // current state rather than marking that old turn as running again.
+            val confirmed = if (pending != null) api.session(session.id) else null
             mutable.update {
-                it.copy(selectedSettings = null, session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId,
-                    model = selected.model, reasoningEffort = selected.reasoningEffort) else it.session)
+                val acknowledged = it.session?.copy(pendingInput = null)
+                it.copy(selectedSettings = null, session = when {
+                    it.eventRevision != revision -> acknowledged
+                    confirmed != null -> confirmed
+                    else -> acknowledged?.copy(state = SessionState.Running, turnId = turn.turnId,
+                        model = selected.model, reasoningEffort = selected.reasoningEffort)
+                })
             }
             onSent()
         }
@@ -474,8 +483,8 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
     private fun sendPendingPrompt() {
         val session = mutable.value.session ?: return
         if (!mutable.value.canSend) return
-        val prompt = PendingPrompts.take(session.id) ?: return
-        send(prompt) {}
+        val pending = session.pendingInput ?: return
+        send(pending.input) {}
     }
 
     private fun action(block: suspend () -> Unit) {

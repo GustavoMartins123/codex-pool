@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/runnerproto"
+	"github.com/google/uuid"
 )
 
 func sessionHTTPError(w http.ResponseWriter, err error) {
@@ -222,7 +223,7 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			sessionHTTPError(w, err)
 			return
 		}
-		if strings.TrimSpace(q.Input) == "" || len(q.Input) > runnerproto.MaxInputBytes {
+		if strings.TrimSpace(q.Input) == "" || len(q.Input) > runnerproto.MaxInputBytes || q.PendingInputID != "" && uuid.Validate(q.PendingInputID) != nil {
 			respondJSONError(w, 400, "invalid turn input")
 			return
 		}

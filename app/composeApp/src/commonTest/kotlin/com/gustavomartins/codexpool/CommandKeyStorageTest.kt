@@ -51,7 +51,7 @@ class CommandKeyStorageTest {
                     createdBody = (request.body as TextContent).text
                     created = PoolJson.decodeFromString<CreateSession>(createdBody!!)
                     respond(PoolJson.encodeToString(Session("s-1", Agent.Claude, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
-                        SessionState.PendingRunner, conversationId = "s-1")), HttpStatusCode.Created, headers)
+                        SessionState.PendingRunner, conversationId = "s-1", pendingInput = PendingInput("draft-1", "list files"))), HttpStatusCode.Created, headers)
                 }
                 else -> error("Unexpected request: ${request.url}")
             }
@@ -74,9 +74,9 @@ class CommandKeyStorageTest {
             var opened: String? = null
             vm.create(CreateSession(Agent.Claude, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, prompt = "list files")) { opened = it }
             vm.state.first { opened != null && !it.loading }
-            assertNull(created?.prompt)
-            assertFalse("prompt" in requireNotNull(createdBody))
-            assertEquals("list files", PendingPrompts.take("s-1"))
+            assertEquals("list files", created?.prompt)
+            assertTrue("initial_input" in requireNotNull(createdBody))
+            assertFalse("\"prompt\"" in requireNotNull(createdBody))
         } finally { client.close() }
     }
 }

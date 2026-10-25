@@ -91,13 +91,6 @@ class CommandSigner(
     }
 }
 
-/** First prompts of new sessions, sent as a signed turn once the runner is ready. */
-object PendingPrompts {
-    private val prompts = mutableMapOf<String, String>()
-    fun put(sessionId: String, prompt: String) { prompts[sessionId] = prompt }
-    fun take(sessionId: String): String? = prompts.remove(sessionId)
-}
-
 internal fun hmacSha256(key: ByteArray, message: ByteArray): ByteArray {
     val block = 64
     val normalized = (if (key.size > block) sha256(key) else key).copyOf(block)
