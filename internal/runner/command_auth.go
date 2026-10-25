@@ -4,12 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/atomicfile"
 	"codex-pool-proxy/internal/runnerproto"
 )
 
@@ -50,6 +52,9 @@ func commandFresh(issuedAt int64, now time.Time) bool {
 // for this session and its permission settings, recently, and after every
 // turn already accepted.
 func (s *localSession) verifyTurn(m runnerproto.Message, now time.Time) error {
+	if m.TurnID == "" || strings.ContainsAny(m.TurnID, " \t\r\n") {
+		return errors.New("invalid signed turn ID")
+	}
 	d := s.daemon
 	signature := m.Signatures[d.commandKeyID]
 	if signature == "" {
@@ -65,10 +70,14 @@ func (s *localSession) verifyTurn(m runnerproto.Message, now time.Time) error {
 	s.mu.Lock()
 	control := s.control
 	s.mu.Unlock()
-	lastAt, lastTurn := readLastTurnSignature(control)
-	// A redelivery of the turn accepted last, after a runner restart, keeps
-	// its turn ID; anything older is a replay.
-	if m.IssuedAt < lastAt || m.IssuedAt == lastAt && m.TurnID != lastTurn {
+	lastAt, err := readLastTurnSignature(control)
+	if err != nil {
+		return fmt.Errorf("read turn replay protection: %w", err)
+	}
+	// An accepted signature is spent even when execution or its acknowledgement
+	// was interrupted. Reconnection of a live process is deduplicated by lastTurn;
+	// a restarted process must never execute that signed command again.
+	if m.IssuedAt <= lastAt {
 		return errors.New("turn signature was already used")
 	}
 	return writeLastTurnSignature(control, m.IssuedAt, m.TurnID)
@@ -92,17 +101,23 @@ func (s *localSession) verifyApproval(m runnerproto.Message, command string, now
 	return nil
 }
 
-func readLastTurnSignature(control string) (int64, string) {
+func readLastTurnSignature(control string) (int64, error) {
+	if control == "" {
+		return 0, errors.New("session control directory unavailable")
+	}
 	data, err := os.ReadFile(filepath.Join(control, lastTurnFile))
-	if err != nil {
-		return 0, ""
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil // A new session has not accepted a signed turn yet.
 	}
-	at, turn, _ := strings.Cut(strings.TrimSpace(string(data)), " ")
+	if err != nil {
+		return 0, err
+	}
+	at, turn, found := strings.Cut(string(data), " ")
 	value, err := strconv.ParseInt(at, 10, 64)
-	if err != nil {
-		return 0, ""
+	if err != nil || value <= 0 || strconv.FormatInt(value, 10) != at || !found || turn == "" || strings.ContainsAny(turn, " \t\r\n") {
+		return 0, errors.New("invalid persisted turn signature")
 	}
-	return value, turn
+	return value, nil
 }
 
 func writeLastTurnSignature(control string, issuedAt int64, turn string) error {
@@ -130,5 +145,5 @@ func writeLastTurnSignature(control string, issuedAt int64, turn string) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temp, filepath.Join(control, lastTurnFile))
+	return atomicfile.Publish(temp, filepath.Join(control, lastTurnFile))
 }

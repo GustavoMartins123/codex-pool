@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -65,8 +66,8 @@ func TestVerifyTurnRequiresAFreshSignatureForThisSession(t *testing.T) {
 			t.Errorf("%s turn accepted", name)
 		}
 	}
-	if err := s.verifyTurn(signedTurn(key, s.session, "turn-1", "run tests", at), now); err != nil {
-		t.Fatalf("redelivery of the last accepted turn rejected: %v", err)
+	if err := s.verifyTurn(signedTurn(key, s.session, "turn-1", "run tests", at), now); err == nil {
+		t.Fatal("an already accepted signature was authorized twice")
 	}
 	restarted := &localSession{daemon: s.daemon, session: s.session, control: s.control}
 	if err := restarted.verifyTurn(signedTurn(key, s.session, "turn-0", "older", at-1), now); err == nil {
@@ -75,6 +76,57 @@ func TestVerifyTurnRequiresAFreshSignatureForThisSession(t *testing.T) {
 	if err := restarted.verifyTurn(signedTurn(key, s.session, "turn-3", "next", at+5), now); err != nil {
 		t.Fatalf("newer turn after restart rejected: %v", err)
 	}
+}
+
+func TestRestartRejectsTheLastAcceptedSignedTurn(t *testing.T) {
+	original, key := signedTestSession(t)
+	now := time.Now()
+	command := signedTurn(key, original.session, "completed-turn", "synthetic input", now.UnixMilli())
+	if err := original.verifyTurn(command, now); err != nil {
+		t.Fatal(err)
+	}
+	original.lastTurn = command.TurnID
+	restarted := &localSession{daemon: original.daemon, session: original.session, control: original.control}
+	if restarted.lastTurn != "" {
+		t.Fatal("restart fixture retained in-memory deduplication")
+	}
+	if err := restarted.verifyTurn(command, now); err == nil {
+		t.Fatal("restart authorized an already spent signature")
+	}
+	command.TurnID = "renamed-by-pool"
+	if err := restarted.verifyTurn(command, now); err == nil {
+		t.Fatal("changing the turn ID reopened a spent signature")
+	}
+}
+
+func TestTurnReplayProtectionFailsClosedOnUnreadableOrCorruptState(t *testing.T) {
+	for name, contents := range map[string]string{"empty": "", "truncated": "123", "invalid time": "no turn-1", "zero": "0 turn-1", "negative": "-1 turn-1", "missing turn": "123 ", "extra fields": "123 turn-1 extra"} {
+		t.Run(name, func(t *testing.T) {
+			s, key := signedTestSession(t)
+			path := filepath.Join(s.control, lastTurnFile)
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			if err := s.verifyTurn(signedTurn(key, s.session, "turn-2", "input", now.UnixMilli()), now); err == nil {
+				t.Fatal("corrupt replay state authorized execution")
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || string(got) != contents {
+				t.Fatal("invalid replay state was overwritten")
+			}
+		})
+	}
+	t.Run("read error", func(t *testing.T) {
+		s, key := signedTestSession(t)
+		if err := os.Mkdir(filepath.Join(s.control, lastTurnFile), 0700); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		if err := s.verifyTurn(signedTurn(key, s.session, "turn-1", "input", now.UnixMilli()), now); err == nil {
+			t.Fatal("read error authorized execution")
+		}
+	})
 }
 
 func TestVerifyApprovalBindsTheRequestedCommand(t *testing.T) {
