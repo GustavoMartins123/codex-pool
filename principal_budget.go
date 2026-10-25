@@ -161,17 +161,27 @@ func (a *policyAdmission) releaseBudgetHolds() {
 		}
 		return nil
 	}); err != nil {
+		// The persisted token reservation stays held (fail closed), but the
+		// concurrency slot lives only in memory and belongs to a request that
+		// has finished; keeping it would lock the scope out until restart.
 		log.Printf("policy reservation release failed: %v", err)
+		p.releasePolicyInflightLocked(a.holds)
 		return
 	}
+	p.releasePolicyInflightLocked(a.holds)
 	for _, hold := range a.holds {
-		p.policyInflight[hold.Scope]--
-		if p.policyInflight[hold.Scope] <= 0 {
-			delete(p.policyInflight, hold.Scope)
-		}
 		p.policyReserved[hold.Scope] -= hold.Tokens
 		if p.policyReserved[hold.Scope] <= 0 {
 			delete(p.policyReserved, hold.Scope)
+		}
+	}
+}
+
+func (p *PassportStore) releasePolicyInflightLocked(holds []policyBudgetHold) {
+	for _, hold := range holds {
+		p.policyInflight[hold.Scope]--
+		if p.policyInflight[hold.Scope] <= 0 {
+			delete(p.policyInflight, hold.Scope)
 		}
 	}
 }

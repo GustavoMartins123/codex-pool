@@ -90,6 +90,35 @@ func TestPrincipalTokenReservationsSurviveRestart(t *testing.T) {
 	requirePolicyCode(t, err, "policy_monthly_tokens_exceeded")
 }
 
+func TestFailedReservationReleaseFreesConcurrencySlot(t *testing.T) {
+	p, client := testPolicyPassport(t)
+	setPrincipalBudget(t, p, "policy-user", PolicyLimits{ConcurrentRequests: 1, DailyTokens: 1000, MonthlyTokens: 1000, TokenReservation: 10})
+	now := time.Now().UTC()
+	admission, err := p.beginPolicyRequest("policy-user", client.ID, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drift the persisted reservation so the release transaction fails.
+	_, day, _ := policyUsageKeys("principal:policy-user", now)
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucketPassportPolicyUsage))
+		counter, err := readPolicyCounter(b, day)
+		if err != nil {
+			return err
+		}
+		counter.ReservedTokens = 0
+		return writePolicyCounter(b, day, counter)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	admission.Release()
+	next, err := p.beginPolicyRequest("policy-user", client.ID, nil, now)
+	if err != nil {
+		t.Fatalf("finished request kept its concurrency slot after a failed release: %v", err)
+	}
+	next.Release()
+}
+
 func TestBudgetReservationRollbackAndExplicitConfiguration(t *testing.T) {
 	p, client := testPolicyPassport(t)
 	setPrincipalBudget(t, p, "policy-user", PolicyLimits{DailyRequests: 1})
