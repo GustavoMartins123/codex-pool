@@ -63,7 +63,7 @@ class CommandSigner(
         store(key)
     }
 
-    fun signTurn(session: Session, input: String): SignedCommand? = sign { issuedAt ->
+    fun signTurn(session: Session, input: String): SignedCommand = sign { issuedAt ->
         CommandSigning.turnInput(session.id, issuedAt, session.agent, session.permissionMode, session.workspace, input)
     }
 
@@ -74,9 +74,9 @@ class CommandSigner(
         }
 
     // Runners reject a turn signature that is not newer than the last one they accepted.
-    private fun sign(input: (Long) -> ByteArray): SignedCommand? {
+    private fun sign(input: (Long) -> ByteArray): SignedCommand {
         val stored = keys()
-        if (stored.isEmpty()) return null
+        check(stored.isNotEmpty()) { MISSING_KEY }
         val issuedAt = maxOf(now(), lastIssuedAt + 1).also { lastIssuedAt = it }
         val message = input(issuedAt)
         return SignedCommand(issuedAt, stored.associate { encoded ->
@@ -86,11 +86,12 @@ class CommandSigner(
     }
 
     companion object {
+        const val MISSING_KEY = "Este aparelho não tem a chave do runner. Rode runnerd rotate no computador e leia o novo QR."
         val Disabled = CommandSigner(keys = { emptyList() }, store = { error("Este aparelho não guarda chaves de runner.") })
     }
 }
 
-/** First prompts of signed sessions, sent as a signed turn once the runner is ready. */
+/** First prompts of new sessions, sent as a signed turn once the runner is ready. */
 object PendingPrompts {
     private val prompts = mutableMapOf<String, String>()
     fun put(sessionId: String, prompt: String) { prompts[sessionId] = prompt }

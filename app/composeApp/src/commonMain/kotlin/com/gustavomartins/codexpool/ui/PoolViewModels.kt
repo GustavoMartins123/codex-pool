@@ -176,11 +176,11 @@ class DashboardViewModel(private val api: PoolApi, private val signer: CommandSi
     fun create(request: CreateSession, onCreated: (String) -> Unit) = action {
         request.validate()
         require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
-        // Signed runners only run prompts bound to an existing session, so the first
+        // Runners only run prompts signed for an existing session, so the first
         // prompt is held back and sent as a signed turn once the runner is ready.
-        val prompt = request.prompt.takeIf { signer.enabled }
-        val session = api.create(if (prompt != null) request.copy(prompt = null) else request)
-        if (prompt != null) PendingPrompts.put(session.id, prompt)
+        check(signer.enabled) { CommandSigner.MISSING_KEY }
+        val session = api.create(request)
+        request.prompt?.let { PendingPrompts.put(session.id, it) }
         onCreated(session.conversationId)
     }
 
@@ -470,7 +470,7 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
         // Only the authoritative SSE event removes the pending approval.
     }
 
-    // A signed session's first prompt waits until the runner can take it as a signed turn.
+    // A new session's first prompt waits until the runner can take it as a signed turn.
     private fun sendPendingPrompt() {
         val session = mutable.value.session ?: return
         if (!mutable.value.canSend) return

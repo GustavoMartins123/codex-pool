@@ -50,8 +50,8 @@ class CommandSigningTest {
         val signer = CommandSigner(keys = { listOf(encoded, other) }, store = {}, now = { issuedAt })
         val target = Session(session, Agent.Claude, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
             SessionState.WaitingInput, conversationId = session)
-        val first = assertNotNull(signer.signTurn(target, "list files"))
-        val second = assertNotNull(signer.signTurn(target, "list files"))
+        val first = signer.signTurn(target, "list files")
+        val second = signer.signTurn(target, "list files")
         assertEquals(issuedAt, first.issuedAt)
         assertEquals(issuedAt + 1, second.issuedAt)
         assertEquals(setOf(CommandSigning.keyId(key), CommandSigning.keyId(CommandSigning.decodeKey(other))), first.signatures.keys)
@@ -60,6 +60,6 @@ class CommandSigningTest {
         val approval = Approval("call_1", "go test ./...", "")
         assertNull(signer.signApproval(session, approval, Decision.Deny))
         assertNotNull(signer.signApproval(session, approval, Decision.Approve))
-        assertNull(CommandSigner.Disabled.signTurn(target, "list files"))
+        assertFailsWith<IllegalStateException> { CommandSigner.Disabled.signTurn(target, "list files") }
     }
 }

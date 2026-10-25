@@ -70,7 +70,8 @@ class SessionModelChangeTest {
                     .header("Content-Type", requireNotNull(body.contentType()).toString()).body(body).build()
             } }
         }
-        val vm = SessionViewModel(PoolApi(client, Credentials("https://pool.example", "synthetic", "client")), "conversation")
+        val signer = CommandSigner(keys = { listOf("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8") }, store = {})
+        val vm = SessionViewModel(PoolApi(client, Credentials("https://pool.example", "synthetic", "client")), "conversation", signer)
         try {
             compose.setContent { MaterialTheme { SessionScreen(vm) {} } }
             compose.waitUntil(10_000) { vm.state.value.connection == StreamConnection.Live || vm.state.value.error != null }
@@ -86,7 +87,8 @@ class SessionModelChangeTest {
             compose.onNodeWithText("Mensagem para o agente").performTextInput("Continue here")
             compose.onNodeWithText("Enviar").performClick()
             compose.waitUntil(5_000) { sent.get() != null && !vm.state.value.busy }
-            assertEquals(TurnInput("Continue here", "gemini-test", "high"), sent.get())
+            assertEquals(TurnInput("Continue here", "gemini-test", "high"), sent.get().copy(issuedAt = 0, signatures = emptyMap()))
+            assertEquals(1, sent.get().signatures.size)
             assertEquals("conversation", vm.state.value.session?.conversationId)
             assertEquals("gemini-test", vm.state.value.session?.model)
             assertEquals("Earlier response", vm.state.value.entries.first().content)
