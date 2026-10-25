@@ -25,13 +25,32 @@ class CommandKeyStorageTest {
         accounts = accounts.withCommandKey(key(1)).withCommandKey(key(1))
         assertEquals(listOf(key(1)), accounts.selected.commandKeys)
         assertTrue(accounts.providers.single { it.baseUrl == other }.commandKeys.isEmpty())
-        for (seed in 2..40) accounts = accounts.withCommandKey(key(seed))
+        for (seed in 2..MAX_COMMAND_KEYS) accounts = accounts.withCommandKey(key(seed))
         assertEquals(MAX_COMMAND_KEYS, accounts.selected.commandKeys.size)
-        assertEquals(key(40), accounts.selected.commandKeys.last())
+        assertEquals(key(1), accounts.selected.commandKeys.first())
+        assertFailsWith<IllegalArgumentException> { accounts.withCommandKey(key(MAX_COMMAND_KEYS + 1)) }
+        assertEquals(MAX_COMMAND_KEYS, accounts.withCommandKey(key(1)).selected.commandKeys.size)
         assertEquals(accounts, decodeStoredAccounts(PoolJson.encodeToString(accounts)).accounts)
         assertTrue(decodeStoredAccounts("""{"version":2,"selectedUrl":"$url","providers":[{"name":"A","baseUrl":"$url"}]}""")
             .accounts.selected.commandKeys.isEmpty())
         assertFails { accounts.copy(providers = listOf(PoolProvider("A", url, commandKeys = listOf("not-a-key")))).validate() }
+    }
+
+    @Test fun everyStoredKeyFitsInTurnsAndApprovalsWithoutDiscardingOldKeys() {
+        val session = Session("s", Agent.Codex, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
+            SessionState.WaitingInput, conversationId = "s")
+        for (count in listOf(1, 16, 17, 32)) {
+            var accounts = PoolAccounts.initial(url)
+            repeat(count) { accounts = accounts.withCommandKey(key(it)) }
+            accounts = decodeStoredAccounts(PoolJson.encodeToString(accounts)).accounts
+            val signer = CommandSigner(keys = { accounts.selected.commandKeys }, store = {})
+            val signed = signer.signTurn(session, "input")
+            assertEquals(count, signed.signatures.size)
+            assertTrue(signed.signatures.size <= CommandSigning.MAX_SIGNATURES)
+            assertEquals(count, signer.signApproval("s", Approval("a", "command", ""), Decision.Approve)?.signatures?.size)
+        }
+        val tooMany = CommandSigner(keys = { (0..CommandSigning.MAX_SIGNATURES).map(::key) }, store = {})
+        assertFailsWith<IllegalArgumentException> { tooMany.signTurn(session, "input") }
     }
 
     @Test fun pairingKeepsTheRunnerKeyBeforeApprovingAndSignedSessionsHoldTheFirstPrompt() = runTest {

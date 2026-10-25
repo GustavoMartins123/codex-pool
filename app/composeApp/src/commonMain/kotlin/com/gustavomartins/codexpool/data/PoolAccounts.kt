@@ -3,8 +3,8 @@ package com.gustavomartins.codexpool.data
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.jsonObject
 
-/** Runner command keys stay with the pool they were paired through; the newest are kept. */
-const val MAX_COMMAND_KEYS = 32
+/** Runner command keys stay with their pool and fit in one signed command. */
+const val MAX_COMMAND_KEYS = CommandSigning.MAX_SIGNATURES
 
 @Serializable
 data class PoolProvider(val name: String, val baseUrl: String, val credentials: Credentials? = null,
@@ -37,9 +37,14 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
         if (it.baseUrl == selectedUrl) it.copy(credentials = credentials) else it
     }).validate()
 
-    fun withCommandKey(key: String): PoolAccounts = copy(providers = providers.map {
-        if (it.baseUrl == selectedUrl) it.copy(commandKeys = (it.commandKeys - key + key).takeLast(MAX_COMMAND_KEYS)) else it
-    }).validate()
+    fun withCommandKey(key: String): PoolAccounts {
+        require(key in selected.commandKeys || selected.commandKeys.size < MAX_COMMAND_KEYS) {
+            "Limite de $MAX_COMMAND_KEYS chaves de runner atingido neste provedor."
+        }
+        return copy(providers = providers.map {
+            if (it.baseUrl == selectedUrl) it.copy(commandKeys = it.commandKeys - key + key) else it
+        }).validate()
+    }
 
     companion object {
         fun initial(defaultUrl: String): PoolAccounts {

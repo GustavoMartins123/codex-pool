@@ -79,3 +79,19 @@ func TestValidCommandSignatures(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandSignatureLimitCoversEveryStoredAppKey(t *testing.T) {
+	if MaxCommandSignatures != 32 {
+		t.Fatal("signature contract no longer covers the app's 32 stored keys")
+	}
+	for _, count := range []int{1, 16, 17, 32, 33} {
+		signatures := map[string]string{}
+		for i := 0; i < count; i++ {
+			key := []byte{byte(i)}
+			signatures[CommandKeyID(key)] = SignCommand(key, []byte("input"))
+		}
+		if got := ValidCommandSignatures(vectorIssuedAt, signatures); got != (count <= 32) {
+			t.Fatalf("signature count %d accepted=%v", count, got)
+		}
+	}
+}

@@ -19,7 +19,7 @@ const CommandKeyBytes = 32
 
 // MaxCommandSignatures bounds the signatures one command may carry: a signer
 // labels one signature per runner key it holds.
-const MaxCommandSignatures = 16
+const MaxCommandSignatures = 32
 
 const commandKeyIDLength = 22
 const commandSignatureLength = 43

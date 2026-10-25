@@ -9,6 +9,7 @@ import kotlin.time.Clock
  */
 object CommandSigning {
     const val KEY_BYTES = 32
+    const val MAX_SIGNATURES = 32
 
     fun decodeKey(value: String): ByteArray {
         val key = runCatching { base64UrlDecode(value) }.getOrNull()
@@ -77,6 +78,9 @@ class CommandSigner(
     private fun sign(input: (Long) -> ByteArray): SignedCommand {
         val stored = keys()
         check(stored.isNotEmpty()) { MISSING_KEY }
+        require(stored.size <= CommandSigning.MAX_SIGNATURES && stored.distinct().size == stored.size) {
+            "Conjunto de chaves de runner inválido: o limite por provedor é ${CommandSigning.MAX_SIGNATURES}."
+        }
         val issuedAt = maxOf(now(), lastIssuedAt + 1).also { lastIssuedAt = it }
         val message = input(issuedAt)
         return SignedCommand(issuedAt, stored.associate { encoded ->
