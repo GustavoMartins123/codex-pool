@@ -607,6 +607,16 @@ func (p *PassportStore) byLogin(login string) *Principal {
 	return nil
 }
 
+// loginThrottleKey names the account a password attempt targets. Known logins
+// map to their principal, so email and username share one counter; unknown
+// logins are throttled the same way, so a lockout never reveals which exist.
+func (p *PassportStore) loginThrottleKey(login string) string {
+	if principal := p.byLogin(login); principal != nil {
+		return "principal:" + principal.ID
+	}
+	return "login:" + strings.ToLower(strings.TrimSpace(login))
+}
+
 func (p *PassportStore) createSession(principalID string) (token, csrf string, err error) {
 	token, err = secureToken(32)
 	if err != nil {

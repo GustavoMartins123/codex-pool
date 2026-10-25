@@ -789,6 +789,7 @@ func main() {
 		aliases:              newModelAliases(aliasesCfg),
 		effortCap:            newEffortCap(effortByUser, effortByOrigin),
 		bruteForce:           newBruteForceTracker(),
+		accountLocks:         newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		experiments:          experiments,
@@ -820,6 +821,10 @@ func main() {
 	defer h.bruteForce.stop()
 	if err := h.bruteForce.persistBans(passportBanStore{passport: passport, namespace: "ip"}, time.Now()); err != nil {
 		log.Fatalf("restore brute-force bans: %v", err)
+	}
+	defer h.accountLocks.stop()
+	if err := h.accountLocks.persistBans(passportBanStore{passport: passport, namespace: "account"}, time.Now()); err != nil {
+		log.Fatalf("restore account sign-in locks: %v", err)
 	}
 	h.startUsagePoller(shutdownCtx)
 	if err := h.startSessionBroker(shutdownCtx); err != nil {
@@ -959,6 +964,7 @@ type proxyHandler struct {
 	aliases              *modelAliases
 	effortCap            *effortCap
 	bruteForce           *bruteForceTracker
+	accountLocks         *bruteForceTracker
 	passkeyIssueMu       sync.Mutex
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics

@@ -170,6 +170,13 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		respondJSONError(w, 400, "invalid json")
 		return nil
 	}
+	account := h.passport.loginThrottleKey(q.Email)
+	if h.accountLocks != nil && h.accountLocks.isBanned(account) {
+		h.metrics.incPassport("sign_in_outcomes", "account_locked")
+		w.Header().Set("Retry-After", strconv.Itoa(int(accountLockDuration/time.Second)))
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts for this account; try again later or sign in with a passkey")
+		return nil
+	}
 	pr, err := h.passport.verifyLogin(q.Email, q.Password)
 	if errors.Is(err, errPasswordVerificationBusy) {
 		// Saturation says nothing about the password, so it must neither
@@ -180,8 +187,14 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		return nil
 	}
 	if err != nil {
+		if h.accountLocks != nil {
+			h.accountLocks.recordFailure(account)
+		}
 		h.passwordLoginFailed(w, r)
 		return nil
+	}
+	if h.accountLocks != nil {
+		h.accountLocks.recordSuccess(account)
 	}
 	return pr
 }

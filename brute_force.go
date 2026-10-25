@@ -13,6 +13,14 @@ const (
 	bruteForceCleanup     = 10 * time.Minute
 )
 
+// Password sign-in is also limited per targeted account, so an attacker
+// spread across many networks still gets only a few guesses per window.
+// Passkey sign-in does not consult this lock and stays available.
+const (
+	accountLockMaxFailures = 10
+	accountLockDuration    = 15 * time.Minute
+)
+
 type attemptRecord struct {
 	count    int
 	firstAt  time.Time

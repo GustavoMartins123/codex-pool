@@ -751,6 +751,34 @@ func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
 	}
 }
 
+func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	h.accountLocks = newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration)
+	t.Cleanup(h.accountLocks.stop)
+	attempt := func(login, password string, network int) int {
+		request := loginRequest(fmt.Sprintf(`{"email":%q,"password":%q}`, login, password))
+		request.RemoteAddr = fmt.Sprintf("198.51.%d.1:4242", network)
+		recorder := httptest.NewRecorder()
+		h.handlePassportLogin(recorder, request)
+		return recorder.Code
+	}
+	// Each network stays below its own IP ban; only the account limit trips.
+	for i := 0; i < accountLockMaxFailures; i++ {
+		if code := attempt("Brute@Example.com", "wrong password", i/(bruteForceMaxAttempts-1)); code != http.StatusUnauthorized {
+			t.Fatalf("distributed failure %d status = %d, want 401", i, code)
+		}
+	}
+	if code := attempt("brute@example.com", "correct horse battery", 99); code != http.StatusTooManyRequests {
+		t.Fatalf("correct password on a locked account status = %d, want 429", code)
+	}
+	for i := 0; i < accountLockMaxFailures; i++ {
+		attempt("nobody@example.com", "wrong password", 50+i/(bruteForceMaxAttempts-1))
+	}
+	if code := attempt("nobody@example.com", "wrong password", 98); code != http.StatusTooManyRequests {
+		t.Fatalf("unknown login status = %d, want 429 so lockouts do not reveal which accounts exist", code)
+	}
+}
+
 func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {
