@@ -68,7 +68,8 @@ launch configuration:
 ```
 
 Without this setting, an auto session ends before any credential is fetched or
-workspace is created, and the runner logs `auto permissions are disabled`.
+workspace is created: the app shows it closed with `auto_permissions_disabled`,
+and the runner logs `auto permissions are disabled`.
 Path workspaces always require gated permissions.
 
 ## Signed commands
