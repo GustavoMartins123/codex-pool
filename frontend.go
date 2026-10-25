@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -39,10 +42,7 @@ func (h *proxyHandler) servePassportSPA(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	noStore(w)
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-	}
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
 }
@@ -140,9 +140,32 @@ func (h *proxyHandler) serveCuteCodeLanding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	publicURL := h.getEffectivePublicURL(r)
+	var page bytes.Buffer
+	if err := tmpl.Execute(&page, map[string]string{"PublicURL": publicURL}); err != nil {
+		http.Error(w, "internal error: template render failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src "+inlineScriptHashes(page.Bytes())+"; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
-	_ = tmpl.Execute(w, map[string]string{"PublicURL": publicURL})
+	_, _ = w.Write(page.Bytes())
+}
+
+var inlineScriptPattern = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
+
+// inlineScriptHashes allows exactly the inline scripts of a rendered page.
+// The landing embeds the public URL in its script, so the hash is computed
+// per response instead of once.
+func inlineScriptHashes(page []byte) string {
+	sources := []string{}
+	for _, match := range inlineScriptPattern.FindAllSubmatch(page, -1) {
+		sum := sha256.Sum256(match[1])
+		sources = append(sources, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	if len(sources) == 0 {
+		return "'none'"
+	}
+	return strings.Join(sources, " ")
 }
 
 func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Request) ([]byte, error) {

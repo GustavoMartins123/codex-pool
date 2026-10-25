@@ -346,7 +346,7 @@ func localHealthProbe(r *http.Request) bool {
 
 // ServeHTTP routes incoming requests to the appropriate handler.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	applySecurityHeaders(w, r.URL.Path)
+	applySecurityHeaders(w, r)
 	clientIP, err := requestClientIP(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
