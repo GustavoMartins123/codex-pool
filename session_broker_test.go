@@ -362,3 +362,74 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 		t.Fatal("runner revocation did not close session")
 	}
 }
+
+func drainRunnerFrames(r *connectedRunner) []runnerproto.Message {
+	var frames []runnerproto.Message
+	for {
+		select {
+		case m := <-r.out:
+			frames = append(frames, m)
+		default:
+			return frames
+		}
+	}
+}
+
+func lastFrame(t *testing.T, r *connectedRunner, kind string) runnerproto.Message {
+	t.Helper()
+	frames := drainRunnerFrames(r)
+	for i := len(frames) - 1; i >= 0; i-- {
+		if frames[i].Type == kind {
+			return frames[i]
+		}
+	}
+	t.Fatalf("runner received no %s frame", kind)
+	return runnerproto.Message{}
+}
+
+func TestBrokerRelaysOnlyTheReceivingRunnersCommandSignature(t *testing.T) {
+	for _, keyed := range []bool{true, false} {
+		t.Run(map[bool]string{true: "keyed runner", false: "legacy runner"}[keyed], func(t *testing.T) {
+			_, b, login, principal := brokerFixture(t)
+			r := brokerRunner(t, b, principal)
+			own := runnerproto.CommandKeyID([]byte("own-runner-command-key-32-bytes!"))
+			other := runnerproto.CommandKeyID([]byte("another-runner-command-key-32by!"))
+			if keyed {
+				r.hello.CommandKeyID = own
+			}
+			s := brokerSession(t, b, principal, login.ClientID)
+			if err := b.claim(r, s.ID); err != nil {
+				t.Fatal(err)
+			}
+			brokerEvent(t, b, r, s.ID, "workspace.status", func(m *runnerproto.Message) { m.Status = "ready" })
+			brokerEvent(t, b, r, s.ID, "turn.started", nil)
+			brokerEvent(t, b, r, s.ID, "turn.finished", nil)
+			drainRunnerFrames(r)
+
+			signatures := map[string]string{own: strings.Repeat("a", 43), other: strings.Repeat("b", 43)}
+			if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "signed input", IssuedAt: 1761379200000, Signatures: signatures}, authorizeSyntheticSession); err != nil {
+				t.Fatal(err)
+			}
+			turn := lastFrame(t, r, "turn.start")
+			if keyed && (turn.IssuedAt != 1761379200000 || len(turn.Signatures) != 1 || turn.Signatures[own] != signatures[own]) {
+				t.Fatalf("keyed runner turn signatures = %d %v", turn.IssuedAt, turn.Signatures)
+			}
+			if !keyed && (turn.IssuedAt != 0 || turn.Signatures != nil) {
+				t.Fatal("legacy runner received signature fields it cannot decode")
+			}
+
+			brokerEvent(t, b, r, s.ID, "turn.started", nil)
+			brokerEvent(t, b, r, s.ID, "approval.request", func(m *runnerproto.Message) { m.ApprovalID = "approval-1"; m.Command = "go test ./..." })
+			if err := b.resolveSignedApproval(principal, s.ID, "approval-1", runnerproto.ApprovalDecision{Decision: "approve", IssuedAt: 1761379200001, Signatures: signatures}); err != nil {
+				t.Fatal(err)
+			}
+			decision := lastFrame(t, r, "approval.decision")
+			if keyed && (decision.IssuedAt != 1761379200001 || len(decision.Signatures) != 1 || decision.Signatures[own] == "") {
+				t.Fatalf("keyed runner approval signatures = %d %v", decision.IssuedAt, decision.Signatures)
+			}
+			if !keyed && decision.Signatures != nil {
+				t.Fatal("legacy runner received approval signature fields")
+			}
+		})
+	}
+}

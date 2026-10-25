@@ -88,6 +88,7 @@ func (b *sessionBroker) claim(r *connectedRunner, id string) error {
 				m.TurnID = a.TurnID
 				m.ApprovalID = a.ID
 				m.Decision = a.Decision
+				attachCommandSignature(&m, r, a.DecisionIssuedAt, a.DecisionSignatures)
 				b.sendLocked(r, m)
 			}
 			return nil
@@ -366,6 +367,7 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 			return errors.New("unexpected turn start")
 		}
 		next.QueuedInput = ""
+		next.QueuedIssuedAt, next.QueuedSignatures = 0, nil
 		next.State = "running"
 		event = "turn.started"
 		payload = map[string]any{"turn_id": m.TurnID}

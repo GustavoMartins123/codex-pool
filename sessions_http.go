@@ -226,6 +226,10 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			respondJSONError(w, 400, "invalid turn input")
 			return
 		}
+		if !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
+			respondJSONError(w, 400, "invalid command signatures")
+			return
+		}
 		turn, err := b.startTurn(principal.ID, id, q, func(settings *runnerproto.CreateSession) error {
 			return h.authorizeSessionModel(principal.ID+"-c-"+client.ID, settings)
 		})
@@ -245,14 +249,16 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 3 && parts[1] == "approvals" && parts[2] != "" {
-		var q struct {
-			Decision string `json:"decision"`
-		}
+		var q runnerproto.ApprovalDecision
 		if err := decodeSessionJSON(w, r, &q); err != nil {
 			sessionHTTPError(w, err)
 			return
 		}
-		if err := b.resolveApproval(principal.ID, id, parts[2], q.Decision); err != nil {
+		if !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
+			respondJSONError(w, 400, "invalid command signatures")
+			return
+		}
+		if err := b.resolveSignedApproval(principal.ID, id, parts[2], q); err != nil {
 			sessionHTTPError(w, err)
 			return
 		}

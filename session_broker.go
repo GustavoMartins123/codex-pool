@@ -37,6 +37,10 @@ type sessionRecord struct {
 	HistoryComplete bool   `json:"history_complete"`
 	DeleteRequested bool   `json:"delete_requested"`
 	DeleteError     string `json:"delete_error,omitempty"`
+
+	// The app's signatures for QueuedInput, relayed verbatim to the runner.
+	QueuedIssuedAt   int64             `json:"queued_issued_at,omitempty"`
+	QueuedSignatures map[string]string `json:"queued_signatures,omitempty"`
 }
 
 type approvalRecord struct {
@@ -44,6 +48,9 @@ type approvalRecord struct {
 	SessionID   string `json:"session_id"`
 	PrincipalID string `json:"principal_id"`
 	Decision    string `json:"decision,omitempty"`
+	// The app's signatures for an approve decision, relayed verbatim.
+	DecisionIssuedAt   int64             `json:"decision_issued_at,omitempty"`
+	DecisionSignatures map[string]string `json:"decision_signatures,omitempty"`
 }
 
 type sessionEvent struct {
@@ -326,6 +333,8 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 	}
 	next.TurnID = uuid.NewString()
 	next.QueuedInput = input.Input
+	next.QueuedIssuedAt = input.IssuedAt
+	next.QueuedSignatures = input.Signatures
 	next.State = "running"
 	next.UpdatedAt = b.now()
 	next.CancelRequested = false
@@ -348,7 +357,23 @@ func (b *sessionBroker) dispatchTurnLocked(s *sessionRecord) {
 	m.TurnID = s.TurnID
 	m.Input = s.QueuedInput
 	m.Settings = &runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort}
-	b.sendLocked(b.runners[s.RunnerID], m)
+	r := b.runners[s.RunnerID]
+	attachCommandSignature(&m, r, s.QueuedIssuedAt, s.QueuedSignatures)
+	b.sendLocked(r, m)
+}
+
+// attachCommandSignature copies into m the app signature meant for r. Only
+// runners that announced a command key receive the fields: older runner
+// binaries reject unknown frame fields. The pool never checks signatures; a
+// runner that requires them refuses commands that lack a valid one.
+func attachCommandSignature(m *runnerproto.Message, r *connectedRunner, issuedAt int64, signatures map[string]string) {
+	if r == nil || r.hello.CommandKeyID == "" {
+		return
+	}
+	if signature, ok := signatures[r.hello.CommandKeyID]; ok {
+		m.IssuedAt = issuedAt
+		m.Signatures = map[string]string{r.hello.CommandKeyID: signature}
+	}
 }
 
 func (b *sessionBroker) cancelTurn(principal, id string) error {
@@ -424,6 +449,7 @@ func (b *sessionBroker) closeLocked(s *sessionRecord, reason string) error {
 	next.ClosedAt = &now
 	next.UpdatedAt = now
 	next.QueuedInput = ""
+	next.QueuedIssuedAt, next.QueuedSignatures = 0, nil
 	next.Approvals = []runnerproto.Approval{}
 	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": "closed"})}
 	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" || reason == "checkpoint_failed" {
@@ -523,7 +549,7 @@ func (b *sessionBroker) sweep() error {
 		}
 		for _, approval := range s.Approvals {
 			if !approval.ExpiresAt.After(now) {
-				if err := b.resolveApprovalLocked(s.PrincipalID, s.ID, approval.ID, "deny", "timeout"); err != nil {
+				if err := b.resolveApprovalLocked(s.PrincipalID, s.ID, approval.ID, "deny", "timeout", 0, nil); err != nil {
 					return err
 				}
 			}
@@ -533,11 +559,16 @@ func (b *sessionBroker) sweep() error {
 }
 
 func (b *sessionBroker) resolveApproval(principal, id, aid, decision string) error {
+	return b.resolveSignedApproval(principal, id, aid, runnerproto.ApprovalDecision{Decision: decision})
+}
+
+func (b *sessionBroker) resolveSignedApproval(principal, id, aid string, q runnerproto.ApprovalDecision) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.resolveApprovalLocked(principal, id, aid, decision, "user")
+	return b.resolveApprovalLocked(principal, id, aid, q.Decision, "user", q.IssuedAt, q.Signatures)
 }
-func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, source string) error {
+
+func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, source string, issuedAt int64, signatures map[string]string) error {
 	s, err := b.ownedLocked(principal, id)
 	if err != nil {
 		return err
@@ -577,6 +608,9 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, sour
 			source = "timeout"
 		}
 		record.Decision = decision
+		if decision == "approve" {
+			record.DecisionIssuedAt, record.DecisionSignatures = issuedAt, signatures
+		}
 		pending := []runnerproto.Approval{}
 		for _, a := range next.Approvals {
 			if a.ID != aid {
@@ -613,6 +647,8 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, sour
 	m.TurnID = record.TurnID
 	m.ApprovalID = aid
 	m.Decision = record.Decision
-	b.sendLocked(b.runners[s.RunnerID], m)
+	r := b.runners[s.RunnerID]
+	attachCommandSignature(&m, r, record.DecisionIssuedAt, record.DecisionSignatures)
+	b.sendLocked(r, m)
 	return nil
 }
