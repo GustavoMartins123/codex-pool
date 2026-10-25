@@ -384,6 +384,9 @@ func (p *PassportStore) reserveGrantRequest(grant *accountGrant, now time.Time) 
 				return err
 			}
 		}
+		if err := pruneMinuteCounters(b, scope, minuteKey); err != nil {
+			return err
+		}
 		a.holds = []policyBudgetHold{{Scope: scope, Day: dayKey, Month: monthKey, Tokens: reserved, Limits: grant.Budget}}
 		return nil
 	})

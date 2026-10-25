@@ -115,6 +115,9 @@ func (p *PassportStore) reservePolicyRequest(principalID, clientID string, confi
 					return err
 				}
 			}
+			if err := pruneMinuteCounters(b, s.id, minuteKey); err != nil {
+				return err
+			}
 			a.holds = append(a.holds, policyBudgetHold{Scope: s.id, Day: dayKey, Month: monthKey, Tokens: reserved, Limits: s.limits})
 			if s.id == clientID {
 				a.reservedTokens = reserved

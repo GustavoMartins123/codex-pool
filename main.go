@@ -704,6 +704,9 @@ func main() {
 	if err := passport.retireLegacyCredentials(legacyPoolUsers); err != nil {
 		log.Fatalf("legacy credential retirement failed: %v", err)
 	}
+	if err := passport.sweepMinuteCounters(time.Now()); err != nil {
+		log.Fatalf("policy minute counter sweep failed: %v", err)
+	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
 	if err := passport.initializeAccountAuthority(pool.allAccounts()); err != nil {
 		log.Fatalf("initialize account ownership: %v", err)

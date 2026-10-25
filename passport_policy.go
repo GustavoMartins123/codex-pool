@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -188,9 +189,69 @@ func writePolicyCounter(bucket *bbolt.Bucket, key string, counter policyUsageCou
 
 func policyUsageKeys(clientID string, now time.Time) (minute, day, month string) {
 	now = now.UTC()
-	return "minute|" + clientID + "|" + now.Format("200601021504"),
+	return policyMinutePrefix + clientID + "|" + now.Format("200601021504"),
 		"day|" + clientID + "|" + now.Format("20060102"),
 		"month|" + clientID + "|" + now.Format("200601")
+}
+
+// policyMinutePrefix starts every per-minute rate counter key.
+const policyMinutePrefix = "minute|"
+
+// minuteCounterSweepBatch bounds each startup sweep transaction.
+const minuteCounterSweepBatch = 4096
+
+// pruneMinuteCounters deletes a scope's per-minute counters older than the
+// current key. Only the current minute is ever read, and bbolt never shrinks,
+// so keeping them grew the store by one key per scope and active minute.
+func pruneMinuteCounters(bucket *bbolt.Bucket, scope, current string) error {
+	prefix := []byte(policyMinutePrefix + scope + "|")
+	var stale [][]byte
+	cursor := bucket.Cursor()
+	for k, _ := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix) && string(k) < current; k, _ = cursor.Next() {
+		stale = append(stale, append([]byte(nil), k...))
+	}
+	for _, k := range stale {
+		if err := bucket.Delete(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sweepMinuteCounters removes per-minute counters written before pruning
+// existed, in bounded transactions so a large backlog never becomes one huge
+// write.
+func (p *PassportStore) sweepMinuteCounters(now time.Time) error {
+	current := now.UTC().Format("200601021504")
+	prefix := []byte(policyMinutePrefix)
+	for {
+		deleted := 0
+		if err := p.db.Update(func(tx *bbolt.Tx) error {
+			bucket := tx.Bucket([]byte(bucketPassportPolicyUsage))
+			if bucket == nil {
+				return errors.New("policy usage unavailable")
+			}
+			var stale [][]byte
+			cursor := bucket.Cursor()
+			for k, _ := cursor.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix) && len(stale) < minuteCounterSweepBatch; k, _ = cursor.Next() {
+				if string(k[bytes.LastIndexByte(k, '|')+1:]) < current {
+					stale = append(stale, append([]byte(nil), k...))
+				}
+			}
+			for _, k := range stale {
+				if err := bucket.Delete(k); err != nil {
+					return err
+				}
+			}
+			deleted = len(stale)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if deleted < minuteCounterSweepBatch {
+			return nil
+		}
+	}
 }
 
 func (p *PassportStore) resolveClientPolicy(principalID, clientID string, configured map[string]ClientPolicy) (*Principal, ClientPolicy, bool, bool) {
