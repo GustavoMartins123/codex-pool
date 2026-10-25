@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -38,8 +39,28 @@ func newBruteForceTracker() *bruteForceTracker {
 	return t
 }
 
+// bruteForceKey groups IPv6 clients by their /64 prefix, the smallest block a
+// single host commonly controls, so rotating addresses inside it does not
+// reset the failure count. IPv4 and IPv4-mapped addresses keep one key each.
+func bruteForceKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
+}
+
 // isBanned returns true if the IP is currently banned.
 func (t *bruteForceTracker) isBanned(ip string) bool {
+	ip = bruteForceKey(ip)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec, ok := t.attempts[ip]
@@ -60,6 +81,7 @@ func (t *bruteForceTracker) isBanned(ip string) bool {
 // recordFailure increments the failure count for an IP. Returns true if
 // the IP is now banned (just crossed the threshold).
 func (t *bruteForceTracker) recordFailure(ip string) bool {
+	ip = bruteForceKey(ip)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec, ok := t.attempts[ip]
@@ -67,10 +89,7 @@ func (t *bruteForceTracker) recordFailure(ip string) bool {
 		if len(t.attempts) >= maxTrackedBruteForceIPs {
 			t.cleanupLocked(time.Now())
 			if len(t.attempts) >= maxTrackedBruteForceIPs {
-				for k := range t.attempts {
-					delete(t.attempts, k)
-					break
-				}
+				t.evictLocked()
 			}
 		}
 		rec = &attemptRecord{firstAt: time.Now()}
@@ -89,8 +108,29 @@ func (t *bruteForceTracker) recordFailure(ip string) bool {
 	return false
 }
 
+// evictLocked frees one slot. Active bans survive while any unbanned record
+// remains, so flooding the table from fresh addresses cannot lift a ban: the
+// oldest unbanned record goes first, otherwise the ban closest to expiry.
+func (t *bruteForceTracker) evictLocked() {
+	var victim string
+	var victimAt time.Time
+	victimBanned := true
+	for key, rec := range t.attempts {
+		banned := !rec.bannedAt.IsZero()
+		at := rec.firstAt
+		if banned {
+			at = rec.bannedAt
+		}
+		if victim == "" || victimBanned && !banned || banned == victimBanned && at.Before(victimAt) {
+			victim, victimAt, victimBanned = key, at, banned
+		}
+	}
+	delete(t.attempts, victim)
+}
+
 // recordSuccess clears the failure count for an IP.
 func (t *bruteForceTracker) recordSuccess(ip string) {
+	ip = bruteForceKey(ip)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.attempts, ip)
