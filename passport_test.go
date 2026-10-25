@@ -721,6 +721,36 @@ func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
 	}
 }
 
+func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		h.passport.passwordWork <- struct{}{}
+	}
+	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
+	for i := 0; i < passwordAttemptLimit; i++ {
+		busy := httptest.NewRecorder()
+		h.handlePassportLogin(busy, loginRequest(correct))
+		if busy.Code != http.StatusServiceUnavailable {
+			t.Fatalf("attempt %d status = %d, want 503 while saturated", i, busy.Code)
+		}
+	}
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		<-h.passport.passwordWork
+	}
+	throttled := httptest.NewRecorder()
+	h.handlePassportLogin(throttled, loginRequest(correct))
+	if throttled.Code != http.StatusTooManyRequests || throttled.Header().Get("Retry-After") == "" {
+		t.Fatalf("attempt past the per-network limit status = %d retry-after=%q, want 429", throttled.Code, throttled.Header().Get("Retry-After"))
+	}
+	other := loginRequest(correct)
+	other.RemoteAddr = "198.51.100.20:4242"
+	ok := httptest.NewRecorder()
+	h.handlePassportLogin(ok, other)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("another network status = %d, want 200", ok.Code)
+	}
+}
+
 func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {

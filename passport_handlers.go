@@ -156,6 +156,12 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return nil
 	}
+	if !h.allowPasswordAttempt(ip) {
+		h.metrics.incPassport("sign_in_outcomes", "throttled")
+		w.Header().Set("Retry-After", strconv.Itoa(int(passkeyIssueWindowDuration/time.Second)))
+		respondJSONError(w, http.StatusTooManyRequests, "too many sign-in attempts, try again later")
+		return nil
+	}
 	var q struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
