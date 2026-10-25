@@ -322,9 +322,14 @@ func (p *PassportStore) recordPolicyTokens(clientID string, tokens int64, now ti
 	}
 	_, dayKey, monthKey := policyUsageKeys(clientID, now)
 	_, principalDay, principalMonth := policyUsageKeys("principal:"+principalID, now)
+	keys := []string{dayKey, monthKey, principalDay, principalMonth}
+	if sponsor := p.guestBudgetSponsor(p.principal(principalID)); sponsor != nil {
+		_, sponsorDay, sponsorMonth := policyUsageKeys("principal:"+sponsor.ID, now)
+		keys = append(keys, sponsorDay, sponsorMonth)
+	}
 	return p.db.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(bucketPassportPolicyUsage))
-		for _, key := range []string{dayKey, monthKey, principalDay, principalMonth} {
+		for _, key := range keys {
 			counter, err := readPolicyCounter(bucket, key)
 			if err != nil {
 				return err

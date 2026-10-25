@@ -148,3 +148,39 @@ func TestBudgetReservationRollbackAndExplicitConfiguration(t *testing.T) {
 		t.Fatal("implicit token reservation accepted")
 	}
 }
+
+func TestGuestRequestsSpendSponsorBudget(t *testing.T) {
+	p, sponsorClient := testPolicyPassport(t)
+	expires := time.Now().Add(24 * time.Hour)
+	guest, _, guestClient, _, err := p.createGuest("policy-user", "friend", "F", &expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setPrincipalBudget(t, p, "policy-user", PolicyLimits{DailyRequests: 2})
+	now := time.Now().UTC()
+	for i := range 2 {
+		admission, err := p.beginPolicyRequest(guest.ID, guestClient.ID, nil, now)
+		if err != nil {
+			t.Fatalf("guest request %d: %v", i, err)
+		}
+		admission.Release()
+	}
+	_, err = p.beginPolicyRequest(guest.ID, guestClient.ID, nil, now)
+	requirePolicyCode(t, err, "policy_daily_requests_exceeded")
+	_, err = p.beginPolicyRequest("policy-user", sponsorClient.ID, nil, now)
+	requirePolicyCode(t, err, "policy_daily_requests_exceeded")
+
+	if err := p.recordPolicyTokens(guestClient.ID, 50, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.db.View(func(tx *bbolt.Tx) error {
+		_, day, _ := policyUsageKeys("principal:policy-user", now)
+		counter, err := readPolicyCounter(tx.Bucket([]byte(bucketPassportPolicyUsage)), day)
+		if err == nil && counter.Tokens != 50 {
+			t.Fatalf("sponsor tokens = %d, want the guest's 50", counter.Tokens)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
