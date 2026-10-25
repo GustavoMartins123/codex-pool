@@ -93,11 +93,15 @@ func (h *proxyHandler) getEffectivePublicURL(r *http.Request) string {
 		scheme = "https"
 	}
 	host := r.Host
-	if host == "" {
+	// The inferred URL is interpolated into setup scripts, and Go accepts
+	// shell metacharacters such as $, ( and ' in Host headers.
+	if !inferredHostPattern.MatchString(host) {
 		host = "localhost:8989"
 	}
 	return fmt.Sprintf("%s://%s", scheme, host)
 }
+
+var inferredHostPattern = regexp.MustCompile(`^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?$`)
 
 func wantsPowerShell(r *http.Request) bool {
 	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("shell"))) {
