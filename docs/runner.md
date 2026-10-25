@@ -48,6 +48,29 @@ On Windows, escape backslashes:
 At least one of `codex` or `claude` must point to an existing executable.
 On Windows, executables must be native `.exe` files; shell shims are rejected.
 
+## Permission modes
+
+Each session runs in one of two permission modes, chosen in the app:
+
+- **Gated** (default): the agent asks for approval in the app before running
+  commands, and Codex stays inside its `workspace-write` sandbox.
+- **Auto**: the agent runs without approvals and without a filesystem sandbox
+  (Codex `danger-full-access`, Claude Code `bypassPermissions`). It can read
+  and change anything the runner's user can, not only the session workspace.
+
+The runner refuses auto sessions unless the machine owner enables them in the
+launch configuration:
+
+```json
+{
+  "allow_auto": true
+}
+```
+
+Without this setting, an auto session ends before any credential is fetched or
+workspace is created, and the runner logs `auto permissions are disabled`.
+Path workspaces always require gated permissions.
+
 ## Pair and run
 
 Extract the binary and pair the machine:
@@ -105,6 +128,9 @@ native agent state. User path and repository workspaces are preserved.
 - `agent executable unavailable`: correct the absolute executable path in JSON.
 - `workspace path is not in the runner allowlist`: add the existing directory
   to `allow_paths`.
+- `auto permissions are disabled`: the session asked for auto permissions on a
+  runner without `"allow_auto": true`. Use gated permissions, or enable auto
+  sessions in the launch configuration.
 - `original runner must be online`: resuming and deleting require the machine
   that holds the workspace and native state.
 - `checkpoint unavailable` or `checkpoint checksum mismatch`: history remains
