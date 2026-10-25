@@ -231,6 +231,9 @@ type PassportStore struct {
 	policyReserved  map[string]int64
 	policyCacheMu   sync.Mutex
 	policyCache     *policyCache
+	// guestPassMu serializes the member pass cap check with the write that
+	// creates or restores a pass.
+	guestPassMu sync.Mutex
 }
 
 func passportAEAD() (cipher.AEAD, error) {

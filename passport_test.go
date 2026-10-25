@@ -851,7 +851,8 @@ func newPassportWithTwoMembers(t *testing.T) (*PassportStore, *Principal, *Princ
 
 func TestGuestPassesAreScopedToOwner(t *testing.T) {
 	passport, alpha, beta := newPassportWithTwoMembers(t)
-	guest, _, _, _, err := passport.createGuest(alpha.ID, "Alpha friend", "Al", nil)
+	expires := time.Now().Add(24 * time.Hour)
+	guest, _, _, _, err := passport.createGuest(alpha.ID, "Alpha friend", "Al", &expires)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,16 +4,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGuestPassesFollowSponsorStatus(t *testing.T) {
 	p, operator := testPassportWithOperator(t)
 	member := insertTestPrincipal(t, p, "sponsor-member", PrincipalMember, "sponsor", "sponsor@example.com")
-	guest, _, client, joinToken, err := p.createGuest(member.ID, "friend", "Friend", nil)
+	expires := time.Now().Add(24 * time.Hour)
+	guest, _, client, joinToken, err := p.createGuest(member.ID, "friend", "Friend", &expires)
 	if err != nil {
 		t.Fatal(err)
 	}
-	benched, _, _, _, err := p.createGuest(member.ID, "benched friend", "Benched", nil)
+	benched, _, _, _, err := p.createGuest(member.ID, "benched friend", "Benched", &expires)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,5 +53,46 @@ func TestGuestPassesFollowSponsorStatus(t *testing.T) {
 	}
 	if got := p.principal(benched.ID); got == nil || got.Status != PrincipalSuspended {
 		t.Fatal("reactivating the sponsor revived an individually suspended guest pass")
+	}
+}
+
+func TestMemberGuestPassesAreBounded(t *testing.T) {
+	passport, alpha, _ := newPassportWithTwoMembers(t)
+	now := time.Now()
+	soon, tooLate := now.Add(24*time.Hour), now.Add(maxGuestPassLifetime+time.Hour)
+	if _, _, _, _, err := passport.createGuest(alpha.ID, "forever", "F", nil); err == nil {
+		t.Fatal("member created a pass without expiry")
+	}
+	if _, _, _, _, err := passport.createGuest(alpha.ID, "too long", "L", &tooLate); err == nil {
+		t.Fatal("member created a pass beyond the maximum lifetime")
+	}
+	var first *Principal
+	for i := 0; i < maxActiveGuestPassesPerMember; i++ {
+		guest, _, _, _, err := passport.createGuest(alpha.ID, "friend", "F", &soon)
+		if err != nil {
+			t.Fatalf("pass %d: %v", i, err)
+		}
+		if first == nil {
+			first = guest
+		}
+	}
+	if _, _, _, _, err := passport.createGuest(alpha.ID, "one too many", "M", &soon); err == nil {
+		t.Fatal("member exceeded the active pass cap")
+	}
+	if _, err := passport.updateGuestPass(alpha, first.ID, "friend", "F", nil); err == nil {
+		t.Fatal("member removed a pass expiry")
+	}
+	if _, err := passport.setGuestPassStatus(alpha, first.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := passport.createGuest(alpha.ID, "replacement", "R", &soon); err != nil {
+		t.Fatalf("revoking a pass did not free a slot: %v", err)
+	}
+	if _, err := passport.setGuestPassStatus(alpha, first.ID, true); err == nil {
+		t.Fatal("restoring a pass exceeded the active pass cap")
+	}
+	operator := insertTestPrincipal(t, passport, "pass-operator", PrincipalOperator, "passop", "passop@example.com")
+	if _, _, _, _, err := passport.createGuest(operator.ID, "operator guest", "O", nil); err != nil {
+		t.Fatalf("operator passes must stay unbounded: %v", err)
 	}
 }
