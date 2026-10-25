@@ -195,7 +195,7 @@ func (p *PassportStore) redeemJoin(token string) (*Principal, string, string, er
 		return nil, "", "", errors.New("link unavailable")
 	}
 	pr := p.principal(link.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || p.guestSponsorUnavailable(pr) {
 		return nil, "", "", errors.New("link unavailable")
 	}
 	now := time.Now().UTC()

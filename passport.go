@@ -527,6 +527,23 @@ func (p *PassportStore) principal(id string) *Principal {
 	cp := *x
 	return &cp
 }
+
+// guestSponsorUnavailable reports whether a guest pass lost its authority
+// because the member or operator who issued it is suspended or expired. The
+// check runs at authentication time, so reactivating the sponsor restores the
+// guests without reviving passes that were suspended individually. Passes
+// without a known issuing principal keep their own status as the only gate.
+func (p *PassportStore) guestSponsorUnavailable(pr *Principal) bool {
+	if pr == nil || pr.Kind != PrincipalGuest || pr.CreatedBy == "" {
+		return false
+	}
+	sponsor := p.principal(pr.CreatedBy)
+	if sponsor == nil {
+		return false
+	}
+	return sponsor.Status != PrincipalActive || sponsor.ExpiresAt != nil && time.Now().After(*sponsor.ExpiresAt)
+}
+
 func (p *PassportStore) byEmail(email string) *Principal {
 	email = strings.ToLower(strings.TrimSpace(email))
 	p.mu.RLock()
@@ -659,7 +676,7 @@ func (p *PassportStore) authenticate(r *http.Request) (*Principal, *passportSess
 		return nil, nil
 	}
 	pr := p.principal(s.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) || p.guestSponsorUnavailable(pr) {
 		return nil, nil
 	}
 	return pr, &s
@@ -711,7 +728,7 @@ func splitClientIdentity(identity string) (string, string) {
 func (p *PassportStore) credentialState(identity string) (*Principal, *ClientCredential, bool) {
 	principalID, clientID := splitClientIdentity(identity)
 	pr := p.principal(principalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) || p.guestSponsorUnavailable(pr) {
 		return nil, nil, false
 	}
 	p.mu.RLock()
