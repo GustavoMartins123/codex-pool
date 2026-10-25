@@ -61,7 +61,7 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 					return err
 				}
 				for _, grant := range grants {
-					if grantActive(grant, resource, principal.ID, now) {
+					if grantUsable(tx, grant, resource, principal.ID, now) {
 						a.grants = append(a.grants, grant)
 					}
 				}

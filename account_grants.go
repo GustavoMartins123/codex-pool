@@ -73,13 +73,37 @@ func grantActive(g accountGrant, resource *accountResource, actor string, now ti
 	return g.RecipientID == actor && g.Provider == resource.Provider && g.AccountID == resource.ID && g.RevokedAt == nil && g.ExpiresAt.After(now) && resource.WithdrawnAt == nil && resource.Status == "active" && (resource.OperatorManaged || g.CreatedBy == resource.OwnerID || resource.OperatorMayDelegate)
 }
 
+// grantUsable adds the grantor's standing to grantActive: a grant issued by
+// a principal who is now suspended or expired stops working. It is checked
+// at use time, so reactivating the grantor restores the grant without
+// re-issuing it. As with guest passes, a grantor that is not a known
+// principal leaves the grant's own state as the only gate.
+func grantUsable(tx *bbolt.Tx, g accountGrant, resource *accountResource, actor string, now time.Time) bool {
+	if !grantActive(g, resource, actor, now) {
+		return false
+	}
+	principals := tx.Bucket([]byte(bucketPrincipals))
+	if principals == nil {
+		return false
+	}
+	raw := principals.Get([]byte(g.CreatedBy))
+	if raw == nil {
+		return true
+	}
+	var grantor Principal
+	if json.Unmarshal(raw, &grantor) != nil {
+		return false
+	}
+	return grantor.Status == PrincipalActive && (grantor.ExpiresAt == nil || grantor.ExpiresAt.After(now))
+}
+
 func findAccountGrant(tx *bbolt.Tx, resource *accountResource, actor, model string) (*accountGrant, error) {
 	grants, err := accountGrantsByResource(tx, resource.Provider, resource.ID, actor)
 	if err != nil {
 		return nil, err
 	}
 	for _, g := range grants {
-		if grantActive(g, resource, actor, time.Now()) && (model == "" || policyAllows(PolicySelector{Allow: g.Models}, model)) {
+		if grantUsable(tx, g, resource, actor, time.Now()) && (model == "" || policyAllows(PolicySelector{Allow: g.Models}, model)) {
 			return &g, nil
 		}
 	}
