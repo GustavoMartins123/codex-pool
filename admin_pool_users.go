@@ -74,6 +74,10 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusBadRequest, "token required")
 		return
 	}
+	if !validSetupToken(token) {
+		respondJSONError(w, http.StatusBadRequest, "invalid token")
+		return
+	}
 
 	var user *PoolUser
 	if client := h.passport.redeemConfigDownloadNonce(token); client != nil {

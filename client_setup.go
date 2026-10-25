@@ -9,7 +9,7 @@ import (
 func (h *proxyHandler) serveGrokSetupScript(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	token := strings.TrimPrefix(r.URL.Path, "/setup/grok/")
-	if token == "" || strings.Contains(token, "/") {
+	if !validSetupToken(token) {
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
@@ -172,7 +172,7 @@ printf 'Grok Build model discovery and inference now use codex-pool. Config save
 func (h *proxyHandler) servePiSetupScript(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	token := strings.TrimPrefix(r.URL.Path, "/setup/pi/")
-	if token == "" || strings.Contains(token, "/") {
+	if !validSetupToken(token) {
 		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
