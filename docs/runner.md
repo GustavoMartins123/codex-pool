@@ -48,6 +48,57 @@ On Windows, escape backslashes:
 At least one of `codex` or `claude` must point to an existing executable.
 On Windows, executables must be native `.exe` files; shell shims are rejected.
 
+## Permission modes
+
+Each session runs in one of two permission modes, chosen in the app:
+
+- **Gated** (default): the agent asks for approval in the app before running
+  commands, and Codex stays inside its `workspace-write` sandbox.
+- **Auto**: the agent runs without approvals and without a filesystem sandbox
+  (Codex `danger-full-access`, Claude Code `bypassPermissions`). It can read
+  and change anything the runner's user can, not only the session workspace.
+
+The runner refuses auto sessions unless the machine owner enables them in the
+launch configuration:
+
+```json
+{
+  "allow_auto": true
+}
+```
+
+Without this setting, an auto session ends before any credential is fetched or
+workspace is created, and the runner logs `auto permissions are disabled`.
+Path workspaces always require gated permissions.
+
+## Signed commands
+
+Pairing and rotation generate a command key on the runner. The key travels
+only inside the QR code: the app that scans it stores the key with its
+credentials, and the pool never receives it. The QR image saved with `--qr` or
+`qr` is deleted when pairing ends.
+
+A runner with a command key accepts a prompt only when the paired device
+signed it for that session, its agent, its permission mode and its workspace,
+and accepts an approval only when the device signed it for the exact command
+the runner asked about. A compromised pool, or someone holding a stolen app
+token, can therefore no longer make the runner execute anything. Denials,
+cancellation and closing stay unsigned because they are always safe.
+
+- Only the device that scanned the QR can send prompts and approvals to that
+  runner. To use another device, run `runnerd rotate` and scan the new QR
+  there.
+- Signed prompts must reach the runner within 10 minutes of being sent, and
+  each must be newer than the last one the session accepted. Keep the device
+  and runner clocks in sync.
+- With a signing device, the app sends a new session's first message as a
+  signed turn once the runner is ready, instead of with the session request.
+- Runners paired before command keys existed keep accepting unsigned commands
+  and log how to upgrade. Run `runnerd rotate` on each of them and scan the
+  new QR to require signatures.
+- Update the pool before runners and the app: a runner with a command key and
+  the app's signed requests use protocol fields that older pools reject.
+
 ## Pair and run
 
 Extract the binary and pair the machine:
@@ -105,6 +156,14 @@ native agent state. User path and repository workspaces are preserved.
 - `agent executable unavailable`: correct the absolute executable path in JSON.
 - `workspace path is not in the runner allowlist`: add the existing directory
   to `allow_paths`.
+- `auto permissions are disabled`: the session asked for auto permissions on a
+  runner without `"allow_auto": true`. Use gated permissions, or enable auto
+  sessions in the launch configuration.
+- `command is not signed by the device paired with this runner`: the prompt or
+  approval came from a device without this runner's key, or from a pool that
+  altered it. Run `runnerd rotate` and scan the new QR on the device you use.
+- `outside the accepted time window`: the device or runner clock is off by
+  more than 10 minutes, or the pool delivered the command late.
 - `original runner must be online`: resuming and deleting require the machine
   that holds the workspace and native state.
 - `checkpoint unavailable` or `checkpoint checksum mismatch`: history remains

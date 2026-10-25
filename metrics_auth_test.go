@@ -43,3 +43,24 @@ func TestMetricsCredentialOnlyAuthorizesMetricsAndFailsClosed(t *testing.T) {
 		t.Fatal("disabled monitoring credential accepted")
 	}
 }
+
+func TestMetricsCredentialGuessesAreBanned(t *testing.T) {
+	token := strings.Repeat("a", 64)
+	tracker := newTestBruteForceTracker(t)
+	h := &proxyHandler{cfg: &config{metricsToken: token}, metrics: newMetrics(), pool: newPoolState(nil, false), bruteForce: tracker}
+	scrape := func(credential string) int {
+		r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		r.Header.Set("Authorization", "Bearer "+credential)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < bruteForceMaxAttempts; i++ {
+		if code := scrape("wrong"); code != http.StatusForbidden {
+			t.Fatalf("guess %d status = %d, want 403", i, code)
+		}
+	}
+	if code := scrape(token); code != http.StatusTooManyRequests {
+		t.Fatalf("correct metrics token from banned peer status = %d, want 429", code)
+	}
+}

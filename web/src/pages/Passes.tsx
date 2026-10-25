@@ -15,8 +15,17 @@ function localDateTime(value: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Mirrors the server limits on member-issued passes; operators are exempt.
+const MEMBER_PASS_MAX_DAYS = 90;
+const MEMBER_PASS_DEFAULT_DAYS = 30;
+const MEMBER_PASS_LIMIT = 10;
 
-export function Passes() {
+function localDateTimeInDays(days: number) {
+  return localDateTime(new Date(Date.now() + days * 86_400_000).toISOString());
+}
+
+export function Passes({ operator = false }: { operator?: boolean }) {
+  const expiryRequired = !operator;
   const [passes, setPasses] = useState<GuestPass[]>([]);
   const [note, setNote] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -38,7 +47,9 @@ export function Passes() {
       if (!refreshGuard.isCurrent(version)) return;
       setPasses(items);
       if (initialLoad.current) {
-        setShowForm(shouldShowPassFormOnLoad(items));
+        const showOnLoad = shouldShowPassFormOnLoad(items);
+        setShowForm(showOnLoad);
+        if (showOnLoad && expiryRequired) setExpiry(localDateTimeInDays(MEMBER_PASS_DEFAULT_DAYS));
         initialLoad.current = false;
       }
       setError("");
@@ -48,7 +59,7 @@ export function Passes() {
     } finally {
       if (refreshGuard.isCurrent(version)) setLoading(false);
     }
-  }, [refreshGuard]);
+  }, [refreshGuard, expiryRequired]);
   useEffect(() => { refresh(); }, [refresh]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -80,14 +91,14 @@ export function Passes() {
     {error && <div className="signal-error" role="alert">{error}</div>}
     <div className="view-title">
       <h1>Guest passes</h1>
-      <p>Share access with an optional expiry.</p>
-      {!showForm && <button className="gold-button" onClick={() => { setEditing(null); setNote(""); setDisplayName(""); setExpiry(""); setShowForm(true); }}>Create a pass</button>}
+      <p>{expiryRequired ? `Share access for up to ${MEMBER_PASS_MAX_DAYS} days, with up to ${MEMBER_PASS_LIMIT} active passes.` : "Share access with an optional expiry."}</p>
+      {!showForm && <button className="gold-button" onClick={() => { setEditing(null); setNote(""); setDisplayName(""); setExpiry(expiryRequired ? localDateTimeInDays(MEMBER_PASS_DEFAULT_DAYS) : ""); setShowForm(true); }}>Create a pass</button>}
     </div>
     {fresh && <div className="setup-secret"><code>{window.location.origin + fresh.link}</code><CopyButton text={window.location.origin + fresh.link} label="Copy link" /></div>}
     {showForm && <form className="pass-form" onSubmit={submit}>
       <label><span>Who is this for?</span><textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="Dave from climbing" required /></label>
       <label><span>Name (optional)</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={48} placeholder="Dave" /></label>
-      <label><span>Expiry (optional)</span><input type="datetime-local" value={expiry} onChange={(e) => setExpiry(e.target.value)} /></label>
+      <label><span>{expiryRequired ? `Expiry (required, up to ${MEMBER_PASS_MAX_DAYS} days)` : "Expiry (optional)"}</span><input type="datetime-local" value={expiry} onChange={(e) => setExpiry(e.target.value)} required={expiryRequired} max={expiryRequired ? localDateTimeInDays(MEMBER_PASS_MAX_DAYS) : undefined} /></label>
       <div className="join-actions"><button className="gold-button" disabled={busy}>{busy ? "Saving…" : editing ? "Save changes" : "Create pass"}</button><button type="button" className="quiet-button" onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button></div>
     </form>}
     <div className="pass-list" role="list" aria-label="Guest passes">

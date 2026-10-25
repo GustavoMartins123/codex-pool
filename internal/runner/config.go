@@ -18,6 +18,9 @@ type Config struct {
 	PoolURL  string `json:"pool_url"`
 	RunnerID string `json:"runner_id"`
 	Token    string `json:"token"`
+	// CommandKey is shown once in the pairing QR and never sent to the pool.
+	// Runners paired before command keys existed have none.
+	CommandKey string `json:"command_key,omitempty"`
 }
 
 // LaunchConfig is safe to keep beside the binary: it contains paths and labels,
@@ -32,15 +35,20 @@ type LaunchConfig struct {
 	AllowPaths []string `json:"allow_paths"`
 	Labels     []string `json:"labels"`
 	QR         string   `json:"qr,omitempty"`
+	// AllowAuto accepts sessions in auto permission mode, which run the agent
+	// without approvals or a filesystem sandbox. Off unless the machine owner
+	// opts in here, so a pool server or app credential cannot grant it alone.
+	AllowAuto bool `json:"allow_auto,omitempty"`
 }
 
 type Options struct {
-	Config        Config
-	WorkspaceRoot string
-	AllowedPaths  []string
-	Labels        []string
-	Executables   map[string]string
-	HTTPClient    *http.Client
+	Config               Config
+	WorkspaceRoot        string
+	AllowedPaths         []string
+	Labels               []string
+	Executables          map[string]string
+	HTTPClient           *http.Client
+	AllowAutoPermissions bool
 }
 
 func ValidateOrigin(raw string) error {
@@ -124,6 +132,11 @@ func ReadConfig(path string) (Config, error) {
 	}
 	if cfg.RunnerID == "" || !strings.HasPrefix(cfg.Token, "pool-runner-"+cfg.RunnerID+".") {
 		return cfg, errors.New("invalid runner credential")
+	}
+	if cfg.CommandKey != "" {
+		if _, err := decodeCommandKey(cfg.CommandKey); err != nil {
+			return cfg, err
+		}
 	}
 	return cfg, nil
 }

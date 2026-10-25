@@ -29,6 +29,18 @@ type TurnInput struct {
 	Input           string  `json:"input"`
 	Model           *string `json:"model,omitempty"`
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
+	// IssuedAt (Unix milliseconds) and Signatures, keyed by CommandKeyID,
+	// carry the app's TurnSigningInput signatures; see signing.go.
+	IssuedAt   int64             `json:"issued_at,omitempty"`
+	Signatures map[string]string `json:"signatures,omitempty"`
+}
+
+// ApprovalDecision is the app's answer to an approval request. Approving on
+// a runner with a command key requires ApprovalSigningInput signatures.
+type ApprovalDecision struct {
+	Decision   string            `json:"decision"`
+	IssuedAt   int64             `json:"issued_at,omitempty"`
+	Signatures map[string]string `json:"signatures,omitempty"`
 }
 
 type Approval struct {
@@ -86,6 +98,9 @@ type Hello struct {
 	Labels             []string `json:"labels"`
 	AllowedPaths       []string `json:"allowed_paths"`
 	PersistentSessions bool     `json:"persistent_sessions"`
+	// CommandKeyID is set by runners that require signed commands. Only
+	// those runners receive IssuedAt and Signatures in command frames.
+	CommandKeyID string `json:"command_key_id,omitempty"`
 }
 
 type Runner struct {
@@ -99,6 +114,7 @@ type Runner struct {
 	Arch         string    `json:"arch"`
 	Revoked      bool      `json:"revoked"`
 	CreatedAt    time.Time `json:"created_at"`
+	CommandKeyID string    `json:"command_key_id,omitempty"`
 }
 
 // Every frame carries a version. A connection never negotiates another protocol.
@@ -126,6 +142,9 @@ type Message struct {
 	DurationMS     int64            `json:"duration_ms,omitempty"`
 	ExitCode       int              `json:"exit_code,omitempty"`
 	Sequence       uint64           `json:"sequence,omitempty"`
+	IssuedAt       int64            `json:"issued_at,omitempty"`
+	// Signatures holds only the receiving runner's entry.
+	Signatures map[string]string `json:"signatures,omitempty"`
 }
 
 func Frame(kind string) Message { return Message{Version: Version, Type: kind} }

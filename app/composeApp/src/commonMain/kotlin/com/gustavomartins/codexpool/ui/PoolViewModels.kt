@@ -67,6 +67,14 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
         accounts.withCredentials(null)
     }
 
+    /** Saves a runner command key for the selected pool; pairing must not proceed if this fails. */
+    suspend fun addCommandKey(key: String) {
+        val accounts = requireNotNull(mutable.value.accounts) { "Armazenamento de provedores indisponível." }
+        val updated = accounts.withCommandKey(key)
+        store.write(updated)
+        mutable.update { it.copy(accounts = updated) }
+    }
+
     fun resetStorage() {
         if (mutable.value.loading || mutable.value.accounts != null) return
         mutable.update { it.copy(loading = true, error = null) }
@@ -112,9 +120,10 @@ data class DashboardState(
     val error: String? = null,
 )
 
-class DashboardViewModel(private val api: PoolApi) : ViewModel() {
+class DashboardViewModel(private val api: PoolApi, private val signer: CommandSigner = CommandSigner.Disabled) : ViewModel() {
     private val mutable = MutableStateFlow(DashboardState())
     val state = mutable.asStateFlow()
+    private var pairingKey: String? = null
     init { refresh() }
 
     fun select(tab: DashboardTab) {
@@ -167,20 +176,35 @@ class DashboardViewModel(private val api: PoolApi) : ViewModel() {
     fun create(request: CreateSession, onCreated: (String) -> Unit) = action {
         request.validate()
         require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
-        val session = api.create(request)
+        // Signed runners only run prompts bound to an existing session, so the first
+        // prompt is held back and sent as a signed turn once the runner is ready.
+        val prompt = request.prompt.takeIf { signer.enabled }
+        val session = api.create(if (prompt != null) request.copy(prompt = null) else request)
+        if (prompt != null) PendingPrompts.put(session.id, prompt)
         onCreated(session.conversationId)
     }
 
     fun openPairing() { mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false, error = null) } }
-    fun dismissPairing() { if (!mutable.value.loading) mutable.update { it.copy(pairingOpen = false, pairing = null, pairingComplete = false, error = null) } }
+    fun dismissPairing() {
+        if (mutable.value.loading) return
+        pairingKey = null
+        mutable.update { it.copy(pairingOpen = false, pairing = null, pairingComplete = false, error = null) }
+    }
     fun reviewPairing(link: String) = action {
         mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false) }
+        pairingKey = null
+        val qr = parsePairingLink(link, api.credentials.baseUrl)
         val pairing = api.reviewPairing(link)
+        pairingKey = qr.commandKey
         mutable.update { it.copy(pairing = pairing) }
     }
     fun decidePairing(id: String, decision: Decision, code: String) = action {
         require(mutable.value.pairing?.id == id) { "O pedido de pareamento mudou. Leia o QR novamente." }
+        // Keep the runner's key before approving: a runner whose key was lost refuses every command.
+        val key = pairingKey
+        if (decision == Decision.Approve && key != null) signer.remember(key)
         api.decidePairing(id, decision, code)
+        pairingKey = null
         mutable.update { it.copy(pairing = null, pairingComplete = true) }
     }
     fun revoke(id: String) = action {
@@ -263,7 +287,7 @@ fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?):
     is SessionEvent.Error -> state.copy(error = event.value.message)
 }
 
-class SessionViewModel(private val api: PoolApi, private val id: String) : ViewModel() {
+class SessionViewModel(private val api: PoolApi, private val id: String, private val signer: CommandSigner = CommandSigner.Disabled) : ViewModel() {
     private val mutable = MutableStateFlow(SessionScreenState())
     val state = mutable.asStateFlow()
     private var stream: Job? = null
@@ -322,8 +346,9 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                         api.events(id, lastEventId, onCursor = { cursor ->
                             if (generation == streamGeneration) lastEventId = cursor
                         }) {
-                            if (generation == streamGeneration) mutable.update {
-                                it.copy(connection = StreamConnection.Live, error = null)
+                            if (generation == streamGeneration) {
+                                mutable.update { it.copy(connection = StreamConnection.Live, error = null) }
+                                sendPendingPrompt()
                             }
                         }.collect { frame ->
                             val event = frame.event
@@ -331,6 +356,7 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
                                 mutable.update { reduceEvent(it, event, frame.id).copy(eventRevision = it.eventRevision + 1) }
                                 reconnectDelay = 500L
                                 if (event is SessionEvent.Error) throw SessionProtocolException(event.value.message)
+                                sendPendingPrompt()
                             }
                         }
                         if (mutable.value.session?.state == SessionState.Closed) {
@@ -421,7 +447,8 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         action {
             val revision = mutable.value.eventRevision
             val selected = requireNotNull(mutable.value.turnSettings)
-            val turn = api.turn(requireNotNull(mutable.value.session).id, input, selected)
+            val session = requireNotNull(mutable.value.session)
+            val turn = api.turn(session.id, input, selected, signer.signTurn(session, input))
             mutable.update {
                 it.copy(selectedSettings = null, session = if (it.eventRevision == revision) it.session?.copy(state = SessionState.Running, turnId = turn.turnId,
                     model = selected.model, reasoningEffort = selected.reasoningEffort) else it.session)
@@ -436,9 +463,19 @@ class SessionViewModel(private val api: PoolApi, private val id: String) : ViewM
         mutable.update { if (it.eventRevision == revision) it.copy(session = it.session?.copy(state = SessionState.Closing)) else it }
     }
     fun decide(approvalId: String, decision: Decision) = action {
-        require(mutable.value.approvals.any { it.approvalId == approvalId }) { "A aprovação não está pendente." }
-        api.decide(requireNotNull(mutable.value.session).id, approvalId, decision)
+        val approval = mutable.value.approvals.firstOrNull { it.approvalId == approvalId }
+        require(approval != null) { "A aprovação não está pendente." }
+        val session = requireNotNull(mutable.value.session)
+        api.decide(session.id, approvalId, decision, signer.signApproval(session.id, approval, decision))
         // Only the authoritative SSE event removes the pending approval.
+    }
+
+    // A signed session's first prompt waits until the runner can take it as a signed turn.
+    private fun sendPendingPrompt() {
+        val session = mutable.value.session ?: return
+        if (!mutable.value.canSend) return
+        val prompt = PendingPrompts.take(session.id) ?: return
+        send(prompt) {}
     }
 
     private fun action(block: suspend () -> Unit) {

@@ -324,6 +324,9 @@ func (p *PassportStore) updateGuestPass(actor *Principal, principalID, note, dis
 	if len([]rune(strings.TrimSpace(displayName))) > 48 {
 		return nil, errors.New("display name must be 48 characters or fewer")
 	}
+	if err := validateGuestPassExpiry(actor, expiresAt, time.Now()); err != nil {
+		return nil, err
+	}
 	link, err := p.joinLinkForPrincipal(principalID)
 	if err != nil {
 		return nil, err
@@ -381,6 +384,8 @@ func (p *PassportStore) setGuestPassStatus(actor *Principal, principalID string,
 	if err != nil {
 		return nil, err
 	}
+	p.guestPassMu.Lock()
+	defer p.guestPassMu.Unlock()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	current := p.principals[principalID]
@@ -397,6 +402,14 @@ func (p *PassportStore) setGuestPassStatus(actor *Principal, principalID string,
 	if active {
 		if updated.ExpiresAt != nil && time.Now().After(*updated.ExpiresAt) {
 			return nil, errors.New("set a future expiry or remove expiry before restoring")
+		}
+		// Passes issued before the member limits existed may lack an expiry;
+		// restoring one requires giving it a bounded expiry first.
+		if err := validateGuestPassExpiry(actor, updated.ExpiresAt, time.Now()); err != nil {
+			return nil, err
+		}
+		if err := p.checkGuestPassCapLocked(actor, principalID, time.Now()); err != nil {
+			return nil, err
 		}
 		updated.Status = PrincipalActive
 		link.Revoked = false

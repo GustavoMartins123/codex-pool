@@ -143,6 +143,9 @@ func validHello(h *runnerproto.Hello) error {
 	if h == nil || len(h.Agents) == 0 || len(h.Agents) > 2 || h.OS == "" || h.Arch == "" || len(h.Labels) > 32 || len(h.AllowedPaths) > 64 {
 		return errors.New("invalid runner hello")
 	}
+	if h.CommandKeyID != "" && !runnerproto.ValidCommandKeyID(h.CommandKeyID) {
+		return errors.New("invalid runner command key")
+	}
 	seen := map[string]bool{}
 	for _, agent := range h.Agents {
 		if (agent != "codex" && agent != "claude") || seen[agent] {

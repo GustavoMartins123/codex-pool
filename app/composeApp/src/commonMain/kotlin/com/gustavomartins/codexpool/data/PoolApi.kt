@@ -133,17 +133,21 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
             authorize(); contentType(ContentType.Application.Json); setBody(request)
         }.checked("/api/sessions").body()
     }
-    suspend fun turn(id: String, input: String, settings: TurnSettings? = null): TurnStarted {
+    suspend fun turn(id: String, input: String, settings: TurnSettings? = null, signed: SignedCommand? = null): TurnStarted {
         require(input.isNotBlank()) { "O turno não pode estar vazio." }
         return client.post(endpoint("${sessionPath(id)}/turns")) {
-            authorize(); contentType(ContentType.Application.Json); setBody(TurnInput(input, settings?.model, settings?.reasoningEffort))
+            authorize(); contentType(ContentType.Application.Json)
+            if (signed == null) setBody(TurnInput(input, settings?.model, settings?.reasoningEffort))
+            else setBody(SignedTurnInput(input, settings?.model, settings?.reasoningEffort, signed.issuedAt, signed.signatures))
         }.checked("${sessionPath(id)}/turns").body()
     }
     suspend fun cancel(id: String) { client.post(endpoint("${sessionPath(id)}/turns:cancel")) { authorize() }.checked(sessionPath(id)) }
     suspend fun close(id: String) { client.delete(endpoint(sessionPath(id))) { authorize() }.checked(sessionPath(id)) }
-    suspend fun decide(id: String, approvalId: String, decision: Decision) {
+    suspend fun decide(id: String, approvalId: String, decision: Decision, signed: SignedCommand? = null) {
         client.post(endpoint("${sessionPath(id)}/approvals/${resourceId(approvalId)}")) {
-            authorize(); contentType(ContentType.Application.Json); setBody(ApprovalDecision(decision))
+            authorize(); contentType(ContentType.Application.Json)
+            if (signed == null) setBody(ApprovalDecision(decision))
+            else setBody(SignedApprovalDecision(decision, signed.issuedAt, signed.signatures))
         }.checked("${sessionPath(id)}/approvals")
     }
     suspend fun runners(): List<Runner> = client.get(endpoint("/api/me/runners")) { authorize() }

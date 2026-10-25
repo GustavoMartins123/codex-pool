@@ -231,6 +231,9 @@ type PassportStore struct {
 	policyReserved  map[string]int64
 	policyCacheMu   sync.Mutex
 	policyCache     *policyCache
+	// guestPassMu serializes the member pass cap check with the write that
+	// creates or restores a pass.
+	guestPassMu sync.Mutex
 }
 
 func passportAEAD() (cipher.AEAD, error) {
@@ -266,7 +269,7 @@ func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, e
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucketModelVerifications)); err != nil {
 			return err
 		}
-		for _, n := range []string{bucketAccountGrants, bucketContributionAttempts, bucketAccountResources, bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketJoinLinksByToken, bucketMemberRecoveryLinks, bucketMemberRecoveryLinksByToken, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage} {
+		for _, n := range []string{bucketAccountGrants, bucketContributionAttempts, bucketAccountResources, bucketPrincipals, bucketPassportSessions, bucketClientCredentials, bucketConfigNonces, bucketPassportAvatars, bucketJoinLinks, bucketJoinLinksByToken, bucketMemberRecoveryLinks, bucketMemberRecoveryLinksByToken, bucketPassportAudit, bucketWebAuthnCredentials, bucketWebAuthnChallenges, bucketPassportPolicyUsage, bucketAuthBans} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(n)); err != nil {
 				return err
 			}
@@ -527,6 +530,23 @@ func (p *PassportStore) principal(id string) *Principal {
 	cp := *x
 	return &cp
 }
+
+// guestSponsorUnavailable reports whether a guest pass lost its authority
+// because the member or operator who issued it is suspended or expired. The
+// check runs at authentication time, so reactivating the sponsor restores the
+// guests without reviving passes that were suspended individually. Passes
+// without a known issuing principal keep their own status as the only gate.
+func (p *PassportStore) guestSponsorUnavailable(pr *Principal) bool {
+	if pr == nil || pr.Kind != PrincipalGuest || pr.CreatedBy == "" {
+		return false
+	}
+	sponsor := p.principal(pr.CreatedBy)
+	if sponsor == nil {
+		return false
+	}
+	return sponsor.Status != PrincipalActive || sponsor.ExpiresAt != nil && time.Now().After(*sponsor.ExpiresAt)
+}
+
 func (p *PassportStore) byEmail(email string) *Principal {
 	email = strings.ToLower(strings.TrimSpace(email))
 	p.mu.RLock()
@@ -588,6 +608,16 @@ func (p *PassportStore) byLogin(login string) *Principal {
 		}
 	}
 	return nil
+}
+
+// loginThrottleKey names the account a password attempt targets. Known logins
+// map to their principal, so email and username share one counter; unknown
+// logins are throttled the same way, so a lockout never reveals which exist.
+func (p *PassportStore) loginThrottleKey(login string) string {
+	if principal := p.byLogin(login); principal != nil {
+		return "principal:" + principal.ID
+	}
+	return "login:" + strings.ToLower(strings.TrimSpace(login))
 }
 
 func (p *PassportStore) createSession(principalID string) (token, csrf string, err error) {
@@ -659,7 +689,7 @@ func (p *PassportStore) authenticate(r *http.Request) (*Principal, *passportSess
 		return nil, nil
 	}
 	pr := p.principal(s.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) || p.guestSponsorUnavailable(pr) {
 		return nil, nil
 	}
 	return pr, &s
@@ -669,12 +699,16 @@ func setSessionCookies(w http.ResponseWriter, token, csrf string) {
 	http.SetCookie(w, &http.Cookie{Name: "pool_csrf", Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
 }
 
+// errPasswordVerificationBusy reports that every Argon2 slot is in use. It is
+// a capacity signal, not evidence of a wrong password.
+var errPasswordVerificationBusy = errors.New("password verification busy")
+
 func (p *PassportStore) verifyLogin(email, password string) (*Principal, error) {
 	select {
 	case p.passwordWork <- struct{}{}:
 		defer func() { <-p.passwordWork }()
 	default:
-		return nil, errors.New("password verification busy")
+		return nil, errPasswordVerificationBusy
 	}
 	pr := p.byLogin(email)
 	encoded := "$argon2id$v=19$m=65536,t=3,p=4$MDAwMDAwMDAwMDAwMDAwMA$XGlzLL5oqnlF1hNkoqRj3uiKgA4+J5l+6bV9rQ"
@@ -707,7 +741,7 @@ func splitClientIdentity(identity string) (string, string) {
 func (p *PassportStore) credentialState(identity string) (*Principal, *ClientCredential, bool) {
 	principalID, clientID := splitClientIdentity(identity)
 	pr := p.principal(principalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || (pr.Kind == PrincipalOperator && !principalIsUsableOperator(pr)) || p.guestSponsorUnavailable(pr) {
 		return nil, nil, false
 	}
 	p.mu.RLock()

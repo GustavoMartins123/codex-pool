@@ -38,6 +38,11 @@ const passkeyIssueLimit = 15
 const passkeyRegisterIssueLimit = 10
 const passkeyIssueWindowDuration = 5 * time.Minute
 
+// passwordAttemptLimit caps password sign-in attempts per client network and
+// window. It runs before Argon2, so one source cannot keep the verification
+// slots busy; busy and failed attempts count alike.
+const passwordAttemptLimit = 20
+
 type passkeyIssueWindow struct {
 	count int
 	until time.Time
@@ -45,6 +50,10 @@ type passkeyIssueWindow struct {
 
 func (h *proxyHandler) allowPasskeyChallenge(ip string) bool {
 	return h.allowPasskeyIssue("login:"+ip, passkeyIssueLimit)
+}
+
+func (h *proxyHandler) allowPasswordAttempt(ip string) bool {
+	return h.allowPasskeyIssue("password:"+bruteForceKey(ip), passwordAttemptLimit)
 }
 
 func (h *proxyHandler) allowPasskeyRegistration(principalID string) bool {

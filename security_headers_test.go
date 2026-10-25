@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -153,5 +156,67 @@ func TestServeHTTPRejectsDeniedIP(t *testing.T) {
 	// Even rejections carry the baseline security headers.
 	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("X-Content-Type-Options on 403 = %q, want nosniff", got)
+	}
+}
+
+func TestBaselineCSPAndHSTSFollowTransport(t *testing.T) {
+	t.Setenv("PUBLIC_URL", "")
+	headers := func(r *http.Request) http.Header {
+		w := httptest.NewRecorder()
+		applySecurityHeaders(w, r)
+		return w.Header()
+	}
+	plain := headers(httptest.NewRequest(http.MethodGet, "http://pool.example/api/x", nil))
+	if plain.Get("Content-Security-Policy") != baselineCSP {
+		t.Fatalf("baseline CSP = %q", plain.Get("Content-Security-Policy"))
+	}
+	if plain.Get("Strict-Transport-Security") != "" {
+		t.Fatal("HSTS sent for a plain HTTP request")
+	}
+	forwarded := httptest.NewRequest(http.MethodGet, "http://pool.example/api/x", nil)
+	forwarded.Header.Set("X-Forwarded-Proto", "https")
+	if headers(forwarded).Get("Strict-Transport-Security") != hstsPolicy {
+		t.Fatal("HSTS missing behind a TLS-terminating proxy")
+	}
+	t.Setenv("PUBLIC_URL", "https://pool.example")
+	if headers(httptest.NewRequest(http.MethodGet, "http://pool.example/healthz", nil)).Get("Strict-Transport-Security") != hstsPolicy {
+		t.Fatal("HSTS missing for an HTTPS public URL")
+	}
+}
+
+func TestHTMLSurfacesDeclareNarrowPolicies(t *testing.T) {
+	t.Setenv("PUBLIC_URL", "https://pool.example")
+	h := &proxyHandler{cfg: &config{adminToken: "status-admin-token"}, pool: newPoolState(nil, false), metrics: newMetrics()}
+
+	landing := httptest.NewRecorder()
+	h.ServeHTTP(landing, httptest.NewRequest(http.MethodGet, "/cute-code", nil))
+	csp := landing.Header().Get("Content-Security-Policy")
+	script := inlineScriptPattern.FindSubmatch(landing.Body.Bytes())
+	if script == nil {
+		t.Fatal("landing page lost its inline script")
+	}
+	sum := sha256.Sum256(script[1])
+	if !strings.Contains(csp, "script-src 'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'") || strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Fatalf("landing CSP must allow only its own script by hash: %q", csp)
+	}
+
+	statusRequest := httptest.NewRequest(http.MethodGet, "/status", nil)
+	statusRequest.Header.Set("X-Admin-Token", "status-admin-token")
+	status := httptest.NewRecorder()
+	h.ServeHTTP(status, statusRequest)
+	if status.Code != http.StatusOK {
+		t.Fatalf("status page = %d", status.Code)
+	}
+	if csp := status.Header().Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'none'") || strings.Contains(csp, "script-src") {
+		t.Fatalf("status page CSP must forbid scripts: %q", csp)
+	}
+
+	spa := httptest.NewRecorder()
+	h.ServeHTTP(spa, httptest.NewRequest(http.MethodGet, "/", nil))
+	if csp := spa.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "object-src 'none'") {
+		t.Fatalf("SPA CSP = %q", csp)
+	}
+	if spa.Header().Get("Strict-Transport-Security") != hstsPolicy {
+		t.Fatal("SPA lost HSTS")
 	}
 }

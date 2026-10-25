@@ -201,13 +201,22 @@ func serveNoopCodexAppsMCP(w http.ResponseWriter, r *http.Request) {
 // Session requests that change state must also pass the Passport CSRF check.
 func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	// The explicit break-glass credential takes precedence over any browser
-	// cookie, including a stale or lower-role Passport session.
-	if h.cfg != nil && h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
-		if h.bruteForce != nil {
-			h.bruteForce.recordSuccess(getClientIP(r))
+	// cookie, including a stale or lower-role Passport session. A banned peer
+	// is refused before the comparison, otherwise the ban would not stop it
+	// from guessing the token.
+	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") != "" {
+		ip := getClientIP(r)
+		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+			return false
 		}
-		*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
-		return true
+		if secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
+			if h.bruteForce != nil {
+				h.bruteForce.recordSuccess(ip)
+			}
+			*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
+			return true
+		}
 	}
 	if h.passport != nil {
 		if principal, session := h.passport.authenticate(r); principal != nil {
@@ -337,7 +346,7 @@ func localHealthProbe(r *http.Request) bool {
 
 // ServeHTTP routes incoming requests to the appropriate handler.
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	applySecurityHeaders(w, r.URL.Path)
+	applySecurityHeaders(w, r)
 	clientIP, err := requestClientIP(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

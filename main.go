@@ -704,6 +704,9 @@ func main() {
 	if err := passport.retireLegacyCredentials(legacyPoolUsers); err != nil {
 		log.Fatalf("legacy credential retirement failed: %v", err)
 	}
+	if err := passport.sweepMinuteCounters(time.Now()); err != nil {
+		log.Fatalf("policy minute counter sweep failed: %v", err)
+	}
 	log.Printf("Pool Passport initialized (%d principals)", len(passport.principals))
 	if err := passport.initializeAccountAuthority(pool.allAccounts()); err != nil {
 		log.Fatalf("initialize account ownership: %v", err)
@@ -786,6 +789,7 @@ func main() {
 		aliases:              newModelAliases(aliasesCfg),
 		effortCap:            newEffortCap(effortByUser, effortByOrigin),
 		bruteForce:           newBruteForceTracker(),
+		accountLocks:         newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		experiments:          experiments,
@@ -815,6 +819,13 @@ func main() {
 		h.nativeContext = &nativeContext{store: contextStore, pool: pool, provider: registry.ForType(AccountTypeCodex), transport: h.transport, refresh: h.refreshAccountAfterAuthFailure}
 	}
 	defer h.bruteForce.stop()
+	if err := h.bruteForce.persistBans(passportBanStore{passport: passport, namespace: "ip"}, time.Now()); err != nil {
+		log.Fatalf("restore brute-force bans: %v", err)
+	}
+	defer h.accountLocks.stop()
+	if err := h.accountLocks.persistBans(passportBanStore{passport: passport, namespace: "account"}, time.Now()); err != nil {
+		log.Fatalf("restore account sign-in locks: %v", err)
+	}
 	h.startUsagePoller(shutdownCtx)
 	if err := h.startSessionBroker(shutdownCtx); err != nil {
 		log.Fatalf("failed to start session broker: %v", err)
@@ -953,6 +964,7 @@ type proxyHandler struct {
 	aliases              *modelAliases
 	effortCap            *effortCap
 	bruteForce           *bruteForceTracker
+	accountLocks         *bruteForceTracker
 	passkeyIssueMu       sync.Mutex
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics

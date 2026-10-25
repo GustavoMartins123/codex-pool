@@ -300,6 +300,8 @@ func (h *proxyHandler) serveStatusPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The status page is server-rendered with inline styles and no scripts.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl := template.Must(template.New("status").Funcs(template.FuncMap{
 		"pct": func(v float64) string {

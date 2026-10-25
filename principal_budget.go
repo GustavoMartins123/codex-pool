@@ -67,16 +67,27 @@ func (p *PassportStore) reservePolicyRequest(principalID, clientID string, confi
 	if err := validatePolicyLimits(principal.Budget); err != nil {
 		return nil, err
 	}
+	sponsor := p.guestBudgetSponsor(principal)
+	if sponsor != nil {
+		if err := validatePolicyLimits(sponsor.Budget); err != nil {
+			return nil, err
+		}
+	}
 	priority := policy.Priority
 	if priority == 0 {
 		priority = defaultPolicyPriority(principal.Kind)
 	}
-	a := &policyAdmission{store: p, principalID: principalID, clientID: clientID, policy: policy, priority: priority, configured: policy.configured() || principal.Budget != (PolicyLimits{})}
+	a := &policyAdmission{store: p, principalID: principalID, clientID: clientID, policy: policy, priority: priority, configured: policy.configured() || principal.Budget != (PolicyLimits{}) || sponsor != nil && sponsor.Budget != (PolicyLimits{})}
 	type scope struct {
 		id     string
 		limits PolicyLimits
 	}
 	scopes := []scope{{clientID, policy.Limits}, {"principal:" + principalID, principal.Budget}}
+	if sponsor != nil {
+		// A guest also spends its sponsor's budget, so passes cannot
+		// multiply a member's allowance.
+		scopes = append(scopes, scope{"principal:" + sponsor.ID, sponsor.Budget})
+	}
 	for _, s := range scopes {
 		if s.limits.ConcurrentRequests > 0 && p.policyInflight[s.id] >= s.limits.ConcurrentRequests {
 			return nil, &policyError{Status: 429, Code: "policy_concurrency_exceeded", Message: "concurrent request limit exhausted"}
@@ -114,6 +125,9 @@ func (p *PassportStore) reservePolicyRequest(principalID, clientID string, confi
 				if err := writePolicyCounter(b, key, counter); err != nil {
 					return err
 				}
+			}
+			if err := pruneMinuteCounters(b, s.id, minuteKey); err != nil {
+				return err
 			}
 			a.holds = append(a.holds, policyBudgetHold{Scope: s.id, Day: dayKey, Month: monthKey, Tokens: reserved, Limits: s.limits})
 			if s.id == clientID {
@@ -161,17 +175,36 @@ func (a *policyAdmission) releaseBudgetHolds() {
 		}
 		return nil
 	}); err != nil {
+		// The persisted token reservation stays held (fail closed), but the
+		// concurrency slot lives only in memory and belongs to a request that
+		// has finished; keeping it would lock the scope out until restart.
 		log.Printf("policy reservation release failed: %v", err)
+		p.releasePolicyInflightLocked(a.holds)
 		return
 	}
+	p.releasePolicyInflightLocked(a.holds)
 	for _, hold := range a.holds {
-		p.policyInflight[hold.Scope]--
-		if p.policyInflight[hold.Scope] <= 0 {
-			delete(p.policyInflight, hold.Scope)
-		}
 		p.policyReserved[hold.Scope] -= hold.Tokens
 		if p.policyReserved[hold.Scope] <= 0 {
 			delete(p.policyReserved, hold.Scope)
+		}
+	}
+}
+
+// guestBudgetSponsor returns the principal whose budget a guest's requests
+// also consume: the known principal that issued the pass.
+func (p *PassportStore) guestBudgetSponsor(principal *Principal) *Principal {
+	if principal == nil || principal.Kind != PrincipalGuest || principal.CreatedBy == "" {
+		return nil
+	}
+	return p.principal(principal.CreatedBy)
+}
+
+func (p *PassportStore) releasePolicyInflightLocked(holds []policyBudgetHold) {
+	for _, hold := range holds {
+		p.policyInflight[hold.Scope]--
+		if p.policyInflight[hold.Scope] <= 0 {
+			delete(p.policyInflight, hold.Scope)
 		}
 	}
 }

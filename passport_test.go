@@ -698,6 +698,87 @@ func TestLoginRateLimitsRepeatedFailures(t *testing.T) {
 	}
 }
 
+func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		h.passport.passwordWork <- struct{}{}
+	}
+	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
+	for i := 0; i < bruteForceMaxAttempts+1; i++ {
+		busy := httptest.NewRecorder()
+		h.handlePassportLogin(busy, loginRequest(correct))
+		if busy.Code != http.StatusServiceUnavailable || busy.Header().Get("Retry-After") == "" {
+			t.Fatalf("saturated attempt %d status = %d retry-after=%q, want 503 with Retry-After", i, busy.Code, busy.Header().Get("Retry-After"))
+		}
+	}
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		<-h.passport.passwordWork
+	}
+	ok := httptest.NewRecorder()
+	h.handlePassportLogin(ok, loginRequest(correct))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("login after saturation status = %d, want 200 (saturation must not ban)", ok.Code)
+	}
+}
+
+func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		h.passport.passwordWork <- struct{}{}
+	}
+	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
+	for i := 0; i < passwordAttemptLimit; i++ {
+		busy := httptest.NewRecorder()
+		h.handlePassportLogin(busy, loginRequest(correct))
+		if busy.Code != http.StatusServiceUnavailable {
+			t.Fatalf("attempt %d status = %d, want 503 while saturated", i, busy.Code)
+		}
+	}
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		<-h.passport.passwordWork
+	}
+	throttled := httptest.NewRecorder()
+	h.handlePassportLogin(throttled, loginRequest(correct))
+	if throttled.Code != http.StatusTooManyRequests || throttled.Header().Get("Retry-After") == "" {
+		t.Fatalf("attempt past the per-network limit status = %d retry-after=%q, want 429", throttled.Code, throttled.Header().Get("Retry-After"))
+	}
+	other := loginRequest(correct)
+	other.RemoteAddr = "198.51.100.20:4242"
+	ok := httptest.NewRecorder()
+	h.handlePassportLogin(ok, other)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("another network status = %d, want 200", ok.Code)
+	}
+}
+
+func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	h.accountLocks = newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration)
+	t.Cleanup(h.accountLocks.stop)
+	attempt := func(login, password string, network int) int {
+		request := loginRequest(fmt.Sprintf(`{"email":%q,"password":%q}`, login, password))
+		request.RemoteAddr = fmt.Sprintf("198.51.%d.1:4242", network)
+		recorder := httptest.NewRecorder()
+		h.handlePassportLogin(recorder, request)
+		return recorder.Code
+	}
+	// Each network stays below its own IP ban; only the account limit trips.
+	for i := 0; i < accountLockMaxFailures; i++ {
+		if code := attempt("Brute@Example.com", "wrong password", i/(bruteForceMaxAttempts-1)); code != http.StatusUnauthorized {
+			t.Fatalf("distributed failure %d status = %d, want 401", i, code)
+		}
+	}
+	if code := attempt("brute@example.com", "correct horse battery", 99); code != http.StatusTooManyRequests {
+		t.Fatalf("correct password on a locked account status = %d, want 429", code)
+	}
+	for i := 0; i < accountLockMaxFailures; i++ {
+		attempt("nobody@example.com", "wrong password", 50+i/(bruteForceMaxAttempts-1))
+	}
+	if code := attempt("nobody@example.com", "wrong password", 98); code != http.StatusTooManyRequests {
+		t.Fatalf("unknown login status = %d, want 429 so lockouts do not reveal which accounts exist", code)
+	}
+}
+
 func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {
@@ -770,7 +851,8 @@ func newPassportWithTwoMembers(t *testing.T) (*PassportStore, *Principal, *Princ
 
 func TestGuestPassesAreScopedToOwner(t *testing.T) {
 	passport, alpha, beta := newPassportWithTwoMembers(t)
-	guest, _, _, _, err := passport.createGuest(alpha.ID, "Alpha friend", "Al", nil)
+	expires := time.Now().Add(24 * time.Hour)
+	guest, _, _, _, err := passport.createGuest(alpha.ID, "Alpha friend", "Al", &expires)
 	if err != nil {
 		t.Fatal(err)
 	}

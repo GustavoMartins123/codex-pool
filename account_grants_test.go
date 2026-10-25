@@ -526,3 +526,38 @@ func TestGrantAPIRejectsCSRFUnknownFieldsAndLeaksNoSecrets(t *testing.T) {
 	_, err := p.createAccountGrant("owner-api", 2, grant)
 	requirePolicyCode(t, err, "grant_invalid")
 }
+
+func TestGrantsFollowGrantorStatus(t *testing.T) {
+	p, pool := ownershipFixture(t)
+	addTestPassportOperator(t, p, "carol")
+	bob := *p.principal("bob")
+	bob.Kind = PrincipalMember
+	if err := p.db.Update(func(tx *bbolt.Tx) error { return putJSON(tx.Bucket([]byte(bucketPrincipals)), bob.ID, bob) }); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.principals[bob.ID] = &bob
+	p.mu.Unlock()
+	private := pool.allAccounts()[1]
+	if _, err := p.createAccountGrant("alice", 1, testGrant("from-alice", "bob", private)); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.authorizeAccount("bob", private, "use"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.setPrincipalStatus("carol", "alice", PrincipalSuspended); err != nil {
+		t.Fatal(err)
+	}
+	if p.authorizeAccount("bob", private, "use") == nil {
+		t.Fatal("grant issued by a suspended principal kept working")
+	}
+	if _, err := p.accountGrantForUse("bob", private, "gpt-5.5"); err == nil {
+		t.Fatal("grant lookup ignored the grantor's suspension")
+	}
+	if _, err := p.setPrincipalStatus("carol", "alice", PrincipalActive); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.authorizeAccount("bob", private, "use"); err != nil {
+		t.Fatalf("reactivating the grantor did not restore the grant: %v", err)
+	}
+}

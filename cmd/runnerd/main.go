@@ -100,6 +100,7 @@ func run() error {
 		root := flags.String("workspaces", "", "absolute workspace root")
 		codex := flags.String("codex", "", "absolute native Codex executable")
 		claude := flags.String("claude", "", "absolute native Claude executable")
+		allowAuto := flags.Bool("allow-auto", false, "accept auto permission sessions (no approvals, no sandbox)")
 		var paths, labels stringsFlag
 		flags.Var(&paths, "allow-path", "allowed existing workspace directory (repeatable)")
 		flags.Var(&labels, "label", "runner label (repeatable)")
@@ -151,7 +152,7 @@ func run() error {
 		if *claude != "" {
 			executables["claude"] = *claude
 		}
-		return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: *root, AllowedPaths: paths, Labels: labels, Executables: executables})
+		return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: *root, AllowedPaths: paths, Labels: labels, Executables: executables, AllowAutoPermissions: *allowAuto})
 	default:
 		return errors.New("unknown runnerd command")
 	}
@@ -228,7 +229,7 @@ func runConfiguredRunner(ctx context.Context, path string) error {
 	if launch.Claude != "" {
 		executables["claude"] = launch.Claude
 	}
-	return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: launch.Workspaces, AllowedPaths: launch.AllowPaths, Labels: launch.Labels, Executables: executables})
+	return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: launch.Workspaces, AllowedPaths: launch.AllowPaths, Labels: launch.Labels, Executables: executables, AllowAutoPermissions: launch.AllowAuto})
 }
 
 func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string) (runner.Config, error) {
@@ -236,7 +237,11 @@ func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string
 	if err != nil {
 		return runner.Config{}, err
 	}
-	link, err := runner.PairingLink(origin, p.ID)
+	commandKey, err := runner.NewCommandKey()
+	if err != nil {
+		return runner.Config{}, err
+	}
+	link, err := runner.PairingLink(origin, p.ID, commandKey)
 	if err != nil {
 		return runner.Config{}, err
 	}
@@ -250,6 +255,13 @@ func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string
 		if err := qr.WriteFile(512, qrPath); err != nil {
 			return runner.Config{}, err
 		}
+		// The image holds the command key; it must not outlive the pairing.
+		defer os.Remove(qrPath)
 	}
-	return runner.AwaitPairing(ctx, nil, origin, *p)
+	config, err := runner.AwaitPairing(ctx, nil, origin, *p)
+	if err != nil {
+		return runner.Config{}, err
+	}
+	config.CommandKey = commandKey
+	return config, nil
 }

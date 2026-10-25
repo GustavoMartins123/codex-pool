@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
@@ -91,10 +92,66 @@ func (h *proxyHandler) auditProviderContribution(r *http.Request, provider, acco
 	}
 }
 
+// Member-issued guest passes are bounded so one member cannot hand out
+// unlimited or permanent access to the shared pool. Operators are exempt.
+const (
+	maxActiveGuestPassesPerMember = 10
+	maxGuestPassLifetime          = 90 * 24 * time.Hour
+)
+
+// guestPassLimitsApply reports whether actor issues passes under the member
+// limits. Operators and issuers that are not known principals are exempt.
+func guestPassLimitsApply(actor *Principal) bool {
+	return actor != nil && actor.Kind != PrincipalOperator
+}
+
+func validateGuestPassExpiry(actor *Principal, expires *time.Time, now time.Time) error {
+	if !guestPassLimitsApply(actor) {
+		return nil
+	}
+	if expires == nil {
+		return errors.New("guest passes need an expiry within 90 days")
+	}
+	if !expires.After(now) || expires.After(now.Add(maxGuestPassLifetime)) {
+		return errors.New("guest pass expiry must be in the future and within 90 days")
+	}
+	return nil
+}
+
+// checkGuestPassCapLocked refuses a pass that would give actor more than the
+// member limit of usable passes. except names a pass being restored.
+func (p *PassportStore) checkGuestPassCapLocked(actor *Principal, except string, now time.Time) error {
+	if !guestPassLimitsApply(actor) {
+		return nil
+	}
+	active := 0
+	for id, principal := range p.principals {
+		if id != except && principal.Kind == PrincipalGuest && principal.CreatedBy == actor.ID && principal.Status == PrincipalActive && (principal.ExpiresAt == nil || principal.ExpiresAt.After(now)) {
+			active++
+		}
+	}
+	if active >= maxActiveGuestPassesPerMember {
+		return fmt.Errorf("guest pass limit reached (%d active); revoke a pass first", maxActiveGuestPassesPerMember)
+	}
+	return nil
+}
+
 func (p *PassportStore) createGuest(actorID, note, displayName string, expires *time.Time) (*Principal, *JoinLink, *ClientCredential, string, error) {
 	note = strings.TrimSpace(note)
 	if note == "" || len([]rune(note)) > 300 {
 		return nil, nil, nil, "", errors.New("note required (max 300 characters)")
+	}
+	actor := p.principal(actorID)
+	if err := validateGuestPassExpiry(actor, expires, time.Now()); err != nil {
+		return nil, nil, nil, "", err
+	}
+	p.guestPassMu.Lock()
+	defer p.guestPassMu.Unlock()
+	p.mu.RLock()
+	err := p.checkGuestPassCapLocked(actor, "", time.Now())
+	p.mu.RUnlock()
+	if err != nil {
+		return nil, nil, nil, "", err
 	}
 	id, err := secureID(12)
 	if err != nil {
@@ -195,7 +252,7 @@ func (p *PassportStore) redeemJoin(token string) (*Principal, string, string, er
 		return nil, "", "", errors.New("link unavailable")
 	}
 	pr := p.principal(link.PrincipalID)
-	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) {
+	if pr == nil || pr.Status != PrincipalActive || (pr.ExpiresAt != nil && time.Now().After(*pr.ExpiresAt)) || p.guestSponsorUnavailable(pr) {
 		return nil, "", "", errors.New("link unavailable")
 	}
 	now := time.Now().UTC()

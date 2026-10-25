@@ -3,8 +3,12 @@ package com.gustavomartins.codexpool.data
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.jsonObject
 
+/** Runner command keys stay with the pool they were paired through; the newest are kept. */
+const val MAX_COMMAND_KEYS = 32
+
 @Serializable
-data class PoolProvider(val name: String, val baseUrl: String, val credentials: Credentials? = null)
+data class PoolProvider(val name: String, val baseUrl: String, val credentials: Credentials? = null,
+    val commandKeys: List<String> = emptyList())
 
 @Serializable
 data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val providers: List<PoolProvider>) {
@@ -20,6 +24,10 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
                     "A credencial não pertence ao domínio do provedor."
                 }
             }
+            require(it.commandKeys.size <= MAX_COMMAND_KEYS && it.commandKeys.distinct().size == it.commandKeys.size) {
+                "Chaves de runner armazenadas inválidas."
+            }
+            it.commandKeys.forEach(CommandSigning::decodeKey)
         }
         require(providers.count { it.baseUrl == selectedUrl } == 1) { "O provedor selecionado não está cadastrado." }
         return this
@@ -27,6 +35,10 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
 
     fun withCredentials(credentials: Credentials?): PoolAccounts = copy(providers = providers.map {
         if (it.baseUrl == selectedUrl) it.copy(credentials = credentials) else it
+    }).validate()
+
+    fun withCommandKey(key: String): PoolAccounts = copy(providers = providers.map {
+        if (it.baseUrl == selectedUrl) it.copy(commandKeys = (it.commandKeys - key + key).takeLast(MAX_COMMAND_KEYS)) else it
     }).validate()
 
     companion object {
