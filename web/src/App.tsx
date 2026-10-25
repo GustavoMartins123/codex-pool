@@ -153,7 +153,7 @@ export function App() {
               {view === "pulse" && <Pulse stats={stats} signal={signal} onAccounts={() => goToView("accounts", { accounts: "attention" })} />}
               {view === "insights" && <Insights stats={stats} signal={signal} onAccounts={() => goToView("accounts", { accounts: null })} />}
               {view === "mine" && <PassportMine principal={passport} onPrincipal={setPassport} />}
-              {view === "passes" && passport && passport.kind !== "guest" && <Passes />}
+              {view === "passes" && passport && passport.kind !== "guest" && <Passes operator={passport.kind === "operator"} />}
               {view === "console" && passport && passport.kind === "operator" && <PassportConsole principal={passport} />}
               {view === "accounts" && passport.kind === "member" && <MemberAccounts key={passport.id} />}
               {view === "accounts" && data?.view === "accounts" && (
