@@ -99,6 +99,27 @@ class PoolApiTest {
         } finally { client.close() }
     }
 
+    @Test fun signedCommandsCarryIssueTimeAndSignaturesOnlyWhenSigned() = runTest {
+        val bodies = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            bodies += (request.body as TextContent).text
+            if (request.url.encodedPath.endsWith("/turns")) respond("""{"turn_id":"t-1"}""", HttpStatusCode.Created, jsonHeaders)
+            else respond("", HttpStatusCode.NoContent)
+        }
+        val client = HttpClient(engine) { poolConfiguration() }
+        try {
+            val api = PoolApi(client, credentials)
+            val signed = SignedCommand(1761379200000L, mapOf("CYxfwqA9-ufHeg_CwDnJkw" to "x".repeat(43)))
+            api.turn("s-1", "continue")
+            api.turn("s-1", "continue", signed = signed)
+            api.decide("s-1", "a-1", Decision.Approve, signed)
+            // Unsigned bodies stay byte-compatible with pools that predate signing.
+            assertFalse("issued_at" in PoolJson.parseToJsonElement(bodies[0]).jsonObject)
+            assertEquals(SignedTurnInput("continue", issuedAt = signed.issuedAt, signatures = signed.signatures), PoolJson.decodeFromString<SignedTurnInput>(bodies[1]))
+            assertEquals(SignedApprovalDecision(Decision.Approve, signed.issuedAt, signed.signatures), PoolJson.decodeFromString<SignedApprovalDecision>(bodies[2]))
+        } finally { client.close() }
+    }
+
     @Test fun invalidResourceIdsAndEmptyTurnsNeverReachTheNetwork() = runTest {
         val engine = MockEngine { error("No HTTP request is allowed") }
         val client = HttpClient(engine) { poolConfiguration() }

@@ -18,6 +18,14 @@ class PairingTest {
             assertFailsWith<IllegalArgumentException> { pairingRequestId(value, "https://pool.example") }
         }
     }
+    @Test fun currentRunnerQrCarriesItsCommandKeyAndRejectsMalformedKeys() {
+        val key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        assertEquals(PairingQr(id, key), parsePairingLink("$link&key=$key", "https://pool.example"))
+        assertEquals(PairingQr(id, null), parsePairingLink(link, "https://pool.example"))
+        for (value in listOf("$link&key=short", "$link&key=$key&key=$key", "$link&extra=1")) {
+            assertFailsWith<IllegalArgumentException> { parsePairingLink(value, "https://pool.example") }
+        }
+    }
     @Test fun foreignQrNeverSendsAppCredentialsAndApprovalUsesMachineCode() = runTest {
         var calls = 0
         val client = HttpClient(MockEngine { request ->

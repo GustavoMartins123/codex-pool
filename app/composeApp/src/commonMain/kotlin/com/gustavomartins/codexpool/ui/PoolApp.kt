@@ -49,8 +49,8 @@ fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Un
             single<CredentialStore> { store }
             single { client }
             viewModel { AuthViewModel(get(), get(), AppBuildConfig.PoolUrl) }
-            viewModel { parameters -> DashboardViewModel(parameters.get()) }
-            viewModel { parameters -> SessionViewModel(parameters.get(), parameters.get()) }
+            viewModel { parameters -> DashboardViewModel(parameters.get(), parameters.get()) }
+            viewModel { parameters -> SessionViewModel(parameters.get(), parameters.get(), parameters.get()) }
         }
     }
     val typography = Typography(
@@ -77,7 +77,10 @@ fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Un
                     DisposableEffect(viewModels) { onDispose { viewModels.clear() } }
                     CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
                         val api = remember { PoolApi(client, credentials) }
-                        AuthenticatedApp(api, state, auth::logout, onScanPairing, onProviders = { providersOpen = true })
+                        val signer = remember {
+                            CommandSigner(keys = { auth.state.value.accounts?.selected?.commandKeys.orEmpty() }, store = auth::addCommandKey)
+                        }
+                        AuthenticatedApp(api, signer, state, auth::logout, onScanPairing, onProviders = { providersOpen = true })
                     }
                 }
                 if (providersOpen) ProviderDialog(state, auth::selectProvider, auth::addProvider) { providersOpen = false }
@@ -87,9 +90,9 @@ fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Un
 }
 
 @Composable
-private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, onScanPairing: (() -> Unit)?, onProviders: () -> Unit) {
+private fun AuthenticatedApp(api: PoolApi, signer: CommandSigner, auth: AuthState, logout: () -> Unit, onScanPairing: (() -> Unit)?, onProviders: () -> Unit) {
     val nav = rememberNavController()
-    val dashboard = koinViewModel<DashboardViewModel>(parameters = { parametersOf(api) })
+    val dashboard = koinViewModel<DashboardViewModel>(parameters = { parametersOf(api, signer) })
     val state by dashboard.state.collectAsStateWithLifecycle()
     val pairingLink by PairingLinks.pending.collectAsStateWithLifecycle()
     LaunchedEffect(pairingLink, state.loading) {
@@ -116,7 +119,7 @@ private fun AuthenticatedApp(api: PoolApi, auth: AuthState, logout: () -> Unit, 
         }
         composable<SessionRoute> { entry ->
             val id = entry.toRoute<SessionRoute>().id
-            val session = koinViewModel<SessionViewModel>(viewModelStoreOwner = entry, parameters = { parametersOf(api, id) })
+            val session = koinViewModel<SessionViewModel>(viewModelStoreOwner = entry, parameters = { parametersOf(api, id, signer) })
             SessionScreen(session, onBack = { nav.popBackStack(); dashboard.refresh() })
         }
     }
