@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"go.etcd.io/bbolt"
 )
 
 func newTestBruteForceTracker(t *testing.T) *bruteForceTracker {
@@ -77,5 +81,54 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	rr = httptest.NewRecorder()
 	if h.checkProviderContributionAuth(rr, contribution) || rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("contribution auth from banned peer: status = %d, want 429", rr.Code)
+	}
+}
+
+func TestBruteForceBansSurviveRestartWithoutRawAddresses(t *testing.T) {
+	passport, _ := newNonceTestPassport(t)
+	store := passportBanStore{passport: passport, namespace: "ip"}
+	first := newTestBruteForceTracker(t)
+	if err := first.persistBans(store, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	banForTest(first, "198.51.100.7")
+	banForTest(first, "2001:db8:0:1::5")
+
+	expired := store.Key("203.0.113.1")
+	if err := store.SaveBan(expired, time.Now().Add(-2*bruteForceBanDuration)); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := newTestBruteForceTracker(t)
+	if err := restarted.persistBans(store, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.isBanned("198.51.100.7") || !restarted.isBanned("2001:db8:0:1::ffff") {
+		t.Fatal("bans were lost across a restart")
+	}
+	if restarted.isBanned("198.51.100.8") {
+		t.Fatal("restart banned an unrelated address")
+	}
+	bans, err := store.LoadBans()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bans[expired]; ok || len(bans) != 2 {
+		t.Fatalf("persisted bans = %d (expired kept: %v), want the 2 active ones", len(bans), ok)
+	}
+	if err := passport.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(bucketAuthBans)).ForEach(func(k, v []byte) error {
+			if strings.Contains(string(k), "198.51.100") || strings.Contains(string(k), "2001:db8") {
+				t.Fatalf("raw client address persisted: %s", k)
+			}
+			return nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted.recordSuccess("198.51.100.7")
+	if bans, _ := store.LoadBans(); len(bans) != 1 {
+		t.Fatalf("lifting a ban left %d persisted bans, want 1", len(bans))
 	}
 }

@@ -818,6 +818,9 @@ func main() {
 		h.nativeContext = &nativeContext{store: contextStore, pool: pool, provider: registry.ForType(AccountTypeCodex), transport: h.transport, refresh: h.refreshAccountAfterAuthFailure}
 	}
 	defer h.bruteForce.stop()
+	if err := h.bruteForce.persistBans(passportBanStore{passport: passport, namespace: "ip"}, time.Now()); err != nil {
+		log.Fatalf("restore brute-force bans: %v", err)
+	}
 	h.startUsagePoller(shutdownCtx)
 	if err := h.startSessionBroker(shutdownCtx); err != nil {
 		log.Fatalf("failed to start session broker: %v", err)
