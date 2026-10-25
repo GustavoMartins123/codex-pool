@@ -491,6 +491,11 @@ func (s *localSession) emit(m runnerproto.Message) error {
 
 func (s *localSession) initialize(credentialPath string) {
 	fail := func() { s.cancel(); s.finish(1) }
+	if s.session.PermissionMode == "auto" && !s.daemon.options.AllowAutoPermissions {
+		log.Printf("runner: refusing session %s: auto permissions are disabled; set allow_auto in the launch config to accept them", s.session.ID)
+		fail()
+		return
+	}
 	m := runnerproto.Frame("workspace.status")
 	m.Status = "preparing"
 	if s.emit(m) != nil {

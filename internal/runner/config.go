@@ -32,15 +32,20 @@ type LaunchConfig struct {
 	AllowPaths []string `json:"allow_paths"`
 	Labels     []string `json:"labels"`
 	QR         string   `json:"qr,omitempty"`
+	// AllowAuto accepts sessions in auto permission mode, which run the agent
+	// without approvals or a filesystem sandbox. Off unless the machine owner
+	// opts in here, so a pool server or app credential cannot grant it alone.
+	AllowAuto bool `json:"allow_auto,omitempty"`
 }
 
 type Options struct {
-	Config        Config
-	WorkspaceRoot string
-	AllowedPaths  []string
-	Labels        []string
-	Executables   map[string]string
-	HTTPClient    *http.Client
+	Config               Config
+	WorkspaceRoot        string
+	AllowedPaths         []string
+	Labels               []string
+	Executables          map[string]string
+	HTTPClient           *http.Client
+	AllowAutoPermissions bool
 }
 
 func ValidateOrigin(raw string) error {
