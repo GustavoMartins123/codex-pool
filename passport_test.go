@@ -698,6 +698,29 @@ func TestLoginRateLimitsRepeatedFailures(t *testing.T) {
 	}
 }
 
+func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
+	h := newLoginBruteForceHandler(t)
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		h.passport.passwordWork <- struct{}{}
+	}
+	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
+	for i := 0; i < bruteForceMaxAttempts+1; i++ {
+		busy := httptest.NewRecorder()
+		h.handlePassportLogin(busy, loginRequest(correct))
+		if busy.Code != http.StatusServiceUnavailable || busy.Header().Get("Retry-After") == "" {
+			t.Fatalf("saturated attempt %d status = %d retry-after=%q, want 503 with Retry-After", i, busy.Code, busy.Header().Get("Retry-After"))
+		}
+	}
+	for i := 0; i < cap(h.passport.passwordWork); i++ {
+		<-h.passport.passwordWork
+	}
+	ok := httptest.NewRecorder()
+	h.handlePassportLogin(ok, loginRequest(correct))
+	if ok.Code != http.StatusOK {
+		t.Fatalf("login after saturation status = %d, want 200 (saturation must not ban)", ok.Code)
+	}
+}
+
 func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {

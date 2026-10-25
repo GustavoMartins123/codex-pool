@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -164,6 +165,14 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		return nil
 	}
 	pr, err := h.passport.verifyLogin(q.Email, q.Password)
+	if errors.Is(err, errPasswordVerificationBusy) {
+		// Saturation says nothing about the password, so it must neither
+		// read as a wrong password nor count toward the caller's ban.
+		h.metrics.incPassport("sign_in_outcomes", "busy")
+		w.Header().Set("Retry-After", "1")
+		respondJSONError(w, http.StatusServiceUnavailable, "sign-in is busy, try again shortly")
+		return nil
+	}
 	if err != nil {
 		h.passwordLoginFailed(w, r)
 		return nil

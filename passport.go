@@ -669,12 +669,16 @@ func setSessionCookies(w http.ResponseWriter, token, csrf string) {
 	http.SetCookie(w, &http.Cookie{Name: "pool_csrf", Value: csrf, Path: "/", Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 86400})
 }
 
+// errPasswordVerificationBusy reports that every Argon2 slot is in use. It is
+// a capacity signal, not evidence of a wrong password.
+var errPasswordVerificationBusy = errors.New("password verification busy")
+
 func (p *PassportStore) verifyLogin(email, password string) (*Principal, error) {
 	select {
 	case p.passwordWork <- struct{}{}:
 		defer func() { <-p.passwordWork }()
 	default:
-		return nil, errors.New("password verification busy")
+		return nil, errPasswordVerificationBusy
 	}
 	pr := p.byLogin(email)
 	encoded := "$argon2id$v=19$m=65536,t=3,p=4$MDAwMDAwMDAwMDAwMDAwMA$XGlzLL5oqnlF1hNkoqRj3uiKgA4+J5l+6bV9rQ"
