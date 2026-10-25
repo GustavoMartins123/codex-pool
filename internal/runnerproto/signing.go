@@ -79,8 +79,7 @@ func ValidCommandKeyID(id string) bool {
 }
 
 // ValidCommandSignatures reports whether a relayed signature set is well
-// formed. An empty set is valid: unsigned commands still reach runners that
-// were paired before command keys existed.
+// formed. An empty set is valid for the commands runners accept unsigned.
 func ValidCommandSignatures(issuedAt int64, signatures map[string]string) bool {
 	if len(signatures) == 0 {
 		return issuedAt == 0

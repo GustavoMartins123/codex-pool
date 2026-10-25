@@ -578,8 +578,13 @@ func validateSessionRequest(q runnerproto.CreateSession) error {
 	if q.PermissionMode != "auto" && q.PermissionMode != "gated" {
 		return sessionError(400, "invalid permission mode")
 	}
-	if q.Model == "" || len(q.Model) > 256 || strings.TrimSpace(q.Model) != q.Model || len(q.Prompt) > runnerproto.MaxInputBytes {
-		return sessionError(400, "invalid model or prompt")
+	if q.Model == "" || len(q.Model) > 256 || strings.TrimSpace(q.Model) != q.Model {
+		return sessionError(400, "invalid model")
+	}
+	// Runners only run prompts signed for an existing session, so the first
+	// prompt is sent as a signed turn once the runner is ready.
+	if q.Prompt != "" {
+		return sessionError(400, "send the first prompt as a signed turn")
 	}
 	switch q.Workspace.Mode {
 	case "ephemeral":
@@ -599,9 +604,6 @@ func validateSessionRequest(q runnerproto.CreateSession) error {
 	}
 	if len(q.Workspace.Target) > 4096 || strings.ContainsAny(q.Workspace.Target, "\x00\r\n") {
 		return sessionError(400, "invalid workspace target")
-	}
-	if q.Prompt != "" && strings.TrimSpace(q.Prompt) == "" {
-		return sessionError(400, "prompt cannot be blank")
 	}
 	return nil
 }

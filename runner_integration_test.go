@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -63,12 +64,38 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	if err != nil || !done {
 		t.Fatal(err)
 	}
-	created := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated","prompt":"synthetic input"}`)
+	// runnerd pair keeps this key and shows it only in the QR the app scans.
+	if credential.CommandKey, err = runner.NewCommandKey(); err != nil {
+		t.Fatal(err)
+	}
+	key, err := base64.RawURLEncoding.DecodeString(credential.CommandKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyID := runnerproto.CommandKeyID(key)
+	created := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated"}`)
 	if created.Code != 201 {
 		t.Fatalf("create=%d %s", created.Code, created.Body.String())
 	}
 	var session runnerproto.Session
 	_ = json.Unmarshal(created.Body.Bytes(), &session)
+	var issuedAt int64
+	signedTurn := func(input string) string {
+		// Runners reject a turn that is not newer than the last one accepted.
+		issuedAt++
+		if now := time.Now().UnixMilli(); now > issuedAt {
+			issuedAt = now
+		}
+		signature := runnerproto.SignCommand(key, runnerproto.TurnSigningInput(session.ID, issuedAt, session.Agent, session.PermissionMode, session.Workspace, input))
+		body, _ := json.Marshal(runnerproto.TurnInput{Input: input, IssuedAt: issuedAt, Signatures: map[string]string{keyID: signature}})
+		return string(body)
+	}
+	signedApproval := func(approval runnerproto.Approval) string {
+		at := time.Now().UnixMilli()
+		signature := runnerproto.SignCommand(key, runnerproto.ApprovalSigningInput(session.ID, approval.ID, "approve", at, approval.Command))
+		body, _ := json.Marshal(runnerproto.ApprovalDecision{Decision: "approve", IssuedAt: at, Signatures: map[string]string{keyID: signature}})
+		return string(body)
+	}
 	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/conversations/"+session.ConversationID+"/events", nil)
 	request.Header.Set("Authorization", "Bearer "+login.Token)
 	stream, err := server.Client().Do(request)
@@ -115,6 +142,10 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 			}
 		}
 	}
+	await(func(s *runnerproto.Session) bool { return s.State == "waiting_input" })
+	if turn := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, signedTurn("synthetic input")); turn.Code != 200 {
+		t.Fatalf("first turn=%d %s", turn.Code, turn.Body.String())
+	}
 	state := await(func(s *runnerproto.Session) bool { return len(s.Approvals) == 1 })
 	b.mu.Lock()
 	connection := b.runners[credential.RunnerID]
@@ -136,13 +167,13 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	decision := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/approvals/"+state.Approvals[0].ID, login.Token, `{"decision":"approve"}`)
+	decision := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/approvals/"+state.Approvals[0].ID, login.Token, signedApproval(state.Approvals[0]))
 	if decision.Code != 204 {
 		t.Fatalf("approve=%d", decision.Code)
 	}
 	await(func(s *runnerproto.Session) bool { return s.State == "waiting_input" && s.Turns == 1 })
 	for index, decision := range []string{"deny", "cancel"} {
-		turn := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, `{"input":"another synthetic turn"}`)
+		turn := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, signedTurn("another synthetic turn"))
 		if turn.Code != 200 {
 			t.Fatal(turn.Code)
 		}
@@ -207,12 +238,12 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	if state.Checkpoint == nil || state.Checkpoint.NativeSessionID != originalNativeID {
 		t.Fatal("resume created a new native conversation")
 	}
-	continued := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, `{"input":"continue the same conversation"}`)
+	continued := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/turns", login.Token, signedTurn("continue the same conversation"))
 	if continued.Code != 200 {
 		t.Fatalf("continued turn: %d %s", continued.Code, continued.Body.String())
 	}
 	state = await(func(s *runnerproto.Session) bool { return s.State == "waiting_approval" && len(s.Approvals) == 1 })
-	approved := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/approvals/"+state.Approvals[0].ID, login.Token, `{"decision":"approve"}`)
+	approved := appAuthRequest(h, "POST", "/api/sessions/"+session.ID+"/approvals/"+state.Approvals[0].ID, login.Token, signedApproval(state.Approvals[0]))
 	if approved.Code != 204 {
 		t.Fatal("continued tool approval failed")
 	}

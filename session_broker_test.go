@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,7 +31,7 @@ func brokerFixture(t *testing.T) (*proxyHandler, *sessionBroker, *appLoginRespon
 func brokerRunner(t *testing.T, b *sessionBroker, principal string) *connectedRunner {
 	t.Helper()
 	credentials := pairedRunner(t, b, principal)
-	r := &connectedRunner{id: credentials.RunnerID, principal: principal, hello: runnerproto.Hello{Agents: []string{"codex", "claude"}, OS: "test", Arch: "test", AllowedPaths: []string{"/approved"}}, out: make(chan runnerproto.Message, 128), stop: func() {}, lastSeen: b.now()}
+	r := &connectedRunner{id: credentials.RunnerID, principal: principal, hello: runnerproto.Hello{Agents: []string{"codex", "claude"}, OS: "test", Arch: "test", AllowedPaths: []string{"/approved"}, CommandKeyID: runnerproto.CommandKeyID([]byte("own-runner-command-key-32-bytes!"))}, out: make(chan runnerproto.Message, 128), stop: func() {}, lastSeen: b.now()}
 	if err := b.connectRunner(r); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated","prompt":"synthetic task"}`)
+	create := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated"}`)
 	if create.Code != 201 {
 		t.Fatalf("create=%d %s", create.Code, create.Body.String())
 	}
@@ -284,7 +285,7 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	if err := json.Unmarshal(create.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range []string{`{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"path","target":"/unsafe"},"permission_mode":"auto"}`, `{"agent":"codex","model":"not-in-catalog","workspace":{"mode":"ephemeral"},"permission_mode":"gated"}`} {
+	for _, body := range []string{`{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"path","target":"/unsafe"},"permission_mode":"auto"}`, `{"agent":"codex","model":"not-in-catalog","workspace":{"mode":"ephemeral"},"permission_mode":"gated"}`, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated","prompt":"unsigned task"}`} {
 		if response := appAuthRequest(h, "POST", "/api/sessions", login.Token, body); response.Code < 400 {
 			t.Fatal("invalid request accepted")
 		}
@@ -302,6 +303,11 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	defer conn.CloseNow()
 	hello := runnerproto.Frame("hello")
 	hello.Hello = &runnerproto.Hello{Agents: []string{"codex"}, OS: "test", Arch: "test"}
+	if validHello(hello.Hello) == nil {
+		t.Fatal("hello without a command key accepted")
+	}
+	keyID := runnerproto.CommandKeyID([]byte("own-runner-command-key-32-bytes!"))
+	hello.Hello.CommandKeyID = keyID
 	if err := wsjson.Write(ctx, conn, hello); err != nil {
 		t.Fatal(err)
 	}
@@ -351,9 +357,17 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	ready.Status = "ready"
 	_ = wsjson.Write(ctx, conn, ready)
 	read("event.ack")
+	turnPath := "/api/sessions/" + session.ID + "/turns"
+	if unsigned := appAuthRequest(h, "POST", turnPath, login.Token, `{"input":"synthetic task"}`); unsigned.Code != 400 {
+		t.Fatalf("unsigned turn=%d", unsigned.Code)
+	}
+	signed := fmt.Sprintf(`{"input":"synthetic task","issued_at":1761379200000,"signatures":{%q:%q}}`, keyID, strings.Repeat("a", 43))
+	if started := appAuthRequest(h, "POST", turnPath, login.Token, signed); started.Code != 200 {
+		t.Fatalf("signed turn=%d %s", started.Code, started.Body.String())
+	}
 	turn := read("turn.start")
-	if turn.Input != "synthetic task" || turn.TurnID == "" {
-		t.Fatal("initial turn not relayed")
+	if turn.Input != "synthetic task" || turn.TurnID == "" || turn.Signatures[keyID] == "" {
+		t.Fatal("signed turn not relayed")
 	}
 	if err := b.revokeRunner(principal, credential.RunnerID); err != nil {
 		t.Fatal(err)
@@ -388,49 +402,35 @@ func lastFrame(t *testing.T, r *connectedRunner, kind string) runnerproto.Messag
 }
 
 func TestBrokerRelaysOnlyTheReceivingRunnersCommandSignature(t *testing.T) {
-	for _, keyed := range []bool{true, false} {
-		t.Run(map[bool]string{true: "keyed runner", false: "legacy runner"}[keyed], func(t *testing.T) {
-			_, b, login, principal := brokerFixture(t)
-			r := brokerRunner(t, b, principal)
-			own := runnerproto.CommandKeyID([]byte("own-runner-command-key-32-bytes!"))
-			other := runnerproto.CommandKeyID([]byte("another-runner-command-key-32by!"))
-			if keyed {
-				r.hello.CommandKeyID = own
-			}
-			s := brokerSession(t, b, principal, login.ClientID)
-			if err := b.claim(r, s.ID); err != nil {
-				t.Fatal(err)
-			}
-			brokerEvent(t, b, r, s.ID, "workspace.status", func(m *runnerproto.Message) { m.Status = "ready" })
-			brokerEvent(t, b, r, s.ID, "turn.started", nil)
-			brokerEvent(t, b, r, s.ID, "turn.finished", nil)
-			drainRunnerFrames(r)
+	_, b, login, principal := brokerFixture(t)
+	r := brokerRunner(t, b, principal)
+	own := r.hello.CommandKeyID
+	other := runnerproto.CommandKeyID([]byte("another-runner-command-key-32by!"))
+	s := brokerSession(t, b, principal, login.ClientID)
+	if err := b.claim(r, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "workspace.status", func(m *runnerproto.Message) { m.Status = "ready" })
+	brokerEvent(t, b, r, s.ID, "turn.started", nil)
+	brokerEvent(t, b, r, s.ID, "turn.finished", nil)
+	drainRunnerFrames(r)
 
-			signatures := map[string]string{own: strings.Repeat("a", 43), other: strings.Repeat("b", 43)}
-			if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "signed input", IssuedAt: 1761379200000, Signatures: signatures}, authorizeSyntheticSession); err != nil {
-				t.Fatal(err)
-			}
-			turn := lastFrame(t, r, "turn.start")
-			if keyed && (turn.IssuedAt != 1761379200000 || len(turn.Signatures) != 1 || turn.Signatures[own] != signatures[own]) {
-				t.Fatalf("keyed runner turn signatures = %d %v", turn.IssuedAt, turn.Signatures)
-			}
-			if !keyed && (turn.IssuedAt != 0 || turn.Signatures != nil) {
-				t.Fatal("legacy runner received signature fields it cannot decode")
-			}
-
-			brokerEvent(t, b, r, s.ID, "turn.started", nil)
-			brokerEvent(t, b, r, s.ID, "approval.request", func(m *runnerproto.Message) { m.ApprovalID = "approval-1"; m.Command = "go test ./..." })
-			if err := b.resolveSignedApproval(principal, s.ID, "approval-1", runnerproto.ApprovalDecision{Decision: "approve", IssuedAt: 1761379200001, Signatures: signatures}); err != nil {
-				t.Fatal(err)
-			}
-			decision := lastFrame(t, r, "approval.decision")
-			if keyed && (decision.IssuedAt != 1761379200001 || len(decision.Signatures) != 1 || decision.Signatures[own] == "") {
-				t.Fatalf("keyed runner approval signatures = %d %v", decision.IssuedAt, decision.Signatures)
-			}
-			if !keyed && decision.Signatures != nil {
-				t.Fatal("legacy runner received approval signature fields")
-			}
-		})
+	signatures := map[string]string{own: strings.Repeat("a", 43), other: strings.Repeat("b", 43)}
+	if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "signed input", IssuedAt: 1761379200000, Signatures: signatures}, authorizeSyntheticSession); err != nil {
+		t.Fatal(err)
+	}
+	turn := lastFrame(t, r, "turn.start")
+	if turn.IssuedAt != 1761379200000 || len(turn.Signatures) != 1 || turn.Signatures[own] != signatures[own] {
+		t.Fatalf("runner turn signatures = %d %v", turn.IssuedAt, turn.Signatures)
+	}
+	brokerEvent(t, b, r, s.ID, "turn.started", nil)
+	brokerEvent(t, b, r, s.ID, "approval.request", func(m *runnerproto.Message) { m.ApprovalID = "approval-1"; m.Command = "go test ./..." })
+	if err := b.resolveSignedApproval(principal, s.ID, "approval-1", runnerproto.ApprovalDecision{Decision: "approve", IssuedAt: 1761379200001, Signatures: signatures}); err != nil {
+		t.Fatal(err)
+	}
+	decision := lastFrame(t, r, "approval.decision")
+	if decision.IssuedAt != 1761379200001 || len(decision.Signatures) != 1 || decision.Signatures[own] == "" {
+		t.Fatalf("runner approval signatures = %d %v", decision.IssuedAt, decision.Signatures)
 	}
 }
 
