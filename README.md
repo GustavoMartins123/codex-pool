@@ -295,6 +295,8 @@ The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `h
 
 Members sign in with a username or email and may add a passkey. They can manage their own profile, client credentials, usage, and revocable guest passes. Guests can manage their own profile and clients and inspect their own usage. Operators additionally manage global pool analytics, principals, provider accounts, route diagnostics, audit events, and operational administration from the Signal Room. `ADMIN_TOKEN` remains a break-glass administrative credential.
 
+Guest passes issued by members expire within 90 days, and a member may hold at most ten usable passes at once; operators are exempt. A guest's requests also count against the budget of the principal who issued the pass. Suspending or expiring a member suspends their guest passes and the account grants they issued until the member is active again.
+
 The retired pool-user system is gone as an authority: setup downloads use single-use nonces minted on demand, and a one-shot retirement at boot imports any remaining `data/pool_users.json` identities as guest principals (metadata only — their old tokens never authenticate) and revokes every `legacy-*` client credential. Re-adding the file later has no effect.
 
 ---
@@ -363,6 +365,17 @@ are trusted, so a direct client cannot spoof its origin. Forwarding chains are
 read from right to left through trusted hops; malformed forwarding headers
 from a trusted peer reject the request.
 
+**Sign-in protection.** Failed admin-token, metrics-token and password
+attempts ban the client network (IPv6 grouped by /64) for 30 minutes after
+five failures; a banned network cannot keep guessing even with the right
+secret. Password sign-in is also limited to 20 attempts per network every five
+minutes before any Argon2 work, and an account refuses password sign-in for 15
+minutes after ten failures from any network (unknown logins are locked the
+same way, and passkey sign-in is unaffected). When every verification slot is
+busy, sign-in answers 503 without counting a failure. Bans and account locks
+survive restarts; they are stored as salted HMACs, never as raw addresses or
+logins.
+
 **Access policy.** `ip_access_allow` / `ip_access_deny` (env `PROXY_IP_ALLOW` /
 `PROXY_IP_DENY`) gate requests by IP or CIDR. Deny always wins over allow, and
 only local GET/HEAD probes to `/healthz`, `/livez` and `/readyz` bypass
@@ -377,7 +390,13 @@ prunes old origin metadata. Opt out with `PROXY_IP_PRIVACY=false` or
 `ip_privacy = false`.
 
 **Response headers.** Every response carries `X-Content-Type-Options`,
-`Referrer-Policy`, `Permissions-Policy` and a `frame-ancestors 'none'` CSP.
+`Referrer-Policy`, `Permissions-Policy` and a CSP. Responses without their own
+policy get `default-src 'none'; frame-ancestors 'none'; base-uri 'none';
+form-action 'none'`; the dashboard, the status page and the cute-code landing
+replace it with the narrowest policy that renders them (the landing allows its
+inline script by SHA-256 hash only). `Strict-Transport-Security` is sent when
+the request arrives over HTTPS, through a proxy reporting
+`X-Forwarded-Proto: https`, or when `public_url` is HTTPS.
 Authenticated, credential-bearing and probe surfaces (`/api/`, `/admin/`,
 `/setup/`, `/config/`, `/metrics`, `/oauth/token`) additionally get
 `Cache-Control: no-store`.
