@@ -15,14 +15,23 @@ import (
 	"codex-pool-proxy/internal/runnerproto"
 )
 
-func PairingLink(origin, id string) (string, error) {
+// PairingLink builds the QR payload. commandKey travels only through the QR,
+// from the runner's screen to the device that scans it, never to the pool.
+func PairingLink(origin, id, commandKey string) (string, error) {
 	if err := ValidateOrigin(origin); err != nil {
 		return "", err
 	}
-	if len(id) != 43 || strings.ContainsAny(id, "/?#&=+% \r\n") {
+	if !validPairingID(id) {
 		return "", errors.New("invalid pairing identifier")
 	}
-	return "codexpool://pair?pool=" + url.QueryEscape(origin) + "&request=" + id, nil
+	if _, err := decodeCommandKey(commandKey); err != nil {
+		return "", err
+	}
+	return "codexpool://pair?pool=" + url.QueryEscape(origin) + "&request=" + id + "&key=" + commandKey, nil
+}
+
+func validPairingID(id string) bool {
+	return len(id) == 43 && !strings.ContainsAny(id, "/?#&=+% \r\n")
 }
 
 func BeginPairing(ctx context.Context, client *http.Client, origin string, machine runnerproto.PairingRequest, rotationToken string) (*runnerproto.PairingStart, error) {
@@ -40,8 +49,8 @@ func BeginPairing(ctx context.Context, client *http.Client, origin string, machi
 	if len(result.ID) != 43 || len(result.DeviceSecret) != 43 || len(result.UserCode) != 8 || result.Interval < 3 || result.Interval > 30 || !result.ExpiresAt.After(time.Now()) || result.ExpiresAt.After(time.Now().Add(10*time.Minute)) {
 		return nil, errors.New("invalid pairing response")
 	}
-	if _, err := PairingLink(origin, result.ID); err != nil {
-		return nil, err
+	if !validPairingID(result.ID) {
+		return nil, errors.New("invalid pairing identifier")
 	}
 	return &result, nil
 }
@@ -51,8 +60,8 @@ func CompletePairing(ctx context.Context, client *http.Client, origin string, p 
 	if err := ValidateOrigin(origin); err != nil {
 		return Config{}, false, err
 	}
-	if _, err := PairingLink(origin, p.ID); err != nil {
-		return Config{}, false, err
+	if !validPairingID(p.ID) {
+		return Config{}, false, errors.New("invalid pairing identifier")
 	}
 	status, err := pairingRequest(ctx, client, origin+"/api/runner/pairings/"+p.ID, p.DeviceSecret, struct{}{}, &result)
 	if err != nil {

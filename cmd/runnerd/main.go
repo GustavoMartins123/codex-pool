@@ -237,7 +237,11 @@ func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string
 	if err != nil {
 		return runner.Config{}, err
 	}
-	link, err := runner.PairingLink(origin, p.ID)
+	commandKey, err := runner.NewCommandKey()
+	if err != nil {
+		return runner.Config{}, err
+	}
+	link, err := runner.PairingLink(origin, p.ID, commandKey)
 	if err != nil {
 		return runner.Config{}, err
 	}
@@ -251,6 +255,13 @@ func pairMachine(ctx context.Context, origin, name, rotationToken, qrPath string
 		if err := qr.WriteFile(512, qrPath); err != nil {
 			return runner.Config{}, err
 		}
+		// The image holds the command key; it must not outlive the pairing.
+		defer os.Remove(qrPath)
 	}
-	return runner.AwaitPairing(ctx, nil, origin, *p)
+	config, err := runner.AwaitPairing(ctx, nil, origin, *p)
+	if err != nil {
+		return runner.Config{}, err
+	}
+	config.CommandKey = commandKey
+	return config, nil
 }

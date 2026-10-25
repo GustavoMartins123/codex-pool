@@ -18,6 +18,9 @@ type Config struct {
 	PoolURL  string `json:"pool_url"`
 	RunnerID string `json:"runner_id"`
 	Token    string `json:"token"`
+	// CommandKey is shown once in the pairing QR and never sent to the pool.
+	// Runners paired before command keys existed have none.
+	CommandKey string `json:"command_key,omitempty"`
 }
 
 // LaunchConfig is safe to keep beside the binary: it contains paths and labels,
@@ -129,6 +132,11 @@ func ReadConfig(path string) (Config, error) {
 	}
 	if cfg.RunnerID == "" || !strings.HasPrefix(cfg.Token, "pool-runner-"+cfg.RunnerID+".") {
 		return cfg, errors.New("invalid runner credential")
+	}
+	if cfg.CommandKey != "" {
+		if _, err := decodeCommandKey(cfg.CommandKey); err != nil {
+			return cfg, err
+		}
 	}
 	return cfg, nil
 }

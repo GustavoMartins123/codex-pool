@@ -28,6 +28,10 @@ type daemon struct {
 	claims   map[string]bool
 	commands chan runnerproto.Message
 	notify   chan struct{}
+	// commandKey, set for runners paired with a command key, makes the
+	// runner refuse prompts and approvals the paired device did not sign.
+	commandKey   []byte
+	commandKeyID string
 }
 
 type localSession struct {
@@ -49,6 +53,7 @@ type localSession struct {
 	exited           bool
 	closing          bool
 	lastTurn         string
+	approvalCommands map[string]string
 	exitOnce         sync.Once
 	done             chan struct{}
 	commands         chan runnerproto.Message
@@ -101,6 +106,15 @@ func Run(ctx context.Context, options Options) error {
 		options.AllowedPaths[i] = canonical
 	}
 	d := &daemon{options: options, ctx: ctx, sessions: map[string]*localSession{}, claims: map[string]bool{}, commands: make(chan runnerproto.Message, 128), notify: make(chan struct{}, 1)}
+	if options.Config.CommandKey != "" {
+		key, err := decodeCommandKey(options.Config.CommandKey)
+		if err != nil {
+			return err
+		}
+		d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
+	} else {
+		log.Printf("runner: no command key; prompts and approvals relayed by the pool are not signature-checked. Run `runnerd rotate` and scan the new QR to require signed commands")
+	}
 	defer func() {
 		d.mu.Lock()
 		sessions := []*localSession{}
@@ -185,7 +199,7 @@ func (d *daemon) connect() (bool, error) {
 	}
 	sort.Strings(agents)
 	hello := runnerproto.Frame("hello")
-	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths, PersistentSessions: true}
+	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths, PersistentSessions: true, CommandKeyID: d.commandKeyID}
 	write := func(m runnerproto.Message) error {
 		data, err := json.Marshal(m)
 		if err != nil {
@@ -485,6 +499,17 @@ func (s *localSession) emit(m runnerproto.Message) error {
 	s.sequence++
 	s.pending = append(s.pending, m)
 	s.bytes += len(data)
+	// Signed approvals are checked against the command this runner asked
+	// about, never against the copy the pool shows the app.
+	switch m.Type {
+	case "approval.request":
+		if s.approvalCommands == nil {
+			s.approvalCommands = map[string]string{}
+		}
+		s.approvalCommands[m.ApprovalID] = m.Command
+	case "approval.cancelled":
+		delete(s.approvalCommands, m.ApprovalID)
+	}
 	s.daemon.wake()
 	return nil
 }
@@ -598,13 +623,24 @@ func (s *localSession) initialize(credentialPath string) {
 				s.lastTurn = command.TurnID
 				if command.Settings == nil {
 					err = errors.New("turn settings are missing")
-				} else {
+				} else if err = s.verifyTurn(command, time.Now()); err == nil {
 					err = agent.StartTurn(command.TurnID, command.Input, *command.Settings)
 				}
 			case "turn.cancel":
 				err = agent.Cancel(command.TurnID)
 			case "approval.decision":
-				err = agent.Decide(command.ApprovalID, command.Decision)
+				s.mu.Lock()
+				requested, pending := s.approvalCommands[command.ApprovalID]
+				delete(s.approvalCommands, command.ApprovalID)
+				s.mu.Unlock()
+				// Deny stays unsigned: the pool denies expired approvals and
+				// refusing is always safe. Decide ignores unknown approvals.
+				if pending && command.Decision == "approve" {
+					err = s.verifyApproval(command, requested, time.Now())
+				}
+				if err == nil {
+					err = agent.Decide(command.ApprovalID, command.Decision)
+				}
 			}
 			if err != nil {
 				failure := runnerproto.Frame("execution.error")
