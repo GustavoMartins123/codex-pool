@@ -30,7 +30,10 @@ class SessionModelChangeTest {
 
     @Test fun chatSendsTheNewModelAndEffortWhileKeepingEarlierMessages() {
         val session = Session("session", Agent.Codex, "gpt-test", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
-            SessionState.WaitingInput, conversationId = "conversation", runnerId = "runner-1")
+            SessionState.WaitingInput, conversationId = "conversation", runnerId = "runner-1",
+            capabilities = ModelCapabilities("1".repeat(64), listOf(
+                AgentModel(Agent.Codex, "gpt-test", listOf("low", "high", "max")),
+                AgentModel(Agent.Codex, "gemini-test", listOf("low", "high")))))
         val sent = AtomicReference<TurnInput>()
         val streamWriter = PipedOutputStream()
         val streamReader = PipedInputStream(streamWriter)

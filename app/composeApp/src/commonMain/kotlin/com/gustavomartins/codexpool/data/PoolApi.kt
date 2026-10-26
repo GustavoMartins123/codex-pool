@@ -4,6 +4,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.client.call.body
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutConfig
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.SSEClientException
@@ -13,6 +15,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.delay
@@ -62,7 +65,7 @@ class PoolApiException(val status: Int, val endpoint: String) : Exception(when (
 
 class SessionProtocolException(message: String) : Exception(message)
 
-class PoolApi(private val client: HttpClient, val credentials: Credentials) {
+class PoolApi(private val client: HttpClient, override val credentials: Credentials) : RunnerCatalogSource {
     init { require(normalizePoolUrl(credentials.baseUrl) == credentials.baseUrl); require(credentials.token.isNotBlank()) }
 
     companion object {
@@ -172,6 +175,35 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     }
     suspend fun catalog(): List<CatalogModel> = client.get(endpoint("/api/pool/catalog")) { authorize() }
         .checked("/api/pool/catalog").body<Catalog>().models
+
+    override suspend fun runnerCatalog(revision: String?): RunnerCatalogSnapshot? {
+        val response = client.get(endpoint("/api/me/runner-catalog")) {
+            authorize(); revision?.let { header(HttpHeaders.IfNoneMatch, "\"$it\"") }
+        }
+        if (response.status == HttpStatusCode.NotModified && revision != null) return null
+        return response.checked("/api/me/runner-catalog").body<RunnerCatalogSnapshot>().validate()
+    }
+
+    override fun runnerCatalogEvents(revision: String?): Flow<RunnerCatalogSnapshot> = flow {
+        val path = "/api/me/runner-catalog/events"
+        try {
+            client.sse(request = {
+                url(endpoint(path)); authorize(); revision?.let { header("Last-Event-ID", it) }
+                timeout { requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS }
+            }) {
+                incoming.collect { event ->
+                    val data = event.data ?: return@collect
+                    require(event.event == "catalog.snapshot") { "Evento de catálogo desconhecido." }
+                    val snapshot = PoolJson.decodeFromString<RunnerCatalogSnapshot>(data).validate()
+                    require(event.id == snapshot.revision) { "Revisão de catálogo inconsistente." }
+                    emit(snapshot)
+                }
+            }
+        } catch (e: SSEClientException) {
+            e.response?.let { if (it.status.value != 200) throw PoolApiException(it.status.value, path) }
+            throw (e.cause ?: SessionProtocolException("O canal de catálogo foi interrompido."))
+        }
+    }
     suspend fun quotas(): Quotas = client.get(endpoint("/api/me/quotas")) { authorize() }.checked("/api/me/quotas").body()
     suspend fun logout() { client.delete(endpoint("/api/auth/token")) { authorize() }.checked("/api/auth/token") }
 
