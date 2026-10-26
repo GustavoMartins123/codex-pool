@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"codex-pool-proxy/internal/runnerproto"
 	"context"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,19 +29,24 @@ func main() {
 	log.SetFlags(log.LstdFlags)
 	if err := run(); err != nil {
 		log.Print(err)
+		// A double-clicked console window would close before the error is read.
+		if runtime.GOOS == "windows" && len(os.Args) < 2 {
+			fmt.Fprint(os.Stderr, "Press Enter to close.")
+			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		}
 		os.Exit(1)
 	}
 }
 func run() error {
-	if len(os.Args) < 2 {
-		return errors.New("usage: runnerd pair|rotate|run (use --help for flags)")
-	}
 	defaultState, err := runner.DefaultStatePath()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if len(os.Args) < 2 {
+		return start(ctx, defaultState)
+	}
 	switch os.Args[1] {
 	case "pair", "rotate":
 		flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
@@ -155,6 +162,57 @@ func run() error {
 		return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: *root, AllowedPaths: paths, Labels: labels, Executables: executables, AllowAutoPermissions: *allowAuto})
 	default:
 		return errors.New("unknown runnerd command")
+	}
+}
+
+// start is runnerd without arguments: pair from the app on first use, finish
+// an interrupted pairing, or connect with the saved state.
+func start(ctx context.Context, state string) error {
+	unlock, err := runner.LockState(state)
+	if err != nil {
+		return errors.New("another runnerd is already using this machine's runner state")
+	}
+	defer unlock()
+	config, err := runner.ReadConfig(state)
+	if _, statErr := os.Stat(state); errors.Is(statErr, os.ErrNotExist) {
+		fmt.Println("This machine is not paired yet.")
+		config, err = runner.Onboard(ctx, runner.OnboardingOptions{StatePath: state, Report: showOnboarding})
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
+		// Never overwrite a state that might hold the only copy of a credential.
+		return fmt.Errorf("%v in %s; fix or move that file, revoke the old runner in the app, and start again", err, state)
+	}
+	executables := runner.FindAgents()
+	if len(executables) == 0 {
+		return errors.New("paired, but no agent is available: install Codex or Claude Code so `codex` or `claude` is on PATH, or use `runnerd run --config` to point at them")
+	}
+	fmt.Printf("Connecting runner %s to %s.\n", config.RunnerID, config.PoolURL)
+	return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: filepath.Join(filepath.Dir(state), "workspaces"), Executables: executables})
+}
+
+func showOnboarding(e runner.OnboardingEvent) {
+	switch e.Kind {
+	case runner.OnboardingRecovering:
+		fmt.Printf("Finishing the pairing with %s that was interrupted.\n", e.PoolURL)
+	case runner.OnboardingQR:
+		qr, err := qrcode.New(e.Link, qrcode.Medium)
+		if err != nil {
+			fmt.Println("The pairing QR could not be drawn:", err)
+			return
+		}
+		fmt.Println(qr.ToSmallString(false))
+		fmt.Printf("Scan in the codex-pool app: Runners > Connect machine. The phone must reach %s.\nThis QR is a secret: do not photograph or share it. Expires %s.\n",
+			strings.Join(e.Endpoints, ", "), e.ExpiresAt.Local().Format(time.Kitchen))
+	case runner.OnboardingPairing:
+		fmt.Printf("Pool %s is waiting for the app to approve %q (code %s).\n", e.PoolURL, e.Name, e.UserCode)
+	case runner.OnboardingPaired:
+		fmt.Printf("Paired runner %s with %s.\n", e.RunnerID, e.PoolURL)
+	case runner.OnboardingRetrying:
+		fmt.Printf("Pairing attempt ended: %v. Showing a new QR.\n", e.Err)
+	case runner.OnboardingAbandoned:
+		fmt.Println(e.Err)
 	}
 }
 
