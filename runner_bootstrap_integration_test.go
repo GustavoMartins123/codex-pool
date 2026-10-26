@@ -195,6 +195,15 @@ func TestRunnerBootstrapEndToEnd(t *testing.T) {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
+	listed := appAuthRequest(h, "GET", "/api/me/runners", login.Token, "")
+	var machines runnerproto.RunnerList
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &machines) != nil || len(machines.Runners) != 1 {
+		t.Fatalf("runner list = %d %s", listed.Code, listed.Body.String())
+	}
+	machine := machines.Runners[0]
+	if machine.ID != result.cfg.RunnerID || machine.CommandKeyID != ticket.CommandKeyID || !machine.Online || machine.Revoked {
+		t.Fatalf("runner list did not identify the QR's machine: %+v", machine)
+	}
 	stop()
 	<-stopped
 }

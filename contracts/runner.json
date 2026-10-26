@@ -511,7 +511,8 @@
         {"field": "agents", "name": "agents"},
         {"field": "revoked", "name": "revoked", "default": false},
         {"field": "labels", "name": "labels", "default": []},
-        {"field": "allowed_paths", "name": "allowedPaths", "default": []}
+        {"field": "allowed_paths", "name": "allowedPaths", "default": []},
+        {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null}
       ]
     },
     {

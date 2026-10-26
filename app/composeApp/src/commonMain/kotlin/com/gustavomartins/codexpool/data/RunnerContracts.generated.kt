@@ -189,6 +189,7 @@ data class Runner(
     @SerialName("revoked") val revoked: Boolean = false,
     @SerialName("labels") val labels: List<String> = emptyList(),
     @SerialName("allowed_paths") val allowedPaths: List<String> = emptyList(),
+    @SerialName("command_key_id") val commandKeyId: String? = null,
 )
 
 @Serializable

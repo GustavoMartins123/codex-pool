@@ -61,7 +61,8 @@ class BootstrapCoordinator(
         mutable.value = BootstrapProgress(BootstrapStep.Saving, ticket)
         val runnerId = awaitSaved(ticket)
         mutable.value = BootstrapProgress(BootstrapStep.WaitingOnline, ticket, runnerId)
-        if (awaitOnline(ticket, runnerId)) mutable.value = BootstrapProgress(BootstrapStep.Online, ticket, runnerId)
+        val online = awaitOnline(ticket, runnerId)
+        if (online != null) mutable.value = BootstrapProgress(BootstrapStep.Online, ticket, online.id)
         else mutable.value = BootstrapProgress(BootstrapStep.WaitingOnline, ticket, runnerId,
             "Autorizado. O runner ainda não ficou online: confira no computador se Codex ou Claude Code está instalado.")
     }
@@ -107,15 +108,19 @@ class BootstrapCoordinator(
         return null
     }
 
-    private suspend fun awaitOnline(ticket: BootstrapTicket, runnerId: String?): Boolean {
+    private suspend fun awaitOnline(ticket: BootstrapTicket, runnerId: String?): Runner? {
         val attempts = (2.minutes / 2.seconds).toInt()
         repeat(attempts) {
             val runners = runCatching { pool.runners() }.getOrNull().orEmpty()
-            val runner = if (runnerId != null) runners.firstOrNull { it.id == runnerId } else runners.firstOrNull { it.name == ticket.name && it.online && !it.revoked }
-            if (runner?.online == true && !runner.revoked) return true
+            // The key ID came from the pinned LAN ticket; the pool learns it
+            // when this runner connects. Machine names need not be unique.
+            val runner = runners.firstOrNull {
+                it.commandKeyId == ticket.commandKeyId && (runnerId == null || it.id == runnerId) && it.online && !it.revoked
+            }
+            if (runner != null) return runner
             pause(2.seconds)
         }
-        return false
+        return null
     }
 
     private suspend fun failing(block: suspend () -> Unit) {

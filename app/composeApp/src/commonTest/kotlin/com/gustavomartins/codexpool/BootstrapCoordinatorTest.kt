@@ -15,6 +15,7 @@ class BootstrapCoordinatorTest {
     private val secret = "c".repeat(42) + "A"
     private val payload = BootstrapPayload(1, "b".repeat(42) + "A", listOf("https://192.168.1.20:49152"), "p".repeat(42) + "A", secret, "2026-10-26T12:05:00Z")
     private val commandKey = base64UrlEncode(ByteArray(32) { 9 })
+    private val commandKeyId = CommandSigning.keyId(CommandSigning.decodeKey(commandKey))
     private val pairingId = "r".repeat(43)
     private val runnerId = "11111111-2222-3333-4444-555555555555"
     private val headers = headersOf(HttpHeaders.ContentType, "application/json")
@@ -24,6 +25,7 @@ class BootstrapCoordinatorTest {
         var reviewRunner: String? = null,
         var lanAfterApproval: Boolean = true,
         var storeFails: Boolean = false,
+        var listedRunners: List<Runner>? = null,
     ) {
         val events = mutableListOf<String>()
         var approved = false
@@ -63,7 +65,9 @@ class BootstrapCoordinatorTest {
                     approved = decision.decision == Decision.Approve
                     respond("", HttpStatusCode.NoContent)
                 }
-                "/api/me/runners" -> respond(PoolJson.encodeToString(RunnerList(listOf(Runner(runnerId, "desktop", online = approved, agents = listOf(Agent.Codex))))), HttpStatusCode.OK, headers)
+                "/api/me/runners" -> respond(PoolJson.encodeToString(RunnerList(listedRunners ?: listOf(
+                    Runner(runnerId, "desktop", online = approved, agents = listOf(Agent.Codex), commandKeyId = commandKeyId)
+                ))), HttpStatusCode.OK, headers)
                 else -> error("unexpected pool path ${request.url.encodedPath}")
             }
         }) { poolConfiguration() }, Credentials(pool, "token", "client"))
@@ -104,7 +108,53 @@ class BootstrapCoordinatorTest {
         h.coordinator.prepare()
         h.coordinator.approve()
         assertEquals(BootstrapStep.Online, h.coordinator.progress.value.step)
-        assertNull(h.coordinator.progress.value.runnerId)
+        assertEquals(runnerId, h.coordinator.progress.value.runnerId)
+    }
+
+    @Test fun neverConfirmsAnotherRunnerWithTheSameName() = runTest {
+        val otherKeyId = CommandSigning.keyId(ByteArray(32) { 10 })
+        for (keyId in listOf(otherKeyId, null)) {
+            val h = Harness(lanAfterApproval = false, listedRunners = listOf(
+                Runner("another-runner", "desktop", online = true, agents = listOf(Agent.Codex), commandKeyId = keyId)
+            ))
+            h.coordinator.prepare()
+            h.coordinator.approve()
+            assertEquals(BootstrapStep.WaitingOnline, h.coordinator.progress.value.step)
+            assertNull(h.coordinator.progress.value.runnerId)
+        }
+    }
+
+    @Test fun confirmsTheKeyOwnerEvenWhenNamesCollideOrChange() = runTest {
+        val h = Harness(lanAfterApproval = false, listedRunners = listOf(
+            Runner("another-runner", "desktop", online = true, agents = listOf(Agent.Codex)),
+            Runner(runnerId, "renamed", online = true, agents = listOf(Agent.Codex), commandKeyId = commandKeyId)
+        ))
+        h.coordinator.prepare()
+        h.coordinator.approve()
+        assertEquals(BootstrapStep.Online, h.coordinator.progress.value.step)
+        assertEquals(runnerId, h.coordinator.progress.value.runnerId)
+    }
+
+    @Test fun requiresTheMatchingRunnerToBeOnlineAndUsable() = runTest {
+        for (runner in listOf(
+            Runner(runnerId, "desktop", online = false, agents = emptyList(), commandKeyId = commandKeyId),
+            Runner(runnerId, "desktop", online = true, agents = emptyList(), revoked = true, commandKeyId = commandKeyId),
+        )) {
+            val h = Harness(lanAfterApproval = false, listedRunners = listOf(runner))
+            h.coordinator.prepare()
+            h.coordinator.approve()
+            assertEquals(BootstrapStep.WaitingOnline, h.coordinator.progress.value.step)
+        }
+    }
+
+    @Test fun preservesTheRunnerIdConfirmedOverTheLan() = runTest {
+        val h = Harness(listedRunners = listOf(
+            Runner("another-runner", "desktop", online = true, agents = listOf(Agent.Codex), commandKeyId = commandKeyId)
+        ))
+        h.coordinator.prepare()
+        h.coordinator.approve()
+        assertEquals(BootstrapStep.WaitingOnline, h.coordinator.progress.value.step)
+        assertEquals(runnerId, h.coordinator.progress.value.runnerId)
     }
 
     @Test fun cancellingBeforeApprovalTellsTheRunner() = runTest {
