@@ -57,7 +57,9 @@ func ParseBootstrapLink(link string, now time.Time) (BootstrapPayload, error) {
 		return p, invalid
 	}
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(query.Get("payload"))
-	if err != nil || rejectDuplicateKeys(raw) != nil {
+	// BootstrapLink never escapes anything; escapes would let the app's
+	// parser decode keys differently.
+	if err != nil || bytes.ContainsRune(raw, '\\') || rejectDuplicateKeys(raw) != nil {
 		return p, invalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
