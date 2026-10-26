@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	qrcode "github.com/skip2/go-qrcode"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -208,6 +209,9 @@ func start(ctx context.Context, state string) error {
 func agents(ctx context.Context, state string) (map[string]string, error) {
 	lookup := runner.AgentLookup{ManagedRoot: runner.ManagedAgentsDir(state)}
 	found, tried := lookup.Resolve(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(found) > 0 {
 		return found, nil
 	}
@@ -229,8 +233,11 @@ func agents(ctx context.Context, state string) (map[string]string, error) {
 	}
 	fmt.Printf("No agent found. Install Codex %s for this runner?\n  OpenAI's native build from registry.npmjs.org, checked against a pinned SHA-512\n  About %d MB in %s; PATH and your Codex settings are not changed.\nInstall? [y/N] ",
 		release.Version, release.UnpackedSize>>20, runner.ManagedAgentsDir(state))
-	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	if !strings.EqualFold(strings.TrimSpace(answer), "y") {
+	consent, err := readInstallConsent(ctx, os.Stdin)
+	if err != nil {
+		return nil, err
+	}
+	if !consent {
 		return nil, unavailable
 	}
 	if err := installCodex(ctx, installer); err != nil {
@@ -241,6 +248,33 @@ func agents(ctx context.Context, state string) (map[string]string, error) {
 		return nil, errors.New("paired, but the installed Codex did not start; remove " + runner.ManagedAgentsDir(state) + " and try again")
 	}
 	return found, nil
+}
+
+func readInstallConsent(ctx context.Context, input io.Reader) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	type answer struct {
+		line string
+		err  error
+	}
+	read := make(chan answer, 1)
+	go func() {
+		line, err := bufio.NewReader(input).ReadString('\n')
+		read <- answer{line, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case result := <-read:
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if result.err != nil && result.err != io.EOF {
+			return false, result.err
+		}
+		return strings.EqualFold(strings.TrimSpace(result.line), "y"), nil
+	}
 }
 
 func installCodex(ctx context.Context, installer *runner.AgentInstaller) error {
