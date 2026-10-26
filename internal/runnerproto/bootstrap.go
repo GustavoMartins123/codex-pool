@@ -43,7 +43,8 @@ func BootstrapLink(p BootstrapPayload) (string, error) {
 func ParseBootstrapLink(link string, now time.Time) (BootstrapPayload, error) {
 	var p BootstrapPayload
 	invalid := errors.New("invalid bootstrap QR")
-	if len(link) > BootstrapMaxLinkBytes || strings.ContainsFunc(link, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
+	// url.Parse lowercases the scheme; the app compares the prefix exactly.
+	if len(link) > BootstrapMaxLinkBytes || !strings.HasPrefix(link, "codexpool://bootstrap?") || strings.ContainsFunc(link, func(r rune) bool { return r < 0x21 || r == 0x7f }) {
 		return p, invalid
 	}
 	u, err := url.Parse(link)
