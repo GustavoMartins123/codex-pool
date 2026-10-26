@@ -156,8 +156,9 @@ class PoolApi(private val client: HttpClient, val credentials: Credentials) {
     suspend fun runners(): List<Runner> = client.get(endpoint("/api/me/runners")) { authorize() }
         .checked("/api/me/runners").body<RunnerList>().runners
     suspend fun revoke(id: String) { client.delete(endpoint("/api/me/runners/${resourceId(id)}")) { authorize() }.checked("/api/me/runners") }
-    suspend fun reviewPairing(link: String): PairingReview {
-        val id = pairingRequestId(link, credentials.baseUrl)
+    suspend fun reviewPairing(link: String): PairingReview = reviewPairingRequest(pairingRequestId(link, credentials.baseUrl))
+    suspend fun reviewPairingRequest(id: String): PairingReview {
+        require(id.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Pedido de pareamento inválido." }
         return client.get(endpoint("/api/me/runner-pairings/$id")) { authorize() }
             .checked("/api/me/runner-pairings/$id").body<PairingReview>().also {
                 require(it.id == id) { "O pool retornou outro pedido de pareamento." }

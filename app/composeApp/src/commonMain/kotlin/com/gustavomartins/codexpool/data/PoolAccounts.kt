@@ -34,12 +34,20 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
         if (it.baseUrl == selectedUrl) it.copy(credentials = credentials) else it
     }).validate()
 
-    fun withCommandKey(key: String): PoolAccounts {
-        require(key in selected.commandKeys || selected.commandKeys.size < RunnerContract.MaxCommandSignatures) {
+    /**
+     * Stores [key] with [owner]'s provider, the account that approved the runner,
+     * even if another provider was selected meanwhile; without an owner, the selected one.
+     */
+    fun withCommandKey(key: String, owner: Credentials? = null): PoolAccounts {
+        val target = if (owner == null) selected else providers.singleOrNull { it.baseUrl == owner.baseUrl }
+        require(target != null && (owner == null || target.credentials?.clientId == owner.clientId)) {
+            "A conta mudou durante o pareamento. Nenhuma chave foi salva."
+        }
+        require(key in target.commandKeys || target.commandKeys.size < RunnerContract.MaxCommandSignatures) {
             "Limite de ${RunnerContract.MaxCommandSignatures} chaves de runner atingido neste provedor."
         }
         return copy(providers = providers.map {
-            if (it.baseUrl == selectedUrl) it.copy(commandKeys = it.commandKeys - key + key) else it
+            if (it.baseUrl == target.baseUrl) it.copy(commandKeys = it.commandKeys - key + key) else it
         }).validate()
     }
 
