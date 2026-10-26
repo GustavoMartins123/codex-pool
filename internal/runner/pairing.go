@@ -34,6 +34,35 @@ func validPairingID(id string) bool {
 	return len(id) == 43 && !strings.ContainsAny(id, "/?#&=+% \r\n")
 }
 
+// PairingRejected reports the pool's HTTP answer to a pairing request.
+type PairingRejected struct{ Status int }
+
+func (e *PairingRejected) Error() string {
+	switch e.Status {
+	case http.StatusForbidden:
+		return "pairing denied or the account is unavailable"
+	case http.StatusGone:
+		return "pairing expired or cancelled; create a new request"
+	}
+	return fmt.Sprintf("pairing rejected (HTTP %d); create a new request", e.Status)
+}
+
+// errPairingTransport marks failures worth polling again: the pool may have
+// answered, so a recoverable pairing must ask again rather than give up.
+var errPairingTransport = errors.New("pairing transport failed")
+
+// ErrPoolIncompatible reports a pool that cannot deliver credentials in a
+// recoverable way; the runner refuses to fall back to a weaker delivery.
+var ErrPoolIncompatible = errors.New("the pool does not support pairing runners from the app; update the pool")
+
+const pairingReceiptWindow = 5 * time.Minute
+
+func pairingEnded(err error) bool {
+	var rejected *PairingRejected
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &rejected) &&
+		rejected.Status >= 400 && rejected.Status < 500 && rejected.Status != http.StatusRequestTimeout && rejected.Status != http.StatusTooManyRequests
+}
+
 func BeginPairing(ctx context.Context, client *http.Client, origin string, machine runnerproto.PairingRequest, rotationToken string) (*runnerproto.PairingStart, error) {
 	if err := ValidateOrigin(origin); err != nil {
 		return nil, err
@@ -43,8 +72,16 @@ func BeginPairing(ctx context.Context, client *http.Client, origin string, machi
 	if err != nil {
 		return nil, err
 	}
+	if status == http.StatusBadRequest && machine.Delivery != "" {
+		return nil, ErrPoolIncompatible
+	}
 	if status != 200 {
 		return nil, fmt.Errorf("pairing rejected (HTTP %d)", status)
+	}
+	// An older pool would consume the credential on its first response; never
+	// fall back to that silently.
+	if result.Delivery != machine.Delivery {
+		return nil, ErrPoolIncompatible
 	}
 	if len(result.ID) != 43 || len(result.DeviceSecret) != 43 || len(result.UserCode) != 8 || result.Interval < 3 || result.Interval > 30 || !result.ExpiresAt.After(time.Now()) || result.ExpiresAt.After(time.Now().Add(10*time.Minute)) {
 		return nil, errors.New("invalid pairing response")
@@ -71,7 +108,7 @@ func CompletePairing(ctx context.Context, client *http.Client, origin string, p 
 		return Config{}, false, nil
 	}
 	if status != 200 {
-		return Config{}, false, fmt.Errorf("pairing rejected (HTTP %d); create a new request", status)
+		return Config{}, false, &PairingRejected{Status: status}
 	}
 	if len(result.RunnerID) != 36 || len(result.Token) != len("pool-runner-")+36+1+43 || !strings.HasPrefix(result.Token, "pool-runner-"+result.RunnerID+".") {
 		return Config{}, false, errors.New("invalid pairing credential")
@@ -80,17 +117,25 @@ func CompletePairing(ctx context.Context, client *http.Client, origin string, p 
 }
 
 func AwaitPairing(ctx context.Context, client *http.Client, origin string, p runnerproto.PairingStart) (Config, error) {
-	ctx, cancel := context.WithDeadline(ctx, p.ExpiresAt)
+	deadline := p.ExpiresAt
+	if p.Delivery == runnerproto.PairingDeliveryRecoverable {
+		// Issuance can extend the pool's deadline even if that response is lost.
+		deadline = deadline.Add(pairingReceiptWindow)
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	timer := time.NewTimer(time.Duration(p.Interval) * time.Second)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return Config{}, errors.New("pairing expired or cancelled; create a new request")
+			return Config{}, fmt.Errorf("pairing expired or cancelled; create a new request: %w", ctx.Err())
 		case <-timer.C:
 			cfg, done, err := CompletePairing(ctx, client, origin, p)
-			if err != nil {
+			var rejected *PairingRejected
+			retry := errors.Is(err, errPairingTransport) || errors.As(err, &rejected) &&
+				(rejected.Status == http.StatusRequestTimeout || rejected.Status == http.StatusTooManyRequests || rejected.Status >= 500)
+			if err != nil && !retry {
 				return Config{}, err
 			}
 			if done {
@@ -120,13 +165,29 @@ func pairingRequest(ctx context.Context, client *http.Client, endpoint, token st
 	}
 	response, err := httpClient(client).Do(r)
 	if err != nil {
-		return 0, errors.New("pairing transport failed")
+		return 0, errPairingTransport
 	}
 	defer response.Body.Close()
-	if response.StatusCode == 200 {
+	if response.StatusCode == 200 && result != nil {
 		if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(result); err != nil {
-			return 0, errors.New("invalid pairing response")
+			return 0, errPairingTransport
 		}
 	}
 	return response.StatusCode, nil
+}
+
+// AcknowledgePairing tells the pool the runner saved the credential it
+// received, so the pool drops its sealed copy. Repeating it is harmless.
+func AcknowledgePairing(ctx context.Context, client *http.Client, cfg Config, pairingID string) error {
+	if !validPairingID(pairingID) {
+		return errors.New("invalid pairing identifier")
+	}
+	status, err := pairingRequest(ctx, client, cfg.PoolURL+"/api/runner/pairings/"+pairingID+"/ack", cfg.Token, struct{}{}, nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusNoContent {
+		return &PairingRejected{Status: status}
+	}
+	return nil
 }

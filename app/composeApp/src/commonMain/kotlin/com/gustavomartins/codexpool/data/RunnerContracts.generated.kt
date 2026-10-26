@@ -18,6 +18,16 @@ object RunnerContract {
     const val TurnSigningDomain: String = "codexpool-turn/1"
     const val ApprovalSigningDomain: String = "codexpool-approval/1"
     const val ExitAutoPermissionsDisabled: String = "auto_permissions_disabled"
+    const val PairingDeliveryRecoverable: String = "recoverable/1"
+    const val BootstrapVersion: Int = 1
+    const val BootstrapMaxLinkBytes: Int = 2048
+    const val BootstrapMaxEndpoints: Int = 4
+    const val BootstrapTtlSeconds: Int = 300
+    const val BootstrapReceiptSeconds: Int = 30
+    const val BootstrapMaxRequestBytes: Int = 16384
+    const val BootstrapMaxResponseBytes: Int = 65536
+    const val BootstrapSecretHeader: String = "X-Codexpool-Bootstrap"
+    const val BootstrapPathPrefix: String = "/bootstrap/v1"
 }
 
 @Serializable
@@ -71,6 +81,26 @@ enum class RunnerStatus(val wire: String) {
     @SerialName("online") Online("online"),
     @SerialName("offline") Offline("offline"),
     @SerialName("reconnected") Reconnected("reconnected"),
+}
+
+@Serializable
+enum class BootstrapPhase(val wire: String) {
+    @SerialName("waiting") Waiting("waiting"),
+    @SerialName("awaiting_approval") AwaitingApproval("awaiting_approval"),
+    @SerialName("paired") Paired("paired"),
+    @SerialName("failed") Failed("failed"),
+    @SerialName("cancelled") Cancelled("cancelled"),
+    @SerialName("expired") Expired("expired"),
+}
+
+@Serializable
+enum class BootstrapError(val wire: String) {
+    @SerialName("pool_unreachable") PoolUnreachable("pool_unreachable"),
+    @SerialName("pool_rejected") PoolRejected("pool_rejected"),
+    @SerialName("pool_incompatible") PoolIncompatible("pool_incompatible"),
+    @SerialName("pairing_denied") PairingDenied("pairing_denied"),
+    @SerialName("pairing_expired") PairingExpired("pairing_expired"),
+    @SerialName("save_failed") SaveFailed("save_failed"),
 }
 
 @Serializable
@@ -159,6 +189,7 @@ data class Runner(
     @SerialName("revoked") val revoked: Boolean = false,
     @SerialName("labels") val labels: List<String> = emptyList(),
     @SerialName("allowed_paths") val allowedPaths: List<String> = emptyList(),
+    @SerialName("command_key_id") val commandKeyId: String? = null,
 )
 
 @Serializable
@@ -224,6 +255,57 @@ data class ExecutionError(
 @Serializable
 data class RunnerList(
     @SerialName("runners") val runners: List<Runner>,
+)
+
+@Serializable
+data class BootstrapPayload(
+    @SerialName("version") val version: Int,
+    @SerialName("bootstrap_id") val bootstrapId: String,
+    @SerialName("endpoints") val endpoints: List<String>,
+    @SerialName("tls_spki_sha256") val tlsSpkiSha256: String,
+    @SerialName("bootstrap_secret") val bootstrapSecret: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class BootstrapBegin(
+    @SerialName("bootstrap_id") val bootstrapId: String,
+    @SerialName("operation_id") val operationId: String,
+    @SerialName("pool_url") val poolUrl: String,
+)
+
+@Serializable
+data class BootstrapTicket(
+    @SerialName("bootstrap_id") val bootstrapId: String,
+    @SerialName("operation_id") val operationId: String,
+    @SerialName("pool_url") val poolUrl: String,
+    @SerialName("pairing_id") val pairingId: String,
+    @SerialName("user_code") val userCode: String,
+    @SerialName("name") val name: String,
+    @SerialName("os") val os: String,
+    @SerialName("arch") val arch: String,
+    @SerialName("command_key") val commandKey: String,
+    @SerialName("command_key_id") val commandKeyId: String,
+    @SerialName("expires_at") val expiresAt: String,
+)
+
+@Serializable
+data class BootstrapStatus(
+    @SerialName("bootstrap_id") val bootstrapId: String,
+    @SerialName("phase") val phase: BootstrapPhase,
+    @SerialName("operation_id") val operationId: String? = null,
+    @SerialName("pool_url") val poolUrl: String? = null,
+    @SerialName("pairing_id") val pairingId: String? = null,
+    @SerialName("runner_id") val runnerId: String? = null,
+    @SerialName("command_key_id") val commandKeyId: String? = null,
+    @SerialName("error") val error: BootstrapError? = null,
+    @SerialName("message") val message: String? = null,
+)
+
+@Serializable
+data class BootstrapOperation(
+    @SerialName("bootstrap_id") val bootstrapId: String,
+    @SerialName("operation_id") val operationId: String,
 )
 
 sealed interface SessionEvent {

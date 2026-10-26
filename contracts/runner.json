@@ -60,6 +60,56 @@
       "go": "ExitAutoPermissionsDisabled",
       "kotlin": "ExitAutoPermissionsDisabled",
       "value": "auto_permissions_disabled"
+    },
+    {
+      "go": "PairingDeliveryRecoverable",
+      "kotlin": "PairingDeliveryRecoverable",
+      "value": "recoverable/1"
+    },
+    {
+      "go": "BootstrapVersion",
+      "kotlin": "BootstrapVersion",
+      "value": 1
+    },
+    {
+      "go": "BootstrapMaxLinkBytes",
+      "kotlin": "BootstrapMaxLinkBytes",
+      "value": 2048
+    },
+    {
+      "go": "BootstrapMaxEndpoints",
+      "kotlin": "BootstrapMaxEndpoints",
+      "value": 4
+    },
+    {
+      "go": "BootstrapTTLSeconds",
+      "kotlin": "BootstrapTtlSeconds",
+      "value": 300
+    },
+    {
+      "go": "BootstrapReceiptSeconds",
+      "kotlin": "BootstrapReceiptSeconds",
+      "value": 30
+    },
+    {
+      "go": "BootstrapMaxRequestBytes",
+      "kotlin": "BootstrapMaxRequestBytes",
+      "value": 16384
+    },
+    {
+      "go": "BootstrapMaxResponseBytes",
+      "kotlin": "BootstrapMaxResponseBytes",
+      "value": 65536
+    },
+    {
+      "go": "BootstrapSecretHeader",
+      "kotlin": "BootstrapSecretHeader",
+      "value": "X-Codexpool-Bootstrap"
+    },
+    {
+      "go": "BootstrapPathPrefix",
+      "kotlin": "BootstrapPathPrefix",
+      "value": "/bootstrap/v1"
     }
   ],
   "enums": [
@@ -195,6 +245,64 @@
         {
           "name": "Reconnected",
           "wire": "reconnected"
+        }
+      ]
+    },
+    {
+      "name": "BootstrapPhase",
+      "values": [
+        {
+          "name": "Waiting",
+          "wire": "waiting"
+        },
+        {
+          "name": "AwaitingApproval",
+          "wire": "awaiting_approval"
+        },
+        {
+          "name": "Paired",
+          "wire": "paired"
+        },
+        {
+          "name": "Failed",
+          "wire": "failed"
+        },
+        {
+          "name": "Cancelled",
+          "wire": "cancelled"
+        },
+        {
+          "name": "Expired",
+          "wire": "expired"
+        }
+      ]
+    },
+    {
+      "name": "BootstrapError",
+      "values": [
+        {
+          "name": "PoolUnreachable",
+          "wire": "pool_unreachable"
+        },
+        {
+          "name": "PoolRejected",
+          "wire": "pool_rejected"
+        },
+        {
+          "name": "PoolIncompatible",
+          "wire": "pool_incompatible"
+        },
+        {
+          "name": "PairingDenied",
+          "wire": "pairing_denied"
+        },
+        {
+          "name": "PairingExpired",
+          "wire": "pairing_expired"
+        },
+        {
+          "name": "SaveFailed",
+          "wire": "save_failed"
         }
       ]
     }
@@ -403,7 +511,8 @@
         {"field": "agents", "name": "agents"},
         {"field": "revoked", "name": "revoked", "default": false},
         {"field": "labels", "name": "labels", "default": []},
-        {"field": "allowed_paths", "name": "allowedPaths", "default": []}
+        {"field": "allowed_paths", "name": "allowedPaths", "default": []},
+        {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null}
       ]
     },
     {
@@ -441,7 +550,8 @@
       "fields": [
         {"json": "name", "go": "Name", "type": "string"},
         {"json": "os", "go": "OS", "type": "string"},
-        {"json": "arch", "go": "Arch", "type": "string"}
+        {"json": "arch", "go": "Arch", "type": "string"},
+        {"json": "delivery", "go": "Delivery", "type": "string", "omit_empty": true}
       ]
     },
     {
@@ -451,7 +561,8 @@
         {"json": "device_secret", "go": "DeviceSecret", "type": "string"},
         {"json": "user_code", "go": "UserCode", "type": "string"},
         {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"},
-        {"json": "interval", "go": "Interval", "type": "int"}
+        {"json": "interval", "go": "Interval", "type": "int"},
+        {"json": "delivery", "go": "Delivery", "type": "string", "omit_empty": true}
       ]
     },
     {
@@ -580,6 +691,103 @@
       ],
       "kotlin": [
         {"field": "runners", "name": "runners"}
+      ]
+    },
+    {
+      "name": "BootstrapPayload",
+      "fields": [
+        {"json": "version", "go": "Version", "type": "int"},
+        {"json": "bootstrap_id", "go": "BootstrapID", "type": "string"},
+        {"json": "endpoints", "go": "Endpoints", "type": "[]string"},
+        {"json": "tls_spki_sha256", "go": "TLSSPKISHA256", "type": "string"},
+        {"json": "bootstrap_secret", "go": "BootstrapSecret", "type": "string"},
+        {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"}
+      ],
+      "kotlin": [
+        {"field": "version", "name": "version"},
+        {"field": "bootstrap_id", "name": "bootstrapId"},
+        {"field": "endpoints", "name": "endpoints"},
+        {"field": "tls_spki_sha256", "name": "tlsSpkiSha256"},
+        {"field": "bootstrap_secret", "name": "bootstrapSecret"},
+        {"field": "expires_at", "name": "expiresAt"}
+      ]
+    },
+    {
+      "name": "BootstrapBegin",
+      "fields": [
+        {"json": "bootstrap_id", "go": "BootstrapID", "type": "string"},
+        {"json": "operation_id", "go": "OperationID", "type": "string"},
+        {"json": "pool_url", "go": "PoolURL", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "bootstrap_id", "name": "bootstrapId"},
+        {"field": "operation_id", "name": "operationId"},
+        {"field": "pool_url", "name": "poolUrl"}
+      ]
+    },
+    {
+      "name": "BootstrapTicket",
+      "fields": [
+        {"json": "bootstrap_id", "go": "BootstrapID", "type": "string"},
+        {"json": "operation_id", "go": "OperationID", "type": "string"},
+        {"json": "pool_url", "go": "PoolURL", "type": "string"},
+        {"json": "pairing_id", "go": "PairingID", "type": "string"},
+        {"json": "user_code", "go": "UserCode", "type": "string"},
+        {"json": "name", "go": "Name", "type": "string"},
+        {"json": "os", "go": "OS", "type": "string"},
+        {"json": "arch", "go": "Arch", "type": "string"},
+        {"json": "command_key", "go": "CommandKey", "type": "string"},
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string"},
+        {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"}
+      ],
+      "kotlin": [
+        {"field": "bootstrap_id", "name": "bootstrapId"},
+        {"field": "operation_id", "name": "operationId"},
+        {"field": "pool_url", "name": "poolUrl"},
+        {"field": "pairing_id", "name": "pairingId"},
+        {"field": "user_code", "name": "userCode"},
+        {"field": "name", "name": "name"},
+        {"field": "os", "name": "os"},
+        {"field": "arch", "name": "arch"},
+        {"field": "command_key", "name": "commandKey"},
+        {"field": "command_key_id", "name": "commandKeyId"},
+        {"field": "expires_at", "name": "expiresAt"}
+      ]
+    },
+    {
+      "name": "BootstrapStatus",
+      "fields": [
+        {"json": "bootstrap_id", "go": "BootstrapID", "type": "string"},
+        {"json": "phase", "go": "Phase", "type": "BootstrapPhase"},
+        {"json": "operation_id", "go": "OperationID", "type": "string", "omit_empty": true},
+        {"json": "pool_url", "go": "PoolURL", "type": "string", "omit_empty": true},
+        {"json": "pairing_id", "go": "PairingID", "type": "string", "omit_empty": true},
+        {"json": "runner_id", "go": "RunnerID", "type": "string", "omit_empty": true},
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true},
+        {"json": "error", "go": "Error", "type": "BootstrapError", "omit_empty": true},
+        {"json": "message", "go": "Message", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "bootstrap_id", "name": "bootstrapId"},
+        {"field": "phase", "name": "phase"},
+        {"field": "operation_id", "name": "operationId", "nullable": true, "default": null},
+        {"field": "pool_url", "name": "poolUrl", "nullable": true, "default": null},
+        {"field": "pairing_id", "name": "pairingId", "nullable": true, "default": null},
+        {"field": "runner_id", "name": "runnerId", "nullable": true, "default": null},
+        {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null},
+        {"field": "error", "name": "error", "nullable": true, "default": null},
+        {"field": "message", "name": "message", "nullable": true, "default": null}
+      ]
+    },
+    {
+      "name": "BootstrapOperation",
+      "fields": [
+        {"json": "bootstrap_id", "go": "BootstrapID", "type": "string"},
+        {"json": "operation_id", "go": "OperationID", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "bootstrap_id", "name": "bootstrapId"},
+        {"field": "operation_id", "name": "operationId"}
       ]
     }
   ],

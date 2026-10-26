@@ -15,6 +15,11 @@ import (
 const bucketRunnerPairings = "runner_pairings"
 const runnerPairingTTL = 5 * time.Minute
 
+// runnerReceiptTTL keeps an issued credential recoverable by the device
+// secret that requested it, so a runner that lost the response can fetch the
+// same credential instead of leaving one without any local copy.
+const runnerReceiptTTL = 5 * time.Minute
+
 type runnerPairing struct {
 	runnerproto.PairingReview
 	SecretDigest     string    `json:"secret_digest"`
@@ -25,12 +30,27 @@ type runnerPairing struct {
 	LastPoll         time.Time `json:"last_poll"`
 	Attempts         int       `json:"attempts"`
 	Source           string    `json:"source"`
+	// Recoverable deliveries keep the issued credential sealed until the
+	// runner confirms it saved it; legacy pairings are consumed on issue.
+	Delivery     string `json:"delivery,omitempty"`
+	IssuedRunner string `json:"issued_runner,omitempty"`
+	IssuedDigest string `json:"issued_digest,omitempty"`
+	Receipt      []byte `json:"receipt,omitempty"`
 }
+
+const runnerReceiptKind = "runner-credential-receipt"
 
 func (b *sessionBroker) beginPairing(q runnerproto.PairingRequest, rotating *runnerRecord, source string) (*runnerproto.PairingStart, error) {
 	q.Name = strings.TrimSpace(q.Name)
 	if q.Name == "" || len(q.Name) > 80 || len(q.OS) == 0 || len(q.OS) > 32 || len(q.Arch) == 0 || len(q.Arch) > 32 || strings.ContainsAny(q.Name+q.OS+q.Arch, "\x00\r\n") {
 		return nil, sessionError(400, "invalid machine details")
+	}
+	if q.Delivery != "" && q.Delivery != runnerproto.PairingDeliveryRecoverable {
+		return nil, sessionError(400, "unsupported pairing delivery")
+	}
+	// Rotation keeps its consume-on-issue semantics and the runner identity.
+	if q.Delivery != "" && rotating != nil {
+		return nil, sessionError(400, "rotation does not support recoverable delivery")
 	}
 	id, err := secureToken(32)
 	if err != nil {
@@ -46,7 +66,7 @@ func (b *sessionBroker) beginPairing(q runnerproto.PairingRequest, rotating *run
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	p := runnerPairing{PairingReview: runnerproto.PairingReview{ID: id, Name: q.Name, OS: q.OS, Arch: q.Arch, ExpiresAt: b.now().Add(runnerPairingTTL)}, SecretDigest: tokenDigest(secret), CodeDigest: tokenDigest(code), Source: tokenDigest(source)}
+	p := runnerPairing{PairingReview: runnerproto.PairingReview{ID: id, Name: q.Name, OS: q.OS, Arch: q.Arch, ExpiresAt: b.now().Add(runnerPairingTTL)}, SecretDigest: tokenDigest(secret), CodeDigest: tokenDigest(code), Source: tokenDigest(source), Delivery: q.Delivery}
 	if rotating != nil {
 		p.RunnerID = rotating.Runner.ID
 		p.PrincipalID = rotating.PrincipalID
@@ -80,7 +100,7 @@ func (b *sessionBroker) beginPairing(q runnerproto.PairingRequest, rotating *run
 	if err != nil {
 		return nil, err
 	}
-	return &runnerproto.PairingStart{ID: id, DeviceSecret: secret, UserCode: code, ExpiresAt: p.ExpiresAt, Interval: 3}, nil
+	return &runnerproto.PairingStart{ID: id, DeviceSecret: secret, UserCode: code, ExpiresAt: p.ExpiresAt, Interval: 3, Delivery: q.Delivery}, nil
 }
 
 func (b *sessionBroker) pairingLocked(tx *bbolt.Tx, id string) (*runnerPairing, error) {
@@ -185,6 +205,7 @@ func (b *sessionBroker) completePairing(id, secret string) (*runnerproto.RunnerC
 	defer b.mu.Unlock()
 	var result *runnerproto.RunnerCredential
 	var fault error
+	recovered := false
 	err := b.store.db.Update(func(tx *bbolt.Tx) error {
 		p, err := b.pairingLocked(tx, id)
 		if err != nil {
@@ -200,6 +221,14 @@ func (b *sessionBroker) completePairing(id, secret string) (*runnerproto.RunnerC
 			return sessionError(429, "polling too frequently")
 		}
 		p.LastPoll = b.now()
+		if p.Decision == "issued" {
+			credential, err := b.recoverReceiptLocked(tx, p)
+			if err != nil {
+				return err
+			}
+			result, recovered = credential, true
+			return putJSON(tx.Bucket([]byte(bucketRunnerPairings)), id, p)
+		}
 		if p.Decision == "deny" {
 			return sessionError(403, "pairing denied")
 		}
@@ -249,6 +278,16 @@ func (b *sessionBroker) completePairing(id, secret string) (*runnerproto.RunnerC
 			return err
 		}
 		p.Decision = "consumed"
+		if p.Delivery == runnerproto.PairingDeliveryRecoverable {
+			sealed, err := b.store.seal(runnerReceiptKind, p.ID+"|"+id, p.PrincipalID, token)
+			if err != nil {
+				return err
+			}
+			p.Decision, p.IssuedRunner, p.IssuedDigest, p.Receipt = "issued", id, r.Digest, sealed
+			if deadline := b.now().Add(runnerReceiptTTL); deadline.After(p.ExpiresAt) {
+				p.ExpiresAt = deadline
+			}
+		}
 		if err := putJSON(tx.Bucket([]byte(bucketRunnerPairings)), p.ID, p); err != nil {
 			return err
 		}
@@ -268,10 +307,64 @@ func (b *sessionBroker) completePairing(id, secret string) (*runnerproto.RunnerC
 	if fault != nil {
 		return nil, fault
 	}
-	if connected := b.runners[result.RunnerID]; connected != nil {
+	// A recovered credential is the one already issued, so its connection,
+	// if any, stays up; a new credential replaces the old connection.
+	if connected := b.runners[result.RunnerID]; connected != nil && !recovered {
 		connected.stop()
 	}
 	return result, nil
+}
+
+// recoverReceiptLocked returns the credential already issued to this
+// pairing, never a second one, while its runner and account stay usable.
+func (b *sessionBroker) recoverReceiptLocked(tx *bbolt.Tx, p *runnerPairing) (*runnerproto.RunnerCredential, error) {
+	var r runnerRecord
+	if json.Unmarshal(tx.Bucket([]byte(bucketRunners)).Get([]byte(p.IssuedRunner)), &r) != nil || r.Runner.Revoked || r.PrincipalID != p.PrincipalID ||
+		subtle.ConstantTimeCompare([]byte(r.Digest), []byte(p.IssuedDigest)) != 1 {
+		return nil, sessionError(403, "runner credential changed or revoked")
+	}
+	var principal Principal
+	if json.Unmarshal(tx.Bucket([]byte(bucketPrincipals)).Get([]byte(p.PrincipalID)), &principal) != nil || !runnerPrincipalUsable(&principal, b.now()) {
+		return nil, sessionError(403, "account unavailable")
+	}
+	token, err := b.store.open(runnerReceiptKind, p.ID+"|"+p.IssuedRunner, p.PrincipalID, p.Receipt)
+	if err != nil || subtle.ConstantTimeCompare([]byte(tokenDigest(token)), []byte(p.IssuedDigest)) != 1 {
+		return nil, sessionError(410, "pairing receipt unavailable; revoke the runner and pair again")
+	}
+	return &runnerproto.RunnerCredential{RunnerID: p.IssuedRunner, Token: token}, nil
+}
+
+// acknowledgeReceipt drops the sealed credential once the runner proves it
+// saved it by authenticating with it. Repeating the acknowledgement is a
+// no-op, so a lost response never needs another enrollment.
+func (b *sessionBroker) acknowledgeReceipt(id string, runner *runnerRecord) error {
+	if len(id) != 43 {
+		return sessionError(404, "pairing unavailable")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.store.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketRunnerPairings))
+		raw := bucket.Get([]byte(id))
+		if raw == nil {
+			return nil
+		}
+		var p runnerPairing
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return err
+		}
+		if p.Delivery != runnerproto.PairingDeliveryRecoverable || p.IssuedRunner != runner.Runner.ID {
+			return sessionError(404, "pairing unavailable")
+		}
+		if p.Decision != "issued" {
+			return nil
+		}
+		p.Decision, p.Receipt = "consumed", nil
+		if err := b.store.audit(tx, p.PrincipalID, "runner.credential.received", p.IssuedRunner, ""); err != nil {
+			return err
+		}
+		return putJSON(bucket, id, p)
+	})
 }
 
 func (h *proxyHandler) handleRunnerPairing(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +408,19 @@ func (h *proxyHandler) handleRunnerPairing(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := strings.TrimPrefix(path, "/")
+	if receipt, ok := strings.CutSuffix(id, "/ack"); ok && !strings.Contains(receipt, "/") {
+		runner, err := b.runnerCredential(r)
+		if err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		if err := b.acknowledgeReceipt(receipt, runner); err != nil {
+			sessionHTTPError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if strings.Contains(id, "/") {
 		http.NotFound(w, r)
 		return

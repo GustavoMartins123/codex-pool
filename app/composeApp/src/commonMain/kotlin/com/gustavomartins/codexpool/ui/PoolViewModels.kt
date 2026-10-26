@@ -15,6 +15,7 @@ fun Throwable.userMessage(): String = when (this) {
     is SessionProtocolException -> message.orEmpty()
     is SerializationException -> "Resposta incompatível com o contrato do pool."
     is IllegalArgumentException -> message.orEmpty()
+    is BootstrapFailure -> message.orEmpty()
     else -> "A operação falhou (${this::class.simpleName}). Verifique a conexão e tente novamente."
 }
 
@@ -68,9 +69,9 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
     }
 
     /** Saves a runner command key for the selected pool; pairing must not proceed if this fails. */
-    suspend fun addCommandKey(key: String) {
+    suspend fun addCommandKey(key: String, owner: Credentials? = null) {
         val accounts = requireNotNull(mutable.value.accounts) { "Armazenamento de provedores indisponível." }
-        val updated = accounts.withCommandKey(key)
+        val updated = accounts.withCommandKey(key, owner)
         store.write(updated)
         mutable.update { it.copy(accounts = updated) }
     }
@@ -117,13 +118,20 @@ data class DashboardState(
     val pairingOpen: Boolean = false,
     val pairing: PairingReview? = null,
     val pairingComplete: Boolean = false,
+    val bootstrap: BootstrapProgress? = null,
     val error: String? = null,
 )
 
-class DashboardViewModel(private val api: PoolApi, private val signer: CommandSigner = CommandSigner.Disabled) : ViewModel() {
+class DashboardViewModel(
+    private val api: PoolApi,
+    private val signer: CommandSigner = CommandSigner.Disabled,
+    private val bootstrapClients: BootstrapClientFactory? = null,
+) : ViewModel() {
     private val mutable = MutableStateFlow(DashboardState())
     val state = mutable.asStateFlow()
     private var pairingKey: String? = null
+    private var bootstrap: BootstrapCoordinator? = null
+    private val bootstrapJobs = mutableListOf<Job>()
     init { refresh() }
 
     fun select(tab: DashboardTab) {
@@ -187,16 +195,52 @@ class DashboardViewModel(private val api: PoolApi, private val signer: CommandSi
     fun dismissPairing() {
         if (mutable.value.loading) return
         pairingKey = null
-        mutable.update { it.copy(pairingOpen = false, pairing = null, pairingComplete = false, error = null) }
+        stopBootstrap()
+        mutable.update { it.copy(pairingOpen = false, pairing = null, pairingComplete = false, bootstrap = null, error = null) }
     }
     fun reviewPairing(link: String) = action {
-        mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false) }
+        mutable.update { it.copy(pairingOpen = true, pairing = null, pairingComplete = false, bootstrap = null) }
         pairingKey = null
-        val qr = parsePairingLink(link, api.credentials.baseUrl)
-        val pairing = api.reviewPairing(link)
-        pairingKey = qr.commandKey
-        mutable.update { it.copy(pairing = pairing) }
+        stopBootstrap()
+        when (val qr = parseRunnerQr(link, api.credentials.baseUrl, kotlin.time.Clock.System.now())) {
+            is RunnerQr.Bootstrap -> startBootstrap(qr.payload)
+            is RunnerQr.Pairing -> {
+                val pairing = api.reviewPairing(link)
+                pairingKey = qr.qr.commandKey
+                mutable.update { it.copy(pairing = pairing) }
+            }
+        }
     }
+
+    private fun startBootstrap(payload: BootstrapPayload) {
+        val factory = requireNotNull(bootstrapClients) {
+            "Este aparelho ainda não pareia runners pela rede local. No computador, use runnerd pair --url com o endereço do pool."
+        }
+        // The coordinator keeps this screen's account: api and signer belong to it.
+        val coordinator = BootstrapCoordinator(api, { BootstrapApi.connect(factory, payload) }, signer::remember)
+        bootstrap = coordinator
+        bootstrapJobs += viewModelScope.launch { coordinator.progress.collect { p -> mutable.update { it.copy(bootstrap = p) } } }
+        runBootstrap { it.prepare() }
+    }
+    fun approveBootstrap() = runBootstrap { it.approve() }
+    fun denyBootstrap() = runBootstrap { it.deny() }
+
+    private fun runBootstrap(block: suspend (BootstrapCoordinator) -> Unit) {
+        val coordinator = bootstrap ?: return
+        // Failures land in the coordinator's progress, which the dialog shows.
+        bootstrapJobs += viewModelScope.launch { runCatching { block(coordinator) }.exceptionOrNull()?.let { if (it is CancellationException) throw it } }
+    }
+
+    private fun stopBootstrap() {
+        val coordinator = bootstrap ?: return
+        bootstrap = null
+        bootstrapJobs.forEach { it.cancel() }
+        bootstrapJobs.clear()
+        // The runner should hear the cancellation even if the screen closes meanwhile.
+        viewModelScope.launch { withContext(NonCancellable) { coordinator.cancel() } }
+    }
+
+    override fun onCleared() { bootstrap?.close() }
     fun decidePairing(id: String, decision: Decision, code: String) = action {
         require(mutable.value.pairing?.id == id) { "O pedido de pareamento mudou. Leia o QR novamente." }
         // Keep the runner's key before approving: a runner whose key was lost refuses every command.

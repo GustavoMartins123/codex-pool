@@ -28,6 +28,26 @@ const ApprovalSigningDomain = "codexpool-approval/1"
 
 const ExitAutoPermissionsDisabled = "auto_permissions_disabled"
 
+const PairingDeliveryRecoverable = "recoverable/1"
+
+const BootstrapVersion = 1
+
+const BootstrapMaxLinkBytes = 2048
+
+const BootstrapMaxEndpoints = 4
+
+const BootstrapTTLSeconds = 300
+
+const BootstrapReceiptSeconds = 30
+
+const BootstrapMaxRequestBytes = 16384
+
+const BootstrapMaxResponseBytes = 65536
+
+const BootstrapSecretHeader = "X-Codexpool-Bootstrap"
+
+const BootstrapPathPrefix = "/bootstrap/v1"
+
 const AgentCodex = "codex"
 
 const AgentClaude = "claude"
@@ -77,6 +97,30 @@ const RunnerStatusOnline = "online"
 const RunnerStatusOffline = "offline"
 
 const RunnerStatusReconnected = "reconnected"
+
+const BootstrapPhaseWaiting = "waiting"
+
+const BootstrapPhaseAwaitingApproval = "awaiting_approval"
+
+const BootstrapPhasePaired = "paired"
+
+const BootstrapPhaseFailed = "failed"
+
+const BootstrapPhaseCancelled = "cancelled"
+
+const BootstrapPhaseExpired = "expired"
+
+const BootstrapErrorPoolUnreachable = "pool_unreachable"
+
+const BootstrapErrorPoolRejected = "pool_rejected"
+
+const BootstrapErrorPoolIncompatible = "pool_incompatible"
+
+const BootstrapErrorPairingDenied = "pairing_denied"
+
+const BootstrapErrorPairingExpired = "pairing_expired"
+
+const BootstrapErrorSaveFailed = "save_failed"
 
 type Workspace struct {
 	Mode   string `json:"mode"`
@@ -220,9 +264,10 @@ type Message struct {
 }
 
 type PairingRequest struct {
-	Name string `json:"name"`
-	OS   string `json:"os"`
-	Arch string `json:"arch"`
+	Name     string `json:"name"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type PairingStart struct {
@@ -231,6 +276,7 @@ type PairingStart struct {
 	UserCode     string    `json:"user_code"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	Interval     int       `json:"interval"`
+	Delivery     string    `json:"delivery,omitempty"`
 }
 
 type PairingReview struct {
@@ -292,6 +338,52 @@ type ExecutionError struct {
 
 type RunnerList struct {
 	Runners []Runner `json:"runners"`
+}
+
+type BootstrapPayload struct {
+	Version         int       `json:"version"`
+	BootstrapID     string    `json:"bootstrap_id"`
+	Endpoints       []string  `json:"endpoints"`
+	TLSSPKISHA256   string    `json:"tls_spki_sha256"`
+	BootstrapSecret string    `json:"bootstrap_secret"`
+	ExpiresAt       time.Time `json:"expires_at"`
+}
+
+type BootstrapBegin struct {
+	BootstrapID string `json:"bootstrap_id"`
+	OperationID string `json:"operation_id"`
+	PoolURL     string `json:"pool_url"`
+}
+
+type BootstrapTicket struct {
+	BootstrapID  string    `json:"bootstrap_id"`
+	OperationID  string    `json:"operation_id"`
+	PoolURL      string    `json:"pool_url"`
+	PairingID    string    `json:"pairing_id"`
+	UserCode     string    `json:"user_code"`
+	Name         string    `json:"name"`
+	OS           string    `json:"os"`
+	Arch         string    `json:"arch"`
+	CommandKey   string    `json:"command_key"`
+	CommandKeyID string    `json:"command_key_id"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+type BootstrapStatus struct {
+	BootstrapID  string `json:"bootstrap_id"`
+	Phase        string `json:"phase"`
+	OperationID  string `json:"operation_id,omitempty"`
+	PoolURL      string `json:"pool_url,omitempty"`
+	PairingID    string `json:"pairing_id,omitempty"`
+	RunnerID     string `json:"runner_id,omitempty"`
+	CommandKeyID string `json:"command_key_id,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Message      string `json:"message,omitempty"`
+}
+
+type BootstrapOperation struct {
+	BootstrapID string `json:"bootstrap_id"`
+	OperationID string `json:"operation_id"`
 }
 
 const EventSettings = "session.settings"
