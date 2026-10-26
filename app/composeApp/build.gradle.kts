@@ -9,6 +9,20 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val contractRoot = rootProject.projectDir.parentFile
+val verifyRunnerContracts = tasks.register<Exec>("verifyRunnerContracts") {
+    group = "verification"
+    description = "Reject missing or stale Go/Kotlin runner contracts."
+    workingDir(contractRoot)
+    commandLine("go", "run", "./cmd/contractgen", "-check")
+}
+tasks.register<Exec>("generateRunnerContracts") {
+    group = "code generation"
+    description = "Generate Go and Kotlin runner contracts from contracts/runner.json."
+    workingDir(contractRoot)
+    commandLine("go", "run", "./cmd/contractgen")
+}
+
 val generatedPoolConfig = layout.buildDirectory.dir("generated/poolConfig/commonMain")
 val generatePoolConfig = tasks.register("generatePoolConfig") {
     val environment = rootProject.layout.projectDirectory.file(".env")
@@ -87,6 +101,11 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
             implementation(libs.turbine)
+        }
+    }
+    targets.configureEach {
+        compilations.configureEach {
+            compileTaskProvider.configure { dependsOn(verifyRunnerContracts) }
         }
     }
 }
