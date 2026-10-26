@@ -11,6 +11,58 @@ TAR.GZ archives, together with `SHA256SUMS`. Verify the SHA-256 checksum before
 running a downloaded binary. The `.sh` files are build scripts; the executable
 is `runnerd` or `runnerd.exe`.
 
+## Pair from the app
+
+The same `runnerd` binary works with any pool: it knows none until the app
+tells it. Run it without arguments on the machine:
+
+```bash
+./runnerd
+```
+
+On first use it prints a QR. In the app, open **Runners**, choose the option to
+connect a runner, scan the QR, check the machine name and authorize it. The
+runner saves its credential and connects to the pool in the same process; later
+starts skip the QR and connect directly.
+
+How it works:
+
+- The QR lists the machine's private IPv4 LAN addresses, a one-time secret and
+  the hash of a throwaway TLS certificate. It names no pool.
+- The app connects to the machine over TLS pinned to that certificate, sends
+  the pool origin of the account that scanned the QR, and receives the pairing
+  request the runner opened at that pool. The app's login never reaches the
+  runner, and the command key never reaches the pool.
+- The app stores the command key with that account, then approves the request.
+  The pool sends the credential only to the runner, which saves it before
+  reporting success. The app shows the runner online once the pool sees it.
+- The LAN service answers only this flow and closes when pairing ends. A QR
+  expires after 5 minutes and a new one replaces it; each QR can bind one
+  pairing only.
+
+Requirements and limits:
+
+- The phone must reach the computer directly on the LAN while pairing. Being
+  on the same Wi-Fi is not enough when the network isolates clients. Allow
+  `runnerd` through the computer's firewall if needed. IPv6-only networks are
+  not supported yet.
+- Treat the QR as a secret: whoever scans it before you can start a pairing.
+  Nothing is authorized until you approve it in the app.
+- Pairing from the app is available on Android. On iOS, use the launch
+  configuration below.
+- Without arguments, `runnerd` uses `codex` and `claude` from `PATH` (native
+  `.exe` files on Windows) and keeps its state and workspaces in the user
+  configuration directory. It does not install agents. Use a launch
+  configuration for other paths, labels, allowed workspace paths or
+  `allow_auto`.
+- The pool must support recoverable credential delivery. Older pools are
+  refused with a message asking to update them.
+
+If the runner stops after the app approves but before it saves the
+credential, start it again within about 10 minutes: it finishes the same
+pairing from its journal without a new QR. Later than that, revoke the unused
+runner in the app and pair again.
+
 ## Launch configuration
 
 Create `runner.launch.json` outside the repository. It contains paths and
@@ -147,6 +199,14 @@ native agent state. User path and repository workspaces are preserved.
 
 ## Troubleshooting
 
+- `no private IPv4 LAN address found`: connect the computer to the phone's
+  network, or use a launch configuration with `pair --url`.
+- The app cannot reach the computer: check that both are on the same network
+  without client isolation and that the firewall allows `runnerd`.
+- `paired, but no agent is available`: install Codex or Claude Code so it is
+  on `PATH`, or start with `runnerd run --config`.
+- `invalid pairing journal`: the file next to the runner state is damaged.
+  Move it away, revoke any unused runner in the app, and start again.
 - `runner state unavailable`: pair the machine or correct the `state` path.
 - `runner has no command key`: the machine was paired before command keys
   existed. Run `runnerd rotate` and scan the new QR in the app.
