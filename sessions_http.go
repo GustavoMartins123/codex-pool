@@ -60,7 +60,7 @@ func (h *proxyHandler) handleMyRunners(w http.ResponseWriter, r *http.Request) {
 				sessionHTTPError(w, err)
 				return
 			}
-			respondJSON(w, map[string]any{"runners": items})
+			respondJSON(w, runnerproto.RunnerList{Runners: items})
 		default:
 			w.Header().Set("Allow", "GET")
 			respondJSONError(w, 405, "method not allowed")

@@ -63,7 +63,7 @@ func (b *sessionBroker) resumeConversation(principal, client, id string) (*runne
 	next.ResumeRequested = true
 	next.UpdatedAt = b.now()
 	next.CancelRequested = false
-	if err := b.saveLocked(next, "conversation.resumed", principal, newSessionEvent("state", map[string]any{"state": "pending_runner", "source": "user_resume"})); err != nil {
+	if err := b.saveLocked(next, "conversation.resumed", principal, newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: "pending_runner", Source: "user_resume"})); err != nil {
 		return nil, err
 	}
 	b.offerLocked(next)

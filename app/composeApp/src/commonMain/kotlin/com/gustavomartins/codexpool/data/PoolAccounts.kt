@@ -3,9 +3,6 @@ package com.gustavomartins.codexpool.data
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.jsonObject
 
-/** Runner command keys stay with their pool and fit in one signed command. */
-const val MAX_COMMAND_KEYS = CommandSigning.MAX_SIGNATURES
-
 @Serializable
 data class PoolProvider(val name: String, val baseUrl: String, val credentials: Credentials? = null,
     val commandKeys: List<String> = emptyList())
@@ -24,7 +21,7 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
                     "A credencial não pertence ao domínio do provedor."
                 }
             }
-            require(it.commandKeys.size <= MAX_COMMAND_KEYS && it.commandKeys.distinct().size == it.commandKeys.size) {
+            require(it.commandKeys.size <= RunnerContract.MaxCommandSignatures && it.commandKeys.distinct().size == it.commandKeys.size) {
                 "Chaves de runner armazenadas inválidas."
             }
             it.commandKeys.forEach(CommandSigning::decodeKey)
@@ -38,8 +35,8 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
     }).validate()
 
     fun withCommandKey(key: String): PoolAccounts {
-        require(key in selected.commandKeys || selected.commandKeys.size < MAX_COMMAND_KEYS) {
-            "Limite de $MAX_COMMAND_KEYS chaves de runner atingido neste provedor."
+        require(key in selected.commandKeys || selected.commandKeys.size < RunnerContract.MaxCommandSignatures) {
+            "Limite de ${RunnerContract.MaxCommandSignatures} chaves de runner atingido neste provedor."
         }
         return copy(providers = providers.map {
             if (it.baseUrl == selectedUrl) it.copy(commandKeys = it.commandKeys - key + key) else it

@@ -1,0 +1,643 @@
+{
+  "schema_version": 1,
+  "constants": [
+    {
+      "go": "Version",
+      "kotlin": "ProtocolVersion",
+      "value": 3
+    },
+    {
+      "go": "MaxMessageBytes",
+      "kotlin": "MaxMessageBytes",
+      "value": 262144
+    },
+    {
+      "go": "MaxInputBytes",
+      "kotlin": "MaxInputBytes",
+      "value": 65536
+    },
+    {
+      "go": "CommandKeyBytes",
+      "kotlin": "CommandKeyBytes",
+      "value": 32
+    },
+    {
+      "go": "MaxCommandSignatures",
+      "kotlin": "MaxCommandSignatures",
+      "value": 32
+    },
+    {
+      "go": "CommandKeyIDBytes",
+      "kotlin": "CommandKeyIDBytes",
+      "value": 16
+    },
+    {
+      "go": "commandKeyIDLength",
+      "kotlin": "CommandKeyIDLength",
+      "value": 22
+    },
+    {
+      "go": "commandSignatureLength",
+      "kotlin": "CommandSignatureLength",
+      "value": 43
+    },
+    {
+      "go": "CommandKeyIDDomain",
+      "kotlin": "CommandKeyIDDomain",
+      "value": "codexpool-command-key-id"
+    },
+    {
+      "go": "TurnSigningDomain",
+      "kotlin": "TurnSigningDomain",
+      "value": "codexpool-turn/1"
+    },
+    {
+      "go": "ApprovalSigningDomain",
+      "kotlin": "ApprovalSigningDomain",
+      "value": "codexpool-approval/1"
+    },
+    {
+      "go": "ExitAutoPermissionsDisabled",
+      "kotlin": "ExitAutoPermissionsDisabled",
+      "value": "auto_permissions_disabled"
+    }
+  ],
+  "enums": [
+    {
+      "name": "Agent",
+      "values": [
+        {
+          "name": "Codex",
+          "wire": "codex"
+        },
+        {
+          "name": "Claude",
+          "wire": "claude"
+        }
+      ]
+    },
+    {
+      "name": "WorkspaceMode",
+      "values": [
+        {
+          "name": "Ephemeral",
+          "wire": "ephemeral"
+        },
+        {
+          "name": "Path",
+          "wire": "path"
+        },
+        {
+          "name": "Repo",
+          "wire": "repo"
+        }
+      ]
+    },
+    {
+      "name": "PermissionMode",
+      "values": [
+        {
+          "name": "Auto",
+          "wire": "auto"
+        },
+        {
+          "name": "Gated",
+          "wire": "gated"
+        }
+      ]
+    },
+    {
+      "name": "SessionState",
+      "values": [
+        {
+          "name": "Created",
+          "wire": "created"
+        },
+        {
+          "name": "PendingRunner",
+          "wire": "pending_runner"
+        },
+        {
+          "name": "Claimed",
+          "wire": "claimed"
+        },
+        {
+          "name": "Running",
+          "wire": "running"
+        },
+        {
+          "name": "WaitingInput",
+          "wire": "waiting_input"
+        },
+        {
+          "name": "WaitingApproval",
+          "wire": "waiting_approval"
+        },
+        {
+          "name": "Orphaned",
+          "wire": "orphaned"
+        },
+        {
+          "name": "Closing",
+          "wire": "closing"
+        },
+        {
+          "name": "Closed",
+          "wire": "closed"
+        }
+      ]
+    },
+    {
+      "name": "Decision",
+      "values": [
+        {
+          "name": "Approve",
+          "wire": "approve"
+        },
+        {
+          "name": "Deny",
+          "wire": "deny"
+        }
+      ]
+    },
+    {
+      "name": "DeltaKind",
+      "values": [
+        {
+          "name": "Text",
+          "wire": "text"
+        },
+        {
+          "name": "Thinking",
+          "wire": "thinking"
+        },
+        {
+          "name": "ToolCall",
+          "wire": "tool_call"
+        },
+        {
+          "name": "ToolResult",
+          "wire": "tool_result"
+        }
+      ]
+    },
+    {
+      "name": "RunnerStatus",
+      "values": [
+        {
+          "name": "Online",
+          "wire": "online"
+        },
+        {
+          "name": "Offline",
+          "wire": "offline"
+        },
+        {
+          "name": "Reconnected",
+          "wire": "reconnected"
+        }
+      ]
+    }
+  ],
+  "types": [
+    {
+      "name": "Workspace",
+      "fields": [
+        {"json": "mode", "go": "Mode", "type": "WorkspaceMode"},
+        {"json": "target", "go": "Target", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "mode", "name": "mode"},
+        {"field": "target", "name": "target", "nullable": true, "default": null}
+      ]
+    },
+    {
+      "name": "CreateSession",
+      "fields": [
+        {"json": "agent", "go": "Agent", "type": "Agent"},
+        {"json": "model", "go": "Model", "type": "string"},
+        {"json": "reasoning_effort", "go": "ReasoningEffort", "type": "string"},
+        {"json": "workspace", "go": "Workspace", "type": "Workspace"},
+        {"json": "permission_mode", "go": "PermissionMode", "type": "PermissionMode"},
+        {"json": "prompt", "go": "Prompt", "type": "string", "omit_empty": true},
+        {"json": "initial_input", "go": "InitialInput", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "agent", "name": "agent"},
+        {"field": "model", "name": "model"},
+        {"field": "workspace", "name": "workspace"},
+        {"field": "permission_mode", "name": "permissionMode"},
+        {"field": "initial_input", "name": "prompt", "nullable": true, "default": null},
+        {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""}
+      ]
+    },
+    {
+      "name": "TurnSettings",
+      "fields": [
+        {"json": "model", "go": "Model", "type": "string"},
+        {"json": "reasoning_effort", "go": "ReasoningEffort", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "model", "name": "model"},
+        {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""}
+      ]
+    },
+    {
+      "name": "TurnInput",
+      "fields": [
+        {"json": "input", "go": "Input", "type": "string"},
+        {"json": "pending_input_id", "go": "PendingInputID", "type": "string", "omit_empty": true},
+        {"json": "model", "go": "Model", "type": "string", "pointer": true, "omit_empty": true},
+        {"json": "reasoning_effort", "go": "ReasoningEffort", "type": "string", "pointer": true, "omit_empty": true},
+        {"json": "issued_at", "go": "IssuedAt", "type": "long", "omit_empty": true},
+        {"json": "signatures", "go": "Signatures", "type": "signatures", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "input", "name": "input"},
+        {"field": "model", "name": "model", "nullable": true, "default": null},
+        {"field": "reasoning_effort", "name": "reasoningEffort", "nullable": true, "default": null},
+        {"field": "issued_at", "name": "issuedAt", "default": 0},
+        {"field": "signatures", "name": "signatures", "default": {}},
+        {"field": "pending_input_id", "name": "pendingInputId", "nullable": true, "default": null}
+      ]
+    },
+    {
+      "name": "ApprovalDecision",
+      "fields": [
+        {"json": "decision", "go": "Decision", "type": "Decision"},
+        {"json": "issued_at", "go": "IssuedAt", "type": "long", "omit_empty": true},
+        {"json": "signatures", "go": "Signatures", "type": "signatures", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "decision", "name": "decision"},
+        {"field": "issued_at", "name": "issuedAt", "default": 0},
+        {"field": "signatures", "name": "signatures", "default": {}}
+      ]
+    },
+    {
+      "name": "Approval",
+      "fields": [
+        {"json": "approval_id", "go": "ID", "type": "string"},
+        {"json": "command", "go": "Command", "type": "string"},
+        {"json": "context", "go": "Context", "type": "string"},
+        {"json": "turn_id", "go": "TurnID", "type": "string"},
+        {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"}
+      ],
+      "kotlin": [
+        {"field": "approval_id", "name": "approvalId"},
+        {"field": "command", "name": "command"},
+        {"field": "context", "name": "context"}
+      ]
+    },
+    {
+      "name": "TurnSummary",
+      "fields": [
+        {"json": "turn_id", "go": "TurnID", "type": "string"},
+        {"json": "tokens", "go": "Tokens", "type": "long"},
+        {"json": "duration_ms", "go": "DurationMS", "type": "long"},
+        {"json": "exit_code", "go": "ExitCode", "type": "int"}
+      ],
+      "kotlin": [
+        {"field": "turn_id", "name": "turnId"},
+        {"field": "tokens", "name": "tokens"},
+        {"field": "duration_ms", "name": "durationMs"},
+        {"field": "exit_code", "name": "exitCode", "default": 0}
+      ],
+      "kotlin_name": "TurnFinished"
+    },
+    {
+      "name": "AgentCheckpoint",
+      "fields": [
+        {"json": "version", "go": "Version", "type": "int"},
+        {"json": "native_session_id", "go": "NativeSessionID", "type": "string"},
+        {"json": "native_log_id", "go": "NativeLogID", "type": "string"},
+        {"json": "digest", "go": "Digest", "type": "string"},
+        {"json": "ready", "go": "Ready", "type": "boolean"}
+      ]
+    },
+    {
+      "name": "PendingInput",
+      "fields": [
+        {"json": "id", "go": "ID", "type": "string"},
+        {"json": "input", "go": "Input", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "id", "name": "id"},
+        {"field": "input", "name": "input"}
+      ]
+    },
+    {
+      "name": "Session",
+      "fields": [
+        {"json": "id", "go": "ID", "type": "string"},
+        {"json": "conversation_id", "go": "ConversationID", "type": "string"},
+        {"json": "principal_id", "go": "PrincipalID", "type": "string"},
+        {"json": "client_id", "go": "ClientID", "type": "string"},
+        {"json": "agent", "go": "Agent", "type": "Agent"},
+        {"json": "model", "go": "Model", "type": "string"},
+        {"json": "reasoning_effort", "go": "ReasoningEffort", "type": "string"},
+        {"json": "workspace", "go": "Workspace", "type": "Workspace"},
+        {"json": "permission_mode", "go": "PermissionMode", "type": "PermissionMode"},
+        {"json": "state", "go": "State", "type": "SessionState"},
+        {"json": "runner_id", "go": "RunnerID", "type": "string", "omit_empty": true},
+        {"json": "lease_expires_at", "go": "LeaseExpiresAt", "type": "timestamp"},
+        {"json": "turn_id", "go": "TurnID", "type": "string", "omit_empty": true},
+        {"json": "created_at", "go": "CreatedAt", "type": "timestamp"},
+        {"json": "updated_at", "go": "UpdatedAt", "type": "timestamp"},
+        {"json": "closed_at", "go": "ClosedAt", "type": "timestamp", "pointer": true, "omit_empty": true},
+        {"json": "turns", "go": "Turns", "type": "int"},
+        {"json": "closed_reason", "go": "ClosedReason", "type": "string", "omit_empty": true},
+        {"json": "approvals", "go": "Approvals", "type": "[]Approval"},
+        {"json": "turn_summaries", "go": "Summaries", "type": "[]TurnSummary"},
+        {"json": "checkpoint", "go": "Checkpoint", "type": "AgentCheckpoint", "pointer": true, "omit_empty": true},
+        {"json": "resume_requested", "go": "ResumeRequested", "type": "boolean"},
+        {"json": "pending_input", "go": "PendingInput", "type": "PendingInput", "pointer": true, "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "id", "name": "id"},
+        {"field": "agent", "name": "agent"},
+        {"field": "model", "name": "model"},
+        {"field": "workspace", "name": "workspace"},
+        {"field": "permission_mode", "name": "permissionMode"},
+        {"field": "state", "name": "state"},
+        {"field": "runner_id", "name": "runnerId", "nullable": true, "default": null},
+        {"field": "turn_id", "name": "turnId", "nullable": true, "default": null},
+        {"field": "closed_reason", "name": "closedReason", "nullable": true, "default": null},
+        {"field": "approvals", "name": "approvals", "default": []},
+        {"field": "conversation_id", "name": "conversationId"},
+        {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""},
+        {"field": "pending_input", "name": "pendingInput", "nullable": true, "default": null}
+      ]
+    },
+    {
+      "name": "Hello",
+      "fields": [
+        {"json": "agents", "go": "Agents", "type": "[]Agent"},
+        {"json": "os", "go": "OS", "type": "string"},
+        {"json": "arch", "go": "Arch", "type": "string"},
+        {"json": "labels", "go": "Labels", "type": "[]string"},
+        {"json": "allowed_paths", "go": "AllowedPaths", "type": "[]string"},
+        {"json": "persistent_sessions", "go": "PersistentSessions", "type": "boolean"},
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true}
+      ]
+    },
+    {
+      "name": "Runner",
+      "fields": [
+        {"json": "id", "go": "ID", "type": "string"},
+        {"json": "name", "go": "Name", "type": "string"},
+        {"json": "online", "go": "Online", "type": "boolean"},
+        {"json": "agents", "go": "Agents", "type": "[]Agent"},
+        {"json": "labels", "go": "Labels", "type": "[]string"},
+        {"json": "allowed_paths", "go": "AllowedPaths", "type": "[]string"},
+        {"json": "os", "go": "OS", "type": "string"},
+        {"json": "arch", "go": "Arch", "type": "string"},
+        {"json": "revoked", "go": "Revoked", "type": "boolean"},
+        {"json": "created_at", "go": "CreatedAt", "type": "timestamp"},
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "id", "name": "id"},
+        {"field": "name", "name": "name"},
+        {"field": "online", "name": "online"},
+        {"field": "agents", "name": "agents"},
+        {"field": "revoked", "name": "revoked", "default": false},
+        {"field": "labels", "name": "labels", "default": []},
+        {"field": "allowed_paths", "name": "allowedPaths", "default": []}
+      ]
+    },
+    {
+      "name": "Message",
+      "fields": [
+        {"json": "version", "go": "Version", "type": "int"},
+        {"json": "type", "go": "Type", "type": "string"},
+        {"json": "session_id", "go": "SessionID", "type": "string", "omit_empty": true},
+        {"json": "turn_id", "go": "TurnID", "type": "string", "omit_empty": true},
+        {"json": "hello", "go": "Hello", "type": "Hello", "pointer": true, "omit_empty": true},
+        {"json": "session", "go": "Session", "type": "Session", "pointer": true, "omit_empty": true},
+        {"json": "checkpoint", "go": "Checkpoint", "type": "AgentCheckpoint", "pointer": true, "omit_empty": true},
+        {"json": "sessions", "go": "Sessions", "type": "[]string", "omit_empty": true},
+        {"json": "credential_path", "go": "CredentialPath", "type": "string", "omit_empty": true},
+        {"json": "input", "go": "Input", "type": "string", "omit_empty": true},
+        {"json": "settings", "go": "Settings", "type": "TurnSettings", "pointer": true, "omit_empty": true},
+        {"json": "kind", "go": "Kind", "type": "string", "omit_empty": true},
+        {"json": "content", "go": "Content", "type": "string", "omit_empty": true},
+        {"json": "approval_id", "go": "ApprovalID", "type": "string", "omit_empty": true},
+        {"json": "command", "go": "Command", "type": "string", "omit_empty": true},
+        {"json": "context", "go": "Context", "type": "string", "omit_empty": true},
+        {"json": "decision", "go": "Decision", "type": "string", "omit_empty": true},
+        {"json": "status", "go": "Status", "type": "string", "omit_empty": true},
+        {"json": "reason", "go": "Reason", "type": "string", "omit_empty": true},
+        {"json": "tokens", "go": "Tokens", "type": "long", "omit_empty": true},
+        {"json": "duration_ms", "go": "DurationMS", "type": "long", "omit_empty": true},
+        {"json": "exit_code", "go": "ExitCode", "type": "int", "omit_empty": true},
+        {"json": "sequence", "go": "Sequence", "type": "ulong", "omit_empty": true},
+        {"json": "issued_at", "go": "IssuedAt", "type": "long", "omit_empty": true},
+        {"json": "signatures", "go": "Signatures", "type": "signatures", "omit_empty": true}
+      ]
+    },
+    {
+      "name": "PairingRequest",
+      "fields": [
+        {"json": "name", "go": "Name", "type": "string"},
+        {"json": "os", "go": "OS", "type": "string"},
+        {"json": "arch", "go": "Arch", "type": "string"}
+      ]
+    },
+    {
+      "name": "PairingStart",
+      "fields": [
+        {"json": "id", "go": "ID", "type": "string"},
+        {"json": "device_secret", "go": "DeviceSecret", "type": "string"},
+        {"json": "user_code", "go": "UserCode", "type": "string"},
+        {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"},
+        {"json": "interval", "go": "Interval", "type": "int"}
+      ]
+    },
+    {
+      "name": "PairingReview",
+      "fields": [
+        {"json": "id", "go": "ID", "type": "string"},
+        {"json": "name", "go": "Name", "type": "string"},
+        {"json": "os", "go": "OS", "type": "string"},
+        {"json": "arch", "go": "Arch", "type": "string"},
+        {"json": "runner_id", "go": "RunnerID", "type": "string", "omit_empty": true},
+        {"json": "expires_at", "go": "ExpiresAt", "type": "timestamp"}
+      ],
+      "kotlin": [
+        {"field": "id", "name": "id"},
+        {"field": "name", "name": "name"},
+        {"field": "os", "name": "os"},
+        {"field": "arch", "name": "arch"},
+        {"field": "runner_id", "name": "runnerId", "nullable": true, "default": null},
+        {"field": "expires_at", "name": "expiresAt"}
+      ]
+    },
+    {
+      "name": "PairingDecision",
+      "fields": [
+        {"json": "decision", "go": "Decision", "type": "Decision"},
+        {"json": "user_code", "go": "UserCode", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "decision", "name": "decision"},
+        {"field": "user_code", "name": "userCode"}
+      ]
+    },
+    {
+      "name": "RunnerCredential",
+      "fields": [
+        {"json": "runner_id", "go": "RunnerID", "type": "string"},
+        {"json": "token", "go": "Token", "type": "string"}
+      ]
+    },
+    {
+      "name": "StateEvent",
+      "fields": [
+        {"json": "state", "go": "State", "type": "SessionState"},
+        {"json": "source", "go": "Source", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "state", "name": "state"}
+      ]
+    },
+    {
+      "name": "TurnMessage",
+      "fields": [
+        {"json": "turn_id", "go": "TurnID", "type": "string"},
+        {"json": "input", "go": "Input", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "turn_id", "name": "turnId"},
+        {"field": "input", "name": "input"}
+      ]
+    },
+    {
+      "name": "TurnStarted",
+      "fields": [
+        {"json": "turn_id", "go": "TurnID", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "turn_id", "name": "turnId"}
+      ]
+    },
+    {
+      "name": "TurnDelta",
+      "fields": [
+        {"json": "turn_id", "go": "TurnID", "type": "string"},
+        {"json": "kind", "go": "Kind", "type": "DeltaKind"},
+        {"json": "content", "go": "Content", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "turn_id", "name": "turnId"},
+        {"field": "kind", "name": "kind"},
+        {"field": "content", "name": "content"}
+      ]
+    },
+    {
+      "name": "ApprovalResolved",
+      "fields": [
+        {"json": "approval_id", "go": "ApprovalID", "type": "string"},
+        {"json": "decision", "go": "Decision", "type": "Decision"},
+        {"json": "source", "go": "Source", "type": "string", "omit_empty": true}
+      ],
+      "kotlin": [
+        {"field": "approval_id", "name": "approvalId"},
+        {"field": "decision", "name": "decision"}
+      ]
+    },
+    {
+      "name": "RunnerStatusEvent",
+      "fields": [
+        {"json": "status", "go": "Status", "type": "RunnerStatus"}
+      ],
+      "kotlin": [
+        {"field": "status", "name": "status"}
+      ]
+    },
+    {
+      "name": "ClosedEvent",
+      "fields": [
+        {"json": "reason", "go": "Reason", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "reason", "name": "reason"}
+      ]
+    },
+    {
+      "name": "ExecutionError",
+      "fields": [
+        {"json": "message", "go": "Message", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "message", "name": "message"}
+      ]
+    },
+    {
+      "name": "RunnerList",
+      "fields": [
+        {"json": "runners", "go": "Runners", "type": "[]Runner"}
+      ],
+      "kotlin": [
+        {"field": "runners", "name": "runners"}
+      ]
+    }
+  ],
+  "events": [
+    {
+      "wire": "session.settings",
+      "name": "Settings",
+      "type": "TurnSettings"
+    },
+    {
+      "wire": "turn.input",
+      "name": "Input",
+      "type": "TurnMessage"
+    },
+    {
+      "wire": "state",
+      "name": "State",
+      "type": "StateEvent"
+    },
+    {
+      "wire": "turn.started",
+      "name": "Started",
+      "type": "TurnStarted"
+    },
+    {
+      "wire": "turn.delta",
+      "name": "Delta",
+      "type": "TurnDelta"
+    },
+    {
+      "wire": "turn.finished",
+      "name": "Finished",
+      "type": "TurnFinished"
+    },
+    {
+      "wire": "approval.requested",
+      "name": "Requested",
+      "type": "Approval"
+    },
+    {
+      "wire": "approval.resolved",
+      "name": "Resolved",
+      "type": "ApprovalResolved"
+    },
+    {
+      "wire": "runner.status",
+      "name": "RunnerChanged",
+      "type": "RunnerStatusEvent"
+    },
+    {
+      "wire": "session.closed",
+      "name": "Closed",
+      "type": "ClosedEvent"
+    },
+    {
+      "wire": "error",
+      "name": "Error",
+      "type": "ExecutionError"
+    }
+  ]
+}

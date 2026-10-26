@@ -1,1 +1,4 @@
 *.sh text eol=lf
+/contracts/*.json text eol=lf
+/internal/runnerproto/contracts_generated.go text eol=lf
+/app/composeApp/src/commonMain/kotlin/com/gustavomartins/codexpool/data/RunnerContracts.generated.kt text eol=lf

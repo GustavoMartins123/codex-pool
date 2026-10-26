@@ -17,7 +17,7 @@ class CommandKeyStorageTest {
     @BeforeTest fun dispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
     @AfterTest fun resetDispatcher() { Dispatchers.resetMain() }
     private val url = "https://pool.example"
-    private fun key(seed: Int) = base64UrlEncode(ByteArray(CommandSigning.KEY_BYTES) { (seed + it).toByte() })
+    private fun key(seed: Int) = base64UrlEncode(ByteArray(RunnerContract.CommandKeyBytes) { (seed + it).toByte() })
 
     @Test fun keysStayWithTheirPoolDeduplicatedAndBounded() {
         val other = "https://other.example"
@@ -25,11 +25,11 @@ class CommandKeyStorageTest {
         accounts = accounts.withCommandKey(key(1)).withCommandKey(key(1))
         assertEquals(listOf(key(1)), accounts.selected.commandKeys)
         assertTrue(accounts.providers.single { it.baseUrl == other }.commandKeys.isEmpty())
-        for (seed in 2..MAX_COMMAND_KEYS) accounts = accounts.withCommandKey(key(seed))
-        assertEquals(MAX_COMMAND_KEYS, accounts.selected.commandKeys.size)
+        for (seed in 2..RunnerContract.MaxCommandSignatures) accounts = accounts.withCommandKey(key(seed))
+        assertEquals(RunnerContract.MaxCommandSignatures, accounts.selected.commandKeys.size)
         assertEquals(key(1), accounts.selected.commandKeys.first())
-        assertFailsWith<IllegalArgumentException> { accounts.withCommandKey(key(MAX_COMMAND_KEYS + 1)) }
-        assertEquals(MAX_COMMAND_KEYS, accounts.withCommandKey(key(1)).selected.commandKeys.size)
+        assertFailsWith<IllegalArgumentException> { accounts.withCommandKey(key(RunnerContract.MaxCommandSignatures + 1)) }
+        assertEquals(RunnerContract.MaxCommandSignatures, accounts.withCommandKey(key(1)).selected.commandKeys.size)
         assertEquals(accounts, decodeStoredAccounts(PoolJson.encodeToString(accounts)).accounts)
         assertTrue(decodeStoredAccounts("""{"version":2,"selectedUrl":"$url","providers":[{"name":"A","baseUrl":"$url"}]}""")
             .accounts.selected.commandKeys.isEmpty())
@@ -46,10 +46,10 @@ class CommandKeyStorageTest {
             val signer = CommandSigner(keys = { accounts.selected.commandKeys }, store = {})
             val signed = signer.signTurn(session, "input")
             assertEquals(count, signed.signatures.size)
-            assertTrue(signed.signatures.size <= CommandSigning.MAX_SIGNATURES)
+            assertTrue(signed.signatures.size <= RunnerContract.MaxCommandSignatures)
             assertEquals(count, signer.signApproval("s", Approval("a", "command", ""), Decision.Approve)?.signatures?.size)
         }
-        val tooMany = CommandSigner(keys = { (0..CommandSigning.MAX_SIGNATURES).map(::key) }, store = {})
+        val tooMany = CommandSigner(keys = { (0..RunnerContract.MaxCommandSignatures).map(::key) }, store = {})
         assertFailsWith<IllegalArgumentException> { tooMany.signTurn(session, "input") }
     }
 

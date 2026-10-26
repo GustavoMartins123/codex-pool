@@ -153,8 +153,8 @@ func (b *sessionBroker) claimCredentialLocked(s *sessionRecord) (string, error) 
 		return "", err
 	}
 	events := []sessionEvent{
-		newSessionEvent("runner.status", map[string]any{"status": "reconnected"}),
-		newSessionEvent("state", map[string]any{"state": s.State}),
+		newSessionEvent(runnerproto.EventRunnerChanged, runnerproto.RunnerStatusEvent{Status: "reconnected"}),
+		newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: s.State}),
 	}
 	err = p.db.Update(func(tx *bbolt.Tx) error {
 		nonces := tx.Bucket([]byte(bucketConfigNonces))
@@ -330,8 +330,8 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		if m.TurnID == "" || m.TurnID != s.TurnID || m.Content == "" || len(m.Content) > 8<<10 {
 			return errors.New("invalid execution error")
 		}
-		event = "error"
-		payload = map[string]any{"message": m.Content}
+		event = runnerproto.EventError
+		payload = runnerproto.ExecutionError{Message: m.Content}
 		action = "session.execution_error"
 	case "agent.checkpoint":
 		if !r.hello.PersistentSessions || s.State != "claimed" || s.Ready || !validAgentCheckpoint(m.Checkpoint) || m.Checkpoint.Ready {
@@ -369,8 +369,8 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		next.QueuedInput = ""
 		next.QueuedIssuedAt, next.QueuedSignatures = 0, nil
 		next.State = "running"
-		event = "turn.started"
-		payload = map[string]any{"turn_id": m.TurnID}
+		event = runnerproto.EventStarted
+		payload = runnerproto.TurnStarted{TurnID: m.TurnID}
 		action = "session.running"
 	case "turn.event":
 		if m.TurnID == "" || m.TurnID != s.TurnID || s.QueuedInput != "" || len(m.Content) > 64<<10 {
@@ -379,8 +379,8 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		if m.Kind != "text" && m.Kind != "thinking" && m.Kind != "tool_call" && m.Kind != "tool_result" {
 			return errors.New("invalid delta kind")
 		}
-		event = "turn.delta"
-		payload = map[string]any{"turn_id": m.TurnID, "kind": m.Kind, "content": m.Content}
+		event = runnerproto.EventDelta
+		payload = runnerproto.TurnDelta{TurnID: m.TurnID, Kind: m.Kind, Content: m.Content}
 	case "turn.finished":
 		if m.TurnID == "" || m.TurnID != s.TurnID || s.QueuedInput != "" || m.Tokens < 0 || m.DurationMS < 0 {
 			return errors.New("unexpected turn completion")
@@ -395,7 +395,7 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		next.TurnID = ""
 		next.CancelRequested = false
 		next.Approvals = []runnerproto.Approval{}
-		event = "turn.finished"
+		event = runnerproto.EventFinished
 		payload = summary
 		action = "session.turn_finished"
 	case "approval.request":
@@ -411,7 +411,7 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		approval = &approvalRecord{Approval: a, SessionID: s.ID, PrincipalID: s.PrincipalID}
 		next.Approvals = append(next.Approvals, a)
 		next.State = "waiting_approval"
-		event = "approval.requested"
+		event = runnerproto.EventRequested
 		payload = a
 		action = "session.approval_requested"
 	case "approval.cancelled":
@@ -444,8 +444,8 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		}
 		approvalExists = true
 		action = "session.approval_cancelled"
-		event = "approval.resolved"
-		payload = map[string]any{"approval_id": m.ApprovalID, "decision": "deny"}
+		event = runnerproto.EventResolved
+		payload = runnerproto.ApprovalResolved{ApprovalID: m.ApprovalID, Decision: "deny"}
 	case "process.exit":
 		if m.Status == "checkpoint_failed" && next.Checkpoint != nil {
 			next.Checkpoint.Ready = false
@@ -483,7 +483,7 @@ func (b *sessionBroker) runnerEvent(r *connectedRunner, m runnerproto.Message) e
 		events = append(events, newSessionEvent(event, payload))
 	}
 	if next.State != s.State {
-		events = append(events, newSessionEvent("state", map[string]any{"state": next.State}))
+		events = append(events, newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: next.State}))
 	}
 	if approval != nil {
 		if err := b.store.db.Update(func(tx *bbolt.Tx) error {
@@ -564,7 +564,7 @@ func (b *sessionBroker) releaseClaim(r *connectedRunner, id string) error {
 	next.LastSequence = 0
 	next.LeaseExpiresAt = time.Time{}
 	next.UpdatedAt = b.now()
-	if err := b.saveLocked(next, "session.claim_released", r.principal, newSessionEvent("state", map[string]any{"state": next.State})); err != nil {
+	if err := b.saveLocked(next, "session.claim_released", r.principal, newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: next.State})); err != nil {
 		return err
 	}
 	b.offerLocked(next)

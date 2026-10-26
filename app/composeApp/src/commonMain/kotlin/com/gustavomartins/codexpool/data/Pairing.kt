@@ -3,8 +3,6 @@ package com.gustavomartins.codexpool.data
 import io.ktor.http.Url
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 
 object PairingLinks {
     private val mutable = MutableStateFlow<String?>(null)
@@ -33,13 +31,3 @@ fun parsePairingLink(link: String, pool: String): PairingQr {
 }
 
 fun pairingRequestId(link: String, pool: String): String = parsePairingLink(link, pool).requestId
-
-@Serializable data class PairingReview(
-    val id: String, val name: String, val os: String, val arch: String,
-    @SerialName("runner_id") val runnerId: String? = null,
-    @SerialName("expires_at") val expiresAt: String,
-)
-@Serializable data class PairingDecision(
-    val decision: Decision,
-    @SerialName("user_code") val userCode: String,
-)

@@ -14,16 +14,6 @@ import (
 // at pairing and shows it in the QR only; the pool never receives it. The
 // app signs with HMAC-SHA256 and the pool relays the signatures opaquely.
 
-// CommandKeyBytes is the length of a runner command key.
-const CommandKeyBytes = 32
-
-// MaxCommandSignatures bounds the signatures one command may carry: a signer
-// labels one signature per runner key it holds.
-const MaxCommandSignatures = 32
-
-const commandKeyIDLength = 22
-const commandSignatureLength = 43
-
 func commandMAC(key, input []byte) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(input)
@@ -32,7 +22,7 @@ func commandMAC(key, input []byte) []byte {
 
 // CommandKeyID names a key without revealing it.
 func CommandKeyID(key []byte) string {
-	return base64.RawURLEncoding.EncodeToString(commandMAC(key, []byte("codexpool-command-key-id"))[:16])
+	return base64.RawURLEncoding.EncodeToString(commandMAC(key, []byte(CommandKeyIDDomain))[:CommandKeyIDBytes])
 }
 
 // signingInput encodes fields with length prefixes ("<bytes>:<field>;"), so
@@ -53,13 +43,13 @@ func signingInput(fields ...string) []byte {
 // another session or run it under different permissions. Model and reasoning
 // effort stay unsigned because the pool may legitimately cap them.
 func TurnSigningInput(sessionID string, issuedAt int64, agent, permissionMode string, workspace Workspace, input string) []byte {
-	return signingInput("codexpool-turn/1", sessionID, strconv.FormatInt(issuedAt, 10), agent, permissionMode, workspace.Mode, workspace.Target, input)
+	return signingInput(TurnSigningDomain, sessionID, strconv.FormatInt(issuedAt, 10), agent, permissionMode, workspace.Mode, workspace.Target, input)
 }
 
 // ApprovalSigningInput binds a decision to the exact command the user saw.
 func ApprovalSigningInput(sessionID, approvalID, decision string, issuedAt int64, command string) []byte {
 	sum := sha256.Sum256([]byte(command))
-	return signingInput("codexpool-approval/1", sessionID, approvalID, decision, strconv.FormatInt(issuedAt, 10), hex.EncodeToString(sum[:]))
+	return signingInput(ApprovalSigningDomain, sessionID, approvalID, decision, strconv.FormatInt(issuedAt, 10), hex.EncodeToString(sum[:]))
 }
 
 // SignCommand returns the base64url HMAC of input under key.

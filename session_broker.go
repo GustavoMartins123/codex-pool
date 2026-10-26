@@ -123,7 +123,7 @@ func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
 				s.ResumeState = s.State
 				s.State = "orphaned"
 				s.UpdatedAt = b.now()
-				if err := b.recordEventsTx(tx, &s, []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State})}); err != nil {
+				if err := b.recordEventsTx(tx, &s, []sessionEvent{newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: s.State})}); err != nil {
 					return err
 				}
 			}
@@ -254,7 +254,7 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 		s.PendingInput = &runnerproto.PendingInput{ID: uuid.NewString(), Input: q.InitialInput}
 	}
 	s.ConversationID = s.ID
-	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": s.State}), newSessionEvent("session.settings", runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})}
+	events := []sessionEvent{newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: s.State}), newSessionEvent(runnerproto.EventSettings, runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})}
 	if err := b.saveLocked(s, "session.created", principal, events...); err != nil {
 		return nil, err
 	}
@@ -370,9 +370,9 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 	next.UpdatedAt = b.now()
 	next.CancelRequested = false
 	if err := b.saveLocked(next, "session.turn", principal,
-		newSessionEvent("session.settings", runnerproto.TurnSettings{Model: next.Model, ReasoningEffort: next.ReasoningEffort}),
-		newSessionEvent("state", map[string]any{"state": next.State}),
-		newSessionEvent("turn.input", map[string]any{"turn_id": next.TurnID, "input": input.Input})); err != nil {
+		newSessionEvent(runnerproto.EventSettings, runnerproto.TurnSettings{Model: next.Model, ReasoningEffort: next.ReasoningEffort}),
+		newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: next.State}),
+		newSessionEvent(runnerproto.EventInput, runnerproto.TurnMessage{TurnID: next.TurnID, Input: input.Input})); err != nil {
 		return "", err
 	}
 	b.dispatchTurnLocked(next)
@@ -446,7 +446,7 @@ func (b *sessionBroker) requestClose(principal, id string) error {
 	next.State = "closing"
 	next.ClosedReason = "cancelled"
 	next.UpdatedAt = b.now()
-	if err := b.saveLocked(next, "session.closing", principal, newSessionEvent("state", map[string]any{"state": "closing"})); err != nil {
+	if err := b.saveLocked(next, "session.closing", principal, newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: "closing"})); err != nil {
 		return err
 	}
 	if err := b.revokeSessionClient(next); err != nil {
@@ -481,11 +481,11 @@ func (b *sessionBroker) closeLocked(s *sessionRecord, reason string) error {
 	next.QueuedInput = ""
 	next.QueuedIssuedAt, next.QueuedSignatures = 0, nil
 	next.Approvals = []runnerproto.Approval{}
-	events := []sessionEvent{newSessionEvent("state", map[string]any{"state": "closed"})}
+	events := []sessionEvent{newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: "closed"})}
 	if reason == "agent_failed" || reason == "workspace_failed" || reason == "protocol_error" || reason == "checkpoint_failed" {
-		events = append(events, newSessionEvent("error", map[string]any{"message": reason}))
+		events = append(events, newSessionEvent(runnerproto.EventError, runnerproto.ExecutionError{Message: reason}))
 	}
-	events = append(events, newSessionEvent("session.closed", map[string]any{"reason": reason}))
+	events = append(events, newSessionEvent(runnerproto.EventClosed, runnerproto.ClosedEvent{Reason: reason}))
 	if err := b.saveLocked(next, "session.closed", s.PrincipalID, events...); err != nil {
 		return err
 	}
@@ -572,8 +572,8 @@ func (b *sessionBroker) sweep() error {
 			next.State = "orphaned"
 			next.UpdatedAt = now
 			if err := b.saveLocked(next, "session.orphaned", s.PrincipalID,
-				newSessionEvent("state", map[string]any{"state": "orphaned"}),
-				newSessionEvent("runner.status", map[string]any{"status": "offline"})); err != nil {
+				newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: "orphaned"}),
+				newSessionEvent(runnerproto.EventRunnerChanged, runnerproto.RunnerStatusEvent{Status: "offline"})); err != nil {
 				return err
 			}
 		}
@@ -659,8 +659,8 @@ func (b *sessionBroker) resolveApprovalLocked(principal, id, aid, decision, sour
 			return err
 		}
 		events = []sessionEvent{
-			newSessionEvent("approval.resolved", map[string]any{"approval_id": aid, "decision": record.Decision, "source": source}),
-			newSessionEvent("state", map[string]any{"state": next.State}),
+			newSessionEvent(runnerproto.EventResolved, runnerproto.ApprovalResolved{ApprovalID: aid, Decision: record.Decision, Source: source}),
+			newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: next.State}),
 		}
 		if err := b.recordEventsTx(tx, next, events); err != nil {
 			return err

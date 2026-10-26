@@ -4,7 +4,7 @@ import com.gustavomartins.codexpool.data.*
 import kotlin.test.*
 
 class CommandSigningTest {
-    private val key = ByteArray(CommandSigning.KEY_BYTES) { it.toByte() }
+    private val key = ByteArray(RunnerContract.CommandKeyBytes) { it.toByte() }
     private val session = "5d1d9c3e-9f1a-4f0e-8a51-2f4b7c1d0e11"
     private val issuedAt = 1761379200000L
 
@@ -46,7 +46,7 @@ class CommandSigningTest {
 
     @Test fun signerLabelsEverySignatureAndNeverReusesAnIssueTime() {
         val encoded = base64UrlEncode(key)
-        val other = base64UrlEncode(ByteArray(CommandSigning.KEY_BYTES) { 7 })
+        val other = base64UrlEncode(ByteArray(RunnerContract.CommandKeyBytes) { 7 })
         val signer = CommandSigner(keys = { listOf(encoded, other) }, store = {}, now = { issuedAt })
         val target = Session(session, Agent.Claude, "model", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
             SessionState.WaitingInput, conversationId = session)

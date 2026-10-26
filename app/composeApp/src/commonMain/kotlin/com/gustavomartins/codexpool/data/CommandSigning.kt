@@ -8,25 +8,22 @@ import kotlin.time.Clock
  * approvals for that runner. Mirrors internal/runnerproto/signing.go.
  */
 object CommandSigning {
-    const val KEY_BYTES = 32
-    const val MAX_SIGNATURES = 32
-
     fun decodeKey(value: String): ByteArray {
         val key = runCatching { base64UrlDecode(value) }.getOrNull()
-        require(key != null && key.size == KEY_BYTES) { "Chave de comando do runner inválida." }
+        require(key != null && key.size == RunnerContract.CommandKeyBytes) { "Chave de comando do runner inválida." }
         return key
     }
 
     /** Names a key without revealing it. */
-    fun keyId(key: ByteArray): String = base64UrlEncode(hmacSha256(key, "codexpool-command-key-id".encodeToByteArray()).copyOf(16))
+    fun keyId(key: ByteArray): String = base64UrlEncode(hmacSha256(key, RunnerContract.CommandKeyIDDomain.encodeToByteArray()).copyOf(RunnerContract.CommandKeyIDBytes))
 
     /** Binds a prompt to its session and to the settings that decide what the agent may do. */
     fun turnInput(sessionId: String, issuedAt: Long, agent: Agent, permissionMode: PermissionMode, workspace: Workspace, input: String): ByteArray =
-        signingInput("codexpool-turn/1", sessionId, issuedAt.toString(), agent.wire, permissionMode.wire, workspace.mode.wire, workspace.target.orEmpty(), input)
+        signingInput(RunnerContract.TurnSigningDomain, sessionId, issuedAt.toString(), agent.wire, permissionMode.wire, workspace.mode.wire, workspace.target.orEmpty(), input)
 
     /** Binds a decision to the exact command the user saw. */
     fun approvalInput(sessionId: String, approvalId: String, decision: Decision, issuedAt: Long, command: String): ByteArray =
-        signingInput("codexpool-approval/1", sessionId, approvalId, decision.wire, issuedAt.toString(), sha256(command.encodeToByteArray()).toHex())
+        signingInput(RunnerContract.ApprovalSigningDomain, sessionId, approvalId, decision.wire, issuedAt.toString(), sha256(command.encodeToByteArray()).toHex())
 
     fun sign(key: ByteArray, input: ByteArray): String = base64UrlEncode(hmacSha256(key, input))
 
@@ -41,11 +38,6 @@ object CommandSigning {
         }
         return out.toByteArray()
     }
-
-    private val Agent.wire get() = when (this) { Agent.Codex -> "codex"; Agent.Claude -> "claude" }
-    private val PermissionMode.wire get() = when (this) { PermissionMode.Auto -> "auto"; PermissionMode.Gated -> "gated" }
-    private val WorkspaceMode.wire get() = when (this) { WorkspaceMode.Ephemeral -> "ephemeral"; WorkspaceMode.Path -> "path"; WorkspaceMode.Repo -> "repo" }
-    private val Decision.wire get() = when (this) { Decision.Approve -> "approve"; Decision.Deny -> "deny" }
 }
 
 /** Commands carry the issue time and one signature per runner key this device holds. */
@@ -78,8 +70,8 @@ class CommandSigner(
     private fun sign(input: (Long) -> ByteArray): SignedCommand {
         val stored = keys()
         check(stored.isNotEmpty()) { MISSING_KEY }
-        require(stored.size <= CommandSigning.MAX_SIGNATURES && stored.distinct().size == stored.size) {
-            "Conjunto de chaves de runner inválido: o limite por provedor é ${CommandSigning.MAX_SIGNATURES}."
+        require(stored.size <= RunnerContract.MaxCommandSignatures && stored.distinct().size == stored.size) {
+            "Conjunto de chaves de runner inválido: o limite por provedor é ${RunnerContract.MaxCommandSignatures}."
         }
         val issuedAt = maxOf(now(), lastIssuedAt + 1).also { lastIssuedAt = it }
         val message = input(issuedAt)
