@@ -10,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
+import com.gustavomartins.codexpool.data.BootstrapProgress
+import com.gustavomartins.codexpool.data.BootstrapStep
 import com.gustavomartins.codexpool.data.Decision
 
 @Composable
@@ -30,11 +32,14 @@ fun PairingDialog(state: DashboardState, vm: DashboardViewModel, onScan: (() -> 
         title = { Text(if (state.pairingComplete) "Decisão enviada" else "Conectar máquina") },
         text = {
             Column(Modifier.heightIn(max = 480.dp).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (state.pairingComplete) {
+                val bootstrap = state.bootstrap
+                if (bootstrap != null) {
+                    BootstrapContent(bootstrap, vm)
+                } else if (state.pairingComplete) {
                     Text("O computador receberá a decisão. A credencial fica somente na máquina.")
                 } else if (state.pairing == null) {
-                    Text("Inicie runnerd pair --url ${com.gustavomartins.codexpool.data.AppBuildConfig.PoolUrl} --name minha-maquina no computador.")
-                    Text("Leia o QR ou abra o link gerado por ele. Só autorize máquinas que você reconhece.")
+                    Text("Abra o runnerd no computador e leia o QR que ele mostrar. Celular e computador precisam se alcançar pela rede local.")
+                    Text("Só autorize máquinas que você reconhece. Quem fotografar o QR pode tentar parear a máquina enquanto ele valer.")
                     if (onScan != null) OutlinedButton(onClick = onScan, enabled = !state.loading) { Text("Ler QR Code") }
                     OutlinedTextField(link, { link = it }, label = { Text("Link de pareamento") }, enabled = !state.loading)
                     Button(onClick = { vm.reviewPairing(link.trim()) }, enabled = !state.loading && link.isNotBlank()) { Text("Verificar máquina") }
@@ -56,4 +61,33 @@ fun PairingDialog(state: DashboardState, vm: DashboardViewModel, onScan: (() -> 
             }
         },
         confirmButton = { TextButton(onClick = vm::dismissPairing, enabled = !state.loading) { Text("Concluir") } })
+}
+
+@Composable
+private fun BootstrapContent(progress: BootstrapProgress, vm: DashboardViewModel) {
+    val ticket = progress.ticket
+    when (progress.step) {
+        BootstrapStep.Connecting -> Text("Conectando ao computador pela rede local…")
+        BootstrapStep.Verifying -> Text("Conferindo o pedido no pool…")
+        BootstrapStep.Confirm -> if (ticket != null) {
+            Text(ticket.name, style = MaterialTheme.typography.titleLarge)
+            Text("${ticket.os} · ${ticket.arch}")
+            Text("Esta máquina poderá executar sessões da sua conta em ${ticket.poolUrl.removePrefix("https://")}. " +
+                "A credencial fica só no computador e a chave de comandos fica só neste aparelho.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = vm::denyBootstrap) { Text("Negar") }
+                Button(onClick = vm::approveBootstrap) { Text("Autorizar máquina") }
+            }
+        }
+        BootstrapStep.Authorizing -> Text("Salvando a chave e autorizando…")
+        BootstrapStep.Saving -> Text("Autorizado. Aguardando o computador salvar a credencial…")
+        BootstrapStep.WaitingOnline -> Text(progress.message ?: "Pareado. Aguardando o runner ficar online…")
+        BootstrapStep.Online -> Text("${ticket?.name ?: "Runner"} está online.")
+        BootstrapStep.Cancelled -> Text("Pareamento cancelado.")
+        BootstrapStep.Failed -> ErrorMessage(progress.message)
+    }
+    if (progress.step in setOf(BootstrapStep.Connecting, BootstrapStep.Verifying, BootstrapStep.Authorizing, BootstrapStep.Saving) ||
+        progress.step == BootstrapStep.WaitingOnline && progress.message == null) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+    }
 }

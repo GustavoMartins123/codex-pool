@@ -43,13 +43,13 @@ private val PoolColors = darkColorScheme(
 @Serializable private data class SessionRoute(val id: String)
 
 @Composable
-fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Unit)? = null) {
-    val dependencies = remember(store, client) {
+fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Unit)? = null, bootstrapClients: BootstrapClientFactory? = null) {
+    val dependencies = remember(store, client, bootstrapClients) {
         module {
             single<CredentialStore> { store }
             single { client }
             viewModel { AuthViewModel(get(), get(), AppBuildConfig.PoolUrl) }
-            viewModel { parameters -> DashboardViewModel(parameters.get(), parameters.get()) }
+            viewModel { parameters -> DashboardViewModel(parameters.get(), parameters.get(), bootstrapClients) }
             viewModel { parameters -> SessionViewModel(parameters.get(), parameters.get(), parameters.get()) }
         }
     }
@@ -78,7 +78,7 @@ fun PoolApp(store: CredentialStore, client: HttpClient, onScanPairing: (() -> Un
                     CompositionLocalProvider(LocalViewModelStoreOwner provides owner) {
                         val api = remember { PoolApi(client, credentials) }
                         val signer = remember {
-                            CommandSigner(keys = { auth.state.value.accounts?.selected?.commandKeys.orEmpty() }, store = auth::addCommandKey)
+                            CommandSigner(keys = { auth.state.value.accounts?.selected?.commandKeys.orEmpty() }, store = { auth.addCommandKey(it, credentials) })
                         }
                         AuthenticatedApp(api, signer, state, auth::logout, onScanPairing, onProviders = { providersOpen = true })
                     }

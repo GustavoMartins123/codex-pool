@@ -17,16 +17,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.dataString?.let(PairingLinks::receive)
+        intent.pairingLink()?.let(PairingLinks::receive)
     }
+    // Bootstrap QRs carry a LAN secret, so they come only from the in-app scanner.
+    private fun Intent.pairingLink() = dataString?.takeIf { it.startsWith("codexpool://pair?") }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (savedInstanceState == null) intent.dataString?.let(PairingLinks::receive)
+        if (savedInstanceState == null) intent.pairingLink()?.let(PairingLinks::receive)
         enableEdgeToEdge()
         val pool = application as CodexPoolApplication
         setContent { PoolApp(pool.credentials, pool.client, onScanPairing = {
             scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 .setPrompt("Leia o QR do runnerd no computador").setBeepEnabled(false).setOrientationLocked(false))
-        }) }
+        }, bootstrapClients = pool.bootstrapClients) }
     }
 }
