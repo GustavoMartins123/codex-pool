@@ -50,13 +50,42 @@ Requirements and limits:
   Nothing is authorized until you approve it in the app.
 - Pairing from the app is available on Android. On iOS, use the launch
   configuration below.
-- Without arguments, `runnerd` uses `codex` and `claude` from `PATH` (native
-  `.exe` files on Windows) and keeps its state and workspaces in the user
-  configuration directory. It does not install agents. Use a launch
-  configuration for other paths, labels, allowed workspace paths or
-  `allow_auto`.
+- Without arguments, `runnerd` keeps its state, workspaces and any agent it
+  installed in the user configuration directory. Use a launch configuration
+  for other paths, labels, allowed workspace paths or `allow_auto`.
 - The pool must support recoverable credential delivery. Older pools are
   refused with a message asking to update them.
+
+### Agents
+
+Without arguments, `runnerd` looks for each agent in this order and uses the
+first one that is a native build for this machine (or, outside Windows, a
+script) and answers `--version` within 10 seconds:
+
+1. Codex installed by `runnerd` itself.
+2. Claude Code from its native installer, in `~/.local/bin`.
+3. `PATH`, ignoring relative entries and the current directory. An npm
+   install of Codex runs its native build directly, so Node is not needed.
+   On Windows only `.exe` files are run, never `.cmd`, `.ps1` or `.bat`.
+
+If it finds none and you are at the terminal, it offers to install Codex. The
+prompt shows the version and size, and nothing is downloaded unless you answer
+`y`. To install without the prompt:
+
+```bash
+./runnerd install codex
+```
+
+The download comes from the npm registry and is checked against a SHA-512
+compiled into `runnerd`; only the platform's native files are unpacked, into
+the runner's own directory. `PATH` and your own Codex settings are not
+changed, and no administrator rights are needed. Each runner release pins one
+Codex release; a newer `runnerd` replaces it. Maintainers update the pin with
+`go run ./cmd/agentcatalog -codex <version>`, which checks the npm registry's
+signature on every platform package before writing the catalog.
+
+The runner still pairs when no agent is available; it stops with
+`paired, but no agent is available` and connects once one is installed.
 
 If the runner stops after the app approves but before it saves the
 credential, start it again within about 10 minutes: it finishes the same
@@ -203,8 +232,11 @@ native agent state. User path and repository workspaces are preserved.
   network, or use a launch configuration with `pair --url`.
 - The app cannot reach the computer: check that both are on the same network
   without client isolation and that the firewall allows `runnerd`.
-- `paired, but no agent is available`: install Codex or Claude Code so it is
-  on `PATH`, or start with `runnerd run --config`.
+- `paired, but no agent is available`: the lines above it say why each
+  candidate was skipped. Run `runnerd install codex`, install Codex or Claude
+  Code yourself, or start with `runnerd run --config`.
+- `does not match the pinned SHA-512`: the download was altered or corrupted.
+  Nothing was installed; try again on another network.
 - `invalid pairing journal`: the file next to the runner state is damaged.
   Move it away, revoke any unused runner in the app, and start again.
 - `runner state unavailable`: pair the machine or correct the `state` path.
