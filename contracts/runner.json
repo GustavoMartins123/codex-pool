@@ -461,7 +461,8 @@
         {"json": "turn_summaries", "go": "Summaries", "type": "[]TurnSummary"},
         {"json": "checkpoint", "go": "Checkpoint", "type": "AgentCheckpoint", "pointer": true, "omit_empty": true},
         {"json": "resume_requested", "go": "ResumeRequested", "type": "boolean"},
-        {"json": "pending_input", "go": "PendingInput", "type": "PendingInput", "pointer": true, "omit_empty": true}
+        {"json": "pending_input", "go": "PendingInput", "type": "PendingInput", "pointer": true, "omit_empty": true},
+        {"json": "capabilities", "go": "Capabilities", "type": "ModelCapabilities", "pointer": true, "omit_empty": true}
       ],
       "kotlin": [
         {"field": "id", "name": "id"},
@@ -476,7 +477,8 @@
         {"field": "approvals", "name": "approvals", "default": []},
         {"field": "conversation_id", "name": "conversationId"},
         {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""},
-        {"field": "pending_input", "name": "pendingInput", "nullable": true, "default": null}
+        {"field": "pending_input", "name": "pendingInput", "nullable": true, "default": null},
+        {"field": "capabilities", "name": "capabilities", "nullable": true, "default": null}
       ]
     },
     {
@@ -495,10 +497,22 @@
       ]
     },
     {
+      "name": "ModelCapabilities",
+      "fields": [
+        {"json": "revision", "go": "Revision", "type": "string"},
+        {"json": "models", "go": "Models", "type": "[]AgentModel"}
+      ],
+      "kotlin": [
+        {"field": "revision", "name": "revision"},
+        {"field": "models", "name": "models", "default": []}
+      ]
+    },
+    {
       "name": "RunnerCatalog",
       "fields": [
         {"json": "models", "go": "Models", "type": "[]AgentModel"},
-        {"json": "codex_catalog", "go": "CodexCatalog", "type": "string"}
+        {"json": "codex_catalog", "go": "CodexCatalog", "type": "string"},
+        {"json": "revision", "go": "Revision", "type": "string", "omit_empty": true}
       ]
     },
     {
@@ -512,7 +526,8 @@
         {"json": "persistent_sessions", "go": "PersistentSessions", "type": "boolean"},
         {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true},
         {"json": "models_known", "go": "ModelsKnown", "type": "boolean", "omit_empty": true},
-        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true}
+        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true},
+        {"json": "catalog_revision", "go": "CatalogRevision", "type": "string", "omit_empty": true}
       ]
     },
     {
@@ -530,7 +545,8 @@
         {"json": "created_at", "go": "CreatedAt", "type": "timestamp"},
         {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true},
         {"json": "models_known", "go": "ModelsKnown", "type": "boolean", "omit_empty": true},
-        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true}
+        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true},
+        {"json": "catalog_revision", "go": "CatalogRevision", "type": "string", "omit_empty": true}
       ],
       "kotlin": [
         {"field": "id", "name": "id"},
@@ -542,7 +558,8 @@
         {"field": "allowed_paths", "name": "allowedPaths", "default": []},
         {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null},
         {"field": "models_known", "name": "modelsKnown", "default": false},
-        {"field": "models", "name": "models", "default": []}
+        {"field": "models", "name": "models", "default": []},
+        {"field": "catalog_revision", "name": "catalogRevision", "default": ""}
       ]
     },
     {
@@ -553,6 +570,7 @@
         {"json": "session_id", "go": "SessionID", "type": "string", "omit_empty": true},
         {"json": "turn_id", "go": "TurnID", "type": "string", "omit_empty": true},
         {"json": "hello", "go": "Hello", "type": "Hello", "pointer": true, "omit_empty": true},
+        {"json": "capabilities", "go": "Capabilities", "type": "ModelCapabilities", "pointer": true, "omit_empty": true},
         {"json": "session", "go": "Session", "type": "Session", "pointer": true, "omit_empty": true},
         {"json": "checkpoint", "go": "Checkpoint", "type": "AgentCheckpoint", "pointer": true, "omit_empty": true},
         {"json": "sessions", "go": "Sessions", "type": "[]string", "omit_empty": true},
@@ -822,6 +840,7 @@
     }
   ],
   "events": [
+    {"wire": "session.capabilities", "name": "Capabilities", "type": "ModelCapabilities"},
     {
       "wire": "session.settings",
       "name": "Settings",

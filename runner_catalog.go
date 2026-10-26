@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/runnerproto"
+	"go.etcd.io/bbolt"
 )
 
 func (h *proxyHandler) handleRunnerCatalog(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,59 @@ func (h *proxyHandler) handleRunnerCatalog(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, 503, "catalog authorization unavailable")
 		return
 	}
-	respondJSON(w, runnerCatalog(poolModelsForClients(visible)))
+	catalog := runnerCatalog(poolModelsForClients(visible))
+	catalog.Revision = runnerproto.ContentRevision(catalog)
+	w.Header().Set("ETag", `"`+catalog.Revision+`"`)
+	if r.Header.Get("If-None-Match") == w.Header().Get("ETag") {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	respondJSON(w, catalog)
+}
+
+func runnerSupportsSession(r *connectedRunner, s *sessionRecord) bool {
+	if s.Capabilities != nil {
+		return runnerproto.SupportsModel(s.Capabilities.Models, s.Agent, s.Model, s.ReasoningEffort)
+	}
+	return !r.hello.ModelsKnown || runnerproto.SupportsModel(r.hello.Models, s.Agent, s.Model, s.ReasoningEffort)
+}
+
+func (b *sessionBroker) updateRunnerModels(r *connectedRunner, capabilities *runnerproto.ModelCapabilities) error {
+	if err := runnerproto.ValidateCapabilities(capabilities); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.runners[r.id] != r {
+		return sessionError(409, "runner connection replaced")
+	}
+	for _, model := range capabilities.Models {
+		if !supportsAgent(r.hello.Agents, model.Agent) {
+			return sessionError(400, "unavailable runner agent")
+		}
+	}
+	if r.hello.CatalogRevision == capabilities.Revision {
+		return nil
+	}
+	if err := b.store.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(bucketRunners))
+		var stored runnerRecord
+		if err := json.Unmarshal(bucket.Get([]byte(r.id)), &stored); err != nil {
+			return err
+		}
+		stored.Runner.ModelsKnown, stored.Runner.Models, stored.Runner.CatalogRevision = true, capabilities.Models, capabilities.Revision
+		return putJSON(bucket, r.id, stored)
+	}); err != nil {
+		return err
+	}
+	r.hello.ModelsKnown, r.hello.Models, r.hello.CatalogRevision = true, capabilities.Models, capabilities.Revision
+	b.signalCatalogLocked()
+	for _, session := range b.sessions {
+		if session.PrincipalID == r.principal && session.State == "pending_runner" {
+			b.offerLocked(session)
+		}
+	}
+	return nil
 }
 
 func runnerCatalog(models []poolModelDescriptor) runnerproto.RunnerCatalog {

@@ -306,6 +306,7 @@ data class SessionScreenState(
 }
 
 fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?): SessionScreenState = when (event) {
+    is SessionEvent.Capabilities -> state.copy(session = state.session?.copy(capabilities = event.value))
     is SessionEvent.Settings -> state.copy(session = state.session?.copy(model = event.value.model, reasoningEffort = event.value.reasoningEffort))
     is SessionEvent.Input -> state.copy(entries = state.entries.filterNot { it.kind == "user" && it.turnId == event.value.turnId } +
         TranscriptEntry(event.value.turnId, "user", event.value.input, requireNotNull(eventId)))

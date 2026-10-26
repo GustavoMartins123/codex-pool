@@ -179,6 +179,7 @@ data class Session(
     @SerialName("conversation_id") val conversationId: String,
     @SerialName("reasoning_effort") val reasoningEffort: String = "",
     @SerialName("pending_input") val pendingInput: PendingInput? = null,
+    @SerialName("capabilities") val capabilities: ModelCapabilities? = null,
 )
 
 @Serializable
@@ -187,6 +188,12 @@ data class AgentModel(
     @SerialName("model") val model: String,
     @SerialName("reasoning_efforts") val reasoningEfforts: List<String> = emptyList(),
     @SerialName("default_reasoning_effort") val defaultReasoningEffort: String = "",
+)
+
+@Serializable
+data class ModelCapabilities(
+    @SerialName("revision") val revision: String,
+    @SerialName("models") val models: List<AgentModel> = emptyList(),
 )
 
 @Serializable
@@ -201,6 +208,7 @@ data class Runner(
     @SerialName("command_key_id") val commandKeyId: String? = null,
     @SerialName("models_known") val modelsKnown: Boolean = false,
     @SerialName("models") val models: List<AgentModel> = emptyList(),
+    @SerialName("catalog_revision") val catalogRevision: String = "",
 )
 
 @Serializable
@@ -320,6 +328,7 @@ data class BootstrapOperation(
 )
 
 sealed interface SessionEvent {
+    data class Capabilities(val value: ModelCapabilities) : SessionEvent
     data class Settings(val value: TurnSettings) : SessionEvent
     data class Input(val value: TurnMessage) : SessionEvent
     data class State(val value: StateEvent) : SessionEvent
@@ -334,6 +343,7 @@ sealed interface SessionEvent {
 }
 
 fun decodeEvent(type: String, data: String): SessionEvent = when (type) {
+    "session.capabilities" -> SessionEvent.Capabilities(PoolJson.decodeFromString(data))
     "session.settings" -> SessionEvent.Settings(PoolJson.decodeFromString(data))
     "turn.input" -> SessionEvent.Input(PoolJson.decodeFromString(data))
     "state" -> SessionEvent.State(PoolJson.decodeFromString(data))

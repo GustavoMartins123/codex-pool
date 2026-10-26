@@ -24,3 +24,25 @@ func TestAgentModelCapabilitiesRejectAmbiguousOrInvalidReports(t *testing.T) {
 		t.Fatal("model support ignored agent or effort")
 	}
 }
+
+func TestModelRevisionIsStableAcrossReportOrdering(t *testing.T) {
+	first := []AgentModel{{Agent: "codex", Model: "b", ReasoningEfforts: []string{"high", "low"}}, {Agent: "claude", Model: "a"}}
+	second := []AgentModel{first[1], {Agent: "codex", Model: "b", ReasoningEfforts: []string{"low", "high"}}}
+	if ModelsRevision(first) != ModelsRevision(second) {
+		t.Fatal("report order changed the revision")
+	}
+	if first[0].ReasoningEfforts[0] != "high" {
+		t.Fatal("hashing mutated the source report")
+	}
+	if ModelsRevision(nil) != ModelsRevision([]AgentModel{}) {
+		t.Fatal("empty reports have different revisions")
+	}
+	capabilities := &ModelCapabilities{Revision: ModelsRevision(first), Models: first}
+	if ValidateCapabilities(capabilities) != nil {
+		t.Fatal("valid revision rejected")
+	}
+	capabilities.Models[0].Model = "changed"
+	if ValidateCapabilities(capabilities) == nil {
+		t.Fatal("changed content kept its old revision")
+	}
+}

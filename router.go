@@ -368,6 +368,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleRunnerCatalog(w, r)
 		return
 	}
+	if r.URL.Path == "/api/me/runner-catalog" || r.URL.Path == "/api/me/runner-catalog/events" {
+		h.handleAppRunnerCatalog(w, r)
+		return
+	}
 	if r.URL.Path == "/api/runner/ws" {
 		h.handleRunnerWS(w, r)
 		return

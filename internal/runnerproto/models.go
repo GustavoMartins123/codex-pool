@@ -1,9 +1,37 @@
 package runnerproto
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 )
+
+// ModelsRevision ignores report order and never exposes the command key.
+func ModelsRevision(models []AgentModel) string {
+	canonical := append([]AgentModel{}, models...)
+	for i := range canonical {
+		canonical[i].ReasoningEfforts = append([]string{}, canonical[i].ReasoningEfforts...)
+		slices.Sort(canonical[i].ReasoningEfforts)
+	}
+	slices.SortFunc(canonical, func(a, b AgentModel) int { return strings.Compare(a.Agent+"|"+a.Model, b.Agent+"|"+b.Model) })
+	return ContentRevision(canonical)
+}
+
+func ContentRevision(value any) string {
+	raw, _ := json.Marshal(value)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func ValidateCapabilities(c *ModelCapabilities) error {
+	if c == nil || ValidateAgentModels(c.Models) != nil || c.Revision != ModelsRevision(c.Models) {
+		return errors.New("invalid runner catalog revision")
+	}
+	return nil
+}
 
 func ValidateAgentModels(models []AgentModel) error {
 	if len(models) > 512 {

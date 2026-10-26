@@ -81,14 +81,16 @@ type sessionStream struct {
 }
 
 type sessionBroker struct {
-	mu       sync.Mutex
-	store    *PassportStore
-	now      func() time.Time
-	sessions map[string]*sessionRecord
-	runners  map[string]*connectedRunner
-	streams  map[string]*sessionStream
-	stopped  chan struct{}
-	stopOnce sync.Once
+	mu                 sync.Mutex
+	store              *PassportStore
+	now                func() time.Time
+	sessions           map[string]*sessionRecord
+	runners            map[string]*connectedRunner
+	streams            map[string]*sessionStream
+	stopped            chan struct{}
+	stopOnce           sync.Once
+	catalogChanged     chan struct{}
+	catalogSubscribers map[string]int
 }
 
 func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
@@ -200,6 +202,11 @@ func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
 
 func copySession(s *sessionRecord) *sessionRecord {
 	copy := *s
+	if s.Capabilities != nil {
+		c := *s.Capabilities
+		c.Models = append([]runnerproto.AgentModel{}, s.Capabilities.Models...)
+		copy.Capabilities = &c
+	}
 	if s.PendingInput != nil {
 		pending := *s.PendingInput
 		copy.PendingInput = &pending
@@ -273,7 +280,7 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 func (b *sessionBroker) offerLocked(s *sessionRecord) {
 	for _, r := range b.runners {
 		if r.principal == s.PrincipalID && supportsAgent(r.hello.Agents, s.Agent) && (s.RunnerID == "" || s.RunnerID == r.id) {
-			if r.hello.ModelsKnown && !runnerproto.SupportsModel(r.hello.Models, s.Agent, s.Model, s.ReasoningEffort) {
+			if !runnerSupportsSession(r, s) {
 				continue
 			}
 			m := runnerproto.Frame("session.pending")
@@ -366,7 +373,7 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 	}
 	next.ReasoningEffort = settings.ReasoningEffort
 	runner := b.runners[s.RunnerID]
-	if runner.hello.ModelsKnown && !runnerproto.SupportsModel(runner.hello.Models, next.Agent, next.Model, next.ReasoningEffort) {
+	if !runnerSupportsSession(runner, next) {
 		return "", sessionError(409, "runner does not support the selected model or reasoning effort")
 	}
 	if next.Agent == "codex" && s.ReasoningEffort != "" && next.ReasoningEffort == "" {
