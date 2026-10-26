@@ -98,6 +98,17 @@ func run() error {
 		}
 		fmt.Printf("Paired runner %s\n", config.RunnerID)
 		return nil
+	case "install":
+		flags := flag.NewFlagSet("install", flag.ContinueOnError)
+		state := flags.String("state", defaultState, "runner credential file")
+		if err := flags.Parse(os.Args[2:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 1 || flags.Arg(0) != "codex" {
+			return errors.New("usage: runnerd install codex")
+		}
+		// Naming the command is the consent: install even if Claude Code exists.
+		return installCodex(ctx, &runner.AgentInstaller{Root: runner.ManagedAgentsDir(*state)})
 	case "run":
 		flags := flag.NewFlagSet("run", flag.ContinueOnError)
 		state := flags.String("state", defaultState, "runner credential file")
@@ -184,12 +195,68 @@ func start(ctx context.Context, state string) error {
 		// Never overwrite a state that might hold the only copy of a credential.
 		return fmt.Errorf("%v in %s; fix or move that file, revoke the old runner in the app, and start again", err, state)
 	}
-	executables := runner.FindAgents()
-	if len(executables) == 0 {
-		return errors.New("paired, but no agent is available: install Codex or Claude Code so `codex` or `claude` is on PATH, or use `runnerd run --config` to point at them")
+	executables, err := agents(ctx, state)
+	if err != nil {
+		return err
 	}
 	fmt.Printf("Connecting runner %s to %s.\n", config.RunnerID, config.PoolURL)
 	return runner.Run(ctx, runner.Options{Config: config, WorkspaceRoot: filepath.Join(filepath.Dir(state), "workspaces"), Executables: executables})
+}
+
+// agents finds Codex and Claude Code. With none, it offers the pinned Codex
+// build and installs it only after the person at this machine agrees.
+func agents(ctx context.Context, state string) (map[string]string, error) {
+	lookup := runner.AgentLookup{ManagedRoot: runner.ManagedAgentsDir(state)}
+	found, tried := lookup.Resolve(ctx)
+	if len(found) > 0 {
+		return found, nil
+	}
+	for _, c := range tried {
+		where := c.Path
+		if where == "" {
+			where = c.Source
+		}
+		fmt.Printf("  %s (%s): %v\n", c.Agent, where, c.Err)
+	}
+	installer := &runner.AgentInstaller{Root: runner.ManagedAgentsDir(state)}
+	release, ok := installer.Release("codex")
+	unavailable := errors.New("paired, but no agent is available: install Codex or Claude Code, run `runnerd install codex`, or point `runnerd run --config` at them")
+	if !ok {
+		return nil, unavailable
+	}
+	if info, err := os.Stdin.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return nil, unavailable
+	}
+	fmt.Printf("No agent found. Install Codex %s for this runner?\n  OpenAI's native build from registry.npmjs.org, checked against a pinned SHA-512\n  About %d MB in %s; PATH and your Codex settings are not changed.\nInstall? [y/N] ",
+		release.Version, release.UnpackedSize>>20, runner.ManagedAgentsDir(state))
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if !strings.EqualFold(strings.TrimSpace(answer), "y") {
+		return nil, unavailable
+	}
+	if err := installCodex(ctx, installer); err != nil {
+		return nil, fmt.Errorf("paired, but installing Codex failed: %w", err)
+	}
+	found, _ = lookup.Resolve(ctx)
+	if len(found) == 0 {
+		return nil, errors.New("paired, but the installed Codex did not start; remove " + runner.ManagedAgentsDir(state) + " and try again")
+	}
+	return found, nil
+}
+
+func installCodex(ctx context.Context, installer *runner.AgentInstaller) error {
+	last := int64(-1)
+	installer.Progress = func(done, total int64) {
+		if total > 0 && done*20/total != last {
+			last = done * 20 / total
+			fmt.Printf("\rDownloading Codex: %d%%", last*5)
+		}
+	}
+	path, err := installer.Install(ctx, "codex")
+	fmt.Println()
+	if err == nil {
+		fmt.Println("Installed", path)
+	}
+	return err
 }
 
 func showOnboarding(e runner.OnboardingEvent) {
