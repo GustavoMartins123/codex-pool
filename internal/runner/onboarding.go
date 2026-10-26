@@ -212,17 +212,24 @@ func (o *OnboardingOptions) attempt(ctx context.Context) (Config, error) {
 			err = errors.New("pairing cancelled in the app")
 		case errors.As(err, &rejected) && rejected.Status == http.StatusForbidden:
 			code = runnerproto.BootstrapErrorPairingDenied
-		case errors.As(err, &rejected) && rejected.Status == http.StatusGone, strings.Contains(err.Error(), "expired"):
+		case errors.As(err, &rejected) && rejected.Status == http.StatusGone, errors.Is(err, context.DeadlineExceeded):
 			code = runnerproto.BootstrapErrorPairingExpired
 		}
-		// Nothing was issued, or the pool already refuses to hand it out.
-		_ = os.Remove(JournalPath(o.StatePath))
+		ended := poll.Err() != nil || pairingEnded(err)
+		if ended {
+			_ = os.Remove(JournalPath(o.StatePath))
+		}
 		session.update(func(s *runnerproto.BootstrapStatus) {
 			if s.Phase != runnerproto.BootstrapPhaseCancelled {
 				s.Phase, s.Error, s.Message = runnerproto.BootstrapPhaseFailed, code, err.Error()
 			}
 		})
 		o.linger(ctx, session, 5*time.Second)
+		if !ended {
+			// An unexpected response does not prove the credential is unavailable.
+			// Keep the journal and stop, so restarting resumes this same pairing.
+			return Config{}, err
+		}
 		return Config{}, &retryOnboarding{err}
 	}
 	return o.save(ctx, session, attempt.journal, cfg)
@@ -321,14 +328,12 @@ func (o *OnboardingOptions) resume(ctx context.Context, j pairingJournal) (Confi
 	}
 	o.Report(OnboardingEvent{Kind: OnboardingRecovering, PoolURL: j.PoolURL, Name: j.Name})
 	start := j.start()
-	start.ExpiresAt = j.recoverableUntil()
 	cfg, err := AwaitPairing(ctx, o.HTTPClient, j.PoolURL, start)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Config{}, ctx.Err()
 		}
-		var rejected *PairingRejected
-		if errors.As(err, &rejected) && rejected.Status < 500 || strings.Contains(err.Error(), "expired") {
+		if pairingEnded(err) {
 			return abandon()
 		}
 		return Config{}, err

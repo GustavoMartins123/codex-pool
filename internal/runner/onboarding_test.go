@@ -24,21 +24,23 @@ const (
 // fakePool speaks the pool's pairing endpoints with switches for the
 // failures the runner must survive.
 type fakePool struct {
-	mu        sync.Mutex
-	server    *httptest.Server
-	delivery  string
-	approved  bool
-	denied    bool
-	dropFirst bool
-	dropped   bool
-	issued    int
-	acks      int
-	begins    int
-	token     string
+	mu           sync.Mutex
+	server       *httptest.Server
+	delivery     string
+	approved     bool
+	denied       bool
+	dropFirst    bool
+	dropped      bool
+	pollStatus   int
+	expiresAfter time.Duration
+	issued       int
+	acks         int
+	begins       int
+	token        string
 }
 
 func newFakePool(t *testing.T) *fakePool {
-	p := &fakePool{delivery: runnerproto.PairingDeliveryRecoverable, token: "pool-runner-" + fakeRunnerID + "." + strings.Repeat("t", 43)}
+	p := &fakePool{delivery: runnerproto.PairingDeliveryRecoverable, token: "pool-runner-" + fakeRunnerID + "." + strings.Repeat("t", 43), expiresAfter: 5 * time.Minute}
 	p.server = httptest.NewTLSServer(http.HandlerFunc(p.serve))
 	t.Cleanup(p.server.Close)
 	return p
@@ -54,7 +56,7 @@ func (p *fakePool) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&q)
 		p.begins++
 		_ = json.NewEncoder(w).Encode(runnerproto.PairingStart{ID: strings.Repeat("p", 43), DeviceSecret: fakeSecret, UserCode: "AbCd1234",
-			ExpiresAt: time.Now().Add(5 * time.Minute), Interval: 3, Delivery: p.delivery})
+			ExpiresAt: time.Now().Add(p.expiresAfter), Interval: 3, Delivery: p.delivery})
 	case strings.HasSuffix(path, "/ack"):
 		if r.Header.Get("Authorization") != "Bearer "+p.token {
 			w.WriteHeader(401)
@@ -80,6 +82,11 @@ func (p *fakePool) serve(w http.ResponseWriter, r *http.Request) {
 				p.dropped = true
 				conn, _, _ := w.(http.Hijacker).Hijack()
 				conn.Close()
+				return
+			}
+			if p.pollStatus != 0 {
+				w.WriteHeader(p.pollStatus)
+				p.pollStatus = 0
 				return
 			}
 			_ = json.NewEncoder(w).Encode(runnerproto.RunnerCredential{RunnerID: fakeRunnerID, Token: p.token})
@@ -198,6 +205,64 @@ func TestOnboardPairsFromTheLANAndSavesBeforeReportingSuccess(t *testing.T) {
 	})
 	if _, err := net.DialTimeout("tcp", strings.TrimPrefix(strings.Replace(qr.Endpoints[0], lanAddress.String(), "127.0.0.1", 1), "https://"), time.Second); err == nil {
 		t.Fatal("LAN listener still accepts connections")
+	}
+}
+
+func TestOnboardRecoversLostCredentialsBeyondTheOriginalExpiry(t *testing.T) {
+	t.Parallel()
+	pool := newFakePool(t)
+	pool.set(func(p *fakePool) {
+		p.approved, p.dropFirst = true, true
+		p.expiresAfter = 3500 * time.Millisecond
+		p.pollStatus = http.StatusBadGateway
+	})
+	state := filepath.Join(t.TempDir(), "runner.json")
+	run := startOnboarding(t, pool, state, nil)
+	phone := newPhone(t, run.next(t, OnboardingQR).Link, "")
+	status, ticket := phone.begin(operationID(1), pool.server.URL)
+	if status != 200 {
+		t.Fatal(status)
+	}
+	phone.await(t, runnerproto.BootstrapPhasePaired)
+	saved, err := ReadConfig(state)
+	if err != nil || saved.Token != pool.token || saved.CommandKey != ticket.CommandKey {
+		t.Fatalf("recovered state = %+v, %v", saved, err)
+	}
+	if !time.Now().After(ticket.ExpiresAt) {
+		t.Fatal("credential was not recovered after the original deadline")
+	}
+	pool.set(func(p *fakePool) {
+		if !p.dropped || p.pollStatus != 0 || p.issued != 1 || p.begins != 1 {
+			t.Errorf("recovery did not reuse the issued credential: %+v", p)
+		}
+	})
+}
+
+func TestOnboardKeepsTheJournalAfterAnUnexpectedCredentialResponse(t *testing.T) {
+	t.Parallel()
+	pool := newFakePool(t)
+	token := pool.token
+	pool.set(func(p *fakePool) { p.approved = true; p.token = "invalid" })
+	state := filepath.Join(t.TempDir(), "runner.json")
+	run := startOnboarding(t, pool, state, nil)
+	phone := newPhone(t, run.next(t, OnboardingQR).Link, "")
+	status, ticket := phone.begin(operationID(1), pool.server.URL)
+	if status != 200 {
+		t.Fatal(status)
+	}
+	<-run.done
+	if run.err == nil {
+		t.Fatal("invalid credential accepted")
+	}
+	j, err := readJournal(JournalPath(state))
+	if err != nil || j.PairingID != ticket.PairingID || j.CommandKey != ticket.CommandKey {
+		t.Fatalf("recoverable journal lost: %+v %v", j, err)
+	}
+	pool.set(func(p *fakePool) { p.token = token })
+	resumed := startOnboarding(t, pool, state, nil)
+	<-resumed.done
+	if resumed.err != nil || resumed.cfg.Token != token || resumed.cfg.CommandKey != ticket.CommandKey {
+		t.Fatalf("resuming after unexpected response: %+v %v", resumed.cfg, resumed.err)
 	}
 }
 

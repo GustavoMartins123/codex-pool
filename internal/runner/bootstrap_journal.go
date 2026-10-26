@@ -41,7 +41,7 @@ func (j pairingJournal) start() runnerproto.PairingStart {
 // recoverableUntil is when the pool forgets the attempt: an issued
 // credential stays recoverable for the receipt window after issue.
 func (j pairingJournal) recoverableUntil() time.Time {
-	return j.ExpiresAt.Add(5 * time.Minute)
+	return j.ExpiresAt.Add(pairingReceiptWindow)
 }
 
 func writeJournal(path string, j pairingJournal) error {

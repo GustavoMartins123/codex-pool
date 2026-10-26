@@ -55,6 +55,14 @@ var errPairingTransport = errors.New("pairing transport failed")
 // recoverable way; the runner refuses to fall back to a weaker delivery.
 var ErrPoolIncompatible = errors.New("the pool does not support pairing runners from the app; update the pool")
 
+const pairingReceiptWindow = 5 * time.Minute
+
+func pairingEnded(err error) bool {
+	var rejected *PairingRejected
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &rejected) &&
+		rejected.Status >= 400 && rejected.Status < 500 && rejected.Status != http.StatusRequestTimeout && rejected.Status != http.StatusTooManyRequests
+}
+
 func BeginPairing(ctx context.Context, client *http.Client, origin string, machine runnerproto.PairingRequest, rotationToken string) (*runnerproto.PairingStart, error) {
 	if err := ValidateOrigin(origin); err != nil {
 		return nil, err
@@ -109,18 +117,24 @@ func CompletePairing(ctx context.Context, client *http.Client, origin string, p 
 }
 
 func AwaitPairing(ctx context.Context, client *http.Client, origin string, p runnerproto.PairingStart) (Config, error) {
-	ctx, cancel := context.WithDeadline(ctx, p.ExpiresAt)
+	deadline := p.ExpiresAt
+	if p.Delivery == runnerproto.PairingDeliveryRecoverable {
+		// Issuance can extend the pool's deadline even if that response is lost.
+		deadline = deadline.Add(pairingReceiptWindow)
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	timer := time.NewTimer(time.Duration(p.Interval) * time.Second)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return Config{}, errors.New("pairing expired or cancelled; create a new request")
+			return Config{}, fmt.Errorf("pairing expired or cancelled; create a new request: %w", ctx.Err())
 		case <-timer.C:
 			cfg, done, err := CompletePairing(ctx, client, origin, p)
 			var rejected *PairingRejected
-			retry := errors.Is(err, errPairingTransport) || errors.As(err, &rejected) && rejected.Status == http.StatusTooManyRequests
+			retry := errors.Is(err, errPairingTransport) || errors.As(err, &rejected) &&
+				(rejected.Status == http.StatusRequestTimeout || rejected.Status == http.StatusTooManyRequests || rejected.Status >= 500)
 			if err != nil && !retry {
 				return Config{}, err
 			}
