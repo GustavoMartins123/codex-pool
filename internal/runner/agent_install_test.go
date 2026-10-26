@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -120,7 +121,7 @@ func TestAgentInstallUnpacksOnlyTheVerifiedVendorTree(t *testing.T) {
 	if path != filepath.Join(installer.Root, "codex", "1.0.0-"+testTriple, "bin", "codex") {
 		t.Fatalf("installed at %s", path)
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0100 == 0 {
+	if info, err := os.Stat(path); err != nil || runtime.GOOS != "windows" && info.Mode().Perm()&0100 == 0 {
 		t.Fatalf("executable mode: %v %v", info, err)
 	}
 	if _, err := os.Stat(filepath.Join(installer.Root, "codex", "1.0.0-"+testTriple, "codex-path", "rg")); err != nil {
