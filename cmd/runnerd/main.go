@@ -31,7 +31,7 @@ func main() {
 	if err := run(); err != nil {
 		log.Print(err)
 		// A double-clicked console window would close before the error is read.
-		if runtime.GOOS == "windows" && len(os.Args) < 2 {
+		if runtime.GOOS == "windows" && len(os.Args) < 2 && !errors.Is(err, context.Canceled) {
 			fmt.Fprint(os.Stderr, "Press Enter to close.")
 			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 		}
