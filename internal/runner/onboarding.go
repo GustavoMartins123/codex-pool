@@ -49,11 +49,14 @@ type OnboardingOptions struct {
 	HTTPClient *http.Client
 	Report     func(OnboardingEvent)
 
+	// Interfaces and Listen default to the host's network; tests and future
+	// transports replace them.
+	Interfaces func() ([]BootstrapInterface, error)
+	Listen     func(netip.Addr) (net.Listener, error)
+
 	now         func() time.Time
 	ttl         time.Duration
 	receiptWait time.Duration
-	interfaces  func() ([]bootstrapInterface, error)
-	listen      func(netip.Addr) (net.Listener, error)
 }
 
 // DefaultMachineName is the host name, cut to what the pool accepts.
@@ -91,11 +94,11 @@ func (o *OnboardingOptions) defaults() {
 	if o.receiptWait == 0 {
 		o.receiptWait = runnerproto.BootstrapReceiptSeconds * time.Second
 	}
-	if o.interfaces == nil {
-		o.interfaces = localBootstrapInterfaces
+	if o.Interfaces == nil {
+		o.Interfaces = localBootstrapInterfaces
 	}
-	if o.listen == nil {
-		o.listen = func(addr netip.Addr) (net.Listener, error) {
+	if o.Listen == nil {
+		o.Listen = func(addr netip.Addr) (net.Listener, error) {
 			return net.Listen("tcp", netip.AddrPortFrom(addr, 0).String())
 		}
 	}
@@ -148,7 +151,7 @@ type pairingAttempt struct {
 
 func (o *OnboardingOptions) attempt(ctx context.Context) (Config, error) {
 	started := make(chan pairingAttempt, 1)
-	session, err := openBootstrap(ctx, bootstrapOptions{now: o.now, ttl: o.ttl, interfaces: o.interfaces, listen: o.listen,
+	session, err := openBootstrap(ctx, bootstrapOptions{now: o.now, ttl: o.ttl, interfaces: o.Interfaces, listen: o.Listen,
 		begin: func(ctx context.Context, s *bootstrapSession, pool, operation string) (runnerproto.BootstrapTicket, error) {
 			return o.begin(ctx, s, pool, operation, started)
 		}})

@@ -10,9 +10,9 @@ import (
 	"codex-pool-proxy/internal/runnerproto"
 )
 
-// bootstrapInterface is the part of a network interface that decides
+// BootstrapInterface is the part of a network interface that decides
 // whether a phone on the LAN can reach the runner through it.
-type bootstrapInterface struct {
+type BootstrapInterface struct {
 	Name     string
 	Flags    net.Flags
 	Hardware bool
@@ -35,7 +35,7 @@ func virtualInterface(name string) bool {
 
 // bootstrapCandidates picks at most BootstrapMaxEndpoints private IPv4
 // addresses of interfaces that are up, physical first.
-func bootstrapCandidates(interfaces []bootstrapInterface) []netip.Addr {
+func bootstrapCandidates(interfaces []BootstrapInterface) []netip.Addr {
 	type candidate struct {
 		addr     netip.Addr
 		hardware bool
@@ -72,18 +72,18 @@ func bootstrapCandidates(interfaces []bootstrapInterface) []netip.Addr {
 	return addrs
 }
 
-func localBootstrapInterfaces() ([]bootstrapInterface, error) {
+func localBootstrapInterfaces() ([]BootstrapInterface, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, errors.New("network interfaces unavailable")
 	}
-	result := make([]bootstrapInterface, 0, len(interfaces))
+	result := make([]BootstrapInterface, 0, len(interfaces))
 	for _, iface := range interfaces {
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
-		entry := bootstrapInterface{Name: iface.Name, Flags: iface.Flags, Hardware: len(iface.HardwareAddr) == 6}
+		entry := BootstrapInterface{Name: iface.Name, Flags: iface.Flags, Hardware: len(iface.HardwareAddr) == 6}
 		for _, addr := range addrs {
 			if prefix, err := netip.ParsePrefix(addr.String()); err == nil {
 				entry.Addrs = append(entry.Addrs, prefix.Addr())

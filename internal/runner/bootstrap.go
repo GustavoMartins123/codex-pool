@@ -42,7 +42,7 @@ func (e *bootstrapError) Error() string { return e.Message }
 type bootstrapOptions struct {
 	now        func() time.Time
 	ttl        time.Duration
-	interfaces func() ([]bootstrapInterface, error)
+	interfaces func() ([]BootstrapInterface, error)
 	listen     func(netip.Addr) (net.Listener, error)
 	// begin contacts the pool for a newly bound operation. It runs at most
 	// once at a time; a failure leaves the operation bound for a retry.

@@ -23,8 +23,8 @@ import (
 
 var lanAddress = netip.MustParseAddr("10.77.0.5")
 
-func lanInterfaces() ([]bootstrapInterface, error) {
-	return []bootstrapInterface{{Name: "eth0", Flags: net.FlagUp | net.FlagRunning, Hardware: true, Addrs: []netip.Addr{lanAddress}}}, nil
+func lanInterfaces() ([]BootstrapInterface, error) {
+	return []BootstrapInterface{{Name: "eth0", Flags: net.FlagUp | net.FlagRunning, Hardware: true, Addrs: []netip.Addr{lanAddress}}}, nil
 }
 
 // The advertised LAN address is served from loopback; the phone's dialer
@@ -156,7 +156,7 @@ func TestBootstrapCandidatesPreferPhysicalPrivateIPv4(t *testing.T) {
 		}
 		return out
 	}
-	got := bootstrapCandidates([]bootstrapInterface{
+	got := bootstrapCandidates([]BootstrapInterface{
 		{Name: "lo", Flags: up | net.FlagLoopback, Addrs: addrs("127.0.0.1")},
 		{Name: "docker0", Flags: up, Addrs: addrs("172.17.0.1")},
 		{Name: "tun0", Flags: up | net.FlagPointToPoint, Addrs: addrs("10.8.0.2")},
@@ -169,14 +169,14 @@ func TestBootstrapCandidatesPreferPhysicalPrivateIPv4(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("candidates = %v, want %v", got, want)
 	}
-	if len(bootstrapCandidates([]bootstrapInterface{{Name: "wlan0", Flags: up, Addrs: addrs("fd00::2")}})) != 0 {
+	if len(bootstrapCandidates([]BootstrapInterface{{Name: "wlan0", Flags: up, Addrs: addrs("fd00::2")}})) != 0 {
 		t.Fatal("IPv6-only network advertised")
 	}
 }
 
 func TestBootstrapRefusesToStartWithoutALANAddress(t *testing.T) {
 	_, err := openBootstrap(context.Background(), bootstrapOptions{now: time.Now, ttl: time.Minute, listen: loopbackListen,
-		interfaces: func() ([]bootstrapInterface, error) { return nil, nil }})
+		interfaces: func() ([]BootstrapInterface, error) { return nil, nil }})
 	if !errors.Is(err, errNoBootstrapAddress) {
 		t.Fatalf("open without LAN = %v", err)
 	}

@@ -106,7 +106,7 @@ func startOnboarding(t *testing.T, pool *fakePool, state string, configure func(
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	run := &onboardingRun{events: make(chan OnboardingEvent, 32), done: make(chan struct{}), cancel: cancel}
 	options := OnboardingOptions{StatePath: state, Name: "synthetic machine", HTTPClient: pool.server.Client(), Report: func(e OnboardingEvent) { run.events <- e },
-		interfaces: lanInterfaces, listen: loopbackListen, receiptWait: 5 * time.Second}
+		Interfaces: lanInterfaces, Listen: loopbackListen, receiptWait: 5 * time.Second}
 	if configure != nil {
 		configure(&options)
 	}
@@ -260,7 +260,7 @@ func TestOnboardFinishesAJournaledPairingWithoutTheLAN(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := startOnboarding(t, pool, state, func(o *OnboardingOptions) {
-		o.interfaces = func() ([]bootstrapInterface, error) {
+		o.Interfaces = func() ([]BootstrapInterface, error) {
 			t.Error("recovery opened the LAN service")
 			return nil, nil
 		}
@@ -297,7 +297,7 @@ func TestOnboardAbandonsExpiredJournalsAndKeepsCorruptOnes(t *testing.T) {
 
 	corrupt := filepath.Join(t.TempDir(), "runner.json")
 	_ = os.WriteFile(JournalPath(corrupt), []byte("{not json"), 0600)
-	_, err := Onboard(context.Background(), OnboardingOptions{StatePath: corrupt, interfaces: lanInterfaces, listen: loopbackListen})
+	_, err := Onboard(context.Background(), OnboardingOptions{StatePath: corrupt, Interfaces: lanInterfaces, Listen: loopbackListen})
 	if err == nil || !strings.Contains(err.Error(), "remove") {
 		t.Fatalf("corrupt journal = %v", err)
 	}
