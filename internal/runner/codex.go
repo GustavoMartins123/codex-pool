@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
@@ -38,24 +40,7 @@ func startCodex(ctx context.Context, exe, workspace, control, origin, token stri
 			return nil, err
 		}
 	}
-	settings := []string{
-		`model_provider="pool"`, `model_providers.pool.name="codex-pool"`,
-		"model_providers.pool.base_url=" + strconv.Quote(origin+"/v1"),
-		`model_providers.pool.env_key="POOL_SESSION_TOKEN"`, `model_providers.pool.wire_api="responses"`,
-		`model_providers.pool.requires_openai_auth=false`, `cli_auth_credentials_store="ephemeral"`,
-		`mcp_servers={}`, `features.apps=false`, `features.remote_skills=false`, `features.shell_snapshot=false`,
-		`model_providers.pool.request_max_retries=0`, `model_providers.pool.stream_max_retries=0`,
-	}
-	if runtime.GOOS == "windows" && session.PermissionMode == "gated" {
-		settings = append(settings, `windows.sandbox="mxc"`)
-	}
-	args := []string{"app-server", "--listen", "stdio://"}
-	for _, setting := range settings {
-		args = append(args, "-c", setting)
-	}
-	command := exec.Command(exe, args...)
-	command.Dir = workspace
-	command.Env = cleanEnvironment(map[string]string{"CODEX_HOME": control, "POOL_SESSION_TOKEN": token, "OTEL_SDK_DISABLED": "true", "GIT_TERMINAL_PROMPT": "0"})
+	command := codexCommand(exe, workspace, control, origin, token, session.PermissionMode)
 	process, err := spawnJSONProcess(ctx, command)
 	if err != nil {
 		return nil, err
@@ -404,4 +389,29 @@ func (a *codexProcess) handle(message map[string]json.RawMessage) error {
 		// The terminal turn event carries failure without exposing credential-bearing CLI diagnostics.
 	}
 	return nil
+}
+
+func codexCommand(exe, workspace, control, origin, token, permission string) *exec.Cmd {
+	settings := []string{
+		`model_provider="pool"`, `model_providers.pool.name="codex-pool"`,
+		"model_providers.pool.base_url=" + strconv.Quote(origin+"/v1"),
+		`model_providers.pool.env_key="POOL_SESSION_TOKEN"`, `model_providers.pool.wire_api="responses"`,
+		`model_providers.pool.requires_openai_auth=false`, `cli_auth_credentials_store="ephemeral"`,
+		`mcp_servers={}`, `features.apps=false`, `features.remote_skills=false`, `features.shell_snapshot=false`,
+		`model_providers.pool.request_max_retries=0`, `model_providers.pool.stream_max_retries=0`,
+	}
+	if runtime.GOOS == "windows" && permission == "gated" {
+		settings = append(settings, `windows.sandbox="mxc"`)
+	}
+	if _, err := os.Stat(filepath.Join(control, "model_catalog.json")); err == nil {
+		settings = append(settings, "model_catalog_json="+strconv.Quote(filepath.Join(control, "model_catalog.json")))
+	}
+	args := []string{"app-server", "--listen", "stdio://"}
+	for _, setting := range settings {
+		args = append(args, "-c", setting)
+	}
+	command := exec.Command(exe, args...)
+	command.Dir = workspace
+	command.Env = cleanEnvironment(map[string]string{"CODEX_HOME": control, "POOL_SESSION_TOKEN": token, "OTEL_SDK_DISABLED": "true", "GIT_TERMINAL_PROMPT": "0"})
+	return command
 }

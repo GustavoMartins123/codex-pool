@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,37 @@ func fakeAgent(codex bool) {
 			case "initialize":
 				send(map[string]any{"id": frame["id"], "result": map[string]any{}})
 			case "initialized":
+			case "model/list":
+				catalog := ""
+				for _, arg := range os.Args {
+					if strings.HasPrefix(arg, "model_catalog_json=") {
+						catalog, _ = strconv.Unquote(strings.TrimPrefix(arg, "model_catalog_json="))
+					}
+				}
+				var source struct {
+					Models []struct {
+						Slug   string `json:"slug"`
+						Levels []struct {
+							Effort string `json:"effort"`
+						} `json:"supported_reasoning_levels"`
+					} `json:"models"`
+				}
+				raw, err := os.ReadFile(catalog)
+				if err != nil || json.Unmarshal(raw, &source) != nil {
+					os.Exit(40)
+				}
+				rows := []map[string]any{}
+				for _, model := range source.Models {
+					levels := []map[string]string{}
+					for _, level := range model.Levels {
+						if level.Effort == "max" {
+							continue
+						} // Simulate an older CLI without this effort.
+						levels = append(levels, map[string]string{"reasoningEffort": level.Effort})
+					}
+					rows = append(rows, map[string]any{"model": model.Slug, "supportedReasoningEfforts": levels})
+				}
+				send(map[string]any{"id": frame["id"], "result": map[string]any{"data": rows, "nextCursor": nil}})
 			case "thread/start", "thread/resume":
 				var params map[string]any
 				_ = json.Unmarshal(frame["params"], &params)

@@ -32,6 +32,8 @@ type daemon struct {
 	// device did not sign.
 	commandKey   []byte
 	commandKeyID string
+	modelCatalog runnerproto.RunnerCatalog
+	models       []runnerproto.AgentModel
 }
 
 type localSession struct {
@@ -116,6 +118,13 @@ func Run(ctx context.Context, options Options) error {
 		return err
 	}
 	d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
+	d.modelCatalog, err = fetchRunnerCatalog(ctx, options)
+	if err == nil {
+		d.models, err = prepareAgentModels(ctx, options, d.modelCatalog)
+	}
+	if err != nil {
+		log.Printf("runner model discovery: %v; unconfirmed models will not be offered", err)
+	}
 	defer func() {
 		d.mu.Lock()
 		sessions := []*localSession{}
@@ -201,6 +210,7 @@ func (d *daemon) connect() (bool, error) {
 	sort.Strings(agents)
 	hello := runnerproto.Frame("hello")
 	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths, PersistentSessions: true, CommandKeyID: d.commandKeyID}
+	hello.Hello.ModelsKnown, hello.Hello.Models = true, d.models
 	write := func(m runnerproto.Message) error {
 		data, err := json.Marshal(m)
 		if err != nil {
@@ -580,6 +590,10 @@ func (s *localSession) initialize(credentialPath string) {
 	var agent agentProcess
 	switch s.session.Agent {
 	case "codex":
+		if s.daemon.modelCatalog.CodexCatalog == "" || saveCodexCatalog(control, s.daemon.modelCatalog.CodexCatalog) != nil {
+			fail()
+			return
+		}
 		agent, err = startCodex(s.ctx, exe, path, control, s.daemon.options.Config.PoolURL, token, s.session, s.emit, s.finish)
 	case "claude":
 		agent, err = startClaude(s.ctx, exe, path, control, s.daemon.options.Config.PoolURL, token, s.session, s.emit, s.finish)
