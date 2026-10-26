@@ -141,7 +141,13 @@ func ReadConfig(path string) (Config, error) {
 }
 
 func WriteConfig(path string, cfg Config) error {
-	data, err := json.Marshal(cfg)
+	return writePrivateJSON(path, cfg)
+}
+
+// writePrivateJSON replaces path atomically with a file only its owner can
+// read, synced before the rename so a crash leaves the old or new content.
+func writePrivateJSON(path string, value any) error {
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
