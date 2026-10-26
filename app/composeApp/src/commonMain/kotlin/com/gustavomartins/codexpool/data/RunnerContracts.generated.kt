@@ -117,6 +117,7 @@ data class CreateSession(
     @SerialName("permission_mode") val permissionMode: PermissionMode,
     @SerialName("initial_input") val prompt: String? = null,
     @SerialName("reasoning_effort") val reasoningEffort: String = "",
+    @SerialName("runner_id") val runnerId: String? = null,
 )
 
 @Serializable
@@ -181,6 +182,14 @@ data class Session(
 )
 
 @Serializable
+data class AgentModel(
+    @SerialName("agent") val agent: Agent,
+    @SerialName("model") val model: String,
+    @SerialName("reasoning_efforts") val reasoningEfforts: List<String> = emptyList(),
+    @SerialName("default_reasoning_effort") val defaultReasoningEffort: String = "",
+)
+
+@Serializable
 data class Runner(
     @SerialName("id") val id: String,
     @SerialName("name") val name: String,
@@ -190,6 +199,8 @@ data class Runner(
     @SerialName("labels") val labels: List<String> = emptyList(),
     @SerialName("allowed_paths") val allowedPaths: List<String> = emptyList(),
     @SerialName("command_key_id") val commandKeyId: String? = null,
+    @SerialName("models_known") val modelsKnown: Boolean = false,
+    @SerialName("models") val models: List<AgentModel> = emptyList(),
 )
 
 @Serializable

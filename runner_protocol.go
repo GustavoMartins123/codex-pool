@@ -24,6 +24,9 @@ func (b *sessionBroker) claim(r *connectedRunner, id string) error {
 	if !supportsAgent(r.hello.Agents, s.Agent) {
 		return sessionError(409, "unsupported agent")
 	}
+	if r.hello.ModelsKnown && !runnerproto.SupportsModel(r.hello.Models, s.Agent, s.Model, s.ReasoningEffort) {
+		return sessionError(409, "runner does not support the selected model or reasoning effort")
+	}
 	if s.State == "closed" {
 		return sessionError(409, "session_closed")
 	}

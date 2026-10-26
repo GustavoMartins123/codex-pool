@@ -184,6 +184,8 @@ func (b *sessionBroker) connectRunner(r *connectedRunner) error {
 		record.Runner.OS = r.hello.OS
 		record.Runner.Arch = r.hello.Arch
 		record.Runner.CommandKeyID = r.hello.CommandKeyID
+		record.Runner.ModelsKnown = r.hello.ModelsKnown
+		record.Runner.Models = r.hello.Models
 		if err := putJSON(bucket, r.id, record); err != nil {
 			return err
 		}

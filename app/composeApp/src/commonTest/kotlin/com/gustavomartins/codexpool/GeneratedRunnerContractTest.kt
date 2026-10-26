@@ -8,9 +8,10 @@ class GeneratedRunnerContractTest {
     @Test fun sessionRequestsKeepTheirCanonicalWireNamesAndDefaults() {
         val draft = CreateSession(Agent.Codex, "synthetic", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, "first input")
         val json = PoolJson.parseToJsonElement(PoolJson.encodeToString(draft)).jsonObject
-        assertEquals(setOf("agent", "model", "workspace", "permission_mode", "initial_input", "reasoning_effort"), json.keys)
+        assertEquals(setOf("agent", "model", "workspace", "permission_mode", "initial_input", "reasoning_effort", "runner_id"), json.keys)
         assertFalse("prompt" in json)
         assertEquals(draft, PoolJson.decodeFromString<CreateSession>(json.toString()))
+        assertNull(draft.runnerId)
         val turn = PoolJson.decodeFromString<TurnInput>("""{"input":"continue"}""")
         assertEquals(0L, turn.issuedAt)
         assertNull(turn.pendingInputId)

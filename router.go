@@ -364,6 +364,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reqID = randomID()
 	}
 	w.Header().Set("X-Pool-Request-Id", reqID)
+	if r.URL.Path == "/api/runner/catalog" {
+		h.handleRunnerCatalog(w, r)
+		return
+	}
 	if r.URL.Path == "/api/runner/ws" {
 		h.handleRunnerWS(w, r)
 		return

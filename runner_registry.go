@@ -146,6 +146,14 @@ func validHello(h *runnerproto.Hello) error {
 	if !runnerproto.ValidCommandKeyID(h.CommandKeyID) {
 		return errors.New("invalid runner command key")
 	}
+	if err := runnerproto.ValidateAgentModels(h.Models); err != nil {
+		return err
+	}
+	for _, model := range h.Models {
+		if !h.ModelsKnown || !supportsAgent(h.Agents, model.Agent) {
+			return errors.New("model for an unavailable runner agent")
+		}
+	}
 	seen := map[string]bool{}
 	for _, agent := range h.Agents {
 		if (agent != "codex" && agent != "claude") || seen[agent] {

@@ -135,6 +135,7 @@ type CreateSession struct {
 	PermissionMode  string    `json:"permission_mode"`
 	Prompt          string    `json:"prompt,omitempty"`
 	InitialInput    string    `json:"initial_input,omitempty"`
+	RunnerID        string    `json:"runner_id,omitempty"`
 }
 
 type TurnSettings struct {
@@ -211,28 +212,44 @@ type Session struct {
 	PendingInput    *PendingInput    `json:"pending_input,omitempty"`
 }
 
+type AgentModel struct {
+	Agent                  string   `json:"agent"`
+	Model                  string   `json:"model"`
+	ReasoningEfforts       []string `json:"reasoning_efforts"`
+	DefaultReasoningEffort string   `json:"default_reasoning_effort"`
+}
+
+type RunnerCatalog struct {
+	Models       []AgentModel `json:"models"`
+	CodexCatalog string       `json:"codex_catalog"`
+}
+
 type Hello struct {
-	Agents             []string `json:"agents"`
-	OS                 string   `json:"os"`
-	Arch               string   `json:"arch"`
-	Labels             []string `json:"labels"`
-	AllowedPaths       []string `json:"allowed_paths"`
-	PersistentSessions bool     `json:"persistent_sessions"`
-	CommandKeyID       string   `json:"command_key_id,omitempty"`
+	Agents             []string     `json:"agents"`
+	OS                 string       `json:"os"`
+	Arch               string       `json:"arch"`
+	Labels             []string     `json:"labels"`
+	AllowedPaths       []string     `json:"allowed_paths"`
+	PersistentSessions bool         `json:"persistent_sessions"`
+	CommandKeyID       string       `json:"command_key_id,omitempty"`
+	ModelsKnown        bool         `json:"models_known,omitempty"`
+	Models             []AgentModel `json:"models,omitempty"`
 }
 
 type Runner struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Online       bool      `json:"online"`
-	Agents       []string  `json:"agents"`
-	Labels       []string  `json:"labels"`
-	AllowedPaths []string  `json:"allowed_paths"`
-	OS           string    `json:"os"`
-	Arch         string    `json:"arch"`
-	Revoked      bool      `json:"revoked"`
-	CreatedAt    time.Time `json:"created_at"`
-	CommandKeyID string    `json:"command_key_id,omitempty"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Online       bool         `json:"online"`
+	Agents       []string     `json:"agents"`
+	Labels       []string     `json:"labels"`
+	AllowedPaths []string     `json:"allowed_paths"`
+	OS           string       `json:"os"`
+	Arch         string       `json:"arch"`
+	Revoked      bool         `json:"revoked"`
+	CreatedAt    time.Time    `json:"created_at"`
+	CommandKeyID string       `json:"command_key_id,omitempty"`
+	ModelsKnown  bool         `json:"models_known,omitempty"`
+	Models       []AgentModel `json:"models,omitempty"`
 }
 
 type Message struct {

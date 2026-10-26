@@ -328,7 +328,8 @@
         {"json": "workspace", "go": "Workspace", "type": "Workspace"},
         {"json": "permission_mode", "go": "PermissionMode", "type": "PermissionMode"},
         {"json": "prompt", "go": "Prompt", "type": "string", "omit_empty": true},
-        {"json": "initial_input", "go": "InitialInput", "type": "string", "omit_empty": true}
+        {"json": "initial_input", "go": "InitialInput", "type": "string", "omit_empty": true},
+        {"json": "runner_id", "go": "RunnerID", "type": "string", "omit_empty": true}
       ],
       "kotlin": [
         {"field": "agent", "name": "agent"},
@@ -336,7 +337,8 @@
         {"field": "workspace", "name": "workspace"},
         {"field": "permission_mode", "name": "permissionMode"},
         {"field": "initial_input", "name": "prompt", "nullable": true, "default": null},
-        {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""}
+        {"field": "reasoning_effort", "name": "reasoningEffort", "default": ""},
+        {"field": "runner_id", "name": "runnerId", "nullable": true, "default": null}
       ]
     },
     {
@@ -478,6 +480,28 @@
       ]
     },
     {
+      "name": "AgentModel",
+      "fields": [
+        {"json": "agent", "go": "Agent", "type": "Agent"},
+        {"json": "model", "go": "Model", "type": "string"},
+        {"json": "reasoning_efforts", "go": "ReasoningEfforts", "type": "[]string"},
+        {"json": "default_reasoning_effort", "go": "DefaultReasoningEffort", "type": "string"}
+      ],
+      "kotlin": [
+        {"field": "agent", "name": "agent"},
+        {"field": "model", "name": "model"},
+        {"field": "reasoning_efforts", "name": "reasoningEfforts", "default": []},
+        {"field": "default_reasoning_effort", "name": "defaultReasoningEffort", "default": ""}
+      ]
+    },
+    {
+      "name": "RunnerCatalog",
+      "fields": [
+        {"json": "models", "go": "Models", "type": "[]AgentModel"},
+        {"json": "codex_catalog", "go": "CodexCatalog", "type": "string"}
+      ]
+    },
+    {
       "name": "Hello",
       "fields": [
         {"json": "agents", "go": "Agents", "type": "[]Agent"},
@@ -486,7 +510,9 @@
         {"json": "labels", "go": "Labels", "type": "[]string"},
         {"json": "allowed_paths", "go": "AllowedPaths", "type": "[]string"},
         {"json": "persistent_sessions", "go": "PersistentSessions", "type": "boolean"},
-        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true}
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true},
+        {"json": "models_known", "go": "ModelsKnown", "type": "boolean", "omit_empty": true},
+        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true}
       ]
     },
     {
@@ -502,7 +528,9 @@
         {"json": "arch", "go": "Arch", "type": "string"},
         {"json": "revoked", "go": "Revoked", "type": "boolean"},
         {"json": "created_at", "go": "CreatedAt", "type": "timestamp"},
-        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true}
+        {"json": "command_key_id", "go": "CommandKeyID", "type": "string", "omit_empty": true},
+        {"json": "models_known", "go": "ModelsKnown", "type": "boolean", "omit_empty": true},
+        {"json": "models", "go": "Models", "type": "[]AgentModel", "omit_empty": true}
       ],
       "kotlin": [
         {"field": "id", "name": "id"},
@@ -512,7 +540,9 @@
         {"field": "revoked", "name": "revoked", "default": false},
         {"field": "labels", "name": "labels", "default": []},
         {"field": "allowed_paths", "name": "allowedPaths", "default": []},
-        {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null}
+        {"field": "command_key_id", "name": "commandKeyId", "nullable": true, "default": null},
+        {"field": "models_known", "name": "modelsKnown", "default": false},
+        {"field": "models", "name": "models", "default": []}
       ]
     },
     {
