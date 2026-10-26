@@ -25,11 +25,11 @@ import (
 type AgentLookup struct {
 	ManagedRoot string
 
-	goos     string
-	goarch   string
-	home     func() (string, error)
-	lookPath func(string) (string, error)
-	probe    func(context.Context, string) error
+	goos   string
+	goarch string
+	home   func() (string, error)
+	paths  func(string) []string
+	probe  func(context.Context, string) error
 }
 
 // AgentCandidate records why a location was or was not used.
@@ -47,8 +47,8 @@ func (l *AgentLookup) defaults() {
 	if l.home == nil {
 		l.home = os.UserHomeDir
 	}
-	if l.lookPath == nil {
-		l.lookPath = exec.LookPath
+	if l.paths == nil {
+		l.paths = agentPaths
 	}
 	if l.probe == nil {
 		l.probe = probeAgent
@@ -62,8 +62,11 @@ func (l AgentLookup) Resolve(ctx context.Context) (map[string]string, []AgentCan
 	var tried []AgentCandidate
 	for _, agent := range []string{"codex", "claude"} {
 		for _, c := range l.candidates(agent) {
+			if ctx.Err() != nil {
+				return found, tried
+			}
 			if c.Err == nil {
-				c.Path, c.Err = l.validate(ctx, c.Path)
+				_, c.Err = l.validate(ctx, c.Path)
 			}
 			tried = append(tried, c)
 			if c.Err == nil {
@@ -97,19 +100,48 @@ func (l AgentLookup) candidates(agent string) []AgentCandidate {
 		// Claude Code's native installer links its current version here.
 		add(filepath.Join(home, ".local", "bin", l.exe("claude")), "official installer", nil)
 	}
-	path, err := l.lookPath(agent)
-	if err != nil {
-		if errors.Is(err, exec.ErrDot) {
-			err = errors.New("PATH points at a relative directory; ignored")
+	paths := l.paths(agent)
+	if len(paths) == 0 {
+		add("", "PATH", exec.ErrNotFound)
+	}
+	for _, path := range paths {
+		if native, ok := l.npmNative(agent, path); ok {
+			add(native, "npm native build", nil)
 		}
-		add("", "PATH", err)
-		return out
+		add(path, "PATH", nil)
 	}
-	if native, ok := l.npmNative(agent, path); ok {
-		add(native, "npm native build", nil)
-	}
-	add(path, "PATH", nil)
 	return out
+}
+
+// agentPaths enumerates absolute PATH entries so an unusable earlier agent
+// cannot hide a working later one. Relative entries never become candidates.
+func agentPaths(agent string) []string {
+	names := []string{agent}
+	if runtime.GOOS == "windows" {
+		names = []string{agent + ".exe", agent + ".cmd"}
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		for _, name := range names {
+			path := filepath.Join(dir, name)
+			key := path
+			if runtime.GOOS == "windows" {
+				key = strings.ToLower(key)
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if _, err := os.Lstat(path); err == nil {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
 }
 
 // npmNative maps an npm-installed codex launcher (a .cmd shim on Windows,

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -25,11 +24,11 @@ func writeScript(t *testing.T, path string, mode os.FileMode) string {
 
 func lookupFor(t *testing.T, path map[string]string, home string) AgentLookup {
 	return AgentLookup{goos: "linux", goarch: "amd64", home: func() (string, error) { return home, nil },
-		lookPath: func(name string) (string, error) {
+		paths: func(name string) []string {
 			if p, ok := path[name]; ok {
-				return p, nil
+				return []string{p}
 			}
-			return "", exec.ErrNotFound
+			return nil
 		},
 		probe: func(context.Context, string) error { return nil }}
 }
@@ -104,7 +103,7 @@ func TestAgentLookupRejectsWhatRunCannotStart(t *testing.T) {
 	}
 
 	relative := lookupFor(t, nil, t.TempDir())
-	relative.lookPath = func(string) (string, error) { return "codex", exec.ErrDot }
+	relative.paths = func(string) []string { return []string{"codex"} }
 	if found, _ := relative.Resolve(context.Background()); len(found) != 0 {
 		t.Fatal("agent from a relative PATH entry accepted")
 	}
@@ -119,6 +118,45 @@ func TestAgentLookupRejectsWhatRunCannotStart(t *testing.T) {
 	cmd := writeScript(t, filepath.Join(root, "codex.cmd"), 0755)
 	if _, err := shim.validate(context.Background(), cmd); err == nil {
 		t.Fatal("Windows shell shim accepted")
+	}
+}
+
+func TestAgentLookupContinuesPastUnusablePathEntries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix scripts as agents")
+	}
+	root := t.TempDir()
+	first := writeScript(t, filepath.Join(root, "first", "codex"), 0755)
+	if err := os.WriteFile(first, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	second := writeScript(t, filepath.Join(root, "second", "codex"), 0755)
+	t.Setenv("PATH", filepath.Dir(first)+string(os.PathListSeparator)+filepath.Dir(second))
+	home := t.TempDir()
+	lookup := AgentLookup{home: func() (string, error) { return home, nil }}
+	found, tried := lookup.Resolve(context.Background())
+	if found["codex"] != second {
+		t.Fatalf("valid agent later on PATH ignored: found=%v tried=%+v", found, tried)
+	}
+	if tried[0].Path != first || tried[0].Err == nil {
+		t.Fatalf("failed candidate lost its diagnostic path: %+v", tried)
+	}
+}
+
+func TestAgentPathsSkipRelativeAndDuplicateDirectories(t *testing.T) {
+	root := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	writeScript(t, filepath.Join(root, name), 0755)
+	valid := writeScript(t, filepath.Join(root, "bin", name), 0755)
+	t.Chdir(root)
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", "."+sep+"bin"+sep+sep+filepath.Dir(valid)+sep+filepath.Dir(valid))
+	paths := agentPaths("codex")
+	if len(paths) != 1 || paths[0] != valid {
+		t.Fatalf("PATH candidates = %v, want only %s", paths, valid)
 	}
 }
 
