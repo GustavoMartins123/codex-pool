@@ -30,10 +30,16 @@ type daemon struct {
 	notify   chan struct{}
 	// commandKey makes the runner refuse prompts and approvals the paired
 	// device did not sign.
-	commandKey   []byte
-	commandKeyID string
-	modelCatalog runnerproto.RunnerCatalog
-	models       []runnerproto.AgentModel
+	commandKey         []byte
+	commandKeyID       string
+	modelCatalog       runnerproto.RunnerCatalog
+	models             []runnerproto.AgentModel
+	modelsRevision     string
+	agentFingerprint   string
+	catalogMu          sync.Mutex
+	catalogNotify      chan struct{}
+	catalogGenerations map[string]string
+	catalogOrder       []string
 }
 
 type localSession struct {
@@ -61,9 +67,12 @@ type localSession struct {
 	exitOnce         sync.Once
 	done             chan struct{}
 	commands         chan runnerproto.Message
+	modelCatalog     string
 }
 
 func Run(ctx context.Context, options Options) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if err := ValidateOrigin(options.Config.PoolURL); err != nil {
 		return err
 	}
@@ -118,13 +127,8 @@ func Run(ctx context.Context, options Options) error {
 		return err
 	}
 	d.commandKey, d.commandKeyID = key, runnerproto.CommandKeyID(key)
-	d.modelCatalog, err = fetchRunnerCatalog(ctx, options)
-	if err == nil {
-		d.models, err = prepareAgentModels(ctx, options, d.modelCatalog)
-	}
-	if err != nil {
-		log.Printf("runner model discovery: %v; unconfirmed models will not be offered", err)
-	}
+	d.catalogNotify = make(chan struct{}, 1)
+	go d.watchModels()
 	defer func() {
 		d.mu.Lock()
 		sessions := []*localSession{}
@@ -191,6 +195,9 @@ func (*credentialRejection) Error() string {
 func (d *daemon) connect() (bool, error) {
 	ctx, cancel := context.WithCancel(d.ctx)
 	defer cancel()
+	if err := d.refreshModels(); err != nil && ctx.Err() == nil {
+		log.Printf("runner reconnect catalog: %v", err)
+	}
 	wsURL := "wss" + strings.TrimPrefix(d.options.Config.PoolURL, "https") + "/api/runner/ws"
 	connectCtx, connectCancel := context.WithTimeout(ctx, 20*time.Second)
 	conn, response, err := websocket.Dial(connectCtx, wsURL, &websocket.DialOptions{HTTPClient: httpClient(d.options.HTTPClient), HTTPHeader: http.Header{"Authorization": []string{"Bearer " + d.options.Config.Token}}, CompressionMode: websocket.CompressionDisabled})
@@ -210,7 +217,9 @@ func (d *daemon) connect() (bool, error) {
 	sort.Strings(agents)
 	hello := runnerproto.Frame("hello")
 	hello.Hello = &runnerproto.Hello{Agents: agents, OS: runtime.GOOS, Arch: runtime.GOARCH, Labels: d.options.Labels, AllowedPaths: d.options.AllowedPaths, PersistentSessions: true, CommandKeyID: d.commandKeyID}
-	hello.Hello.ModelsKnown, hello.Hello.Models = true, d.models
+	d.mu.Lock()
+	hello.Hello.ModelsKnown, hello.Hello.Models, hello.Hello.CatalogRevision = true, d.models, d.modelsRevision
+	d.mu.Unlock()
 	write := func(m runnerproto.Message) error {
 		data, err := json.Marshal(m)
 		if err != nil {
@@ -245,6 +254,15 @@ func (d *daemon) connect() (bool, error) {
 				return
 			case command := <-d.commands:
 				if write(command) != nil {
+					return
+				}
+			case <-d.catalogNotify:
+				d.mu.Lock()
+				capabilities := &runnerproto.ModelCapabilities{Revision: d.modelsRevision, Models: d.models}
+				d.mu.Unlock()
+				update := runnerproto.Frame("models.updated")
+				update.Capabilities = capabilities
+				if write(update) != nil {
 					return
 				}
 			case <-d.notify:
@@ -427,6 +445,19 @@ func (d *daemon) claimed(m runnerproto.Message) error {
 	if fresh {
 		ctx, cancel := context.WithCancel(d.ctx)
 		s = &localSession{daemon: d, session: *m.Session, ctx: ctx, cancel: cancel, commands: make(chan runnerproto.Message, 32), sequence: m.Sequence, done: make(chan struct{})}
+		s.modelCatalog = d.modelCatalog.CodexCatalog
+		if m.Session.Capabilities != nil && !m.Session.ResumeRequested {
+			catalog, ok := d.catalogGenerations[m.Session.Capabilities.Revision]
+			if !ok {
+				cancel()
+				d.mu.Unlock()
+				release := runnerproto.Frame("claim.release")
+				release.SessionID = m.SessionID
+				d.command(release)
+				return nil
+			}
+			s.modelCatalog = catalog
+		}
 		d.sessions[m.SessionID] = s
 	}
 	d.mu.Unlock()
@@ -590,7 +621,7 @@ func (s *localSession) initialize(credentialPath string) {
 	var agent agentProcess
 	switch s.session.Agent {
 	case "codex":
-		if s.daemon.modelCatalog.CodexCatalog == "" || saveCodexCatalog(control, s.daemon.modelCatalog.CodexCatalog) != nil {
+		if !s.session.ResumeRequested && (s.modelCatalog == "" || saveCodexCatalog(control, s.modelCatalog) != nil) {
 			fail()
 			return
 		}

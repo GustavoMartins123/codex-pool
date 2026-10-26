@@ -41,13 +41,14 @@ type LaunchConfig struct {
 }
 
 type Options struct {
-	Config               Config
-	WorkspaceRoot        string
-	AllowedPaths         []string
-	Labels               []string
-	Executables          map[string]string
-	HTTPClient           *http.Client
-	AllowAutoPermissions bool
+	Config                Config
+	WorkspaceRoot         string
+	AllowedPaths          []string
+	Labels                []string
+	Executables           map[string]string
+	HTTPClient            *http.Client
+	AllowAutoPermissions  bool
+	modelsRefreshInterval time.Duration
 }
 
 func ValidateOrigin(raw string) error {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("synthetic-agent 1")
+		os.Exit(0)
+	}
 	if len(os.Args) > 3 && os.Args[1] == "-c" && os.Args[3] == "sandbox" {
 		os.Exit(0)
 	}

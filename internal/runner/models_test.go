@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"sync"
 	"testing"
+	"time"
 
 	"codex-pool-proxy/internal/runnerproto"
 )
@@ -57,6 +60,130 @@ func TestRunnerPreparesThePoolCatalogWithoutTheSiteSetup(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(control, "model_catalog.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCatalogRefreshUsesEtagsAndNotifiesOnlyCapabilityChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses Unix scripts for executable replacement")
+	}
+	var mu sync.Mutex
+	catalog := runnerproto.RunnerCatalog{Models: []runnerproto.AgentModel{{Agent: "claude", Model: "first"}}, CodexCatalog: `{"models":[]}`}
+	catalog.Revision = runnerproto.ContentRevision(catalog)
+	requests, unchanged := 0, 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests++
+		if r.Header.Get("If-None-Match") == `"`+catalog.Revision+`"` {
+			unchanged++
+			w.WriteHeader(304)
+			return
+		}
+		json.NewEncoder(w).Encode(catalog)
+	}))
+	defer server.Close()
+	exe := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho one\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{ctx: context.Background(), options: Options{WorkspaceRoot: t.TempDir(), Config: Config{PoolURL: server.URL, Token: "synthetic"}, HTTPClient: server.Client(), Executables: map[string]string{"claude": exe}}, catalogNotify: make(chan struct{}, 1)}
+	if err := d.refreshModels(); err != nil {
+		t.Fatal(err)
+	}
+	firstRevision, fingerprint := d.modelsRevision, d.agentFingerprint
+	<-d.catalogNotify
+	if err := d.refreshModels(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-d.catalogNotify:
+		t.Fatal("unchanged catalog caused another update")
+	default:
+	}
+	mu.Lock()
+	if requests != 2 || unchanged != 1 {
+		t.Errorf("requests=%d unchanged=%d", requests, unchanged)
+	}
+	mu.Unlock()
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho two-with-a-new-size\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.refreshModels(); err != nil {
+		t.Fatal(err)
+	}
+	if d.agentFingerprint == fingerprint {
+		t.Fatal("executable replacement was ignored")
+	}
+	mu.Lock()
+	catalog.Models = []runnerproto.AgentModel{{Agent: "claude", Model: "second"}}
+	catalog.Revision = ""
+	catalog.Revision = runnerproto.ContentRevision(catalog)
+	mu.Unlock()
+	if err := d.refreshModels(); err != nil {
+		t.Fatal(err)
+	}
+	if d.modelsRevision == firstRevision || d.models[0].Model != "second" {
+		t.Fatal("new source catalog was ignored")
+	}
+	select {
+	case <-d.catalogNotify:
+	default:
+		t.Fatal("capability change was not queued for the pool")
+	}
+	if _, ok := d.catalogGenerations[firstRevision]; !ok {
+		t.Fatal("in-flight sessions lost their earlier catalog generation")
+	}
+	if err := os.Remove(exe); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.refreshModels(); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.models) != 0 {
+		t.Fatal("removed executable kept advertising models")
+	}
+}
+
+func TestCatalogWatcherRecoversFromAnInitialFailure(t *testing.T) {
+	var mu sync.Mutex
+	fail := true
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if fail {
+			w.WriteHeader(503)
+			return
+		}
+		json.NewEncoder(w).Encode(runnerproto.RunnerCatalog{Models: []runnerproto.AgentModel{{Agent: "claude", Model: "recovered"}}, CodexCatalog: `{"models":[]}`})
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &daemon{ctx: ctx, options: Options{WorkspaceRoot: t.TempDir(), Config: Config{PoolURL: server.URL}, HTTPClient: server.Client(), Executables: map[string]string{"claude": exe}, modelsRefreshInterval: 10 * time.Millisecond}, catalogNotify: make(chan struct{}, 1)}
+	if err := d.refreshModels(); err == nil {
+		t.Fatal("fixture did not fail the first request")
+	}
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	done := make(chan struct{})
+	go func() { d.watchModels(); close(done) }()
+	select {
+	case <-d.catalogNotify:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not recover")
+	}
+	cancel()
+	<-done
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.models) != 1 || d.models[0].Model != "recovered" {
+		t.Fatal("recovered catalog was not confirmed")
 	}
 }
 
