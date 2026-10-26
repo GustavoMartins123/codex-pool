@@ -178,16 +178,25 @@ class DashboardViewModel(
     fun loadCatalog() = action {
         mutable.update { it.copy(catalog = null) }
         val models = api.catalog()
-        mutable.update { it.copy(catalog = models) }
+        val runners = api.runners()
+        mutable.update { it.copy(catalog = models.forRunners(runners.filter { signer.canSignFor(it.commandKeyId) }), runners = runners) }
     }
 
     fun create(request: CreateSession, onCreated: (String) -> Unit) = action {
         request.validate()
-        require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
+        require(mutable.value.catalog?.any { it.id == request.model && it.availableNow && it.supports(request.agent) &&
+            (request.reasoningEffort.isEmpty() || request.reasoningEffort in it.efforts(request.agent)) } == true) { "Selecione um modelo e esforço confirmados por um runner online." }
         // The pool persists the draft before acknowledging session creation.
         // Execution still waits for a signed turn bound to the returned session.
         check(signer.enabled) { CommandSigner.MISSING_KEY }
-        val session = api.create(request)
+        val runner = mutable.value.runners.orEmpty().firstOrNull { runner ->
+            runner.online && !runner.revoked && runner.modelsKnown && signer.canSignFor(runner.commandKeyId) && runner.models.any {
+                it.agent == request.agent && it.model == request.model &&
+                    (request.reasoningEffort.isEmpty() || request.reasoningEffort in it.reasoningEfforts)
+            }
+        }
+        require(runner != null) { "Nenhum runner online confirmou essas configurações. Atualize os modelos." }
+        val session = api.create(request.copy(runnerId = runner.id))
         onCreated(session.conversationId)
     }
 
@@ -344,7 +353,9 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
         viewModelScope.launch {
             try {
                 val catalog = api.catalog()
-                mutable.update { it.copy(catalog = catalog) }
+                val runnerId = mutable.value.session?.runnerId
+                val runners = api.runners()
+                mutable.update { it.copy(catalog = if (runnerId == null) emptyList() else catalog.forRunners(runners, runnerId)) }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(catalogError = e.userMessage()) } }
             finally { mutable.update { it.copy(catalogLoading = false) } }

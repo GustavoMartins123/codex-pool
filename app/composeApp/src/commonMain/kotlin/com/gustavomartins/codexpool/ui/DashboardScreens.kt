@@ -195,10 +195,11 @@ fun CreateSessionScreen(state: DashboardState, reloadCatalog: () -> Unit, onBack
             Text("Escolha como trabalhar", style = MaterialTheme.typography.headlineLarge)
             Text("Agente")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Agent.entries.forEach { item -> FilterChip(selected = agent == item, enabled = !state.loading, onClick = { agent = item; model = ""; effort = "" }, label = { Text(item.name) }) }
+                Agent.entries.forEach { item -> FilterChip(selected = agent == item, enabled = !state.loading && state.catalog.orEmpty().any { it.supports(item) }, onClick = { agent = item; model = ""; effort = "" }, label = { Text(item.name) }) }
             }
             ModelSettingsFields(agent, state.catalog.orEmpty(), TurnSettings(model, effort), !state.loading) { model = it.model; effort = it.reasoningEffort }
-            if (state.catalog?.isEmpty() == true) Text("O pool não retornou modelos.")
+            if (state.catalog?.isEmpty() == true) Text("Nenhum runner online confirmou modelos do catálogo. Conecte ou atualize o runner e recarregue.")
+            if (!state.loading) TextButton(onClick = reloadCatalog) { Text("Atualizar modelos dos runners") }
             if (state.catalog == null && !state.loading) TextButton(onClick = reloadCatalog) { Text("Carregar catálogo") }
             Text("Workspace")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

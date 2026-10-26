@@ -51,6 +51,10 @@ class CommandSigner(
     private var lastIssuedAt = 0L
     val enabled get() = keys().isNotEmpty()
 
+    fun canSignFor(keyId: String?): Boolean = keyId != null && keys().any {
+        CommandSigning.keyId(CommandSigning.decodeKey(it)) == keyId
+    }
+
     suspend fun remember(key: String) {
         CommandSigning.decodeKey(key)
         store(key)

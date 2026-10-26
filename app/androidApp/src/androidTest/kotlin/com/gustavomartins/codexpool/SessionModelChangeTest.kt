@@ -30,7 +30,7 @@ class SessionModelChangeTest {
 
     @Test fun chatSendsTheNewModelAndEffortWhileKeepingEarlierMessages() {
         val session = Session("session", Agent.Codex, "gpt-test", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated,
-            SessionState.WaitingInput, conversationId = "conversation")
+            SessionState.WaitingInput, conversationId = "conversation", runnerId = "runner-1")
         val sent = AtomicReference<TurnInput>()
         val streamWriter = PipedOutputStream()
         val streamReader = PipedInputStream(streamWriter)
@@ -57,6 +57,11 @@ class SessionModelChangeTest {
                     {"id":"gpt-test","name":"GPT test","protocol":"openai","available_now":true,"reasoning_efforts":["low","high","max"]},
                     {"id":"gemini-test","name":"Gemini test","protocol":"gemini","protocols":["responses"],"available_now":true,"reasoning_efforts":["low","high"]}
                 ]}""".toResponseBody(jsonType)
+                "/api/me/runners" -> PoolJson.encodeToString(RunnerList(listOf(
+                    Runner("runner-1", "desktop", online = true, agents = listOf(Agent.Codex), modelsKnown = true,
+                        models = listOf(AgentModel(Agent.Codex, "gpt-test", listOf("low", "high", "max")),
+                            AgentModel(Agent.Codex, "gemini-test", listOf("low", "high"))))
+                ))).toResponseBody(jsonType)
                 "/api/sessions/session/turns" -> {
                     assertEquals("POST", request.method)
                     val buffer = Buffer()

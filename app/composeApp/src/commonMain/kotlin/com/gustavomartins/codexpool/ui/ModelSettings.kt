@@ -37,7 +37,7 @@ fun ModelSettingsFields(agent: Agent, catalog: List<CatalogModel>, settings: Tur
             models.forEach { model ->
                 DropdownMenuItem(enabled = model.availableNow,
                     text = { Column { Text(model.name ?: model.id); Text(model.id + if (model.availableNow) "" else " · indisponível", style = MaterialTheme.typography.bodySmall) } },
-                    onClick = { onSelect(TurnSettings(model.id, model.defaultReasoningEffort)); modelMenu = false })
+                    onClick = { onSelect(TurnSettings(model.id, model.defaultEffort(agent))); modelMenu = false })
             }
         }
     }
@@ -49,7 +49,9 @@ fun ModelSettingsFields(agent: Agent, catalog: List<CatalogModel>, settings: Tur
                 modifier = Modifier.fillMaxWidth().testTag("effort-selector").menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(effortMenu) })
             ExposedDropdownMenu(expanded = effortMenu, onDismissRequest = { effortMenu = false }) {
-                (listOf("") + efforts).forEach { effort ->
+                val defaultEffort = selected?.defaultReasoningEffort.orEmpty()
+                val allowDefault = selected?.runnerModels == null || defaultEffort in efforts || defaultEffort.isEmpty() && agent == Agent.Claude
+                (if (allowDefault) listOf("") + efforts else efforts).forEach { effort ->
                     DropdownMenuItem(text = { Text(effortLabel(effort)) }, onClick = { onSelect(settings.copy(reasoningEffort = effort)); effortMenu = false })
                 }
             }
@@ -57,5 +59,5 @@ fun ModelSettingsFields(agent: Agent, catalog: List<CatalogModel>, settings: Tur
     } else if (selected != null) {
         Text("O catálogo não oferece ajuste de raciocínio para este modelo.", style = MaterialTheme.typography.bodySmall)
     }
-    if (models.isEmpty()) Text("Nenhum modelo compatível com ${agent.name} neste pool.")
+    if (models.isEmpty()) Text("Nenhum modelo confirmado para ${agent.name} nos runners online.")
 }

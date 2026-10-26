@@ -10,6 +10,34 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.*
 
 class ModelSettingsTest {
+    @Test fun choicesRequireConfirmationFromAnOnlineRunner() {
+        val catalog = listOf(
+            CatalogModel("pool-only", protocol = "responses", availableNow = true,
+                reasoningEfforts = listOf("low", "high", "max"), defaultReasoningEffort = "max"),
+            CatalogModel("not-installed", protocol = "responses", availableNow = true),
+        )
+        val confirmed = AgentModel(Agent.Codex, "pool-only", listOf("low", "high"), "high")
+        val runner = Runner("runner", "machine", online = true, agents = listOf(Agent.Codex), modelsKnown = true, models = listOf(confirmed))
+        val choices = catalog.forRunners(listOf(runner))
+        assertEquals(listOf("pool-only"), choices.map { it.id })
+        assertEquals(listOf("low", "high"), choices.single().efforts(Agent.Codex))
+        assertEquals("high", choices.single().defaultEffort(Agent.Codex))
+        assertFalse(choices.single().supports(Agent.Claude))
+        assertTrue(catalog.forRunners(listOf(runner.copy(online = false))).isEmpty())
+        assertTrue(catalog.forRunners(listOf(runner.copy(revoked = true))).isEmpty())
+        assertTrue(catalog.forRunners(listOf(runner.copy(modelsKnown = false))).isEmpty())
+        assertTrue(catalog.forRunners(listOf(runner), "another-runner").isEmpty())
+    }
+
+    @Test fun sessionChoicesUseOnlyItsBoundRunner() {
+        val catalog = listOf(CatalogModel("shared", protocol = "responses", availableNow = true, reasoningEfforts = listOf("low", "high")))
+        val first = Runner("first", "same-name", online = true, agents = listOf(Agent.Codex), modelsKnown = true,
+            models = listOf(AgentModel(Agent.Codex, "shared", listOf("low"))))
+        val second = first.copy(id = "second", models = listOf(AgentModel(Agent.Codex, "shared", listOf("high"))))
+        assertEquals(listOf("low"), catalog.forRunners(listOf(first, second), first.id).single().efforts(Agent.Codex))
+        assertEquals(listOf("high"), catalog.forRunners(listOf(first, second), second.id).single().efforts(Agent.Codex))
+    }
+
     @Test fun modelCapabilitiesUseTheCatalogProtocolsAndEfforts() {
         val model = PoolJson.decodeFromString<CatalogModel>("""{"id":"gemini-test","protocol":"gemini","protocols":["responses","anthropic"],"provider":"antigravity","available_now":true,"reasoning_efforts":["minimal","low","high"]}""")
         assertTrue(model.supports(Agent.Codex))
