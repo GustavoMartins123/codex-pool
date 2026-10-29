@@ -214,6 +214,19 @@ type codexRelayTurn struct {
 	account        *Account
 	responseID     string
 	assistantText  strings.Builder
+
+	// continues is the previous_response_id the request chains from.
+	continues string
+	// input is the complete input the request resolves to upstream;
+	// inputKnown is false when the pool cannot reconstruct it.
+	input      []json.RawMessage
+	inputBytes int
+	inputKnown bool
+	// output holds the response's output items in input form;
+	// outputUnknown marks output the chain could not retain.
+	output        []codexOutputItem
+	outputBytes   int
+	outputUnknown bool
 }
 
 type codexRelayState struct {
@@ -247,8 +260,11 @@ type codexRelayState struct {
 
 	activeConversationID string
 	recordedResponses    map[string]struct{}
-	clientClosing        bool
-	upstreamClosing      bool
+	// history is the complete input behind the latest completed response,
+	// so a swap can replay a request that chains from it.
+	history         *codexInputHistory
+	clientClosing   bool
+	upstreamClosing bool
 }
 
 func (s *codexRelayState) run() (int, error) {
@@ -507,13 +523,17 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 		// Record it so routing skips the account, then move the turn to
 		// any other eligible account by replaying the buffered request.
 		s.h.markQuotaExhausted(s.activeAccount)
-		if cand := s.pickQuotaSwapCandidate(turn.model); cand != nil {
+		if !turn.replayable() {
+			log.Printf("[%s] quota exhausted on account %s mid-chain and the chain cannot be replayed; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
+		} else if cand := s.pickQuotaSwapCandidate(turn.model); cand != nil {
 			log.Printf("[%s] quota exhausted on account %s; swapping to %s and replaying turn", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, frame: data, conversationID: turn.conversationID, quota: true}
+		} else {
+			log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
 		}
-		log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
 	}
 	if !isCyberPolicyError(data) {
+		s.observeTurnEvent(turn, data)
 		if isTerminalCodexWebSocketEvent(data) {
 			s.finishTurn(turn)
 		}
@@ -601,6 +621,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	}
 	turn := &codexRelayTurn{request: append([]byte(nil), data...), model: model, conversationID: conversationID, account: s.activeAccount}
 	turn.grantAdmission = grantAdmission
+	s.bindTurnInput(turn)
 	s.turns = append(s.turns, turn)
 	if s.h != nil && s.h.pool != nil && s.h.pool.discoveredModelRequiresEntitlement(AccountTypeCodex, model) && !accountSupportsDiscoveredModel(s.activeAccount, model) {
 		if len(s.turns) > 1 {
@@ -625,7 +646,11 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 		return nil, &swapPendingErr{next: next}
 	}
 	if s.activeAccountUsageBlocksRouting() && len(s.turns) == 1 && turn == s.turns[0] {
-		if cand := s.pickQuotaSwapCandidate(model); cand != nil {
+		if !turn.replayable() {
+			// The threshold sits below a hard rejection, so the account can
+			// still serve this turn; a swap would strand the chain.
+			log.Printf("[%s] account %s is at the usage threshold, but the turn continues a chain the pool cannot replay; keeping it", s.opts.ReqID, s.activeAccount.ID)
+		} else if cand := s.pickQuotaSwapCandidate(model); cand != nil {
 			log.Printf("[%s] account %s is at the usage threshold before turn; swapping to %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, quota: true}
 		}
@@ -843,9 +868,15 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		return fmt.Errorf("cannot swap websocket account with %d pending responses", len(s.turns))
 	}
 	turn := s.turns[0]
+	// Response IDs are scoped to the connection that minted them, so the
+	// target gets the turn's complete input instead of a previous_response_id
+	// it cannot resolve.
+	replay, err := swapReplayFrame(turn)
+	if err != nil {
+		return err
+	}
 	finish := func(bool) {}
 	if s.opts.PrepareAccount != nil {
-		var err error
 		finish, err = s.opts.PrepareAccount(cand)
 		if err != nil {
 			return err
@@ -875,13 +906,6 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	}
 	captureCodexResponseState(cand, newResp, s.opts.ReqID)
 	newConn.SetReadLimit(s.opts.ReadLimit)
-	// Strip previous_response_id from the replay: response_ids are
-	// scoped to the account that minted them, and the swap target has
-	// no knowledge of the original conversation. Keeping the field
-	// would cause an immediate "previous_response_not_found" error.
-	// Losing the prior turn's reasoning context is the lesser evil
-	// versus a hard failure surfacing to the user.
-	replay := stripPreviousResponseID(turn.request)
 	if s.contextEnabled() {
 		replay, err = s.h.prepareContextFrame(s.opts.UserID, s.opts.ClientIP, replay, authAccount)
 		if err != nil {
@@ -914,6 +938,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	turn.grantAdmission = grantAdmission
 	committed = true
 	turn.responseID = ""
+	turn.output, turn.outputBytes, turn.outputUnknown = nil, 0, false
 	return nil
 }
 
@@ -1318,36 +1343,6 @@ func modelRequiresHTTPProviderRoute(model string) bool {
 		isZAIModel(model) ||
 		isXiaomiModel(model) ||
 		isAdverserialModel(model)
-}
-
-// stripPreviousResponseID removes previous_response_id from a
-// response.create payload so the swap replay is accepted by an account
-// that did not mint the original response_id. If parsing fails or the
-// field is absent, the original payload is returned unchanged.
-func stripPreviousResponseID(data []byte) []byte {
-	if !bytes.Contains(data, []byte(`"previous_response_id"`)) {
-		return data
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return data
-	}
-	_, changed := obj["previous_response_id"]
-	delete(obj, "previous_response_id")
-	if response, ok := obj["response"].(map[string]any); ok {
-		if _, exists := response["previous_response_id"]; exists {
-			delete(response, "previous_response_id")
-			changed = true
-		}
-	}
-	if !changed {
-		return data
-	}
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return data
-	}
-	return out
 }
 
 // writeWebSocketRejection owns only failed handshake bodies. Successful

@@ -110,7 +110,6 @@ func TestNativeContextWSSwap(t *testing.T) {
 			var obj map[string]any
 			_ = json.Unmarshal(contextProxyInference(envelope["encrypted_output"]), &obj)
 			obj["type"] = "response.create"
-			obj["previous_response_id"] = "response-from-a"
 			if tc.nested {
 				delete(obj, "type")
 				obj = map[string]any{"type": "response.create", "response": obj}
