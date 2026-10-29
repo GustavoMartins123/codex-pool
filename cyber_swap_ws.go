@@ -237,6 +237,9 @@ type codexRelayState struct {
 	clientCh   <-chan wsFrame
 	upstreamCh <-chan wsFrame
 	session    *trackedWebSocketSession
+	// clientHeartbeatErr spans the relay, not a round: the client socket
+	// survives swaps, and a ping cancelled mid-write would close it.
+	clientHeartbeatErr <-chan error
 
 	// swapDone covers both "we already swapped" and "we tried and gave
 	// up" — once true, no further swap attempts.
@@ -249,6 +252,9 @@ type codexRelayState struct {
 }
 
 func (s *codexRelayState) run() (int, error) {
+	var stopClientHeartbeat func()
+	s.clientHeartbeatErr, stopClientHeartbeat = startWebSocketHeartbeat(s.ctx, s.clientWriter, s.opts.DownstreamHeartbeatInterval, "client")
+	defer stopClientHeartbeat()
 	for {
 		err := s.relayOnce()
 		if err == nil {
@@ -311,8 +317,6 @@ func (s *codexRelayState) relayOnce() error {
 	roundCtx, roundCancel := context.WithCancel(s.ctx)
 	defer roundCancel()
 
-	clientHeartbeatErr, stopClientHeartbeat := startWebSocketHeartbeat(roundCtx, s.clientWriter, s.opts.DownstreamHeartbeatInterval, "client")
-	defer stopClientHeartbeat()
 	upstreamHeartbeatErr, stopUpstreamHeartbeat := startWebSocketHeartbeat(roundCtx, upstreamWriter, s.opts.DownstreamHeartbeatInterval, "upstream")
 	defer stopUpstreamHeartbeat()
 
@@ -322,10 +326,13 @@ func (s *codexRelayState) relayOnce() error {
 
 	debug := s.h != nil && s.h.cfg != nil && s.h.cfg.debug.Load()
 	go func() {
-		upstreamErrCh <- pumpFrames(roundCtx, s.upstreamCh, s.clientWriter, s.opts.LogLabel, "upstream->client", debug, s.inspectUpstream, s.markUpstreamForwarded, activityCh)
+		// Client writes use the relay context: the client socket outlives
+		// the round, and coder/websocket closes a socket whose write
+		// context is cancelled mid-frame.
+		upstreamErrCh <- pumpFrames(roundCtx, s.ctx, s.upstreamCh, s.clientWriter, s.opts.LogLabel, "upstream->client", debug, s.inspectUpstream, s.markUpstreamForwarded, activityCh)
 	}()
 	go func() {
-		clientErrCh <- pumpFrames(roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
+		clientErrCh <- pumpFrames(roundCtx, roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
 			if err := s.h.revalidatePoolCredential(s.credentialRequest, s.opts.UserID); err != nil {
 				return nil, err
 			}
@@ -353,7 +360,7 @@ func (s *codexRelayState) relayOnce() error {
 			roundCancel()
 			<-upstreamErrCh
 			return err
-		case err := <-clientHeartbeatErr:
+		case err := <-s.clientHeartbeatErr:
 			roundCancel()
 			<-upstreamErrCh
 			<-clientErrCh
@@ -385,9 +392,10 @@ func (s *codexRelayState) relayOnce() error {
 // pumpFrames forwards frames from src to dst, calling inspect on each
 // frame before writing. inspect may rewrite the frame (returned []byte)
 // and/or return a sentinel error (e.g. *swapPendingErr) to abort the
-// relay without writing the frame.
+// relay without writing the frame. ctx bounds the pump; writeCtx bounds
+// each write to dst.
 func pumpFrames(
-	ctx context.Context,
+	ctx, writeCtx context.Context,
 	src <-chan wsFrame,
 	dst *webSocketWriter,
 	logLabel, label string,
@@ -427,7 +435,7 @@ func pumpFrames(
 			if debug {
 				logRelayFrame(logLabel, label, frame.msgType, data)
 			}
-			if err := dst.Write(ctx, frame.msgType, data); err != nil {
+			if err := dst.Write(writeCtx, frame.msgType, data); err != nil {
 				return fmt.Errorf("%s write: %w", label, err)
 			}
 			if afterForward != nil {
