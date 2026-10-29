@@ -528,7 +528,7 @@ func (s *codexRelayState) markClientForwarded(data []byte) {
 func (s *codexRelayState) markUpstreamForwarded(data []byte) {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
-	if s.session != nil && isTerminalCodexWebSocketEvent(data) {
+	if s.session != nil && (isTerminalCodexWebSocketEvent(data) || isCodexWebSocketErrorEvent(data)) {
 		s.session.setActive(len(s.turns) != 0)
 	}
 }
@@ -544,6 +544,18 @@ func isTerminalCodexWebSocketEvent(data []byte) bool {
 		return false
 	}
 	return event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete"
+}
+
+// isCodexWebSocketErrorEvent reports a bare error event, which upstream
+// sends instead of a response when it rejects a response.create.
+func isCodexWebSocketErrorEvent(data []byte) bool {
+	if len(data) == 0 || data[0] != '{' || !bytes.Contains(data, []byte(`"error"`)) {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(data, &event) == nil && event.Type == "error"
 }
 
 func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
@@ -596,7 +608,10 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 	}
 	if !isCyberPolicyError(data) {
 		s.observeTurnEvent(turn, data)
-		if isTerminalCodexWebSocketEvent(data) {
+		// An error before response.created rejects the request outright: no
+		// terminal event follows, and a turn left pending would block every
+		// later swap on this socket.
+		if isTerminalCodexWebSocketEvent(data) || (turn != nil && turn.responseID == "" && isCodexWebSocketErrorEvent(data)) {
 			s.finishTurn(turn)
 		}
 		return data, nil
