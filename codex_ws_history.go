@@ -142,6 +142,11 @@ func (s *codexRelayState) observeTurnEvent(turn *codexRelayTurn, data []byte) {
 		return
 	}
 	switch event.Type {
+	case "response.created", "response.in_progress", "response.queued":
+	default:
+		turn.outputForwarded = true
+	}
+	switch event.Type {
 	case "response.output_item.done":
 		if turn.outputUnknown {
 			return

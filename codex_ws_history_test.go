@@ -366,3 +366,208 @@ func TestQuotaThresholdKeepsUnreplayableChainOnAccount(t *testing.T) {
 	}
 	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
 }
+
+// readUntilClose drains client frames until the relay closes the socket and
+// returns them with the close status.
+func readUntilClose(t *testing.T, conn *websocket.Conn, timeout time.Duration) ([]string, websocket.StatusCode) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var frames []string
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return frames, websocket.CloseStatus(err)
+		}
+		frames = append(frames, string(data))
+	}
+}
+
+// A quota error on a chain the pool cannot rebuild must not reach Codex,
+// which treats usage_limit_reached as final. The relay closes the socket
+// instead, and the reconnect resends the complete input to the target.
+func TestQuotaErrorOnUnreplayableChainAsksClientToReconnect(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_drain_handoff", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"usage_limit_reached","message":"You've hit your usage limit"}}`))
+		_, _, _ = conn.Read(ctx)
+	})
+	var mu sync.Mutex
+	var resent []byte
+	upstream.on("acct_fresh_handoff", func(ctx context.Context, conn *websocket.Conn) {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		resent = data
+		mu.Unlock()
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_fresh_handoff","status":"completed"}}`))
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_handoff", PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_handoff", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
+	fx.handler.pool.pin("conv-handoff", "drain")
+	headers := http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "handoff-user")},
+		"session_id":    []string{"conv-handoff"},
+	}
+
+	conn := dialClientWS(t, fx, headers)
+	request := strings.Replace(chainToolOutputRequest, "resp_chain_1", "resp_elsewhere", 1)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(request)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	frames, code := readUntilClose(t, conn, 5*time.Second)
+	if code != websocket.StatusServiceRestart {
+		t.Fatalf("close status = %v, want %v; frames: %v", code, websocket.StatusServiceRestart, frames)
+	}
+	if joined := strings.Join(frames, "\n"); strings.Contains(joined, "usage_limit_reached") {
+		t.Fatalf("quota error leaked to client: %s", joined)
+	}
+	if hits := upstream.hitCount("acct_fresh_handoff"); hits != 0 {
+		t.Fatalf("relay dialed the target with an unreplayable chain %d times", hits)
+	}
+	fx.handler.pool.mu.RLock()
+	pinned := fx.handler.pool.convPin["conv-handoff"]
+	fx.handler.pool.mu.RUnlock()
+	if pinned != "fresh" {
+		t.Fatalf("conversation pin = %q, want fresh", pinned)
+	}
+	if got := fx.handler.recent.snapshot(); len(got) != 0 {
+		t.Fatalf("handoff logged tunnel errors: %v", got)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
+
+	// Codex reconnects; a new socket has no previous response, so it sends
+	// the complete input, which lands on the pinned target.
+	again := dialClientWS(t, fx, headers)
+	if err := again.Write(context.Background(), websocket.MessageText, []byte(chainFirstRequest)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	if frames := mustReadUntil(t, again, `"resp_fresh_handoff"`, 5*time.Second); !strings.Contains(strings.Join(frames, "\n"), "resp_fresh_handoff") {
+		t.Fatalf("reconnect did not reach the target; frames: %v", frames)
+	}
+	mu.Lock()
+	got := string(resent)
+	mu.Unlock()
+	if !strings.Contains(got, "fix the bug") {
+		t.Fatalf("target received %s", got)
+	}
+	if hits := upstream.hitCount("acct_drain_handoff"); hits != 1 {
+		t.Fatalf("exhausted account dialed %d times, want 1", hits)
+	}
+}
+
+// Once response output reached the client, replaying the turn elsewhere
+// would duplicate it; the client restarts the turn on a fresh socket.
+func TestQuotaErrorAfterForwardedOutputAsksClientToReconnect(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_drain_partial", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		writeFrames(ctx, conn, []string{
+			`{"type":"response.created","response":{"id":"resp_partial","status":"in_progress"}}`,
+			`{"type":"response.output_text.delta","item_id":"msg_partial","output_index":0,"delta":"partial answer"}`,
+			`{"type":"response.failed","response":{"id":"resp_partial","status":"failed","error":{"code":"usage_limit_reached","message":"You've hit your usage limit"}}}`,
+		})
+		_, _, _ = conn.Read(ctx)
+	})
+	upstream.on("acct_fresh_partial", func(ctx context.Context, conn *websocket.Conn) {
+		if _, data, err := conn.Read(ctx); err == nil {
+			t.Errorf("target received a replay after output was forwarded: %s", data)
+		}
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_partial", PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_partial", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
+	fx.handler.pool.pin("conv-partial", "drain")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "partial-user")},
+		"session_id":    []string{"conv-partial"},
+	})
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(chainFirstRequest)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	frames, code := readUntilClose(t, conn, 5*time.Second)
+	joined := strings.Join(frames, "\n")
+	if code != websocket.StatusServiceRestart {
+		t.Fatalf("close status = %v, want %v; frames: %s", code, websocket.StatusServiceRestart, joined)
+	}
+	if !strings.Contains(joined, "partial answer") {
+		t.Fatalf("client did not receive the forwarded output: %s", joined)
+	}
+	if strings.Contains(joined, "usage_limit_reached") {
+		t.Fatalf("quota error leaked to client: %s", joined)
+	}
+	if hits := upstream.hitCount("acct_fresh_partial"); hits != 0 {
+		t.Fatalf("target dialed %d times", hits)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
+}
+
+// A cyber_policy swap on a chain the pool cannot rebuild hands the
+// conversation to the cyber account through a reconnect instead of showing
+// the client the cyber_policy frame.
+func TestCyberSwapOnUnreplayableChainAsksClientToReconnect(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_flagged_handoff", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","error":{"code":"cyber_policy","message":"cyber_policy"}}`))
+		_, _, _ = conn.Read(ctx)
+	})
+	upstream.on("acct_cyber_handoff", func(ctx context.Context, conn *websocket.Conn) {
+		if _, data, err := conn.Read(ctx); err == nil {
+			t.Errorf("cyber account received an unreplayable chain: %s", data)
+		}
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	flagged := &Account{Type: AccountTypeCodex, ID: "flagged", AccessToken: "flagged-token", AccountID: "acct_flagged_handoff", PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber_handoff", PlanType: "pro", CyberAccess: true}
+	fx := newCodexProxyFixture(t, upURL, []*Account{flagged, cyber})
+	fx.handler.pool.pin("conv-cyber-handoff", "flagged")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "cyber-handoff-user")},
+		"session_id":    []string{"conv-cyber-handoff"},
+	})
+	request := strings.Replace(chainToolOutputRequest, "resp_chain_1", "resp_elsewhere", 1)
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(request)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	frames, code := readUntilClose(t, conn, 5*time.Second)
+	if code != websocket.StatusServiceRestart {
+		t.Fatalf("close status = %v, want %v; frames: %v", code, websocket.StatusServiceRestart, frames)
+	}
+	if joined := strings.Join(frames, "\n"); strings.Contains(joined, "cyber_policy") {
+		t.Fatalf("cyber_policy frame leaked to client: %s", joined)
+	}
+	if hits := upstream.hitCount("acct_cyber_handoff"); hits != 0 {
+		t.Fatalf("relay dialed the cyber account %d times", hits)
+	}
+	fx.handler.pool.mu.RLock()
+	pinned := fx.handler.pool.convPin["conv-cyber-handoff"]
+	fx.handler.pool.mu.RUnlock()
+	if pinned != "cyber" {
+		t.Fatalf("conversation pin = %q, want cyber", pinned)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{flagged, cyber})
+}

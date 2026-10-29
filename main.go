@@ -4353,7 +4353,8 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		if swap.statusCode != 0 {
 			h.metrics.inc(strconv.Itoa(swap.statusCode), finalAcc.ID)
 		}
-		h.applyWebSocketStatusEffects(reqID, finalAcc, userID, conversationID, swap.swapped, refreshFailed, swap.statusCode)
+		// A handoff already pinned the conversation to the reconnect target.
+		h.applyWebSocketStatusEffects(reqID, finalAcc, userID, conversationID, swap.swapped || swap.handedOff, refreshFailed, swap.statusCode)
 		if h.cfg.debug.Load() {
 			log.Printf("[%s] websocket done status=%d account=%s user=%s origin=%s duration_ms=%d cyber_swapped=%v", reqID, swap.statusCode, finalAcc.ID, userID, originID, time.Since(start).Milliseconds(), swap.swapped)
 		}

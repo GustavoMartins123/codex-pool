@@ -47,6 +47,9 @@ type codexCyberSwapResult struct {
 	termination  webSocketTermination
 	swapped      bool
 	finalAccount *Account
+	// handedOff reports that the relay asked the client to reconnect so
+	// the conversation continues on another account.
+	handedOff bool
 }
 
 // swapPendingErr is returned from the upstream pump on a cyber_policy
@@ -68,6 +71,20 @@ func (e *swapPendingErr) Error() string {
 		return "cyber swap pending"
 	}
 	return "cyber swap pending: " + e.next.ID
+}
+
+// reconnectPendingErr ends the relay so the client reconnects. It is used
+// when a turn must leave its account but the relay cannot replay it: a
+// fresh connection carries no previous response, so Codex resends its
+// complete input there, and the conversation is pinned to next.
+type reconnectPendingErr struct {
+	next           *Account
+	conversationID string
+	reason         string
+}
+
+func (e *reconnectPendingErr) Error() string {
+	return "websocket handoff: " + e.reason
 }
 
 type wsFrame struct {
@@ -201,7 +218,16 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 	defer state.closeAll()
 
 	statusCode, relayErr := state.run()
-	termination := normalizeCompletedWebSocketTermination(classifyWebSocketTermination(relayErr), session)
+	var termination webSocketTermination
+	var reconnect *reconnectPendingErr
+	if errors.As(relayErr, &reconnect) {
+		// A requested reconnect is neither an account nor a tunnel failure.
+		termination = webSocketTermination{Side: "relay", Code: websocket.StatusServiceRestart, Outcome: "handoff", Reason: reconnect.reason + "; reconnect to continue"}
+		relayErr = nil
+		state.handedOff = true
+	} else {
+		termination = normalizeCompletedWebSocketTermination(classifyWebSocketTermination(relayErr), session)
+	}
 	state.closePeer(termination)
 	return state.result(statusCode, relayErr, termination)
 }
@@ -227,6 +253,9 @@ type codexRelayTurn struct {
 	output        []codexOutputItem
 	outputBytes   int
 	outputUnknown bool
+	// outputForwarded marks response output already sent to the client;
+	// replaying the turn elsewhere would duplicate it.
+	outputForwarded bool
 }
 
 type codexRelayState struct {
@@ -263,6 +292,7 @@ type codexRelayState struct {
 	// history is the complete input behind the latest completed response,
 	// so a swap can replay a request that chains from it.
 	history         *codexInputHistory
+	handedOff       bool
 	clientClosing   bool
 	upstreamClosing bool
 }
@@ -275,6 +305,11 @@ func (s *codexRelayState) run() (int, error) {
 		err := s.relayOnce()
 		if err == nil {
 			return 101, nil
+		}
+		var reconnect *reconnectPendingErr
+		if errors.As(err, &reconnect) {
+			s.pinHandOff(reconnect)
+			return 101, err
 		}
 		var swap *swapPendingErr
 		if errors.As(err, &swap) {
@@ -289,6 +324,12 @@ func (s *codexRelayState) run() (int, error) {
 							return http.StatusSwitchingProtocols, err
 						}
 						continue
+					}
+					if errors.Is(doErr, errCodexReplayUnavailable) {
+						log.Printf("[%s] swap to %s needs a chain the pool cannot replay; asking the client to reconnect", s.opts.ReqID, swap.next.ID)
+						reconnect := &reconnectPendingErr{next: swap.next, conversationID: swap.conversationID, reason: "account changed"}
+						s.pinHandOff(reconnect)
+						return 101, reconnect
 					}
 					if len(swap.frame) == 0 {
 						return 101, doErr
@@ -312,6 +353,21 @@ func (s *codexRelayState) run() (int, error) {
 			return 101, nil
 		}
 		return 101, err
+	}
+}
+
+// pinHandOff pins the conversation to the reconnect target so the client's
+// next connection lands there.
+func (s *codexRelayState) pinHandOff(reconnect *reconnectPendingErr) {
+	conversationID := reconnect.conversationID
+	if conversationID == "" {
+		conversationID = s.activeConversationID
+	}
+	if conversationID == "" || reconnect.next == nil || s.h == nil || s.h.pool == nil {
+		return
+	}
+	if err := s.h.pool.pinForUser(s.owner, conversationID, reconnect.next.ID); err != nil {
+		log.Printf("[%s] handoff pin to account %s failed: %v", s.opts.ReqID, reconnect.next.ID, err)
 	}
 }
 
@@ -523,13 +579,19 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 		// Record it so routing skips the account, then move the turn to
 		// any other eligible account by replaying the buffered request.
 		s.h.markQuotaExhausted(s.activeAccount)
-		if !turn.replayable() {
-			log.Printf("[%s] quota exhausted on account %s mid-chain and the chain cannot be replayed; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
-		} else if cand := s.pickQuotaSwapCandidate(turn.model); cand != nil {
+		cand := s.pickQuotaSwapCandidate(turn.model)
+		switch {
+		case cand == nil:
+			log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
+		case turn.replayable() && !turn.outputForwarded:
 			log.Printf("[%s] quota exhausted on account %s; swapping to %s and replaying turn", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, frame: data, conversationID: turn.conversationID, quota: true}
-		} else {
-			log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
+		default:
+			// A replay would lose the chain or duplicate output the client
+			// already has. Codex treats usage_limit_reached as final, but
+			// resends the turn after a dropped connection.
+			log.Printf("[%s] quota exhausted on account %s and the turn cannot be replayed; asking the client to reconnect onto %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
+			return nil, &reconnectPendingErr{next: cand, conversationID: turn.conversationID, reason: "account quota exhausted"}
 		}
 	}
 	if !isCyberPolicyError(data) {
@@ -938,7 +1000,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	turn.grantAdmission = grantAdmission
 	committed = true
 	turn.responseID = ""
-	turn.output, turn.outputBytes, turn.outputUnknown = nil, 0, false
+	turn.output, turn.outputBytes, turn.outputUnknown, turn.outputForwarded = nil, 0, false, false
 	return nil
 }
 
@@ -1150,7 +1212,7 @@ func (s *codexRelayState) result(statusCode int, relayErr error, termination web
 	if relayErr != nil && !termination.accountFailure() {
 		relayErr = nil
 	}
-	return codexCyberSwapResult{statusCode: statusCode, err: relayErr, termination: termination, swapped: swapped, finalAccount: s.activeAccount}
+	return codexCyberSwapResult{statusCode: statusCode, err: relayErr, termination: termination, swapped: swapped, handedOff: s.handedOff, finalAccount: s.activeAccount}
 }
 
 func (h *proxyHandler) dialSwappedUpstream(
