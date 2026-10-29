@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -623,29 +622,6 @@ func TestCyberSwapResultSwappedFlagIsActiveAccountChange(t *testing.T) {
 	}
 }
 
-func TestStripPreviousResponseIDLeavesUnrelatedFields(t *testing.T) {
-	in := []byte(`{"type":"response.create","model":"gpt-5.5","previous_response_id":"resp_abc","input":[{"type":"message","role":"user"}]}`)
-	out := stripPreviousResponseID(in)
-	if bytes.Contains(out, []byte(`previous_response_id`)) {
-		t.Fatalf("previous_response_id not stripped: %s", string(out))
-	}
-	if !bytes.Contains(out, []byte(`"model":"gpt-5.5"`)) {
-		t.Fatalf("model field lost: %s", string(out))
-	}
-	if !bytes.Contains(out, []byte(`"type":"response.create"`)) {
-		t.Fatalf("type field lost: %s", string(out))
-	}
-}
-
-func TestStripPreviousResponseIDNoOp(t *testing.T) {
-	in := []byte(`{"type":"response.create","model":"gpt-5.5","input":[]}`)
-	out := stripPreviousResponseID(in)
-	// Pointer-equal: no rewrite when the field is absent.
-	if &in[0] != &out[0] {
-		t.Fatalf("expected no-rewrite for payload without previous_response_id")
-	}
-}
-
 func TestExtractCodexWebSocketRequestedModel(t *testing.T) {
 	t.Parallel()
 	flat := []byte(`{"type":"response.create","model":"grok-4.5","input":"hi"}`)
@@ -947,4 +923,78 @@ func waitForZeroInflight(t *testing.T, h *proxyHandler, accts []*Account) {
 	if got := atomic.LoadInt64(&h.inflight); got != 0 {
 		t.Errorf("h.inflight = %d, want 0", got)
 	}
+}
+
+func TestWebSocketErrorEventFinishesOnlyRejectedTurn(t *testing.T) {
+	t.Parallel()
+	rejection := []byte(`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"No tool call found for custom tool call output with call_id call_x."}}`)
+
+	rejected := &codexRelayState{turns: []*codexRelayTurn{{request: []byte(`{"type":"response.create"}`)}}}
+	if _, err := rejected.inspectUpstream(rejection); err != nil {
+		t.Fatal(err)
+	}
+	if len(rejected.turns) != 0 {
+		t.Fatalf("rejected turn still pending: %d", len(rejected.turns))
+	}
+
+	// After response.created the response owns its outcome; the terminal
+	// response event finishes it.
+	started := &codexRelayState{turns: []*codexRelayTurn{{request: []byte(`{"type":"response.create"}`), responseID: "resp_started"}}}
+	if _, err := started.inspectUpstream(rejection); err != nil {
+		t.Fatal(err)
+	}
+	if len(started.turns) != 1 {
+		t.Fatalf("started turn finished by a bare error: %d", len(started.turns))
+	}
+}
+
+// A rejected request used to stay pending, so the next request saw two
+// turns and every quota swap on the socket was refused.
+func TestQuotaSwapAfterRejectedRequest(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "test-secret")
+
+	upstream := newFakeCodexUpstream(t)
+	upstream.on("acct_drain_rejected", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"bad input"}}`))
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"error","error":{"type":"rate_limit_error","code":"usage_limit_reached","message":"You've hit your usage limit"}}`))
+		_, _, _ = conn.Read(ctx)
+	})
+	upstream.on("acct_fresh_rejected", func(ctx context.Context, conn *websocket.Conn) {
+		if _, _, err := conn.Read(ctx); err != nil {
+			return
+		}
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.completed","response":{"id":"resp_fresh_rejected","status":"completed"}}`))
+	})
+
+	upURL, _ := url.Parse(upstream.server.URL)
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_rejected", PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_rejected", PlanType: "pro"}
+	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
+	fx.handler.pool.pin("conv-rejected", "drain")
+
+	conn := dialClientWS(t, fx, http.Header{
+		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "rejected-user")},
+		"session_id":    []string{"conv-rejected"},
+	})
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","input":[]}`)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	if frames := mustReadUntil(t, conn, "invalid_request_error", 5*time.Second); !strings.Contains(strings.Join(frames, "\n"), "invalid_request_error") {
+		t.Fatalf("client did not receive the rejection; frames: %v", frames)
+	}
+	if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-5.5","input":[]}`)); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	frames := mustReadUntil(t, conn, `"resp_fresh_rejected"`, 5*time.Second)
+	joined := strings.Join(frames, "\n")
+	if !strings.Contains(joined, "resp_fresh_rejected") || strings.Contains(joined, "usage_limit_reached") {
+		t.Fatalf("quota swap did not run after the rejected request; frames: %s", joined)
+	}
+	waitForZeroInflight(t, fx.handler, []*Account{drain, fresh})
 }

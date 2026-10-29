@@ -47,6 +47,9 @@ type codexCyberSwapResult struct {
 	termination  webSocketTermination
 	swapped      bool
 	finalAccount *Account
+	// handedOff reports that the relay asked the client to reconnect so
+	// the conversation continues on another account.
+	handedOff bool
 }
 
 // swapPendingErr is returned from the upstream pump on a cyber_policy
@@ -68,6 +71,20 @@ func (e *swapPendingErr) Error() string {
 		return "cyber swap pending"
 	}
 	return "cyber swap pending: " + e.next.ID
+}
+
+// reconnectPendingErr ends the relay so the client reconnects. It is used
+// when a turn must leave its account but the relay cannot replay it: a
+// fresh connection carries no previous response, so Codex resends its
+// complete input there, and the conversation is pinned to next.
+type reconnectPendingErr struct {
+	next           *Account
+	conversationID string
+	reason         string
+}
+
+func (e *reconnectPendingErr) Error() string {
+	return "websocket handoff: " + e.reason
 }
 
 type wsFrame struct {
@@ -201,7 +218,16 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 	defer state.closeAll()
 
 	statusCode, relayErr := state.run()
-	termination := normalizeCompletedWebSocketTermination(classifyWebSocketTermination(relayErr), session)
+	var termination webSocketTermination
+	var reconnect *reconnectPendingErr
+	if errors.As(relayErr, &reconnect) {
+		// A requested reconnect is neither an account nor a tunnel failure.
+		termination = webSocketTermination{Side: "relay", Code: websocket.StatusServiceRestart, Outcome: "handoff", Reason: reconnect.reason + "; reconnect to continue"}
+		relayErr = nil
+		state.handedOff = true
+	} else {
+		termination = normalizeCompletedWebSocketTermination(classifyWebSocketTermination(relayErr), session)
+	}
 	state.closePeer(termination)
 	return state.result(statusCode, relayErr, termination)
 }
@@ -214,6 +240,22 @@ type codexRelayTurn struct {
 	account        *Account
 	responseID     string
 	assistantText  strings.Builder
+
+	// continues is the previous_response_id the request chains from.
+	continues string
+	// input is the complete input the request resolves to upstream;
+	// inputKnown is false when the pool cannot reconstruct it.
+	input      []json.RawMessage
+	inputBytes int
+	inputKnown bool
+	// output holds the response's output items in input form;
+	// outputUnknown marks output the chain could not retain.
+	output        []codexOutputItem
+	outputBytes   int
+	outputUnknown bool
+	// outputForwarded marks response output already sent to the client;
+	// replaying the turn elsewhere would duplicate it.
+	outputForwarded bool
 }
 
 type codexRelayState struct {
@@ -237,6 +279,9 @@ type codexRelayState struct {
 	clientCh   <-chan wsFrame
 	upstreamCh <-chan wsFrame
 	session    *trackedWebSocketSession
+	// clientHeartbeatErr spans the relay, not a round: the client socket
+	// survives swaps, and a ping cancelled mid-write would close it.
+	clientHeartbeatErr <-chan error
 
 	// swapDone covers both "we already swapped" and "we tried and gave
 	// up" — once true, no further swap attempts.
@@ -244,15 +289,27 @@ type codexRelayState struct {
 
 	activeConversationID string
 	recordedResponses    map[string]struct{}
-	clientClosing        bool
-	upstreamClosing      bool
+	// history is the complete input behind the latest completed response,
+	// so a swap can replay a request that chains from it.
+	history         *codexInputHistory
+	handedOff       bool
+	clientClosing   bool
+	upstreamClosing bool
 }
 
 func (s *codexRelayState) run() (int, error) {
+	var stopClientHeartbeat func()
+	s.clientHeartbeatErr, stopClientHeartbeat = startWebSocketHeartbeat(s.ctx, s.clientWriter, s.opts.DownstreamHeartbeatInterval, "client")
+	defer stopClientHeartbeat()
 	for {
 		err := s.relayOnce()
 		if err == nil {
 			return 101, nil
+		}
+		var reconnect *reconnectPendingErr
+		if errors.As(err, &reconnect) {
+			s.pinHandOff(reconnect)
+			return 101, err
 		}
 		var swap *swapPendingErr
 		if errors.As(err, &swap) {
@@ -267,6 +324,12 @@ func (s *codexRelayState) run() (int, error) {
 							return http.StatusSwitchingProtocols, err
 						}
 						continue
+					}
+					if errors.Is(doErr, errCodexReplayUnavailable) {
+						log.Printf("[%s] swap to %s needs a chain the pool cannot replay; asking the client to reconnect", s.opts.ReqID, swap.next.ID)
+						reconnect := &reconnectPendingErr{next: swap.next, conversationID: swap.conversationID, reason: "account changed"}
+						s.pinHandOff(reconnect)
+						return 101, reconnect
 					}
 					if len(swap.frame) == 0 {
 						return 101, doErr
@@ -293,6 +356,21 @@ func (s *codexRelayState) run() (int, error) {
 	}
 }
 
+// pinHandOff pins the conversation to the reconnect target so the client's
+// next connection lands there.
+func (s *codexRelayState) pinHandOff(reconnect *reconnectPendingErr) {
+	conversationID := reconnect.conversationID
+	if conversationID == "" {
+		conversationID = s.activeConversationID
+	}
+	if conversationID == "" || reconnect.next == nil || s.h == nil || s.h.pool == nil {
+		return
+	}
+	if err := s.h.pool.pinForUser(s.owner, conversationID, reconnect.next.ID); err != nil {
+		log.Printf("[%s] handoff pin to account %s failed: %v", s.opts.ReqID, reconnect.next.ID, err)
+	}
+}
+
 // forwardCyberPolicy writes the upstream cyber_policy frame through to
 // the client. Routed via clientWriter so it serializes against the
 // heartbeat goroutine that may also be writing.
@@ -311,8 +389,6 @@ func (s *codexRelayState) relayOnce() error {
 	roundCtx, roundCancel := context.WithCancel(s.ctx)
 	defer roundCancel()
 
-	clientHeartbeatErr, stopClientHeartbeat := startWebSocketHeartbeat(roundCtx, s.clientWriter, s.opts.DownstreamHeartbeatInterval, "client")
-	defer stopClientHeartbeat()
 	upstreamHeartbeatErr, stopUpstreamHeartbeat := startWebSocketHeartbeat(roundCtx, upstreamWriter, s.opts.DownstreamHeartbeatInterval, "upstream")
 	defer stopUpstreamHeartbeat()
 
@@ -322,10 +398,13 @@ func (s *codexRelayState) relayOnce() error {
 
 	debug := s.h != nil && s.h.cfg != nil && s.h.cfg.debug.Load()
 	go func() {
-		upstreamErrCh <- pumpFrames(roundCtx, s.upstreamCh, s.clientWriter, s.opts.LogLabel, "upstream->client", debug, s.inspectUpstream, s.markUpstreamForwarded, activityCh)
+		// Client writes use the relay context: the client socket outlives
+		// the round, and coder/websocket closes a socket whose write
+		// context is cancelled mid-frame.
+		upstreamErrCh <- pumpFrames(roundCtx, s.ctx, s.upstreamCh, s.clientWriter, s.opts.LogLabel, "upstream->client", debug, s.inspectUpstream, s.markUpstreamForwarded, activityCh)
 	}()
 	go func() {
-		clientErrCh <- pumpFrames(roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
+		clientErrCh <- pumpFrames(roundCtx, roundCtx, s.clientCh, upstreamWriter, s.opts.LogLabel, "client->upstream", debug, func(data []byte) ([]byte, error) {
 			if err := s.h.revalidatePoolCredential(s.credentialRequest, s.opts.UserID); err != nil {
 				return nil, err
 			}
@@ -353,7 +432,7 @@ func (s *codexRelayState) relayOnce() error {
 			roundCancel()
 			<-upstreamErrCh
 			return err
-		case err := <-clientHeartbeatErr:
+		case err := <-s.clientHeartbeatErr:
 			roundCancel()
 			<-upstreamErrCh
 			<-clientErrCh
@@ -385,9 +464,10 @@ func (s *codexRelayState) relayOnce() error {
 // pumpFrames forwards frames from src to dst, calling inspect on each
 // frame before writing. inspect may rewrite the frame (returned []byte)
 // and/or return a sentinel error (e.g. *swapPendingErr) to abort the
-// relay without writing the frame.
+// relay without writing the frame. ctx bounds the pump; writeCtx bounds
+// each write to dst.
 func pumpFrames(
-	ctx context.Context,
+	ctx, writeCtx context.Context,
 	src <-chan wsFrame,
 	dst *webSocketWriter,
 	logLabel, label string,
@@ -427,7 +507,7 @@ func pumpFrames(
 			if debug {
 				logRelayFrame(logLabel, label, frame.msgType, data)
 			}
-			if err := dst.Write(ctx, frame.msgType, data); err != nil {
+			if err := dst.Write(writeCtx, frame.msgType, data); err != nil {
 				return fmt.Errorf("%s write: %w", label, err)
 			}
 			if afterForward != nil {
@@ -448,7 +528,7 @@ func (s *codexRelayState) markClientForwarded(data []byte) {
 func (s *codexRelayState) markUpstreamForwarded(data []byte) {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
-	if s.session != nil && isTerminalCodexWebSocketEvent(data) {
+	if s.session != nil && (isTerminalCodexWebSocketEvent(data) || isCodexWebSocketErrorEvent(data)) {
 		s.session.setActive(len(s.turns) != 0)
 	}
 }
@@ -464,6 +544,18 @@ func isTerminalCodexWebSocketEvent(data []byte) bool {
 		return false
 	}
 	return event.Type == "response.completed" || event.Type == "response.failed" || event.Type == "response.incomplete"
+}
+
+// isCodexWebSocketErrorEvent reports a bare error event, which upstream
+// sends instead of a response when it rejects a response.create.
+func isCodexWebSocketErrorEvent(data []byte) bool {
+	if len(data) == 0 || data[0] != '{' || !bytes.Contains(data, []byte(`"error"`)) {
+		return false
+	}
+	var event struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(data, &event) == nil && event.Type == "error"
 }
 
 func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
@@ -499,14 +591,27 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 		// Record it so routing skips the account, then move the turn to
 		// any other eligible account by replaying the buffered request.
 		s.h.markQuotaExhausted(s.activeAccount)
-		if cand := s.pickQuotaSwapCandidate(turn.model); cand != nil {
+		cand := s.pickQuotaSwapCandidate(turn.model)
+		switch {
+		case cand == nil:
+			log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
+		case turn.replayable() && !turn.outputForwarded:
 			log.Printf("[%s] quota exhausted on account %s; swapping to %s and replaying turn", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, frame: data, conversationID: turn.conversationID, quota: true}
+		default:
+			// A replay would lose the chain or duplicate output the client
+			// already has. Codex treats usage_limit_reached as final, but
+			// resends the turn after a dropped connection.
+			log.Printf("[%s] quota exhausted on account %s and the turn cannot be replayed; asking the client to reconnect onto %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
+			return nil, &reconnectPendingErr{next: cand, conversationID: turn.conversationID, reason: "account quota exhausted"}
 		}
-		log.Printf("[%s] quota exhausted on account %s and no replacement available; forwarding upstream error", s.opts.ReqID, s.activeAccount.ID)
 	}
 	if !isCyberPolicyError(data) {
-		if isTerminalCodexWebSocketEvent(data) {
+		s.observeTurnEvent(turn, data)
+		// An error before response.created rejects the request outright: no
+		// terminal event follows, and a turn left pending would block every
+		// later swap on this socket.
+		if isTerminalCodexWebSocketEvent(data) || (turn != nil && turn.responseID == "" && isCodexWebSocketErrorEvent(data)) {
 			s.finishTurn(turn)
 		}
 		return data, nil
@@ -593,6 +698,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	}
 	turn := &codexRelayTurn{request: append([]byte(nil), data...), model: model, conversationID: conversationID, account: s.activeAccount}
 	turn.grantAdmission = grantAdmission
+	s.bindTurnInput(turn)
 	s.turns = append(s.turns, turn)
 	if s.h != nil && s.h.pool != nil && s.h.pool.discoveredModelRequiresEntitlement(AccountTypeCodex, model) && !accountSupportsDiscoveredModel(s.activeAccount, model) {
 		if len(s.turns) > 1 {
@@ -617,7 +723,11 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 		return nil, &swapPendingErr{next: next}
 	}
 	if s.activeAccountUsageBlocksRouting() && len(s.turns) == 1 && turn == s.turns[0] {
-		if cand := s.pickQuotaSwapCandidate(model); cand != nil {
+		if !turn.replayable() {
+			// The threshold sits below a hard rejection, so the account can
+			// still serve this turn; a swap would strand the chain.
+			log.Printf("[%s] account %s is at the usage threshold, but the turn continues a chain the pool cannot replay; keeping it", s.opts.ReqID, s.activeAccount.ID)
+		} else if cand := s.pickQuotaSwapCandidate(model); cand != nil {
 			log.Printf("[%s] account %s is at the usage threshold before turn; swapping to %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, quota: true}
 		}
@@ -835,9 +945,15 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		return fmt.Errorf("cannot swap websocket account with %d pending responses", len(s.turns))
 	}
 	turn := s.turns[0]
+	// Response IDs are scoped to the connection that minted them, so the
+	// target gets the turn's complete input instead of a previous_response_id
+	// it cannot resolve.
+	replay, err := swapReplayFrame(turn)
+	if err != nil {
+		return err
+	}
 	finish := func(bool) {}
 	if s.opts.PrepareAccount != nil {
-		var err error
 		finish, err = s.opts.PrepareAccount(cand)
 		if err != nil {
 			return err
@@ -867,13 +983,6 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	}
 	captureCodexResponseState(cand, newResp, s.opts.ReqID)
 	newConn.SetReadLimit(s.opts.ReadLimit)
-	// Strip previous_response_id from the replay: response_ids are
-	// scoped to the account that minted them, and the swap target has
-	// no knowledge of the original conversation. Keeping the field
-	// would cause an immediate "previous_response_not_found" error.
-	// Losing the prior turn's reasoning context is the lesser evil
-	// versus a hard failure surfacing to the user.
-	replay := stripPreviousResponseID(turn.request)
 	if s.contextEnabled() {
 		replay, err = s.h.prepareContextFrame(s.opts.UserID, s.opts.ClientIP, replay, authAccount)
 		if err != nil {
@@ -906,6 +1015,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 	turn.grantAdmission = grantAdmission
 	committed = true
 	turn.responseID = ""
+	turn.output, turn.outputBytes, turn.outputUnknown, turn.outputForwarded = nil, 0, false, false
 	return nil
 }
 
@@ -1117,7 +1227,7 @@ func (s *codexRelayState) result(statusCode int, relayErr error, termination web
 	if relayErr != nil && !termination.accountFailure() {
 		relayErr = nil
 	}
-	return codexCyberSwapResult{statusCode: statusCode, err: relayErr, termination: termination, swapped: swapped, finalAccount: s.activeAccount}
+	return codexCyberSwapResult{statusCode: statusCode, err: relayErr, termination: termination, swapped: swapped, handedOff: s.handedOff, finalAccount: s.activeAccount}
 }
 
 func (h *proxyHandler) dialSwappedUpstream(
@@ -1310,36 +1420,6 @@ func modelRequiresHTTPProviderRoute(model string) bool {
 		isZAIModel(model) ||
 		isXiaomiModel(model) ||
 		isAdverserialModel(model)
-}
-
-// stripPreviousResponseID removes previous_response_id from a
-// response.create payload so the swap replay is accepted by an account
-// that did not mint the original response_id. If parsing fails or the
-// field is absent, the original payload is returned unchanged.
-func stripPreviousResponseID(data []byte) []byte {
-	if !bytes.Contains(data, []byte(`"previous_response_id"`)) {
-		return data
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return data
-	}
-	_, changed := obj["previous_response_id"]
-	delete(obj, "previous_response_id")
-	if response, ok := obj["response"].(map[string]any); ok {
-		if _, exists := response["previous_response_id"]; exists {
-			delete(response, "previous_response_id")
-			changed = true
-		}
-	}
-	if !changed {
-		return data
-	}
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return data
-	}
-	return out
 }
 
 // writeWebSocketRejection owns only failed handshake bodies. Successful
