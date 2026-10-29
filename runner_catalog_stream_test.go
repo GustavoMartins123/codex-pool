@@ -15,6 +15,7 @@ import (
 
 func catalogStreamFixture(t *testing.T) (*proxyHandler, *sessionBroker, string, string) {
 	t.Helper()
+	t.Setenv("POOL_JWT_SECRET", "synthetic-catalog-stream-secret")
 	h, principal, _, _, _, _ := memberQuotaFixture(t)
 	saveQuotaPolicy(t, h, principal, ClientPolicy{Providers: PolicySelector{Allow: []string{"*"}}})
 	login, err := h.passport.createAppToken(h.passport.principal(principal), getPoolJWTSecret())
