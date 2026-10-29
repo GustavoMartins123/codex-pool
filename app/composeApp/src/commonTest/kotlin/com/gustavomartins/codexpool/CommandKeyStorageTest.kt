@@ -66,6 +66,11 @@ class CommandKeyStorageTest {
                     respond(PoolJson.encodeToString(PairingReview(requestId, "desktop", "linux", "amd64", expiresAt = "2026-10-25T00:00:00Z")), HttpStatusCode.OK, headers)
                 } else { events += "approved"; respond("", HttpStatusCode.NoContent) }
                 "/api/pool/catalog" -> respond(PoolJson.encodeToString(Catalog(listOf(CatalogModel("model-1", protocol = "anthropic", availableNow = true)))), HttpStatusCode.OK, headers)
+                "/api/me/runners" -> respond(PoolJson.encodeToString(RunnerList(listOf(
+                    Runner("runner-1", "desktop", online = true, agents = listOf(Agent.Claude), modelsKnown = true,
+                        commandKeyId = CommandSigning.keyId(CommandSigning.decodeKey(key(9))),
+                        models = listOf(AgentModel(Agent.Claude, "model-1")))
+                ))), HttpStatusCode.OK, headers)
                 "/api/sessions" -> {
                     createdBody = (request.body as TextContent).text
                     created = PoolJson.decodeFromString<CreateSession>(createdBody!!)
@@ -88,12 +93,16 @@ class CommandKeyStorageTest {
             vm.state.first { it.pairingComplete && !it.loading }
             assertEquals(listOf("stored", "approved"), events)
             assertEquals(listOf(runnerKey), stored)
+            assertTrue(signer.canSignFor(CommandSigning.keyId(CommandSigning.decodeKey(runnerKey))))
+            assertFalse(signer.canSignFor(CommandSigning.keyId(CommandSigning.decodeKey(key(10)))))
+            assertFalse(signer.canSignFor(null))
 
             vm.loadCatalog(); vm.state.first { it.catalog != null && !it.loading }
             var opened: String? = null
             vm.create(CreateSession(Agent.Claude, "model-1", Workspace(WorkspaceMode.Ephemeral), PermissionMode.Gated, prompt = "list files")) { opened = it }
             vm.state.first { opened != null && !it.loading }
             assertEquals("list files", created?.prompt)
+            assertEquals("runner-1", created?.runnerId)
             assertTrue("initial_input" in requireNotNull(createdBody))
             assertFalse("\"prompt\"" in requireNotNull(createdBody))
         } finally { client.close() }

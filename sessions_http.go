@@ -324,6 +324,10 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 		initial = append(initial, sessionEvent{Type: "state", Data: data})
 		settings, _ := json.Marshal(runnerproto.TurnSettings{Model: s.Model, ReasoningEffort: s.ReasoningEffort})
 		initial = append(initial, sessionEvent{Type: "session.settings", Data: settings})
+		if s.Capabilities != nil {
+			capabilities, _ := json.Marshal(s.Capabilities)
+			initial = append(initial, sessionEvent{Type: "session.capabilities", Data: capabilities})
+		}
 		for _, a := range s.Approvals {
 			data, _ := json.Marshal(a)
 			initial = append(initial, sessionEvent{Type: "approval.requested", Data: data})

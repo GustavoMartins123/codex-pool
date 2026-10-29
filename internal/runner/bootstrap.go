@@ -138,11 +138,21 @@ func runnerReceiptWindow() time.Duration {
 	return 10*time.Minute + runnerproto.BootstrapReceiptSeconds*time.Second
 }
 
+// bootstrapCloseGrace bounds how long Close lets requests in flight finish.
+const bootstrapCloseGrace = 2 * time.Second
+
 // Close stops listening. Nothing else about the session stays reachable.
+// Requests already in flight get a moment to finish, so the cancel or ack
+// that ended the session still reaches the app instead of a dropped
+// connection.
 func (s *bootstrapSession) Close() {
 	s.stop()
+	ctx, cancel := context.WithTimeout(context.Background(), bootstrapCloseGrace)
+	defer cancel()
 	for _, server := range s.servers {
-		_ = server.Close()
+		if server.Shutdown(ctx) != nil {
+			_ = server.Close()
+		}
 	}
 }
 

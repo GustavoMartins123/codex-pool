@@ -81,14 +81,16 @@ type sessionStream struct {
 }
 
 type sessionBroker struct {
-	mu       sync.Mutex
-	store    *PassportStore
-	now      func() time.Time
-	sessions map[string]*sessionRecord
-	runners  map[string]*connectedRunner
-	streams  map[string]*sessionStream
-	stopped  chan struct{}
-	stopOnce sync.Once
+	mu                 sync.Mutex
+	store              *PassportStore
+	now                func() time.Time
+	sessions           map[string]*sessionRecord
+	runners            map[string]*connectedRunner
+	streams            map[string]*sessionStream
+	stopped            chan struct{}
+	stopOnce           sync.Once
+	catalogChanged     chan struct{}
+	catalogSubscribers map[string]int
 }
 
 func newSessionBroker(store *PassportStore) (*sessionBroker, error) {
@@ -200,6 +202,11 @@ func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
 
 func copySession(s *sessionRecord) *sessionRecord {
 	copy := *s
+	if s.Capabilities != nil {
+		c := *s.Capabilities
+		c.Models = append([]runnerproto.AgentModel{}, s.Capabilities.Models...)
+		copy.Capabilities = &c
+	}
 	if s.PendingInput != nil {
 		pending := *s.PendingInput
 		copy.PendingInput = &pending
@@ -247,9 +254,17 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 	if count >= 50 {
 		return nil, sessionError(409, "active session limit reached")
 	}
+	if q.RunnerID != "" {
+		runner := b.runners[q.RunnerID]
+		if runner == nil || runner.principal != principal || !runner.hello.ModelsKnown ||
+			!runnerproto.SupportsModel(runner.hello.Models, q.Agent, q.Model, q.ReasoningEffort) {
+			return nil, sessionError(409, "selected runner is unavailable or does not support the model settings")
+		}
+	}
 	now := b.now()
 	s := &sessionRecord{HistoryComplete: true, Session: runnerproto.Session{ID: uuid.NewString(), PrincipalID: principal, ClientID: client, Agent: q.Agent, Model: q.Model, Workspace: q.Workspace,
 		ReasoningEffort: q.ReasoningEffort, PermissionMode: q.PermissionMode, State: "pending_runner", CreatedAt: now, UpdatedAt: now, Approvals: []runnerproto.Approval{}, Summaries: []runnerproto.TurnSummary{}}}
+	s.RunnerID = q.RunnerID
 	if q.InitialInput != "" {
 		s.PendingInput = &runnerproto.PendingInput{ID: uuid.NewString(), Input: q.InitialInput}
 	}
@@ -265,6 +280,9 @@ func (b *sessionBroker) create(principal, client string, q runnerproto.CreateSes
 func (b *sessionBroker) offerLocked(s *sessionRecord) {
 	for _, r := range b.runners {
 		if r.principal == s.PrincipalID && supportsAgent(r.hello.Agents, s.Agent) && (s.RunnerID == "" || s.RunnerID == r.id) {
+			if !runnerSupportsSession(r, s) {
+				continue
+			}
 			m := runnerproto.Frame("session.pending")
 			value := copySession(s).Session
 			m.Session = &value
@@ -354,6 +372,10 @@ func (b *sessionBroker) startTurn(principal, id string, input runnerproto.TurnIn
 		return "", err
 	}
 	next.ReasoningEffort = settings.ReasoningEffort
+	runner := b.runners[s.RunnerID]
+	if !runnerSupportsSession(runner, next) {
+		return "", sessionError(409, "runner does not support the selected model or reasoning effort")
+	}
 	if next.Agent == "codex" && s.ReasoningEffort != "" && next.ReasoningEffort == "" {
 		return "", sessionError(400, "select an explicit reasoning effort; the model default is unavailable")
 	}

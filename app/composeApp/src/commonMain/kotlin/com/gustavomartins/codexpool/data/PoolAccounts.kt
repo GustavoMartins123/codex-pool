@@ -5,7 +5,7 @@ import kotlinx.serialization.json.jsonObject
 
 @Serializable
 data class PoolProvider(val name: String, val baseUrl: String, val credentials: Credentials? = null,
-    val commandKeys: List<String> = emptyList())
+    val commandKeys: List<String> = emptyList(), val runnerCatalog: RunnerCatalogCache? = null)
 
 @Serializable
 data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val providers: List<PoolProvider>) {
@@ -25,13 +25,23 @@ data class PoolAccounts(val version: Int = 2, val selectedUrl: String, val provi
                 "Chaves de runner armazenadas inválidas."
             }
             it.commandKeys.forEach(CommandSigning::decodeKey)
+            it.runnerCatalog?.let { cache ->
+                require(cache.baseUrl == it.baseUrl && cache.clientId == it.credentials?.clientId) { "O catálogo não pertence à conta armazenada." }
+                cache.snapshot.validate()
+            }
         }
         require(providers.count { it.baseUrl == selectedUrl } == 1) { "O provedor selecionado não está cadastrado." }
         return this
     }
 
     fun withCredentials(credentials: Credentials?): PoolAccounts = copy(providers = providers.map {
-        if (it.baseUrl == selectedUrl) it.copy(credentials = credentials) else it
+        if (it.baseUrl == selectedUrl) it.copy(credentials = credentials,
+            runnerCatalog = it.runnerCatalog?.takeIf { cache -> cache.clientId == credentials?.clientId }) else it
+    }).validate()
+
+    fun withRunnerCatalog(snapshot: RunnerCatalogSnapshot, owner: Credentials): PoolAccounts = copy(providers = providers.map {
+        if (it.baseUrl == owner.baseUrl && it.credentials?.clientId == owner.clientId)
+            it.copy(runnerCatalog = RunnerCatalogCache(owner.baseUrl, owner.clientId, snapshot.validate())) else it
     }).validate()
 
     /**

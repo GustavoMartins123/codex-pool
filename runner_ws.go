@@ -96,6 +96,8 @@ func (h *proxyHandler) handleRunnerWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch m.Type {
+		case "models.updated":
+			err = b.updateRunnerModels(runner, m.Capabilities)
 		case "session.purged":
 			err = b.erasedByRunner(runner, m)
 		case "heartbeat":
@@ -184,6 +186,9 @@ func (b *sessionBroker) connectRunner(r *connectedRunner) error {
 		record.Runner.OS = r.hello.OS
 		record.Runner.Arch = r.hello.Arch
 		record.Runner.CommandKeyID = r.hello.CommandKeyID
+		record.Runner.ModelsKnown = r.hello.ModelsKnown
+		record.Runner.Models = r.hello.Models
+		record.Runner.CatalogRevision = runnerproto.ModelsRevision(r.hello.Models)
 		if err := putJSON(bucket, r.id, record); err != nil {
 			return err
 		}
@@ -192,6 +197,7 @@ func (b *sessionBroker) connectRunner(r *connectedRunner) error {
 		return err
 	}
 	b.runners[r.id] = r
+	b.signalCatalogLocked()
 	m := runnerproto.Frame("hello.ack")
 	b.sendLocked(r, m)
 	for _, s := range b.sessions {
@@ -217,6 +223,7 @@ func (b *sessionBroker) disconnectRunner(r *connectedRunner) {
 		return
 	}
 	delete(b.runners, r.id)
+	b.signalCatalogLocked()
 	for _, s := range b.sessions {
 		if s.RunnerID == r.id && s.State != "closed" {
 			if err := b.saveLocked(copySession(s), "", r.principal, newSessionEvent("runner.status", map[string]any{"status": "offline"})); err != nil {

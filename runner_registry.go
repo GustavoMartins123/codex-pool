@@ -129,6 +129,7 @@ func (b *sessionBroker) revokeRunner(principal, id string) error {
 	if runner := b.runners[id]; runner != nil {
 		runner.stop()
 	}
+	b.signalCatalogLocked()
 	for _, s := range b.sessions {
 		if s.RunnerID == id && s.State != "closed" {
 			if err := b.closeLocked(s, "runner_revoked"); err != nil {
@@ -145,6 +146,17 @@ func validHello(h *runnerproto.Hello) error {
 	}
 	if !runnerproto.ValidCommandKeyID(h.CommandKeyID) {
 		return errors.New("invalid runner command key")
+	}
+	if err := runnerproto.ValidateAgentModels(h.Models); err != nil {
+		return err
+	}
+	if h.CatalogRevision != "" && (!h.ModelsKnown || h.CatalogRevision != runnerproto.ModelsRevision(h.Models)) {
+		return errors.New("invalid runner catalog revision")
+	}
+	for _, model := range h.Models {
+		if !h.ModelsKnown || !supportsAgent(h.Agents, model.Agent) {
+			return errors.New("model for an unavailable runner agent")
+		}
 	}
 	seen := map[string]bool{}
 	for _, agent := range h.Agents {

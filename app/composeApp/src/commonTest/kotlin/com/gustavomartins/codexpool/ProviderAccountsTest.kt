@@ -8,6 +8,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.*
 import kotlin.test.*
@@ -23,6 +25,35 @@ class ProviderAccountsTest {
         override suspend fun read() = accounts
         override suspend fun write(accounts: PoolAccounts) { check(!failWrite); this.accounts = accounts }
         override suspend fun clear() { accounts = null }
+    }
+
+    @Test fun concurrentCatalogAndPairingWritesPreserveBothUpdates() = runTest {
+        val owner = Credentials(primary, "token", "client")
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var saved = PoolAccounts(selectedUrl = primary, providers = listOf(PoolProvider("A", primary, owner)))
+        val store = object : CredentialStore {
+            override suspend fun read() = saved
+            override suspend fun write(accounts: PoolAccounts) {
+                if (accounts.selected.runnerCatalog != null && !release.isCompleted) { entered.complete(Unit); release.await() }
+                saved = accounts
+            }
+            override suspend fun clear() {}
+        }
+        val client = HttpClient(MockEngine { error("No network request expected") }) { poolConfiguration() }
+        try {
+            val vm = AuthViewModel(store, client, primary)
+            vm.state.first { !it.loading }
+            val snapshot = RunnerCatalogSnapshot("a".repeat(64), emptyList(), emptyList())
+            val cache = async { vm.saveRunnerCatalog(snapshot, owner) }
+            entered.await()
+            val key = base64UrlEncode(ByteArray(RunnerContract.CommandKeyBytes) { 7 })
+            val pairing = async { vm.addCommandKey(key, owner) }
+            release.complete(Unit)
+            cache.await(); pairing.await()
+            assertEquals(snapshot, saved.selected.runnerCatalog?.snapshot)
+            assertEquals(listOf(key), saved.selected.commandKeys)
+        } finally { release.complete(Unit); client.close() }
     }
 
     @Test fun switchingAndRestartKeepIndependentTokensAndLogoutOnlyTheSelectedDomain() = runTest {

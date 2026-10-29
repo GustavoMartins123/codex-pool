@@ -8,6 +8,8 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import kotlinx.io.IOException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerializationException
 
 fun Throwable.userMessage(): String = when (this) {
@@ -24,6 +26,7 @@ data class AuthState(val loading: Boolean = true, val accounts: PoolAccounts? = 
 }
 
 class AuthViewModel(private val store: CredentialStore, private val client: HttpClient, private val poolUrl: String) : ViewModel() {
+    private val storageMutex = Mutex()
     private val mutable = MutableStateFlow(AuthState())
     val state = mutable.asStateFlow()
     init {
@@ -69,9 +72,17 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
     }
 
     /** Saves a runner command key for the selected pool; pairing must not proceed if this fails. */
-    suspend fun addCommandKey(key: String, owner: Credentials? = null) {
+    suspend fun addCommandKey(key: String, owner: Credentials? = null) = storageMutex.withLock {
         val accounts = requireNotNull(mutable.value.accounts) { "Armazenamento de provedores indisponível." }
         val updated = accounts.withCommandKey(key, owner)
+        store.write(updated)
+        mutable.update { it.copy(accounts = updated) }
+    }
+
+    suspend fun saveRunnerCatalog(snapshot: RunnerCatalogSnapshot, owner: Credentials) = storageMutex.withLock {
+        val accounts = mutable.value.accounts ?: return@withLock
+        val updated = accounts.withRunnerCatalog(snapshot, owner)
+        if (updated == accounts) return@withLock
         store.write(updated)
         mutable.update { it.copy(accounts = updated) }
     }
@@ -92,13 +103,15 @@ class AuthViewModel(private val store: CredentialStore, private val client: Http
 
     private fun action(block: suspend (PoolAccounts) -> PoolAccounts) {
         if (mutable.value.loading || mutable.value.accounts == null) return
-        val accounts = requireNotNull(mutable.value.accounts)
         mutable.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
-                val updated = block(accounts).validate()
-                store.write(updated)
-                mutable.value = AuthState(loading = false, accounts = updated)
+                storageMutex.withLock {
+                    val accounts = requireNotNull(mutable.value.accounts)
+                    val updated = block(accounts).validate()
+                    store.write(updated)
+                    mutable.value = AuthState(loading = false, accounts = updated)
+                }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(loading = false, error = e.userMessage()) } }
         }
@@ -126,13 +139,22 @@ class DashboardViewModel(
     private val api: PoolApi,
     private val signer: CommandSigner = CommandSigner.Disabled,
     private val bootstrapClients: BootstrapClientFactory? = null,
+    private val runnerCatalog: RunnerCatalogRepository? = null,
 ) : ViewModel() {
     private val mutable = MutableStateFlow(DashboardState())
     val state = mutable.asStateFlow()
     private var pairingKey: String? = null
     private var bootstrap: BootstrapCoordinator? = null
     private val bootstrapJobs = mutableListOf<Job>()
-    init { refresh() }
+    init {
+        refresh()
+        runnerCatalog?.let { repository -> viewModelScope.launch {
+            repository.state.collect { current ->
+                mutable.update { it.copy(runners = current.runners,
+                    catalog = current.snapshot?.models?.forRunners(current.runners.filter { signer.canSignFor(it.commandKeyId) })) }
+            }
+        } }
+    }
 
     fun select(tab: DashboardTab) {
         if (mutable.value.loading) return
@@ -176,18 +198,28 @@ class DashboardViewModel(
     }
 
     fun loadCatalog() = action {
+        if (runnerCatalog != null) { runnerCatalog.refresh(); return@action }
         mutable.update { it.copy(catalog = null) }
         val models = api.catalog()
-        mutable.update { it.copy(catalog = models) }
+        val runners = api.runners()
+        mutable.update { it.copy(catalog = models.forRunners(runners.filter { signer.canSignFor(it.commandKeyId) }), runners = runners) }
     }
 
     fun create(request: CreateSession, onCreated: (String) -> Unit) = action {
         request.validate()
-        require(mutable.value.catalog?.any { it.id == request.model && it.availableNow } == true) { "Selecione um modelo disponível no catálogo." }
+        require(mutable.value.catalog?.any { it.id == request.model && it.availableNow && it.supports(request.agent) &&
+            (request.reasoningEffort.isEmpty() || request.reasoningEffort in it.efforts(request.agent)) } == true) { "Selecione um modelo e esforço confirmados por um runner online." }
         // The pool persists the draft before acknowledging session creation.
         // Execution still waits for a signed turn bound to the returned session.
         check(signer.enabled) { CommandSigner.MISSING_KEY }
-        val session = api.create(request)
+        val runner = mutable.value.runners.orEmpty().firstOrNull { runner ->
+            runner.online && !runner.revoked && runner.modelsKnown && signer.canSignFor(runner.commandKeyId) && runner.models.any {
+                it.agent == request.agent && it.model == request.model &&
+                    (request.reasoningEffort.isEmpty() || request.reasoningEffort in it.reasoningEfforts)
+            }
+        }
+        require(runner != null) { "Nenhum runner online confirmou essas configurações. Atualize os modelos." }
+        val session = api.create(request.copy(runnerId = runner.id))
         onCreated(session.conversationId)
     }
 
@@ -297,6 +329,7 @@ data class SessionScreenState(
 }
 
 fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?): SessionScreenState = when (event) {
+    is SessionEvent.Capabilities -> state.copy(session = state.session?.copy(capabilities = event.value))
     is SessionEvent.Settings -> state.copy(session = state.session?.copy(model = event.value.model, reasoningEffort = event.value.reasoningEffort))
     is SessionEvent.Input -> state.copy(entries = state.entries.filterNot { it.kind == "user" && it.turnId == event.value.turnId } +
         TranscriptEntry(event.value.turnId, "user", event.value.input, requireNotNull(eventId)))
@@ -330,7 +363,8 @@ fun reduceEvent(state: SessionScreenState, event: SessionEvent, eventId: Long?):
     is SessionEvent.Error -> state.copy(error = event.value.message)
 }
 
-class SessionViewModel(private val api: PoolApi, private val id: String, private val signer: CommandSigner = CommandSigner.Disabled) : ViewModel() {
+class SessionViewModel(private val api: PoolApi, private val id: String, private val signer: CommandSigner = CommandSigner.Disabled,
+    private val runnerCatalog: RunnerCatalogRepository? = null) : ViewModel() {
     private val mutable = MutableStateFlow(SessionScreenState())
     val state = mutable.asStateFlow()
     private var stream: Job? = null
@@ -338,13 +372,29 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
     private var lastEventId: String? = null
     private var older: Job? = null
 
+    init { runnerCatalog?.let { repository -> viewModelScope.launch {
+        repository.state.collect { current ->
+            mutable.update { state -> state.copy(catalog = state.session?.let { current.modelsForSession(it) }) }
+        }
+    } } }
+
     fun loadModels() {
         if (mutable.value.catalogLoading) return
         mutable.update { it.copy(catalogLoading = true, catalogError = null) }
         viewModelScope.launch {
             try {
+                if (runnerCatalog != null) {
+                    runnerCatalog.refresh()
+                    mutable.update { state -> state.copy(catalog = state.session?.let { runnerCatalog.state.value.modelsForSession(it) }) }
+                    return@launch
+                }
                 val catalog = api.catalog()
-                mutable.update { it.copy(catalog = catalog) }
+                val runnerId = mutable.value.session?.runnerId
+                val runners = api.runners()
+                val session = mutable.value.session
+                val choices = if (runnerId == null || session?.capabilities == null) emptyList() else
+                    RunnerCatalogState(RunnerCatalogSnapshot("0".repeat(64), catalog, runners), true).modelsForSession(session)
+                mutable.update { it.copy(catalog = choices) }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { mutable.update { it.copy(catalogError = e.userMessage()) } }
             finally { mutable.update { it.copy(catalogLoading = false) } }
@@ -383,7 +433,8 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
                             history.session
                         } else api.session(requireNotNull(mutable.value.session).id)
                         if (generation != streamGeneration) return@launch
-                        mutable.update { it.copy(session = session, approvals = session.approvals) }
+                        mutable.update { it.copy(session = session, approvals = session.approvals,
+                            catalog = runnerCatalog?.state?.value?.modelsForSession(session) ?: it.catalog) }
                         // Replay the last deltas even if the session closed while offline.
                         if (session.state == SessionState.Closed && loadingHistory) break
                         api.events(id, lastEventId, onCursor = { cursor ->
@@ -396,7 +447,11 @@ class SessionViewModel(private val api: PoolApi, private val id: String, private
                         }.collect { frame ->
                             val event = frame.event
                             if (generation == streamGeneration) {
-                                mutable.update { reduceEvent(it, event, frame.id).copy(eventRevision = it.eventRevision + 1) }
+                                mutable.update {
+                                    val reduced = reduceEvent(it, event, frame.id)
+                                    reduced.copy(eventRevision = it.eventRevision + 1,
+                                        catalog = runnerCatalog?.state?.value?.let { catalog -> reduced.session?.let(catalog::modelsForSession) } ?: reduced.catalog)
+                                }
                                 reconnectDelay = 500L
                                 if (event is SessionEvent.Error) throw SessionProtocolException(event.value.message)
                                 sendPendingPrompt()

@@ -24,6 +24,9 @@ func (b *sessionBroker) claim(r *connectedRunner, id string) error {
 	if !supportsAgent(r.hello.Agents, s.Agent) {
 		return sessionError(409, "unsupported agent")
 	}
+	if !runnerSupportsSession(r, s) {
+		return sessionError(409, "runner does not support the selected model or reasoning effort")
+	}
 	if s.State == "closed" {
 		return sessionError(409, "session_closed")
 	}
@@ -37,6 +40,9 @@ func (b *sessionBroker) claim(r *connectedRunner, id string) error {
 		return sessionError(409, "workspace path is not allowed")
 	}
 	next := copySession(s)
+	if next.Capabilities == nil && r.hello.ModelsKnown {
+		next.Capabilities = &runnerproto.ModelCapabilities{Revision: runnerproto.ModelsRevision(r.hello.Models), Models: append([]runnerproto.AgentModel{}, r.hello.Models...)}
+	}
 	next.RunnerID = r.id
 	next.LeaseExpiresAt = b.now().Add(sessionLeaseTTL)
 	next.UpdatedAt = b.now()
@@ -155,6 +161,9 @@ func (b *sessionBroker) claimCredentialLocked(s *sessionRecord) (string, error) 
 	events := []sessionEvent{
 		newSessionEvent(runnerproto.EventRunnerChanged, runnerproto.RunnerStatusEvent{Status: "reconnected"}),
 		newSessionEvent(runnerproto.EventState, runnerproto.StateEvent{State: s.State}),
+	}
+	if s.Capabilities != nil {
+		events = append(events, newSessionEvent(runnerproto.EventCapabilities, s.Capabilities))
 	}
 	err = p.db.Update(func(tx *bbolt.Tx) error {
 		nonces := tx.Bucket([]byte(bucketConfigNonces))
@@ -559,6 +568,7 @@ func (b *sessionBroker) releaseClaim(r *connectedRunner, id string) error {
 	}
 	next := copySession(s)
 	next.RunnerID = ""
+	next.Capabilities = nil
 	next.LLMClientID = ""
 	next.State = "pending_runner"
 	next.LastSequence = 0

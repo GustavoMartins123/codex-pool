@@ -2,6 +2,7 @@ package com.gustavomartins.codexpool.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
@@ -32,15 +33,32 @@ data class CatalogModel(val id: String, val name: String? = null, val protocol: 
     val provider: String = "", val protocols: List<String> = emptyList(),
     @SerialName("reasoning_efforts") val reasoningEfforts: List<String> = emptyList(),
     @SerialName("default_reasoning_effort") val defaultReasoningEffort: String = "",
+    @Transient val runnerModels: List<AgentModel>? = null,
 ) {
-    fun supports(agent: Agent): Boolean = (protocols + protocol).any {
+    fun supports(agent: Agent): Boolean = (runnerModels == null || runnerModels.any { it.agent == agent }) && (protocols + protocol).any {
         when (agent) { Agent.Codex -> it in listOf("openai", "responses"); Agent.Claude -> it == "anthropic" }
     }
-    fun efforts(agent: Agent): List<String> = reasoningEfforts.filter {
-        it in when (agent) {
+    fun efforts(agent: Agent): List<String> = reasoningEfforts.filter { effort ->
+        (runnerModels == null || runnerModels.any { it.agent == agent && effort in it.reasoningEfforts }) &&
+        effort in when (agent) {
             Agent.Codex -> listOf("none", "minimal", "low", "medium", "high", "xhigh", "max")
             Agent.Claude -> listOf("low", "medium", "high", "xhigh", "max")
         }
+    }
+    fun defaultEffort(agent: Agent): String {
+        if (runnerModels == null) return defaultReasoningEffort
+        val supported = efforts(agent)
+        return defaultReasoningEffort.takeIf { it in supported }
+            ?: runnerModels?.firstOrNull { it.agent == agent && it.defaultReasoningEffort in supported }?.defaultReasoningEffort
+            ?: supported.firstOrNull().orEmpty()
+    }
+}
+
+/** Only online runners with confirmed capabilities contribute selectable models. */
+fun List<CatalogModel>.forRunners(runners: List<Runner>, runnerId: String? = null): List<CatalogModel> {
+    val confirmed = runners.filter { it.online && !it.revoked && it.modelsKnown && (runnerId == null || it.id == runnerId) }.flatMap { it.models }
+    return mapNotNull { model ->
+        model.copy(runnerModels = confirmed.filter { it.model == model.id }).takeIf { row -> Agent.entries.any(row::supports) }
     }
 }
 @Serializable data class Catalog(val models: List<CatalogModel>)
