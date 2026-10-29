@@ -385,3 +385,23 @@ func TestBootstrapRetiresAQRAfterRepeatedWrongSecrets(t *testing.T) {
 		t.Fatal("QR not retired")
 	}
 }
+
+// Onboarding closes the session as soon as the app cancels it. The request
+// that ended the session must still get its answer: closing every connection
+// at once made the app see EOF instead of 204.
+func TestBootstrapAnswersTheRequestThatEndsTheSession(t *testing.T) {
+	t.Parallel()
+	for i := 0; i < 40; i++ {
+		s := openTestBootstrap(t, nil)
+		go func() {
+			<-s.cancelled
+			s.Close()
+		}()
+		p := newPhone(t, s.link, "")
+		body, _ := json.Marshal(runnerproto.BootstrapOperation{BootstrapID: s.payload.BootstrapID, OperationID: operationID(1)})
+		status, _, err := p.do(http.MethodPost, "/cancel", "application/json", body, nil)
+		if err != nil || status != http.StatusNoContent {
+			t.Fatalf("attempt %d: cancel = %d %v", i, status, err)
+		}
+	}
+}
