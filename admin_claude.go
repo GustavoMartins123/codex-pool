@@ -38,6 +38,9 @@ func (h *proxyHandler) serveClaudeAdmin(w http.ResponseWriter, r *http.Request) 
 	case path == "/add" && r.Method == http.MethodPost:
 		h.handleClaudeAdd(w, r)
 
+	case path == "/relogin" && r.Method == http.MethodPost:
+		h.handleClaudeRelogin(w, r)
+
 	case path == "/callback" && r.Method == http.MethodGet:
 		// Callback doesn't need admin auth - user redirected from Anthropic
 		h.handleClaudeCallback(w, r)
@@ -305,7 +308,9 @@ func normalizeString(v any) string {
 
 // POST /admin/claude/add - start OAuth flow
 func (h *proxyHandler) handleClaudeAdd(w http.ResponseWriter, r *http.Request) {
-	if !h.checkContributionAttempt(w,r) { return }
+	if !h.checkContributionAttempt(w, r) {
+		return
+	}
 	var req struct {
 		AccountID string `json:"account_id"`
 	}
@@ -324,6 +329,54 @@ func (h *proxyHandler) handleClaudeAdd(w http.ResponseWriter, r *http.Request) {
 		accountID = "claude_" + randomHex(8)
 	}
 
+	h.startClaudeOAuth(w, r, accountID, "")
+}
+
+// POST /admin/claude/relogin starts a fresh login for an existing account.
+func (h *proxyHandler) handleClaudeRelogin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AccountID string `json:"account_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		respondJSONError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	accountID := strings.TrimSpace(req.AccountID)
+	if accountID == "" {
+		respondJSONError(w, http.StatusBadRequest, "account_id is required")
+		return
+	}
+	if h.claudeReloginTarget(w, r, accountID) == nil {
+		return
+	}
+	h.startClaudeOAuth(w, r, accountID, accountID)
+}
+
+func (h *proxyHandler) claudeReloginTarget(w http.ResponseWriter, r *http.Request, accountID string) *Account {
+	for _, account := range h.pool.allAccounts() {
+		if account.ID != accountID || account.Type != AccountTypeClaude {
+			continue
+		}
+		if h.passport != nil {
+			if err := h.passport.authorizeAccount(providerContributionActor(r), account, "manage"); err != nil {
+				respondJSONError(w, http.StatusForbidden, "account management denied")
+				return nil
+			}
+		}
+		account.mu.Lock()
+		oauth := strings.HasPrefix(account.AccessToken, "sk-ant-oat") || account.RefreshToken != ""
+		account.mu.Unlock()
+		if !oauth {
+			respondJSONError(w, http.StatusBadRequest, "Claude relogin requires an OAuth account")
+			return nil
+		}
+		return account
+	}
+	respondJSONError(w, http.StatusNotFound, "Claude account not found")
+	return nil
+}
+
+func (h *proxyHandler) startClaudeOAuth(w http.ResponseWriter, r *http.Request, accountID, reloginAccountID string) {
 	// Generate OAuth URL
 	authURL, session, err := ClaudeAuthorize(accountID)
 	if err != nil {
@@ -332,6 +385,7 @@ func (h *proxyHandler) handleClaudeAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session.ActorID = providerContributionActor(r)
+	session.ReloginAccountID = reloginAccountID
 
 	// Store session
 	claudeOAuthSessions.Lock()
@@ -401,6 +455,15 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
+	if session.ReloginAccountID != "" {
+		if r.URL.Path != "/admin/claude/exchange" {
+			respondJSONError(w, http.StatusForbidden, "relogin session requires operator access")
+			return
+		}
+		if h.claudeReloginTarget(w, r, session.ReloginAccountID) == nil {
+			return
+		}
+	}
 
 	// Exchange code for tokens
 	tokens, err := ClaudeExchange(code, verifier, session.State)
@@ -422,6 +485,25 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 		respondJSONError(w, 502, "could not identify Claude account")
 		return
 	}
+	if session.ReloginAccountID != "" {
+		target := h.claudeReloginTarget(w, r, session.ReloginAccountID)
+		if target == nil {
+			return
+		}
+		if err := replaceClaudeAccountCredentials(target, tokens, uuid); err != nil {
+			respondJSONError(w, http.StatusBadRequest, "relogin failed: "+err.Error())
+			return
+		}
+		if h.passport != nil {
+			if err := h.passport.recordAudit(session.ActorID, "provider.account_relogin", target.ID, "claude"); err != nil {
+				log.Printf("record Claude relogin audit: %v", err)
+			}
+		}
+		respondJSON(w, map[string]any{
+			"success": true, "account_id": target.ID, "replaced": true,
+		})
+		return
+	}
 	accountID, err := h.saveContribution(r, AccountTypeClaude, uuid, map[string]any{"account_uuid": uuid, "added_at": time.Now().UTC().Format(time.RFC3339Nano), "claudeAiOauth": &ClaudeOAuthData{AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, ExpiresAt: time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second).UnixMilli(), Scopes: parseScopes(tokens.Scope)}})
 	if err != nil {
 		respondPolicyError(w, err)
@@ -434,16 +516,73 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	delete(claudeOAuthSessions.sessions, verifier)
 	claudeOAuthSessions.Unlock()
 
-
 	respondJSON(w, map[string]any{
 		"success":    true,
 		"account_id": session.AccountID,
 	})
 }
 
+// replaceClaudeAccountCredentials preserves the account file and runtime state
+// while replacing expired OAuth credentials after verifying the upstream UUID.
+func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenResponse, uuid string) error {
+	if tokens == nil || tokens.AccessToken == "" || tokens.RefreshToken == "" || tokens.ExpiresIn <= 0 {
+		return fmt.Errorf("Claude did not return valid access and refresh tokens")
+	}
+	target.mu.Lock()
+	defer target.mu.Unlock()
+	raw, err := readAccountFile(target.File)
+	if err != nil {
+		return err
+	}
+	var root map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		return fmt.Errorf("parse Claude account: %w", err)
+	}
+	existingUUID := target.AccountUUID
+	if existingUUID == "" {
+		existingUUID, _ = root["account_uuid"].(string)
+	}
+	if existingUUID == "" || uuid == "" || uuid != existingUUID {
+		return fmt.Errorf("signed-in Claude account does not match the existing pool account")
+	}
+	oauth, ok := root["claudeAiOauth"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("Claude OAuth credentials are missing from the account file")
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(time.Duration(tokens.ExpiresIn) * time.Second)
+	oauth["accessToken"] = tokens.AccessToken
+	oauth["refreshToken"] = tokens.RefreshToken
+	oauth["expiresAt"] = expiresAt.UnixMilli()
+	oauth["scopes"] = parseScopes(tokens.Scope)
+	root["account_uuid"] = uuid
+	root["last_refresh"] = now.Format(time.RFC3339Nano)
+	delete(root, "dead")
+	delete(root, "needs_login")
+	delete(root, "auth_error")
+	if err := atomicWriteJSON(target.File, root); err != nil {
+		return err
+	}
+	target.AccessToken = tokens.AccessToken
+	target.RefreshToken = tokens.RefreshToken
+	target.ExpiresAt = expiresAt
+	target.LastRefresh = now
+	target.AccountUUID = uuid
+	target.Dead = false
+	target.NeedsLogin = false
+	target.AuthError = ""
+	target.RefreshBlocked = false
+	log.Printf("claude relogin: replaced credentials for account %s", target.ID)
+	return nil
+}
+
 // POST /admin/claude/:id/refresh - refresh single account tokens
 func (h *proxyHandler) handleClaudeRefresh(w http.ResponseWriter, r *http.Request, accountID string) {
-	if !h.authorizeAccountManagement(w,r,accountID) { return }
+	if !h.authorizeAccountManagement(w, r, accountID) {
+		return
+	}
 	accounts := h.requestVisiblePool(r).allAccounts()
 	var target *Account
 	for _, acc := range accounts {
