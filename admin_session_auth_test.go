@@ -60,6 +60,8 @@ func TestAdminRoutesRequireOperatorSessionOrBreakGlassToken(t *testing.T) {
 		"/admin/accounts/example/reset-credit/consume",
 		"/admin/codex/relogin",
 		"/admin/codex/exchange",
+		"/admin/claude/relogin",
+		"/admin/claude/exchange",
 		"/admin/antigravity/relogin",
 		"/admin/antigravity/exchange",
 	} {

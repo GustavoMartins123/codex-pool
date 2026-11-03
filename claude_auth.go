@@ -61,11 +61,12 @@ func GeneratePKCE() (*PKCE, error) {
 
 // ClaudeOAuthSession stores the state for an in-progress OAuth flow.
 type ClaudeOAuthSession struct {
-	ActorID   string
-	PKCE      *PKCE
-	State     string
-	CreatedAt time.Time
-	AccountID string // Optional: identifier for this account
+	ActorID          string
+	PKCE             *PKCE
+	State            string
+	CreatedAt        time.Time
+	AccountID        string // Optional: identifier for this account
+	ReloginAccountID string // Existing pool account whose credentials will be replaced
 }
 
 // ClaudeAuthorize generates the OAuth authorization URL.
