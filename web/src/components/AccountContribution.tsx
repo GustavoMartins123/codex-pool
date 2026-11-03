@@ -1,4 +1,4 @@
-import { antigravityOAuthStatus, contributeAPIKey, contributeGrok, exchangeAccountOAuth, exchangeAntigravityOAuth, exchangeAntigravityRelogin, exchangeCodexRelogin, startAccountOAuth, startAntigravityOAuth, startAntigravityRelogin, startCodexRelogin, startZAILogin, zaiLoginStatus } from "../api";
+import { antigravityOAuthStatus, contributeAPIKey, contributeGrok, exchangeAccountOAuth, exchangeAntigravityOAuth, exchangeAntigravityRelogin, exchangeClaudeRelogin, exchangeCodexRelogin, startAccountOAuth, startAntigravityOAuth, startAntigravityRelogin, startClaudeRelogin, startCodexRelogin, startZAILogin, zaiLoginStatus } from "../api";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go";
@@ -34,7 +34,7 @@ function oauthCode(value: string, expectedState: string | undefined, provider: C
   return text;
 }
 
-export function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvider = "codex" }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string; reloginProvider?: "codex" | "antigravity" }) {
+export function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvider = "codex" }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string; reloginProvider?: "codex" | "claude" | "antigravity" }) {
   const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? reloginProvider : "codex");
   const [credential, setCredential] = useState("");
 	  const [oauth, setOAuth] = useState<{ verifier?: string; sessionID?: string; state?: string; url: string } | null>(null);
@@ -118,7 +118,9 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	          ? await startAntigravityRelogin(reloginAccountID)
 	          : await startAntigravityOAuth()
 	        : reloginAccountID
-	          ? await startCodexRelogin(reloginAccountID)
+	          ? provider === "claude"
+	            ? await startClaudeRelogin(reloginAccountID)
+	            : await startCodexRelogin(reloginAccountID)
 	          : await startAccountOAuth(provider as "codex" | "claude");
 	      if (!result.oauth_url || (provider !== "zai" && !result.state) || ((provider === "antigravity" || provider === "zai") ? !result.session_id : !result.verifier)) throw new Error("Provider did not return an OAuth session");
 	      oauthCompleted.current = false;
@@ -155,7 +157,11 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	          const code = oauthCode(credential, oauth.state, provider);
 	          if (!code || !oauth.verifier) throw new Error("Paste the authorization code or callback URL");
 	          if (reloginAccountID) {
-	            await exchangeCodexRelogin(code, oauth.verifier);
+	            if (provider === "claude") {
+	              await exchangeClaudeRelogin(code, oauth.verifier);
+	            } else {
+	              await exchangeCodexRelogin(code, oauth.verifier);
+	            }
 	          } else {
 	            await exchangeAccountOAuth(provider as "codex" | "claude", code, oauth.verifier);
 	          }
@@ -202,7 +208,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
           <label className="contribution-field"><span>{provider === "zai_key" ? "Z.ai API key" : `${selected.label} API key`}</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
         )}
         {error && <div className="access-error" role="alert">{error}</div>}
-        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? "Adding…" : "Add to pool"}</button>}</div>
+        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? reloginAccountID ? "Saving…" : "Adding…" : reloginAccountID ? "Save credentials" : "Add to pool"}</button>}</div>
       </form>
     </div>
   );

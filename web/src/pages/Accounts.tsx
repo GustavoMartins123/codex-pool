@@ -28,7 +28,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 1300px)").matches);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
-  const [reloginProvider, setReloginProvider] = useState<"codex" | "antigravity">("codex");
+  const [reloginProvider, setReloginProvider] = useState<"codex" | "claude" | "antigravity">("codex");
   const [action, setAction] = useState<ArmedAccountAction>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -300,7 +300,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
-                      {(selectedAccount.type === "codex" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
+                      {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                     </div>}
 
                   </>
