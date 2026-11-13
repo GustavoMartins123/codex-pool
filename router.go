@@ -931,6 +931,8 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleGrokImport(w, r)
 		case "/api/pool/accounts/opencode-go/add":
 			h.handleOpencodeGoAdd(w, r)
+		case "/api/pool/accounts/qwen/add":
+			h.handleQwenAdd(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1043,6 +1045,13 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOpencodeGoAdmin(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/admin/qwen") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		h.serveQwenAdmin(w, r)
+		return
+	}
 
 	if strings.HasPrefix(r.URL.Path, "/api/avatars/") {
 		h.handlePassportAvatar(w, r)
@@ -1075,6 +1084,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/accounts/") {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/accounts/"), "/")
+		if len(parts) == 3 && parts[0] == "qwen" && parts[2] == "token-plan" {
+			h.handleQwenTokenPlan(w, r, parts[1])
+			return
+		}
 		if len(parts) == 3 && parts[2] == "operator-access" {
 			h.handleOperatorAccountAccess(w, r, AccountType(parts[0]), parts[1])
 			return

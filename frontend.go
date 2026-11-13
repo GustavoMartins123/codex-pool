@@ -2183,6 +2183,9 @@ type AccountStats struct {
 	ResetCreditsAvailable     int               `json:"reset_credits_available"`
 	ResetCreditExpirations    []string          `json:"reset_credit_expirations,omitempty"`
 	ResetCreditsKnown         bool              `json:"reset_credits_known"`
+
+	TokenPlanCredits      *QwenCreditSnapshot `json:"token_plan_credits,omitempty"`
+	TokenPlanCreditsError string              `json:"token_plan_credits_error,omitempty"`
 }
 
 type AggregateStats struct {
@@ -2318,6 +2321,17 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			primaryReported = acc.Usage.PrimaryUsageReported
 			secondaryReported = acc.Usage.SecondaryUsageReported
 		}
+		credits := acc.QwenCredits
+		creditsError := acc.QwenCreditsError
+		if acc.Type == AccountTypeQwen && !qwenCreditsCurrent(credits, stats.GeneratedAt) {
+			credits = nil
+			primaryAvailable, secondaryAvailable = false, false
+			primaryReported, secondaryReported = false, false
+			primaryUsed, secondaryUsed = 0, 0
+			if creditsError == "" {
+				creditsError = "Token Plan credit data is unavailable or expired; refresh the balance"
+			}
+		}
 
 		breakdown := scoreBreakdown{}
 		score := float64(0)
@@ -2360,6 +2374,8 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			CacheHitRate:             cacheHitRate,
 			HasCredits:               acc.Usage.HasCredits,
 			CreditsBalance:           acc.Usage.CreditsBalance,
+			TokenPlanCredits:         credits,
+			TokenPlanCreditsError:    creditsError,
 			Score:                    score,
 			ScoreTooltip:             scoreTooltip,
 			ResetCreditsAvailable:    acc.ResetCreditsAvailable,
