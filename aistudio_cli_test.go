@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // TestAIStudioResponsesRealCodexCLI drives the real Codex CLI through the pool
@@ -24,6 +26,12 @@ func TestAIStudioResponsesRealCodexCLI(t *testing.T) {
 	if binary == "" {
 		t.Skip("AISTUDIO_CODEX_CLI_PATH is required for the Codex CLI integration test")
 	}
+	for _, transport := range []string{"http", "websocket"} {
+		t.Run(transport, func(t *testing.T) { runAIStudioResponsesRealCodexCLI(t, binary, transport == "websocket") })
+	}
+}
+
+func runAIStudioResponsesRealCodexCLI(t *testing.T, binary string, websockets bool) {
 	t.Setenv("POOL_JWT_SECRET", "aistudio-cli-test-secret")
 	workingDirectory, err := os.Getwd()
 	if err != nil {
@@ -110,7 +118,23 @@ func TestAIStudioResponsesRealCodexCLI(t *testing.T) {
 		writeGeminiSSE(w, `{"candidates":[{"content":{"role":"model","parts":[`+part+`]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":20}}`)
 	}))
 	defer upstream.Close()
-	h := aistudioTestHandler(t, upstream.URL, aistudioTestAccount("aistudio-cli", "AIza-cli-test"))
+	accounts := []*Account{aistudioTestAccount("aistudio-cli", "AIza-cli-test")}
+	codexUpstream := mustParse("https://unused.example")
+	if websockets {
+		// The websocket handshake binds a Codex account; its upstream must
+		// never receive an AI Studio turn.
+		fake := newFakeCodexUpstream(t)
+		fake.on("acct_aistudio_ws", func(ctx context.Context, conn *websocket.Conn) {
+			if _, data, err := conn.Read(ctx); err == nil {
+				t.Errorf("AI Studio turn reached the ChatGPT websocket upstream: %s", clipDiagnostic(string(data), 200))
+			}
+		})
+		codexUpstream = mustParse(fake.server.URL)
+		accounts = append(accounts, &Account{Type: AccountTypeCodex, ID: "aistudio-ws", AccessToken: "ws-token", AccountID: "acct_aistudio_ws", PlanType: "pro"})
+	}
+	h := aistudioTestHandler(t, upstream.URL, accounts...)
+	h.registry = NewProviderRegistry(NewCodexProvider(codexUpstream, codexUpstream, codexUpstream), NewClaudeProvider(codexUpstream), NewGeminiProvider(codexUpstream, codexUpstream), NewAIStudioProvider(mustParse(upstream.URL)))
+	h.cfg.websocketReadLimit = 64 << 20
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 	catalog := filepath.Join(control, "models.json")
@@ -119,14 +143,20 @@ func TestAIStudioResponsesRealCodexCLI(t *testing.T) {
 	}
 	lastMessage := filepath.Join(control, "last-message.txt")
 	args := []string{"exec", "--ignore-user-config", "--ephemeral", "--skip-git-repo-check", "--json", "--color", "never", "-s", "workspace-write", "-C", workspace, "-m", "aistudio/gemini-3.8-flash", "--output-last-message", lastMessage}
-	for _, setting := range []string{
+	settings := []string{
 		`model_provider="aistudio-test"`, `model_providers.aistudio-test.name="AI Studio test"`,
 		"model_providers.aistudio-test.base_url=" + strconv.Quote(proxy.URL+"/v1"),
 		`model_providers.aistudio-test.env_key="AISTUDIO_CODEX_TEST_TOKEN"`, `model_providers.aistudio-test.wire_api="responses"`,
 		`model_providers.aistudio-test.requires_openai_auth=false`, `model_providers.aistudio-test.request_max_retries=0`, `model_providers.aistudio-test.stream_max_retries=0`,
 		"model_catalog_json=" + strconv.Quote(catalog), `cli_auth_credentials_store="ephemeral"`,
 		`mcp_servers={}`, `features.apps=false`, `features.shell_snapshot=false`,
-	} {
+	}
+	if websockets {
+		settings = append(settings, `model_providers.aistudio-test.supports_websockets=true`, `model_providers.aistudio-test.features.responses_websockets_v2=true`)
+	} else {
+		settings = append(settings, `model_providers.aistudio-test.supports_websockets=false`)
+	}
+	for _, setting := range settings {
 		args = append(args, "-c", setting)
 	}
 	args = append(args, "Read aistudio-input.txt with exec_command, then create aistudio-output.txt with apply_patch. End with AISTUDIO_CODEX_COMPLETE.")
