@@ -1061,16 +1061,16 @@ func translateOpenAIRespToClaude(body []byte, requestModel string) ([]byte, erro
 
 	// Usage
 	if usage, ok := oai["usage"].(map[string]any); ok {
-		claudeUsage := map[string]any{
-			"input_tokens":  toInt64(usage["prompt_tokens"]),
-			"output_tokens": toInt64(usage["completion_tokens"]),
-		}
+		var cached int64
 		if ct, ok := usage["prompt_tokens_details"].(map[string]any); ok {
-			if cached, ok := ct["cached_tokens"]; ok {
-				claudeUsage["cache_read_input_tokens"] = toInt64(cached)
-			}
+			cached = toInt64(ct["cached_tokens"])
 		}
-		claude["usage"] = claudeUsage
+		input, cached := claudeInputUsage(toInt64(usage["prompt_tokens"]), cached)
+		claude["usage"] = map[string]any{
+			"input_tokens":            input,
+			"cache_read_input_tokens": cached,
+			"output_tokens":           toInt64(usage["completion_tokens"]),
+		}
 	}
 
 	return json.Marshal(claude)

@@ -246,14 +246,30 @@ func (sw *sseTranslateWriter) emitClaudeContentBlockStop() {
 		`{"type":"content_block_stop","index":%d}`, sw.state.contentBlockIndex))
 }
 
+// emitClaudeMessageDelta reports the final stop reason and usage. Chat
+// Completions only sends usage at the end of the stream, so the prompt size is
+// reported here; Claude counts cache reads apart from input_tokens.
 func (sw *sseTranslateWriter) emitClaudeMessageDelta() {
 	stopReason := sw.state.finishReason
 	if stopReason == "" {
 		stopReason = "end_turn"
 	}
-	msg := fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%s,"stop_sequence":null},"usage":{"output_tokens":%d}}`,
-		mustMarshalString(stopReason), sw.state.outputTokens)
+	input, cached := claudeInputUsage(sw.state.inputTokens, sw.state.cachedInputTokens)
+	msg := fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%s,"stop_sequence":null},"usage":{"input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":%d}}`,
+		mustMarshalString(stopReason), input, cached, sw.state.outputTokens)
 	sw.emitClaudeEvent("message_delta", msg)
+}
+
+// claudeInputUsage splits an OpenAI prompt token count, which includes cached
+// tokens, into Claude's uncached input and cache read counts.
+func claudeInputUsage(prompt, cached int64) (int64, int64) {
+	if cached < 0 {
+		cached = 0
+	}
+	if cached > prompt {
+		cached = prompt
+	}
+	return prompt - cached, cached
 }
 
 func (sw *sseTranslateWriter) emitClaudeEvent(eventType, data string) {
