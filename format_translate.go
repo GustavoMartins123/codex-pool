@@ -461,6 +461,13 @@ func convertClaudeMsgToOpenAI(m map[string]any) []map[string]any {
 			}
 			msgs = append(msgs, toolMsg)
 		}
+		// Clients such as Claude Code attach reminders next to tool results;
+		// Chat Completions needs them in a user message after the tool replies.
+		if hasImages {
+			msgs = append(msgs, map[string]any{"role": role, "content": contentParts})
+		} else if len(textParts) > 0 {
+			msgs = append(msgs, map[string]any{"role": role, "content": joinStrings(textParts)})
+		}
 		return msgs
 	}
 
