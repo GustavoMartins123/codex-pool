@@ -124,3 +124,38 @@ func TestSessionUsesOnlyTheRunnerThatConfirmedItsModel(t *testing.T) {
 		t.Fatal("unsupported reasoning effort accepted")
 	}
 }
+
+func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
+	pool := newPoolState([]*Account{
+		{ID: "qwen", Type: AccountTypeQwen, AccessToken: "sk-sp-test", Models: map[string]DiscoveredModel{
+			"qwen3.8-max": {ID: "qwen3.8-max", DisplayName: "Qwen 3.8 Max", Protocol: "openai", ContextWindow: 256000},
+		}},
+		{ID: "kimi", Type: AccountTypeKimi, AccessToken: "sk-test", Models: map[string]DiscoveredModel{
+			"kimi-k3": {ID: "kimi-k3", Protocol: "anthropic"},
+		}},
+	}, false)
+	upstream := []byte(`{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT"}],"etag":"keep"}`)
+	out := injectResponsesPoolModels(injectResponsesPoolModels(upstream, discoveredModelsForPool(pool)), discoveredModelsForPool(pool))
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+		ETag   string           `json:"etag"`
+	}
+	if err := json.Unmarshal(out, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	slugs := map[string]int{}
+	for _, model := range catalog.Models {
+		slugs[stringValue(model["slug"])]++
+	}
+	if catalog.ETag != "keep" || slugs["gpt-6.1-sol"] != 1 || slugs["qwen3.8-max"] != 1 || slugs["kimi-k3"] != 0 || len(slugs) != 2 {
+		t.Fatalf("catalog slugs = %v etag=%q", slugs, catalog.ETag)
+	}
+	for _, model := range catalog.Models {
+		if model["slug"] == "qwen3.8-max" && (model["context_window"] != float64(256000) || model["visibility"] != "list") {
+			t.Fatalf("Qwen catalog entry = %v", model)
+		}
+	}
+	if string(injectResponsesPoolModels([]byte("not json"), discoveredModelsForPool(pool))) != "not json" {
+		t.Fatal("invalid upstream catalog was rewritten")
+	}
+}

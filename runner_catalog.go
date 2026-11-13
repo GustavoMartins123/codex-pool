@@ -135,3 +135,50 @@ func runnerCatalog(models []poolModelDescriptor) runnerproto.RunnerCatalog {
 	result.CodexCatalog = string(raw)
 	return result
 }
+
+// injectResponsesPoolModels adds discovered pool models that the proxy serves
+// over the Responses API (such as Qwen) to a Codex model catalog response, so
+// Codex clients list them next to the upstream and static pool models.
+func injectResponsesPoolModels(body []byte, models []poolModelDescriptor) []byte {
+	var responses []poolModelDescriptor
+	for _, model := range models {
+		if supportsAgent(model.Protocols, "responses") {
+			responses = append(responses, model)
+		}
+	}
+	if len(responses) == 0 {
+		return body
+	}
+	var catalog map[string]any
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return body
+	}
+	existing, ok := catalog["models"].([]any)
+	if !ok {
+		return body
+	}
+	var generated struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(runnerCatalog(responses).CodexCatalog), &generated); err != nil {
+		return body
+	}
+	seen := make(map[string]bool, len(existing))
+	for _, raw := range existing {
+		if model, ok := raw.(map[string]any); ok {
+			seen[stringValue(model["slug"])] = true
+		}
+	}
+	for _, model := range generated.Models {
+		if slug := stringValue(model["slug"]); slug != "" && !seen[slug] {
+			seen[slug] = true
+			existing = append(existing, model)
+		}
+	}
+	catalog["models"] = existing
+	out, err := json.Marshal(catalog)
+	if err != nil {
+		return body
+	}
+	return out
+}

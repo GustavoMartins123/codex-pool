@@ -3580,7 +3580,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			respBody, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if readErr == nil {
-				modified := injectClaudeModels(respBody)
+				modified := injectResponsesPoolModels(injectClaudeModels(respBody), discoveredModelsForPool(h.pool))
 				w.WriteHeader(resp.StatusCode)
 				w.Write(modified)
 			} else {
