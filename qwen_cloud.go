@@ -20,7 +20,7 @@ const (
 	qwenCloudPersonalAPI = "zeldaHttp.apikeyMgr./tokenplan/personal/api/v2/"
 )
 
-func (h *proxyHandler) qwenCloudAccessToken(ctx context.Context, plan *QwenTokenPlanConfig, now time.Time) (string, error) {
+func (h *proxyHandler) issueQwenCloudAccessToken(ctx context.Context, plan *QwenTokenPlanConfig, now time.Time) (string, error) {
 	if h.cfg.qwenPlanBase == nil {
 		return "", errors.New("Alibaba Cloud management endpoint is not configured")
 	}
@@ -72,6 +72,9 @@ func (h *proxyHandler) qwenCloudRequest(ctx context.Context, token, operation st
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			h.qwenCloudTokens.discard(token)
+		}
 		return fmt.Errorf("Alibaba Cloud subscription returned HTTP %d", response.StatusCode)
 	}
 	var envelope struct {
@@ -89,6 +92,7 @@ func (h *proxyHandler) qwenCloudRequest(ctx context.Context, token, operation st
 		} `json:"data"`
 	}
 	if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&envelope) != nil || envelope.Code != "200" || !envelope.SuccessResponse || !envelope.Data.Success || !envelope.Data.DataV2.Data.Success || envelope.Data.DataV2.Data.Code != "SUCCESS" {
+		h.qwenCloudTokens.discard(token)
 		return errors.New("Alibaba Cloud rejected the subscription query; check Token Plan permissions and account access")
 	}
 	if json.Unmarshal(envelope.Data.DataV2.Data.Data, output) != nil {
