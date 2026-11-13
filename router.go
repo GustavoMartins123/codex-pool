@@ -933,6 +933,8 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleOpencodeGoAdd(w, r)
 		case "/api/pool/accounts/qwen/add":
 			h.handleQwenAdd(w, r)
+		case "/api/pool/accounts/aistudio/add":
+			h.handleAIStudioAdd(w, r)
 		case "/api/pool/accounts/qwen/login/init":
 			h.handleQwenLoginInit(w, r)
 		case "/api/pool/accounts/qwen/login/authorize":
@@ -1056,6 +1058,13 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.serveQwenAdmin(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/admin/aistudio") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		h.serveAIStudioAdmin(w, r)
 		return
 	}
 
