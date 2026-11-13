@@ -61,11 +61,11 @@ func (p *QwenProvider) LoadAccount(name, path string, data []byte) (*Account, er
 			}
 		} else {
 			account.PlanType = "token_plan_team"
-			if auth.TokenPlan.Mode == qwenPersonalCloud {
+			if auth.TokenPlan.Mode == qwenPersonalCloud || auth.TokenPlan.Mode == qwenPersonalBrowser {
 				account.PlanType = "token_plan_personal"
 			}
 			expectedSource := "alibaba-api"
-			if auth.TokenPlan.Mode == qwenPersonalCloud {
+			if auth.TokenPlan.Mode == qwenPersonalCloud || auth.TokenPlan.Mode == qwenPersonalBrowser {
 				expectedSource = "alibaba-console"
 			}
 			if credits := auth.Credits; qwenCreditsCurrent(credits, now) && credits.Source == expectedSource {

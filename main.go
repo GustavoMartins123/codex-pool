@@ -951,6 +951,7 @@ func serveUntilShutdown(srv *http.Server, h *proxyHandler, shutdown <-chan struc
 
 type proxyHandler struct {
 	qwenCloudTokens qwenCloudTokenCache
+	qwenLogin       qwenLoginSessions
 
 	queueOnce    sync.Once
 	requestQueue *fairQueue

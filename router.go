@@ -891,6 +891,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == qwenLoginCallback {
+		h.handleQwenLoginCallback(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/pool/accounts/") {
 		if !h.checkProviderContributionAuth(w, r) {
 			return
@@ -933,6 +937,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleOpencodeGoAdd(w, r)
 		case "/api/pool/accounts/qwen/add":
 			h.handleQwenAdd(w, r)
+		case "/api/pool/accounts/qwen/login/init":
+			h.handleQwenLoginInit(w, r)
+		case "/api/pool/accounts/qwen/login/poll":
+			h.handleQwenLoginPoll(w, r)
+		case "/api/pool/accounts/qwen/login/complete":
+			h.handleQwenLoginComplete(w, r)
 		default:
 			http.NotFound(w, r)
 		}

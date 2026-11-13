@@ -24,6 +24,7 @@ const (
 	qwenPersonalManual     = "personal_manual"
 	qwenTeamAPI            = "team_api"
 	qwenPersonalCloud      = "personal_cloud"
+	qwenPersonalBrowser    = "personal_browser"
 	defaultQwenPlanBase    = "https://modelstudio.ap-southeast-1.aliyuncs.com"
 )
 
@@ -37,6 +38,7 @@ type QwenTokenPlanConfig struct {
 	AccessKeyID     string    `json:"access_key_id,omitempty"`
 	AccessKeySecret string    `json:"access_key_secret,omitempty"`
 	SecurityToken   string    `json:"security_token,omitempty"`
+	ConsoleToken    string    `json:"console_token,omitempty"`
 	SeatID          string    `json:"seat_id,omitempty"`
 	UpdatedAt       time.Time `json:"updated_at,omitempty"`
 }
@@ -59,7 +61,7 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 	}
 	switch plan.Mode {
 	case qwenPersonalManual:
-		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" {
+		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" || plan.ConsoleToken != "" {
 			return errors.New("Personal manual tracking does not accept Team credentials")
 		}
 		if !validQwenCreditAmounts(plan.TotalCredits, plan.Remaining) {
@@ -69,6 +71,9 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 			return errors.New("the subscription cycle must contain the current time")
 		}
 	case qwenTeamAPI:
+		if plan.ConsoleToken != "" {
+			return errors.New("Team API tracking does not accept a browser session")
+		}
 		if strings.TrimSpace(plan.AccessKeyID) == "" || strings.TrimSpace(plan.AccessKeySecret) == "" || strings.TrimSpace(plan.SeatID) == "" {
 			return errors.New("Team credit tracking requires AccessKey ID, AccessKey secret and seat ID")
 		}
@@ -76,11 +81,21 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 			return errors.New("Team credits and cycle dates must come from Alibaba Cloud")
 		}
 	case qwenPersonalCloud:
+		if plan.ConsoleToken != "" {
+			return errors.New("AccessKey tracking does not accept a browser session")
+		}
 		if strings.TrimSpace(plan.AccessKeyID) == "" || strings.TrimSpace(plan.AccessKeySecret) == "" {
 			return errors.New("Alibaba Cloud tracking requires an AccessKey ID and AccessKey secret")
 		}
 		if plan.SeatID != "" || plan.TotalCredits != 0 || plan.Remaining != 0 || !plan.CycleStart.IsZero() || !plan.CycleEnd.IsZero() {
 			return errors.New("Cloud credits and cycle dates must come from Alibaba Cloud")
+		}
+	case qwenPersonalBrowser:
+		if strings.TrimSpace(plan.ConsoleToken) == "" || strings.ContainsAny(plan.ConsoleToken, " \t\r\n") {
+			return errors.New("Alibaba Cloud browser session is missing; sign in again")
+		}
+		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" || plan.TotalCredits != 0 || plan.Remaining != 0 || !plan.CycleStart.IsZero() || !plan.CycleEnd.IsZero() {
+			return errors.New("browser credit tracking only accepts an Alibaba Cloud session")
 		}
 	default:
 		return errors.New("unsupported Token Plan credit source")
@@ -154,7 +169,7 @@ func (h *proxyHandler) queryQwenCredits(ctx context.Context, plan *QwenTokenPlan
 			CycleStart: plan.CycleStart, CycleEnd: plan.CycleEnd, UpdatedAt: updated, Source: "manual",
 		}, nil
 	}
-	if plan.Mode == qwenPersonalCloud {
+	if plan.Mode == qwenPersonalCloud || plan.Mode == qwenPersonalBrowser {
 		return h.queryQwenCloudPersonalCredits(ctx, plan, now)
 	}
 	if h.cfg.qwenPlanBase == nil {
