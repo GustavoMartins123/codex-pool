@@ -26,7 +26,7 @@ var logSecretRules = []struct {
 	// JWTs (header.payload.signature).
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{4,}`), "<redacted-jwt>"},
 	// JSON secret assignments: "access_token": "...".
-	{regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|session[_-]?token|password|secret|authorization)"\s*:\s*")[^"]{8,}(")`), "${1}<redacted>${2}"},
+	{regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?key[_-]?secret|security[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|session[_-]?token|password|secret|authorization)"\s*:\s*")[^"]{8,}(")`), "${1}<redacted>${2}"},
 	// Key/value secret assignments without JSON quotes.
 	{regexp.MustCompile(`(?i)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|password|secret|authorization)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/]{12,}`), "${1}<redacted>"},
 	// Google API keys (AIzaSy...).

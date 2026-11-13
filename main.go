@@ -50,6 +50,8 @@ type config struct {
 	grokBase               *url.URL // Grok Code OpenAI-compatible endpoint
 	adverserialBase        *url.URL // platform.adverserial.ai Anthropic-compatible endpoint
 	opencodeGoBase         *url.URL // OpenCode Go subscription endpoint (zen/go/v1)
+	qwenBase               *url.URL
+	qwenPlanBase           *url.URL
 	poolDir                string
 
 	disableRefresh  bool
@@ -206,6 +208,8 @@ func buildConfig() *config {
 	cfg.grokBase = mustParse(getConfigString("UPSTREAM_GROK_BASE", fileCfg.GrokBase, "https://cli-chat-proxy.grok.com/v1"))
 	cfg.adverserialBase = mustParse(getenv("UPSTREAM_ADVERSERIAL_BASE", "https://platform.adverserial.ai/api"))
 	cfg.opencodeGoBase = mustParse(getenv("UPSTREAM_OPENCODE_GO_BASE", "https://opencode.ai/zen/go/v1"))
+	cfg.qwenBase = mustParse(getenv("UPSTREAM_QWEN_BASE", defaultQwenBase))
+	cfg.qwenPlanBase = mustParse(getenv("UPSTREAM_QWEN_PLAN_BASE", defaultQwenPlanBase))
 	cfg.poolDir = getConfigString("POOL_DIR", fileCfg.PoolDir, "pool")
 
 	// Refresh often fails for some auth.json fixtures; allow opting out.
@@ -508,6 +512,7 @@ func main() {
 	grokProvider := NewGrokProvider(cfg.grokBase)
 	adverserialProvider := NewAdverserialProvider(cfg.adverserialBase)
 	opencodeGoProvider := NewOpencodeGoProvider(cfg.opencodeGoBase)
+	qwenProvider := NewQwenProvider(cfg.qwenBase)
 	genericProviders, genericAccounts, err := buildGenericProviders(cfg.genericProviders)
 	if err != nil {
 		log.Fatalf("configure generic providers: %v", err)
@@ -516,7 +521,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure federation: %v", err)
 	}
-	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider}
+	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider, qwenProvider}
 	extraProviders = append(extraProviders, genericProviders...)
 	extraProviders = append(extraProviders, federatedProviders...)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)
@@ -1759,6 +1764,19 @@ func (h *proxyHandler) modelRouteOverride(path, model string, body []byte) (Prov
 	if provider, canonical, ok := h.registry.ResolveModel(model); ok {
 		return provider, provider.UpstreamURL(path), rewriteModelInBody(body, canonical)
 	}
+	if isQwenModel(model) {
+		provider := h.registry.ForType(AccountTypeQwen)
+		if provider == nil {
+			return nil, nil, nil
+		}
+		canonical := strings.TrimSpace(model)
+		if h.pool != nil {
+			if discovered, ok := h.pool.discoveredCanonicalModel(AccountTypeQwen, model); ok {
+				canonical = discovered
+			}
+		}
+		return provider, provider.UpstreamURL(path), rewriteModelInBody(body, canonical)
+	}
 	if isKimiModel(model) {
 		p := h.registry.ForType(AccountTypeKimi)
 		if p == nil {
@@ -1933,6 +1951,7 @@ func (h *proxyHandler) resolveStreamedModelRoute(path, model string) (Provider, 
 		canonical   func(string) string
 	}
 	routes := []route{
+		{AccountTypeQwen, isQwenModel, strings.TrimSpace},
 		{AccountTypeClaude, isClaudeModel, claudeCanonicalModel},
 		{AccountTypeKimi, isKimiModel, func(model string) string { return model }},
 		{AccountTypeMinimax, isMinimaxModel, minimaxCanonicalModel},
@@ -2951,6 +2970,13 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	bodyBytes = normalizeResponsesSchemaBody(bodyBytes)
+	if accountType == AccountTypeQwen && r.URL.Path == "/v1/chat/completions" {
+		bodyBytes, err = prepareQwenChatRequest(bodyBytes)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if accountType == AccountTypeGrok {
 		bodyBytes = rewriteAndSanitizeGrokRequestBody(bodyBytes, requestedModel)
 	}

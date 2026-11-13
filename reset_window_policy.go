@@ -14,6 +14,7 @@ const (
 	ResetWindowFiveHour  ResetWindowKind = "five_hour"
 	ResetWindowDaily     ResetWindowKind = "daily"
 	ResetWindowWeekly    ResetWindowKind = "weekly"
+	ResetWindowMonthly   ResetWindowKind = "monthly"
 	ResetWindowTokens    ResetWindowKind = "tokens"
 	ResetWindowRequests  ResetWindowKind = "requests"
 	ResetWindowPrimary   ResetWindowKind = "primary"
@@ -92,6 +93,8 @@ func resetWindowPolicy(provider AccountType, plan string) ResetWindowPolicy {
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowTokens, Secondary: ResetWindowRequests}
 	case AccountTypeGemini:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowDaily, Secondary: ResetWindowNone}
+	case AccountTypeQwen:
+		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowMonthly, Secondary: ResetWindowNone}
 	default:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowPrimary, Secondary: ResetWindowSecondary}
 	}
@@ -105,6 +108,8 @@ func resetWindowLabel(kind ResetWindowKind) string {
 		return "Daily"
 	case ResetWindowWeekly:
 		return "Weekly"
+	case ResetWindowMonthly:
+		return "Monthly credits"
 	case ResetWindowTokens:
 		return "Tokens"
 	case ResetWindowRequests:

@@ -37,6 +37,16 @@ type providerModelSnapshot struct {
 	Models    map[string]DiscoveredModel `json:"models"`
 }
 
+type providerModelHTTPError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *providerModelHTTPError) Error() string {
+	return fmt.Sprintf("model discovery failed: %s: %s", e.Status, e.Body)
+}
+
 func parseProviderModels(body []byte) (map[string]DiscoveredModel, error) {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(body, &root); err != nil {
@@ -233,7 +243,7 @@ func providerModelsURL(provider Provider) (*url.URL, bool) {
 		}
 		target = *base
 		target.Path = singleJoin(target.Path, "/v1/models")
-	case *OpencodeGoProvider:
+	case *OpencodeGoProvider, *QwenProvider:
 		base := provider.UpstreamURL("/models")
 		if base == nil {
 			return nil, false
@@ -272,11 +282,17 @@ func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provi
 		return providerModelSnapshot{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return providerModelSnapshot{}, fmt.Errorf("model discovery failed: %s: %s", resp.Status, safeText(body))
+		return providerModelSnapshot{}, &providerModelHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: safeText(body)}
 	}
 	models, err := parseProviderModels(body)
 	if err != nil {
 		return providerModelSnapshot{}, err
+	}
+	if provider.Type() == AccountTypeQwen {
+		models, err = qwenDiscoveredModels(models)
+		if err != nil {
+			return providerModelSnapshot{}, err
+		}
 	}
 	return providerModelSnapshot{FetchedAt: time.Now().UTC(), Models: models}, nil
 }
@@ -291,12 +307,29 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	}
 	snapshot, err := fetchProviderModels(ctx, transport, provider, account)
 	if err != nil {
+		if account.Type == AccountTypeQwen {
+			account.mu.Lock()
+			account.Models = nil
+			account.ModelsFetchedAt = time.Time{}
+			account.HealthError = "Qwen model discovery failed; refresh the catalog before routing requests"
+			saveErr := saveAccount(account)
+			account.mu.Unlock()
+			if saveErr != nil {
+				return errors.Join(err, saveErr)
+			}
+		}
 		return err
 	}
 	account.mu.Lock()
 	changed := !reflect.DeepEqual(account.Models, snapshot.Models)
 	account.Models = snapshot.Models
 	account.ModelsFetchedAt = snapshot.FetchedAt
+	if account.Type == AccountTypeQwen {
+		account.HealthError = ""
+		saveErr := saveAccount(account)
+		account.mu.Unlock()
+		return saveErr
+	}
 	if account.Type == AccountTypeCodex {
 		hasDaybreak := accountHasDaybreak(snapshot.Models)
 		if account.CyberAccess != hasDaybreak {
@@ -397,7 +430,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 	for _, key := range keys {
 		entry := aggregates[key]
 		protocol := "anthropic"
-		if entry.provider == AccountTypeCodex || entry.provider == AccountTypeGrok {
+		if entry.provider == AccountTypeCodex || entry.provider == AccountTypeGrok || entry.provider == AccountTypeQwen {
 			protocol = "openai"
 		} else if entry.model.Protocol != "" {
 			protocol = entry.model.Protocol

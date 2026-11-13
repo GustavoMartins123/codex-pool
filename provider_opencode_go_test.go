@@ -108,7 +108,7 @@ func TestIsOpencodeGoModel(t *testing.T) {
 	}
 
 	// Bare IDs route to Go only when no other provider claims them.
-	for _, model := range []string{"longcat-2.0", "omen-alpha", "hy3", "hy4-preview", "qwen3.8-max", "deepseek-v4-pro", "kimi-k3", "kimi-k2.5"} {
+	for _, model := range []string{"longcat-2.0", "omen-alpha", "hy3", "hy4-preview", "deepseek-v4-pro", "kimi-k3", "kimi-k2.5"} {
 		if !isOpencodeGoModel(model) {
 			t.Fatalf("expected bare %q to route to opencode-go", model)
 		}
@@ -119,7 +119,8 @@ func TestIsOpencodeGoModel(t *testing.T) {
 		"glm-5.2", "glm-5.3", "glm-5.3-flash", // zai
 		"mimo-v2.5-pro", "mimo-v2.5", // xiaomi
 		"grok-4.6", "grok-4.5", // grok
-		"gpt-5.6-luna", // codex overlap
+		"gpt-5.6-luna",                 // codex overlap
+		"qwen3.8-max", "qwen3.8-flash", // Qwen Token Plan
 		"", "   ",
 	} {
 		if isOpencodeGoModel(model) {

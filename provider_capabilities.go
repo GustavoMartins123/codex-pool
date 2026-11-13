@@ -61,6 +61,13 @@ func capabilitiesFor(provider AccountType) ProviderCapabilities {
 			SupportsToolHistory: true, SupportsParallelTools: true,
 			SupportsImages: true, SupportsReasoning: true,
 		}
+	case AccountTypeQwen:
+		return ProviderCapabilities{
+			WireFormat: WireOpenAI, SupportsForeignHistory: true,
+			SupportsToolHistory: true, SupportsParallelTools: true,
+			SupportsImages: true, SupportsReasoning: true,
+			SupportsFullHistoryHandoff: true,
+		}
 	default:
 		if isGenericProviderType(provider) {
 			return ProviderCapabilities{WireFormat: WireOpenAI, SupportsForeignHistory: true, SupportsToolHistory: true}

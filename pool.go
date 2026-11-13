@@ -30,6 +30,7 @@ const (
 	AccountTypeGrok        AccountType = "grok"
 	AccountTypeAdverserial AccountType = "adverserial"
 	AccountTypeOpencodeGo  AccountType = "opencode_go"
+	AccountTypeQwen        AccountType = "qwen"
 
 	// For ordinary Codex traffic, cyber-approved accounts receive twice the
 	// routing weight of non-cyber accounts when their quota health is
@@ -99,6 +100,9 @@ type Account struct {
 	ModelRateLimits         map[string]time.Time
 	Models                  map[string]DiscoveredModel
 	ModelsFetchedAt         time.Time
+	QwenTokenPlan           *QwenTokenPlanConfig
+	QwenCredits             *QwenCreditSnapshot
+	QwenCreditsError        string
 	NeedsVerification       bool
 	VerificationURL         string
 	HealthError             string
@@ -390,6 +394,7 @@ func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
 		"grok":        AccountTypeGrok,
 		"adverserial": AccountTypeAdverserial,
 		"opencode_go": AccountTypeOpencodeGo,
+		"qwen":        AccountTypeQwen,
 	}
 
 	for subdir, accountType := range providerDirs {
@@ -901,6 +906,9 @@ func (p *poolState) discoveredModelRequiresEntitlement(accountType AccountType, 
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return false
+	}
+	if accountType == AccountTypeQwen {
+		return true
 	}
 	if entry, ok := modelForProvider(accountType, model); ok {
 		return entry.RequiresDiscovery
@@ -1689,6 +1697,8 @@ func saveAccount(a *Account) error {
 		return saveAPIKeyAccount(a)
 	case AccountTypeOpencodeGo:
 		return saveAPIKeyAccount(a)
+	case AccountTypeQwen:
+		return saveAPIKeyAccount(a)
 	case AccountTypeGrok:
 		return saveGrokAccount(a)
 	default:
@@ -1697,7 +1707,7 @@ func saveAccount(a *Account) error {
 }
 
 func persistAccountAddedAt(root map[string]any, a *Account) {
-	if len(a.Models) > 0 {
+	if len(a.Models) > 0 || a.Type == AccountTypeQwen {
 		root["provider_model_snapshot"] = providerModelSnapshot{FetchedAt: a.ModelsFetchedAt, Models: a.Models}
 	}
 	if a.AddedAt.IsZero() {
@@ -1847,6 +1857,10 @@ func saveAPIKeyAccount(a *Account) error {
 		return fmt.Errorf("parse %s: %w", a.File, err)
 	}
 	persistAccountAddedAt(root, a)
+	if a.Type == AccountTypeQwen {
+		root["token_plan"] = a.QwenTokenPlan
+		root["token_plan_credits"] = a.QwenCredits
+	}
 
 	if a.AccessToken != "" {
 		root["api_key"] = a.AccessToken

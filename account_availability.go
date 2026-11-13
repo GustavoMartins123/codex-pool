@@ -64,7 +64,8 @@ func accountUsageExhaustedLocked(a *Account) bool {
 // enforcing signal for Grok; a live 429 still cools the account down via
 // RateLimitUntil.
 func primaryUsageBlocksRoutingLocked(a *Account, primaryUsed float64) bool {
-	if a != nil && a.Type == AccountTypeGrok {
+	// Token Plan add-on credits remain usable after the monthly allowance is exhausted.
+	if a != nil && (a.Type == AccountTypeGrok || a.Type == AccountTypeQwen) {
 		return false
 	}
 	return primaryUsed >= primaryHardExcludeThreshold

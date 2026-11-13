@@ -278,6 +278,14 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.ProjectID = loaded.ProjectID
 	existing.Models = loaded.Models
 	existing.ModelsFetchedAt = loaded.ModelsFetchedAt
+	existing.QwenTokenPlan = loaded.QwenTokenPlan
+	existing.QwenCredits = loaded.QwenCredits
+	existing.QwenCreditsError = loaded.QwenCreditsError
+	if existing.Type == AccountTypeQwen {
+		existing.HealthError = loaded.HealthError
+		existing.Usage = loaded.Usage
+		return
+	}
 	existing.Usage = mergeUsage(loaded.Usage, existing.Usage)
 }
 

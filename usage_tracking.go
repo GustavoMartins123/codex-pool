@@ -115,6 +115,17 @@ func (h *proxyHandler) pollUpstreamUsage() {
 			continue
 		}
 
+		if accType == AccountTypeQwen {
+			if retrievedAt.IsZero() || now.Sub(retrievedAt) >= qwenCreditPollInterval {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				if err := h.fetchQwenCreditUsage(ctx, now, a); err != nil && h.cfg.debug.Load() {
+					log.Printf("qwen credit fetch %s failed: %v", a.ID, err)
+				}
+				cancel()
+			}
+			continue
+		}
+
 		if !rateLimitUntil.IsZero() && rateLimitUntil.After(now) {
 			continue
 		}

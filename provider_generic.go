@@ -83,7 +83,7 @@ func NewGenericOpenAIProvider(name string, cfg GenericProviderConfig) (*GenericO
 	for _, reserved := range []AccountType{
 		AccountTypeCodex, AccountTypeClaude, AccountTypeGemini, AccountTypeAntigravity,
 		AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi,
-		AccountTypeGrok, AccountTypeAdverserial, AccountTypeOpencodeGo,
+		AccountTypeGrok, AccountTypeAdverserial, AccountTypeOpencodeGo, AccountTypeQwen,
 	} {
 		if strings.EqualFold(name, string(reserved)) {
 			return nil, fmt.Errorf("generic provider name %q conflicts with a built-in provider", name)

@@ -261,7 +261,7 @@ func opencodeGoCatalogID(bare string) string {
 // by another provider, in which case only the prefixed form routes to Go.
 func opencodeGoBareModelTaken(model string) bool {
 	if isKimiModel(model) || isMinimaxModel(model) || isZAIModel(model) ||
-		isXiaomiModel(model) || isAdverserialModel(model) || isGrokModel(model) {
+		isXiaomiModel(model) || isAdverserialModel(model) || isGrokModel(model) || isQwenModel(model) {
 		return true
 	}
 	if isOpenAIModel(model) || isClaudeModel(model) {
