@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/pathmatch"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -84,7 +85,7 @@ func newPoolWatcher(poolDir, configPath string, handler *proxyHandler) (*poolWat
 // watchDirIfNew adds dir to the watch set unless it is already watched.
 func (pw *poolWatcher) watchDirIfNew(dir string) {
 	for _, existing := range pw.watcher.WatchList() {
-		if pathsEqual(existing, dir) {
+		if pathmatch.Equal(existing, dir) {
 			return
 		}
 	}
@@ -96,7 +97,7 @@ func (pw *poolWatcher) watchDirIfNew(dir string) {
 // unwatchDir drops a stale watch (directory removed or renamed away).
 func (pw *poolWatcher) unwatchDir(dir string) {
 	for _, existing := range pw.watcher.WatchList() {
-		if pathsEqual(existing, dir) {
+		if pathmatch.Equal(existing, dir) {
 			_ = pw.watcher.Remove(dir)
 			return
 		}
@@ -137,7 +138,7 @@ func (pw *poolWatcher) handleEvent(event fsnotify.Event) {
 	// Config events match by path (case-insensitively on Windows, where
 	// ReadDirectoryChangesW reports the on-disk casing, which may differ
 	// from the CONFIG_PATH the operator wrote).
-	if pw.configPath != "" && pathsEqual(event.Name, pw.configPath) {
+	if pw.configPath != "" && pathmatch.Equal(event.Name, pw.configPath) {
 		if pw.debounceCfg != nil {
 			pw.debounceCfg.Stop()
 		}
@@ -148,7 +149,7 @@ func (pw *poolWatcher) handleEvent(event fsnotify.Event) {
 	// Everything else only matters when it happens inside the pool
 	// directory: the config directory may be watched simultaneously and its
 	// unrelated files must not trigger pool reloads.
-	if pw.poolDir == "" || !pathWithin(pw.poolDir, event.Name) {
+	if pw.poolDir == "" || !pathmatch.Within(pw.poolDir, event.Name) {
 		return
 	}
 

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/pathmatch"
 )
 
 // auditWaitFor polls cond until it holds or the timeout elapses.
@@ -164,7 +166,7 @@ func TestAuditWatcherHotReloadsAtomicCredentialSave(t *testing.T) {
 // watchlistContains reports whether the watcher currently watches path.
 func watchlistContains(pw *poolWatcher, path string) bool {
 	for _, existing := range pw.watcher.WatchList() {
-		if pathsEqual(existing, path) {
+		if pathmatch.Equal(existing, path) {
 			return true
 		}
 	}

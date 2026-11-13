@@ -88,7 +88,7 @@ func renameWithRetry(oldPath, newPath string) error {
 	var err error
 	for attempt := 0; ; attempt++ {
 		err = atomicfile.Replace(oldPath, newPath)
-		if err == nil || !isTransientRenameError(err) || attempt >= len(renameRetryDelays) {
+		if err == nil || !atomicfile.IsTransientRenameError(err) || attempt >= len(renameRetryDelays) {
 			return err
 		}
 		if writeFileAtomicRetryHook != nil {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 // ZAIProvider handles Z.ai GLM Coding Plan accounts through the Anthropic-compatible API.
@@ -245,7 +247,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"x-ratelimit-requests-utilization",
 		"anthropic-ratelimit-requests-utilization",
 	} {
-		if pct, ok := parseRateLimitPercent(headers.Get(key)); ok {
+		if pct, ok := ratelimit.ParsePercent(headers.Get(key)); ok {
 			snap.PrimaryUsedPercent = pct
 			snap.PrimaryUsed = pct
 			hasPrimary = true
@@ -259,7 +261,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 			{"anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-limit"},
 			{"x-ratelimit-remaining", "x-ratelimit-limit"},
 		} {
-			if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, pair[0], pair[1]); ok {
+			if pct, ok := ratelimit.UsageFromRemainingLimit(headers, pair[0], pair[1]); ok {
 				snap.PrimaryUsedPercent = pct
 				snap.PrimaryUsed = pct
 				hasPrimary = true
@@ -273,7 +275,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"x-ratelimit-tokens-utilization",
 		"anthropic-ratelimit-tokens-utilization",
 	} {
-		if pct, ok := parseRateLimitPercent(headers.Get(key)); ok {
+		if pct, ok := ratelimit.ParsePercent(headers.Get(key)); ok {
 			snap.SecondaryUsedPercent = pct
 			snap.SecondaryUsed = pct
 			hasSecondary = true
@@ -286,7 +288,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 			{"x-ratelimit-tokens-remaining", "x-ratelimit-tokens-limit"},
 			{"anthropic-ratelimit-tokens-remaining", "anthropic-ratelimit-tokens-limit"},
 		} {
-			if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, pair[0], pair[1]); ok {
+			if pct, ok := ratelimit.UsageFromRemainingLimit(headers, pair[0], pair[1]); ok {
 				snap.SecondaryUsedPercent = pct
 				snap.SecondaryUsed = pct
 				hasSecondary = true
@@ -313,7 +315,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"anthropic-ratelimit-requests-reset",
 		"x-ratelimit-reset",
 	} {
-		if resetAt, ok := parseRateLimitReset(headers.Get(key)); ok {
+		if resetAt, ok := ratelimit.ParseReset(headers.Get(key)); ok {
 			snap.PrimaryResetAt = resetAt
 			break
 		}
@@ -323,7 +325,7 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"x-ratelimit-tokens-reset",
 		"anthropic-ratelimit-tokens-reset",
 	} {
-		if resetAt, ok := parseRateLimitReset(headers.Get(key)); ok {
+		if resetAt, ok := ratelimit.ParseReset(headers.Get(key)); ok {
 			snap.SecondaryResetAt = resetAt
 			break
 		}

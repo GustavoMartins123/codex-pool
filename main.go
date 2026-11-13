@@ -24,6 +24,8 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/orderedjson"
+	"codex-pool-proxy/internal/ratelimit"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
@@ -5622,7 +5624,7 @@ func (h *proxyHandler) applyRateLimit(a *Account, hdr http.Header) time.Duration
 			"x-ratelimit-reset",
 		} {
 			if resetStr := hdr.Get(key); resetStr != "" {
-				if resetAt, ok := parseRateLimitReset(resetStr); ok && resetAt.After(time.Now()) && resetAt.After(preciseReset) {
+				if resetAt, ok := ratelimit.ParseReset(resetStr); ok && resetAt.After(time.Now()) && resetAt.After(preciseReset) {
 					preciseReset = resetAt
 				}
 			}
@@ -6450,7 +6452,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedMarshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
 					bodyBytes = reordered
 				}
 
@@ -6518,7 +6520,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedMarshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
 					bodyBytes = reordered
 				}
 

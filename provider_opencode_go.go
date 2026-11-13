@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 // OpencodeGoProvider handles OpenCode Go subscription accounts ($10/month,
@@ -389,7 +391,7 @@ func parseOpencodeGoUsage(body []byte, now time.Time) (opencodeGoQuotaState, err
 	out.snapshot = UsageSnapshot{RetrievedAt: now, Source: "opencode-go-usage"}
 
 	applyWindow := func(w opencodeGoWindowUsage, set func(pct float64, reset time.Time)) {
-		pct := clampRateLimitPercent(w.Percent / 100)
+		pct := ratelimit.ClampPercent(w.Percent / 100)
 		var reset time.Time
 		if ts := strings.TrimSpace(w.ResetsAt); ts != "" {
 			if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
@@ -419,7 +421,7 @@ func parseOpencodeGoUsage(body []byte, now time.Time) (opencodeGoQuotaState, err
 		out.snapshot.SecondaryWindowMinutes = 10080
 		out.snapshot.SecondaryResetAt = reset
 	})
-	out.monthlyPct = clampRateLimitPercent(payload.Usage.Monthly.Percent / 100)
+	out.monthlyPct = ratelimit.ClampPercent(payload.Usage.Monthly.Percent / 100)
 	return out, nil
 }
 

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 // KimiProvider handles Kimi API accounts.
@@ -171,29 +173,29 @@ func parseKimiResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 	hasPrimary := false
 	hasSecondary := false
 
-	if pct, ok := parseRateLimitPercent(headers.Get("x-ratelimit-requests-utilization")); ok {
+	if pct, ok := ratelimit.ParsePercent(headers.Get("x-ratelimit-requests-utilization")); ok {
 		snap.PrimaryUsedPercent = pct
 		snap.PrimaryUsed = pct
 		hasPrimary = true
-	} else if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining-requests", "x-ratelimit-limit-requests"); ok {
+	} else if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining-requests", "x-ratelimit-limit-requests"); ok {
 		snap.PrimaryUsedPercent = pct
 		snap.PrimaryUsed = pct
 		hasPrimary = true
-	} else if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-requests-remaining", "x-ratelimit-requests-limit"); ok {
+	} else if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-requests-remaining", "x-ratelimit-requests-limit"); ok {
 		snap.PrimaryUsedPercent = pct
 		snap.PrimaryUsed = pct
 		hasPrimary = true
-	} else if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining", "x-ratelimit-limit"); ok {
+	} else if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining", "x-ratelimit-limit"); ok {
 		snap.PrimaryUsedPercent = pct
 		snap.PrimaryUsed = pct
 		hasPrimary = true
 	}
 
-	if pct, ok := parseRateLimitPercent(headers.Get("x-ratelimit-tokens-utilization")); ok {
+	if pct, ok := ratelimit.ParsePercent(headers.Get("x-ratelimit-tokens-utilization")); ok {
 		snap.SecondaryUsedPercent = pct
 		snap.SecondaryUsed = pct
 		hasSecondary = true
-	} else if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining-tokens", "x-ratelimit-limit-tokens"); ok {
+	} else if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining-tokens", "x-ratelimit-limit-tokens"); ok {
 		snap.SecondaryUsedPercent = pct
 		snap.SecondaryUsed = pct
 		hasSecondary = true
@@ -203,17 +205,17 @@ func parseKimiResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		return UsageSnapshot{}, false
 	}
 
-	requestsReset, ok := parseRateLimitReset(headers.Get("x-ratelimit-reset-requests"))
+	requestsReset, ok := ratelimit.ParseReset(headers.Get("x-ratelimit-reset-requests"))
 	if !ok {
-		requestsReset, ok = parseRateLimitReset(headers.Get("x-ratelimit-requests-reset"))
+		requestsReset, ok = ratelimit.ParseReset(headers.Get("x-ratelimit-requests-reset"))
 	}
 	if ok {
 		snap.PrimaryResetAt = requestsReset
 	}
 
-	tokensReset, ok := parseRateLimitReset(headers.Get("x-ratelimit-reset-tokens"))
+	tokensReset, ok := ratelimit.ParseReset(headers.Get("x-ratelimit-reset-tokens"))
 	if !ok {
-		tokensReset, ok = parseRateLimitReset(headers.Get("x-ratelimit-tokens-reset"))
+		tokensReset, ok = ratelimit.ParseReset(headers.Get("x-ratelimit-tokens-reset"))
 	}
 	if ok {
 		snap.SecondaryResetAt = tokensReset
