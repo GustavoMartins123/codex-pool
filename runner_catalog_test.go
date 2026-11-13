@@ -127,16 +127,28 @@ func TestSessionUsesOnlyTheRunnerThatConfirmedItsModel(t *testing.T) {
 }
 
 func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
+	qwenModels := map[string]DiscoveredModel{
+		"qwen3.6-flash":     {ID: "qwen3.6-flash", Protocol: "openai"},
+		"qwen3.7-max":       {ID: "qwen3.7-max", Protocol: "openai"},
+		"qwen3.7-plus":      {ID: "qwen3.7-plus", Protocol: "openai"},
+		"qwen3.8-flash":     {ID: "qwen3.8-flash", Protocol: "openai"},
+		"qwen3.8-max":       {ID: "qwen3.8-max", DisplayName: "Qwen 3.8 Max", Protocol: "openai", ContextWindow: 1000000},
+		"qwen4-max-preview": {ID: "qwen4-max-preview", Protocol: "openai", ContextWindow: 128000},
+	}
 	pool := newPoolState([]*Account{
-		{ID: "qwen", Type: AccountTypeQwen, AccessToken: "sk-sp-test", Models: map[string]DiscoveredModel{
-			"qwen3.8-max": {ID: "qwen3.8-max", DisplayName: "Qwen 3.8 Max", Protocol: "openai", ContextWindow: 256000},
-		}},
+		{ID: "qwen", Type: AccountTypeQwen, AccessToken: "sk-sp-test", Models: qwenModels},
 		{ID: "kimi", Type: AccountTypeKimi, AccessToken: "sk-test", Models: map[string]DiscoveredModel{
 			"kimi-k3": {ID: "kimi-k3", Protocol: "anthropic"},
 		}},
 	}, false)
-	upstream := []byte(`{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT"}],"etag":"keep"}`)
-	out := injectResponsesPoolModels(injectResponsesPoolModels(upstream, discoveredModelsForPool(pool)), discoveredModelsForPool(pool))
+	models := discoveredModelsForPool(pool)
+	for _, model := range models {
+		if model.Provider == "qwen" && model.ContextWindow != 500000 {
+			t.Fatalf("Qwen pool catalog context = %d for %s", model.ContextWindow, model.ID)
+		}
+	}
+	upstream := []byte(`{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT","context_window":500000,"max_context_window":872000}],"etag":"keep"}`)
+	out := injectResponsesPoolModels(injectResponsesPoolModels(upstream, models), models)
 	var catalog struct {
 		Models []map[string]any `json:"models"`
 		ETag   string           `json:"etag"`
@@ -148,12 +160,21 @@ func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
 	for _, model := range catalog.Models {
 		slugs[stringValue(model["slug"])]++
 	}
-	if catalog.ETag != "keep" || slugs["gpt-6.1-sol"] != 1 || slugs["qwen3.8-max"] != 1 || slugs["kimi-k3"] != 0 || len(slugs) != 2 {
+	if catalog.ETag != "keep" || slugs["gpt-6.1-sol"] != 1 || slugs["kimi-k3"] != 0 || len(slugs) != len(qwenModels)+1 {
 		t.Fatalf("catalog slugs = %v etag=%q", slugs, catalog.ETag)
 	}
+	for id := range qwenModels {
+		if slugs[id] != 1 {
+			t.Fatalf("Qwen catalog has %d entries for %s", slugs[id], id)
+		}
+	}
 	for _, model := range catalog.Models {
-		if model["slug"] == "qwen3.8-max" && (model["context_window"] != float64(256000) || model["visibility"] != "list") {
+		if _, qwen := qwenModels[stringValue(model["slug"])]; qwen &&
+			(model["context_window"] != float64(500000) || model["max_context_window"] != float64(500000) || model["visibility"] != "list") {
 			t.Fatalf("Qwen catalog entry = %v", model)
+		}
+		if model["slug"] == "gpt-6.1-sol" && (model["context_window"] != float64(500000) || model["max_context_window"] != float64(872000)) {
+			t.Fatalf("upstream GPT context was rewritten: %v", model)
 		}
 	}
 	if string(injectResponsesPoolModels([]byte("not json"), discoveredModelsForPool(pool))) != "not json" {
@@ -177,5 +198,16 @@ func TestCodexModelsEndpointListsQwenModels(t *testing.T) {
 	testPoolProxyRequest(t, h, rr, req, "codex-catalog")
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"slug":"gpt-6.1-sol"`) || !strings.Contains(rr.Body.String(), `"slug":"qwen3.8-max"`) {
 		t.Fatalf("status=%d catalog=%.400s", rr.Code, rr.Body.String())
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range catalog.Models {
+		if model["slug"] == "qwen3.8-max" && (model["context_window"] != float64(500000) || model["max_context_window"] != float64(500000)) {
+			t.Fatalf("Qwen endpoint context = %v", model)
+		}
 	}
 }

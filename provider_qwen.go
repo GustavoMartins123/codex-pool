@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const defaultQwenBase = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+const (
+	defaultQwenBase         = "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+	qwenClientContextWindow = 500000
+)
 
 type QwenProvider struct {
 	base *url.URL

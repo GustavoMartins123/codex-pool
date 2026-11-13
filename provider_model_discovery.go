@@ -459,10 +459,15 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 		if entry.model.WebSearch {
 			capabilities["web_search"] = true
 		}
+		contextWindow := entry.model.ContextWindow
+		if entry.provider == AccountTypeQwen {
+			// Apply the client profile to both current and persisted discovery snapshots.
+			contextWindow = qwenClientContextWindow
+		}
 		descriptors = append(descriptors, poolModelDescriptor{
 			ID: entry.model.ID, Name: entry.model.DisplayName, Description: entry.model.Description,
 			Protocol: protocol, Protocols: protocols, Provider: string(entry.provider), UpstreamID: entry.model.ID,
-			ContextWindow: entry.model.ContextWindow, MaxOutputTokens: entry.model.MaxOutputTokens,
+			ContextWindow: contextWindow, MaxOutputTokens: entry.model.MaxOutputTokens,
 			ReasoningEfforts: append([]string(nil), entry.model.ReasoningEfforts...), DefaultReasoningEffort: entry.model.DefaultReasoningEffort,
 			Modalities: append([]string(nil), entry.model.Modalities...), Capabilities: capabilities,
 			NativeTools:        nativeWebSearchTools(entry.provider, entry.model.WebSearch),
