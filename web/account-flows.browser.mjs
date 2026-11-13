@@ -435,6 +435,8 @@ try {
     const { page, errors } = await open('/?view=console');
     await clickText(page, 'button', 'Effective policy');
     await page.waitForSelector('.provider-access');
+    const providerLabels = await page.$$eval('.provider-access label', nodes => nodes.map(label => label.textContent));
+    assert.ok(providerLabels.includes('qwen'), 'Qwen must be available in provider permissions');
     await clickText(page, '.provider-access button', 'Block all providers');
     assert.equal(await page.$$eval('.provider-access input', nodes => nodes.some(input => input.checked)), false);
     await clickText(page, 'button', 'Save policy');
@@ -451,7 +453,8 @@ try {
     await clickText(page, 'button', 'Save policy');
     await page.waitForFunction(() => document.querySelector('.governance-form')?.textContent.includes('Policy saved'));
     await clickText(page, 'button', 'Reload policy');
-    await page.waitForFunction(() => document.querySelectorAll('.provider-access input').length === 11 && [...document.querySelectorAll('.provider-access input')].every(input => input.checked));
+    await page.waitForFunction(expected => document.querySelectorAll('.provider-access input').length === expected && [...document.querySelectorAll('.provider-access input')].every(input => input.checked), {}, providerLabels.length);
+    assert.deepEqual(await page.$$eval('.provider-access label', nodes => nodes.map(label => label.textContent)), providerLabels);
     for (const width of [390, 768, 1365]) {
       await page.setViewport({ width, height: 900 });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Provider permissions overflow at ${width}px`);

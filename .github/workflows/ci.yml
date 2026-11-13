@@ -46,10 +46,11 @@ jobs:
         run: npm --prefix web run test:browser
 
       - name: Dependency audits and CycloneDX SBOMs
+        id: dependency_checks
         run: bash scripts/check-dependencies.sh
 
       - name: Upload dependency evidence
-        if: always()
+        if: always() && steps.dependency_checks.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dependency-evidence
