@@ -2441,7 +2441,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// large prompts must not be decoded into map[string]any. Spool token-by-token,
 	// then model-route: Grok/Kimi/MiniMax/ZAI/Xiaomi/Adverserial must not inherit
 	// the path-selected Codex upstream (especially /backend-api/codex/responses).
-	if isCodexResponsesPath(r.URL.Path) && accountType != AccountTypeClaude {
+	if isCodexResponsesPath(r.URL.Path) && accountType != AccountTypeClaude && accountType != AccountTypeQwen {
 		largeOrChunked := r.ContentLength < 0 || r.ContentLength > h.cfg.maxInMemoryBodyBytes
 		encoding := strings.TrimSpace(strings.ToLower(r.Header.Get("Content-Encoding")))
 		uncompressedJSON := encoding == "" || encoding == "identity"
@@ -2532,7 +2532,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 	// Claude needs the Responses envelope translated to Messages, including
 	// chunked requests. Keep this on the bounded replay/translation path.
-	if accountType == AccountTypeClaude && isCodexResponsesPath(r.URL.Path) {
+	if (accountType == AccountTypeClaude || accountType == AccountTypeQwen) && isCodexResponsesPath(r.URL.Path) {
 		streamBody = false
 	}
 	if streamBody {
@@ -2834,6 +2834,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	sourceFormat := detectRequestFormat(r.URL.Path)
 	targetFormat := providerTargetFormat(accountType)
 	translateDir := TranslateNone
+	var qwenResponses *qwenResponsesRequest
+	if accountType == AccountTypeQwen && isCodexResponsesPath(r.URL.Path) {
+		qwenResponses, err = prepareQwenResponsesRequest(r.URL.Path, bodyBytes, requestedModel)
+		if err != nil {
+			respondJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		bodyBytes = qwenResponses.Body
+		r.URL.Path = "/v1/chat/completions"
+	}
 	if sourceFormat != FormatUnknown && targetFormat != FormatUnknown && sourceFormat != targetFormat {
 		if sourceFormat == FormatClaude && targetFormat == FormatOpenAI {
 			// Codex backend uses Responses API, not Chat Completions
@@ -3144,7 +3154,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				conversation = &state
 			}
 			fallbackModel, fallbackReason, hasFallback := "", "", false
-			if h.pool.accountAuthority == nil && fallbackTransitions < 4 {
+			if qwenResponses == nil && accountType != AccountTypeQwen && h.pool.accountAuthority == nil && fallbackTransitions < 4 {
 				fallbackModel, fallbackReason, hasFallback = h.getFallbackGraph().ResolveFallbackWithTransitionExcluding(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers(), conversation, fallbackVisited)
 			}
 			if hasFallback {
@@ -3608,7 +3618,33 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 		// Client wanted non-streaming but Codex requires streaming:
 		// buffer SSE events and assemble a non-streaming response.
-		if clientWantsNonStreaming && isSSE && translateDir == TranslateNone && accountType == AccountTypeCodex && strings.HasPrefix(r.URL.Path, "/v1/responses") {
+		if qwenResponses != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			payload := func(data []byte) {
+				if sampleBuf != nil {
+					sampleBuf.Write(data)
+				}
+				var object map[string]any
+				if json.Unmarshal(data, &object) == nil {
+					if usage := provider.ParseUsage(object); usage != nil {
+						usage.AccountID, usage.AccountType, usage.UserID, usage.OriginID = acc.ID, acc.Type, userID, originID
+						acc.mu.Lock()
+						usage.PlanType = acc.PlanType
+						acc.mu.Unlock()
+						if usage.Model == "" {
+							usage.Model = requestedModel
+						}
+						h.recordUsage(acc, *usage, admission)
+					}
+				}
+			}
+			if err := writeQwenResponsesResponse(w, resp, qwenResponses, h.cfg.streamIdleTimeout, cancel, payload); err != nil {
+				if ctx.Err() == nil {
+					h.recent.add(err.Error())
+					h.metrics.inc("error", acc.ID)
+				}
+				return
+			}
+		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateNone && accountType == AccountTypeCodex && strings.HasPrefix(r.URL.Path, "/v1/responses") {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 

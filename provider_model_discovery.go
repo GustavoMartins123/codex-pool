@@ -438,12 +438,16 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 			protocol = "openai"
 		}
 		capabilities := map[string]bool{"reasoning": entry.model.Reasoning, "tools": true}
+		protocols := []string{protocol}
+		if entry.provider == AccountTypeQwen {
+			protocols = []string{"openai", "responses", "anthropic"}
+		}
 		if entry.model.WebSearch {
 			capabilities["web_search"] = true
 		}
 		descriptors = append(descriptors, poolModelDescriptor{
 			ID: entry.model.ID, Name: entry.model.DisplayName, Description: entry.model.Description,
-			Protocol: protocol, Protocols: []string{protocol}, Provider: string(entry.provider), UpstreamID: entry.model.ID,
+			Protocol: protocol, Protocols: protocols, Provider: string(entry.provider), UpstreamID: entry.model.ID,
 			ContextWindow: entry.model.ContextWindow, MaxOutputTokens: entry.model.MaxOutputTokens,
 			Modalities: append([]string(nil), entry.model.Modalities...), Capabilities: capabilities,
 			NativeTools:        nativeWebSearchTools(entry.provider, entry.model.WebSearch),

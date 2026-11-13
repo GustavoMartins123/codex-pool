@@ -34,8 +34,8 @@ func TestQwenProxyRoutesClientProtocolsAndUsage(t *testing.T) {
 		stream                     bool
 	}{
 		{"chat", "/v1/chat/completions", `{"model":"QWEN3.8-MAX","messages":[{"role":"user","content":"hi"}]}`, "/chat/completions", false},
-		{"responses", "/v1/responses", `{"model":"qwen3.8-max","input":"hi"}`, "/responses", false},
-		{"codex path", "/backend-api/codex/responses", `{"model":"qwen3.8-max","input":"hi"}`, "/responses", false},
+		{"responses", "/v1/responses", `{"model":"qwen3.8-max","input":"hi"}`, "/chat/completions", false},
+		{"codex path", "/backend-api/codex/responses", `{"model":"qwen3.8-max","input":"hi"}`, "/chat/completions", false},
 		{"anthropic", "/v1/messages", `{"model":"qwen3.8-max","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`, "/chat/completions", false},
 		{"streaming", "/v1/chat/completions", `{"model":"qwen3.8-max","stream":true,"messages":[{"role":"user","content":"hi"}]}`, "/chat/completions", true},
 	} {
