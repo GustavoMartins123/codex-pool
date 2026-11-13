@@ -16,7 +16,11 @@ import (
 
 // aistudioTestSignature looks like a native Gemini signature, which the
 // translation layer keeps instead of replacing it with the skip value.
-var aistudioTestSignature = base64.StdEncoding.EncodeToString(append([]byte{0x12}, bytes.Repeat([]byte("s"), 31)...))
+var aistudioTestSignature = aistudioTestSignatureFor(0)
+
+func aistudioTestSignatureFor(n int) string {
+	return base64.StdEncoding.EncodeToString(append([]byte{0x12, byte(n)}, bytes.Repeat([]byte("s"), 30)...))
+}
 
 func aistudioTestAccount(id, key string) *Account {
 	return &Account{ID: id, Type: AccountTypeAIStudio, AccessToken: key, PlanType: "api_key", Models: map[string]DiscoveredModel{
