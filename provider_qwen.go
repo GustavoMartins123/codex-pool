@@ -186,10 +186,51 @@ func qwenDiscoveredModels(models map[string]DiscoveredModel) (map[string]Discove
 			continue
 		}
 		model.Protocol = "openai"
+		model.ReasoningEfforts, model.DefaultReasoningEffort = qwenReasoningEfforts(id)
 		filtered[id] = model
 	}
 	if len(filtered) == 0 {
 		return nil, fmt.Errorf("model endpoint returned no Qwen text models")
 	}
 	return filtered, nil
+}
+
+// Model Studio controls Qwen thinking with enable_thinking and caps it with
+// thinking_budget (reasoning tokens), which it documents for the Qwen3 family
+// (Qwen3 through Qwen3.8). Codex efforts map onto those for Qwen3 models: none
+// turns thinking off, low and medium cap it, and high keeps the model default
+// (thinking on, no cap). Other Qwen models expose no effort levels.
+var qwenThinkingBudgets = map[string]int{"low": 4096, "medium": 16384}
+
+// qwenThinkingOnlyModels cannot disable thinking; enable_thinking=false fails.
+var qwenThinkingOnlyModels = []string{"2.4t", "qwen3.7-max-preview", "qwen3.7-max-2026-05-17"}
+
+func qwenSupportsThinkingBudget(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "qwen3")
+}
+
+func qwenReasoningEfforts(id string) ([]string, string) {
+	if !qwenSupportsThinkingBudget(id) {
+		return nil, ""
+	}
+	lower := strings.ToLower(id)
+	for _, marker := range qwenThinkingOnlyModels {
+		if strings.Contains(lower, marker) {
+			return []string{"low", "medium", "high"}, "high"
+		}
+	}
+	return []string{"none", "low", "medium", "high"}, "high"
+}
+
+func applyQwenReasoningEffort(model, effort string, out map[string]any) {
+	switch effort {
+	case "":
+	case "none", "minimal":
+		out["enable_thinking"] = false
+	default:
+		out["enable_thinking"] = true
+		if budget, ok := qwenThinkingBudgets[effort]; ok && qwenSupportsThinkingBudget(model) {
+			out["thinking_budget"] = budget
+		}
+	}
 }

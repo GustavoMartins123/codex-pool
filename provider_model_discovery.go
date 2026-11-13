@@ -463,6 +463,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 			ID: entry.model.ID, Name: entry.model.DisplayName, Description: entry.model.Description,
 			Protocol: protocol, Protocols: protocols, Provider: string(entry.provider), UpstreamID: entry.model.ID,
 			ContextWindow: entry.model.ContextWindow, MaxOutputTokens: entry.model.MaxOutputTokens,
+			ReasoningEfforts: append([]string(nil), entry.model.ReasoningEfforts...), DefaultReasoningEffort: entry.model.DefaultReasoningEffort,
 			Modalities: append([]string(nil), entry.model.Modalities...), Capabilities: capabilities,
 			NativeTools:        nativeWebSearchTools(entry.provider, entry.model.WebSearch),
 			SupportingAccounts: entry.supporting, AvailableAccounts: entry.available, AvailableNow: entry.available > 0,

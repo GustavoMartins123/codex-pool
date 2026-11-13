@@ -195,9 +195,7 @@ func prepareQwenResponsesRequest(path string, body []byte, model string) (*qwenR
 		out["max_tokens"] = value
 	}
 	if reasoning := mapValue(root["reasoning"]); reasoning != nil {
-		if effort := stringValue(reasoning["effort"]); effort != "" {
-			out["enable_thinking"] = effort != "none" && effort != "minimal"
-		}
+		applyQwenReasoningEffort(model, stringValue(reasoning["effort"]), out)
 	}
 	if format := mapValue(mapValue(root["text"])["format"]); format != nil {
 		switch format["type"] {

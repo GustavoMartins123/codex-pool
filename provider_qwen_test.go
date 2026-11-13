@@ -102,3 +102,64 @@ func TestQwenDiscoveryFailureClearsCatalogAndRecovers(t *testing.T) {
 		t.Fatal("Qwen routing confused the native and namespaced Go providers")
 	}
 }
+
+func TestQwenReasoningEffortsOnlyForDocumentedModels(t *testing.T) {
+	for _, test := range []struct {
+		id, wantDefault string
+		want            []string
+	}{
+		{"qwen3.8-max", "high", []string{"none", "low", "medium", "high"}},
+		{"qwen3.6-flash", "high", []string{"none", "low", "medium", "high"}},
+		{"qwen3.8-2.4t-a95b", "high", []string{"low", "medium", "high"}},
+		{"qwen4-max-preview", "", nil},
+	} {
+		efforts, def := qwenReasoningEfforts(test.id)
+		if fmt.Sprint(efforts) != fmt.Sprint(test.want) || def != test.wantDefault {
+			t.Errorf("%s efforts = %v default %q, want %v %q", test.id, efforts, def, test.want, test.wantDefault)
+		}
+	}
+	catalog := runnerCatalog(discoveredModelsForPool(newPoolState([]*Account{{ID: "qwen", Type: AccountTypeQwen, Models: func() map[string]DiscoveredModel {
+		models, _ := qwenDiscoveredModels(map[string]DiscoveredModel{"qwen3.8-max": {ID: "qwen3.8-max"}, "qwen4-max-preview": {ID: "qwen4-max-preview"}})
+		return models
+	}()}}, false)))
+	var codex struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(catalog.CodexCatalog), &codex); err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]int{}
+	for _, model := range codex.Models {
+		levels[stringValue(model["slug"])] = len(anySlice(model["supported_reasoning_levels"]))
+	}
+	if levels["qwen3.8-max"] != 4 || levels["qwen4-max-preview"] != 0 {
+		t.Fatalf("Codex catalog reasoning levels = %v", levels)
+	}
+}
+
+func TestQwenResponsesMapsEffortToThinking(t *testing.T) {
+	for _, test := range []struct {
+		model, effort string
+		thinking      any
+		budget        any
+	}{
+		{"qwen3.8-max", "none", false, nil},
+		{"qwen3.8-max", "low", true, float64(4096)},
+		{"qwen3.8-max", "medium", true, float64(16384)},
+		{"qwen3.8-max", "high", true, nil},
+		{"qwen4-max-preview", "medium", true, nil},
+	} {
+		body := `{"model":"` + test.model + `","input":"hi","reasoning":{"effort":"` + test.effort + `"}}`
+		prepared, err := prepareQwenResponsesRequest("/v1/responses", []byte(body), test.model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var request map[string]any
+		if err := json.Unmarshal(prepared.Body, &request); err != nil {
+			t.Fatal(err)
+		}
+		if request["enable_thinking"] != test.thinking || request["thinking_budget"] != test.budget {
+			t.Errorf("%s effort %s: enable_thinking=%v thinking_budget=%v", test.model, test.effort, request["enable_thinking"], request["thinking_budget"])
+		}
+	}
+}
