@@ -102,13 +102,9 @@ func (h *proxyHandler) qwenCloudRequest(ctx context.Context, token, operation st
 }
 
 func (h *proxyHandler) queryQwenCloudPersonalCredits(ctx context.Context, plan *QwenTokenPlanConfig, now time.Time) (*QwenCreditSnapshot, error) {
-	token := plan.ConsoleToken
-	if plan.Mode == qwenPersonalCloud {
-		var err error
-		token, err = h.qwenCloudAccessToken(ctx, plan, now)
-		if err != nil {
-			return nil, err
-		}
+	token, err := h.qwenCloudAccessToken(ctx, plan, now)
+	if err != nil {
+		return nil, err
 	}
 	var subscription struct {
 		InstanceCode string `json:"instanceCode"`

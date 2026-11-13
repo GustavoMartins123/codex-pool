@@ -82,6 +82,9 @@ func (cache *qwenCloudTokenCache) discard(token string) {
 }
 
 func (h *proxyHandler) qwenCloudAccessToken(ctx context.Context, plan *QwenTokenPlanConfig, now time.Time) (string, error) {
+	if plan.Mode == qwenPersonalBrowser {
+		return h.qwenOAuthCloudAccessToken(ctx, plan.CloudOAuth, now)
+	}
 	if h.cfg.qwenPlanBase == nil {
 		return "", errors.New("Alibaba Cloud management endpoint is not configured")
 	}

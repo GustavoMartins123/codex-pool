@@ -197,7 +197,7 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 	if account.QwenTokenPlan != nil {
 		copy := *account.QwenTokenPlan
 		copy.AccessKeyID, copy.AccessKeySecret, copy.SecurityToken = "", "", ""
-		copy.ConsoleToken = ""
+		copy.CloudOAuth = nil
 		safePlan = &copy
 	}
 	credits, creditsError := account.QwenCredits, account.QwenCreditsError

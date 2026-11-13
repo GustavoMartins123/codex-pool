@@ -3,12 +3,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"io"
-	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,17 +16,17 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-const (
-	qwenLoginOrigin   = "https://modelstudio.console.alibabacloud.com"
-	qwenLoginCallback = "/api/pool/accounts/qwen/login/callback"
-	qwenLoginTTL      = 15 * time.Minute
-)
+const qwenLoginTTL = 15 * time.Minute
 
 type qwenLoginSession struct {
-	actor, state, callbackHost string
-	accountID, status, err     string
-	token                      string
-	expiresAt                  time.Time
+	actor, state, verifier string
+	accountID, status, err string
+	oauth                  *QwenCloudOAuth
+	expiresAt              time.Time
+}
+
+func (session *qwenLoginSession) clearCredentials() {
+	session.verifier, session.oauth = "", nil
 }
 
 type qwenLoginSessions struct {
@@ -42,18 +40,6 @@ func qwenLoginRandom(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
-}
-
-func qwenLoginLocalOrigin(r *http.Request) (*url.URL, error) {
-	origin, err := url.Parse(r.Header.Get("Origin"))
-	if err != nil || origin.Scheme != "http" || origin.User != nil || origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || !inferredHostPattern.MatchString(origin.Host) {
-		return nil, errors.New("Alibaba Cloud browser sign-in requires opening the pool through an HTTP localhost address")
-	}
-	ip := net.ParseIP(origin.Hostname())
-	if !strings.EqualFold(origin.Hostname(), "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return nil, errors.New("Alibaba Cloud only returns browser authorization to a local HTTP address; open the pool through localhost")
-	}
-	return origin, nil
 }
 
 func (h *proxyHandler) qwenLoginAccount(actor, id string) (*Account, error) {
@@ -74,11 +60,6 @@ func (h *proxyHandler) qwenLoginAccount(actor, id string) (*Account, error) {
 func (h *proxyHandler) handleQwenLoginInit(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	if !h.checkContributionAttempt(w, r) {
-		return
-	}
-	origin, err := qwenLoginLocalOrigin(r)
-	if err != nil {
-		respondJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var input struct {
@@ -105,6 +86,11 @@ func (h *proxyHandler) handleQwenLoginInit(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusInternalServerError, "could not create Qwen login state")
 		return
 	}
+	verifier, err := qwenLoginRandom(32)
+	if err != nil {
+		respondJSONError(w, http.StatusInternalServerError, "could not create Qwen authorization verifier")
+		return
+	}
 	sessions := &h.qwenLogin
 	sessions.mu.Lock()
 	defer sessions.mu.Unlock()
@@ -113,12 +99,15 @@ func (h *proxyHandler) handleQwenLoginInit(w http.ResponseWriter, r *http.Reques
 	}
 	now := time.Now()
 	for previousID, session := range sessions.byID {
-		if session.actor == actor && session.status == "exchanging" {
-			respondJSONError(w, http.StatusConflict, "Qwen login is still being finalized")
-			return
+		if session.status == "exchanging" {
+			if session.actor == actor {
+				respondJSONError(w, http.StatusConflict, "Qwen login is still being finalized")
+				return
+			}
+			continue
 		}
 		if session.actor == actor || !now.Before(session.expiresAt) {
-			session.token = ""
+			session.clearCredentials()
 			delete(sessions.byID, previousID)
 		}
 	}
@@ -126,133 +115,144 @@ func (h *proxyHandler) handleQwenLoginInit(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusTooManyRequests, "too many pending Qwen logins")
 		return
 	}
-	sessions.byID[id] = &qwenLoginSession{actor: actor, state: state, callbackHost: origin.Host, accountID: input.AccountID, status: "pending", expiresAt: now.Add(qwenLoginTTL)}
-	notice := origin.Host + qwenLoginCallback + "?" + url.Values{"session_id": {id}, "state": {state}}.Encode()
-	authorize := qwenLoginOrigin + "/console-login?" + url.Values{"notice": {notice}}.Encode()
+	sessions.byID[id] = &qwenLoginSession{actor: actor, state: state, verifier: verifier, accountID: input.AccountID, status: "pending", expiresAt: now.Add(qwenLoginTTL)}
+	challenge := sha256.Sum256([]byte(verifier))
+	authorize := qwenCloudSignInOrigin + "/oauth2/v1/auth?" + url.Values{
+		"response_type": {"code"}, "client_id": {qwenCloudOAuthClient}, "redirect_uri": {qwenOAuthRedirectURI},
+		"state": {state}, "code_challenge": {base64.RawURLEncoding.EncodeToString(challenge[:])}, "code_challenge_method": {"S256"},
+	}.Encode()
 	respondJSON(w, map[string]any{"session_id": id, "oauth_url": authorize})
 }
 
-func (h *proxyHandler) handleQwenLoginCallback(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
-	w.Header().Add("Vary", "Origin")
-	if r.Header.Get("Origin") != qwenLoginOrigin {
-		respondJSONError(w, http.StatusForbidden, "Qwen login origin denied")
-		return
+func parseQwenOAuthCallback(raw, state string) (string, error) {
+	callback, err := url.Parse(strings.TrimSpace(raw))
+	expected, _ := url.Parse(qwenOAuthRedirectURI)
+	if err != nil || callback.Scheme != expected.Scheme || callback.Host != expected.Host || callback.Path != expected.Path || callback.User != nil || callback.Fragment != "" || callback.Opaque != "" {
+		return "", errors.New("paste the complete Alibaba Cloud authorization callback URL")
 	}
-	w.Header().Set("Access-Control-Allow-Origin", qwenLoginOrigin)
-	if r.Method != http.MethodOptions && r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		respondJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	query, err := url.ParseQuery(callback.RawQuery)
+	if err != nil || len(query["state"]) != 1 || !secureSecretEquals(query.Get("state"), state) {
+		return "", errors.New("Alibaba Cloud callback does not match this sign-in session")
+	}
+	if query.Has("error") {
+		return "", errors.New("Alibaba Cloud authorization was declined; sign in again")
+	}
+	if len(query["code"]) != 1 || strings.TrimSpace(query.Get("code")) == "" {
+		return "", errors.New("Alibaba Cloud callback is missing its authorization code")
+	}
+	return query.Get("code"), nil
+}
+
+func (h *proxyHandler) handleQwenLoginAuthorize(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	var input struct {
+		SessionID   string `json:"session_id"`
+		CallbackURL string `json:"callback_url"`
+	}
+	if decodeGovernanceJSON(w, r, &input) != nil || input.SessionID == "" {
+		respondJSONError(w, http.StatusBadRequest, "session_id and callback_url are required")
 		return
 	}
 	sessions := &h.qwenLogin
 	sessions.mu.Lock()
-	defer sessions.mu.Unlock()
-	session := sessions.byID[r.URL.Query().Get("session_id")]
-	if session == nil || !secureSecretEquals(r.URL.Query().Get("state"), session.state) || !strings.EqualFold(r.Host, session.callbackHost) {
-		respondJSONError(w, http.StatusForbidden, "invalid Qwen login callback")
-		return
-	}
-	if !time.Now().Before(session.expiresAt) {
-		session.status, session.err, session.token = "error", "Qwen login expired; sign in again", ""
-		respondJSONError(w, http.StatusGone, session.err)
+	session := sessions.byID[input.SessionID]
+	if session == nil || session.actor != providerContributionActor(r) {
+		sessions.mu.Unlock()
+		respondJSONError(w, http.StatusForbidden, "Qwen login session is unavailable for this principal")
 		return
 	}
 	if session.status != "pending" {
-		respondJSONError(w, http.StatusConflict, "Qwen login callback has already been consumed")
+		sessions.mu.Unlock()
+		respondJSONError(w, http.StatusConflict, "Qwen authorization has already been consumed")
 		return
 	}
-	if r.Method == http.MethodOptions {
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Add("Vary", "Access-Control-Request-Private-Network")
-		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
-			w.Header().Set("Access-Control-Allow-Private-Network", "true")
-		}
-		w.WriteHeader(http.StatusNoContent)
+	if !time.Now().Before(session.expiresAt) {
+		session.status, session.err = "error", "Qwen login expired; sign in again"
+		session.clearCredentials()
+		sessions.mu.Unlock()
+		respondJSONError(w, http.StatusGone, session.err)
 		return
 	}
-	contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if contentType != "application/json" {
-		respondJSONError(w, http.StatusUnsupportedMediaType, "Qwen callback requires JSON")
+	code, err := parseQwenOAuthCallback(input.CallbackURL, session.state)
+	if err != nil {
+		sessions.mu.Unlock()
+		respondJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var input struct {
-		AccessToken   string `json:"access_token"`
-		ConsoleSite   string `json:"console_site"`
-		ConsoleRegion string `json:"console_region"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	var extra any
-	if decoder.Decode(&input) != nil || !errors.Is(decoder.Decode(&extra), io.EOF) || input.ConsoleSite != "international" || input.ConsoleRegion != "ap-southeast-1" || strings.TrimSpace(input.AccessToken) == "" || strings.ContainsAny(input.AccessToken, " \t\r\n") {
-		respondJSONError(w, http.StatusBadRequest, "Qwen callback must contain an international Singapore console session")
+	session.status = "exchanging"
+	verifier := session.verifier
+	session.verifier = ""
+	sessions.mu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	tokens, err := h.fetchQwenOAuthTokens(ctx, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {qwenOAuthRedirectURI}, "code_verifier": {verifier},
+	}, time.Now())
+	sessions.mu.Lock()
+	if err != nil {
+		session.status, session.err = "error", err.Error()
+		session.clearCredentials()
+		view := qwenLoginView(session)
+		sessions.mu.Unlock()
+		respondJSON(w, view)
 		return
 	}
-	session.token, session.status = input.AccessToken, "authorized"
-	respondJSON(w, map[string]bool{"success": true})
+	session.oauth = &QwenCloudOAuth{tokens: tokens}
+	if session.accountID == "" {
+		session.status = "awaiting_key"
+		view := qwenLoginView(session)
+		sessions.mu.Unlock()
+		respondJSON(w, view)
+		return
+	}
+	sessions.mu.Unlock()
+	h.finishQwenLogin(w, r, session, "")
 }
 
 func qwenLoginView(session *qwenLoginSession) map[string]any {
 	return map[string]any{"status": session.status, "account_id": session.accountID, "error": session.err}
 }
 
-func (h *proxyHandler) handleQwenLoginPoll(w http.ResponseWriter, r *http.Request) {
-	h.handleQwenLoginProgress(w, r, false)
-}
-
 func (h *proxyHandler) handleQwenLoginComplete(w http.ResponseWriter, r *http.Request) {
-	h.handleQwenLoginProgress(w, r, true)
-}
-
-func (h *proxyHandler) handleQwenLoginProgress(w http.ResponseWriter, r *http.Request, complete bool) {
 	noStore(w)
 	var input struct {
 		SessionID string `json:"session_id"`
 		APIKey    string `json:"api_key"`
 	}
-	if decodeGovernanceJSON(w, r, &input) != nil || input.SessionID == "" {
-		respondJSONError(w, http.StatusBadRequest, "session_id is required")
+	if decodeGovernanceJSON(w, r, &input) != nil || input.SessionID == "" || strings.TrimSpace(input.APIKey) == "" {
+		respondJSONError(w, http.StatusBadRequest, "session_id and the existing Token Plan api_key are required")
 		return
 	}
-	actor := providerContributionActor(r)
 	sessions := &h.qwenLogin
 	sessions.mu.Lock()
 	session := sessions.byID[input.SessionID]
-	if session == nil {
+	if session == nil || session.actor != providerContributionActor(r) {
 		sessions.mu.Unlock()
-		respondJSONError(w, http.StatusNotFound, "Qwen login session not found")
+		respondJSONError(w, http.StatusForbidden, "Qwen login session is unavailable for this principal")
 		return
 	}
-	if session.actor != actor {
+	if session.status != "awaiting_key" {
 		sessions.mu.Unlock()
-		respondJSONError(w, http.StatusForbidden, "Qwen login belongs to another principal")
+		respondJSONError(w, http.StatusConflict, "finish Alibaba Cloud authorization before adding the Token Plan key")
 		return
 	}
-	if !time.Now().Before(session.expiresAt) && session.status != "complete" && session.status != "exchanging" {
-		session.status, session.err, session.token = "error", "Qwen login expired; sign in again", ""
-	}
-	if session.status == "authorized" && session.accountID == "" {
-		session.status = "awaiting_key"
-	}
-	key := strings.TrimSpace(input.APIKey)
-	if complete && (session.status != "awaiting_key" || key == "") {
+	if !time.Now().Before(session.expiresAt) {
+		session.status, session.err = "error", "Qwen login expired; sign in again"
+		session.clearCredentials()
 		sessions.mu.Unlock()
-		respondJSONError(w, http.StatusBadRequest, "finish Alibaba Cloud sign-in and enter your existing Token Plan API key")
-		return
-	}
-	if !complete && (session.status != "authorized" || session.accountID == "") {
-		view := qwenLoginView(session)
-		sessions.mu.Unlock()
-		respondJSON(w, view)
+		respondJSONError(w, http.StatusGone, session.err)
 		return
 	}
 	session.status = "exchanging"
-	token, accountID := session.token, session.accountID
 	sessions.mu.Unlock()
+	h.finishQwenLogin(w, r, session, strings.TrimSpace(input.APIKey))
+}
+
+func (h *proxyHandler) finishQwenLogin(w http.ResponseWriter, r *http.Request, session *qwenLoginSession, key string) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	plan := &QwenTokenPlanConfig{Mode: qwenPersonalBrowser, ConsoleToken: token}
+	plan := &QwenTokenPlanConfig{Mode: qwenPersonalBrowser, CloudOAuth: session.oauth}
+	accountID := session.accountID
 	credits, err := h.queryQwenCredits(ctx, plan, time.Now())
 	if err == nil && accountID == "" {
 		var snapshot providerModelSnapshot
@@ -272,11 +272,11 @@ func (h *proxyHandler) handleQwenLoginProgress(w http.ResponseWriter, r *http.Re
 			})
 		}
 	} else if err == nil {
-		err = h.linkQwenCloudSession(actor, accountID, plan, credits)
+		err = h.linkQwenCloudSession(providerContributionActor(r), accountID, plan, credits)
 	}
-	sessions.mu.Lock()
-	defer sessions.mu.Unlock()
-	session.token = ""
+	h.qwenLogin.mu.Lock()
+	defer h.qwenLogin.mu.Unlock()
+	session.clearCredentials()
 	if err != nil {
 		session.status, session.err = "error", err.Error()
 	} else {

@@ -29,18 +29,18 @@ const (
 )
 
 type QwenTokenPlanConfig struct {
-	Mode            string    `json:"mode"`
-	Plan            string    `json:"plan,omitempty"`
-	TotalCredits    float64   `json:"total_credits,omitempty"`
-	Remaining       float64   `json:"remaining_credits,omitempty"`
-	CycleStart      time.Time `json:"cycle_start,omitempty"`
-	CycleEnd        time.Time `json:"cycle_end,omitempty"`
-	AccessKeyID     string    `json:"access_key_id,omitempty"`
-	AccessKeySecret string    `json:"access_key_secret,omitempty"`
-	SecurityToken   string    `json:"security_token,omitempty"`
-	ConsoleToken    string    `json:"console_token,omitempty"`
-	SeatID          string    `json:"seat_id,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	Mode            string          `json:"mode"`
+	Plan            string          `json:"plan,omitempty"`
+	TotalCredits    float64         `json:"total_credits,omitempty"`
+	Remaining       float64         `json:"remaining_credits,omitempty"`
+	CycleStart      time.Time       `json:"cycle_start,omitempty"`
+	CycleEnd        time.Time       `json:"cycle_end,omitempty"`
+	AccessKeyID     string          `json:"access_key_id,omitempty"`
+	AccessKeySecret string          `json:"access_key_secret,omitempty"`
+	SecurityToken   string          `json:"security_token,omitempty"`
+	CloudOAuth      *QwenCloudOAuth `json:"cloud_oauth,omitempty"`
+	SeatID          string          `json:"seat_id,omitempty"`
+	UpdatedAt       time.Time       `json:"updated_at,omitempty"`
 }
 
 type QwenCreditSnapshot struct {
@@ -61,7 +61,7 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 	}
 	switch plan.Mode {
 	case qwenPersonalManual:
-		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" || plan.ConsoleToken != "" {
+		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" || plan.CloudOAuth != nil {
 			return errors.New("Personal manual tracking does not accept Team credentials")
 		}
 		if !validQwenCreditAmounts(plan.TotalCredits, plan.Remaining) {
@@ -71,7 +71,7 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 			return errors.New("the subscription cycle must contain the current time")
 		}
 	case qwenTeamAPI:
-		if plan.ConsoleToken != "" {
+		if plan.CloudOAuth != nil {
 			return errors.New("Team API tracking does not accept a browser session")
 		}
 		if strings.TrimSpace(plan.AccessKeyID) == "" || strings.TrimSpace(plan.AccessKeySecret) == "" || strings.TrimSpace(plan.SeatID) == "" {
@@ -81,7 +81,7 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 			return errors.New("Team credits and cycle dates must come from Alibaba Cloud")
 		}
 	case qwenPersonalCloud:
-		if plan.ConsoleToken != "" {
+		if plan.CloudOAuth != nil {
 			return errors.New("AccessKey tracking does not accept a browser session")
 		}
 		if strings.TrimSpace(plan.AccessKeyID) == "" || strings.TrimSpace(plan.AccessKeySecret) == "" {
@@ -91,8 +91,8 @@ func validateQwenTokenPlan(plan *QwenTokenPlanConfig, now time.Time) error {
 			return errors.New("Cloud credits and cycle dates must come from Alibaba Cloud")
 		}
 	case qwenPersonalBrowser:
-		if strings.TrimSpace(plan.ConsoleToken) == "" || strings.ContainsAny(plan.ConsoleToken, " \t\r\n") {
-			return errors.New("Alibaba Cloud browser session is missing; sign in again")
+		if plan.CloudOAuth == nil || !validQwenOAuthTokens(plan.CloudOAuth.snapshot()) {
+			return errors.New("Alibaba Cloud OAuth credentials are missing; sign in again")
 		}
 		if plan.AccessKeyID != "" || plan.AccessKeySecret != "" || plan.SecurityToken != "" || plan.SeatID != "" || plan.TotalCredits != 0 || plan.Remaining != 0 || !plan.CycleStart.IsZero() || !plan.CycleEnd.IsZero() {
 			return errors.New("browser credit tracking only accepts an Alibaba Cloud session")

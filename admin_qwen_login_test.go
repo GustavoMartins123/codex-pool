@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +19,26 @@ func qwenBrowserTestHandler(t *testing.T) *proxyHandler {
 	now := time.Now().UTC()
 	end := now.Add(28 * 24 * time.Hour).UnixMilli()
 	h := qwenTestHandler(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "oauth.alibabacloud.com" {
+			switch r.URL.Path {
+			case "/v1/token":
+				if err := r.ParseForm(); err != nil || r.Form.Get("client_id") != qwenCloudOAuthClient || r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "test-authorization-code" || r.Form.Get("redirect_uri") != qwenOAuthRedirectURI || len(r.Form.Get("code_verifier")) < 43 {
+					t.Fatal("OAuth code exchange did not use the official international PKCE contract")
+				}
+				return qwenJSONResponse(200, `{"access_token":"synthetic-oauth-access","refresh_token":"synthetic-oauth-refresh","expires_in":3600,"token_type":"Bearer"}`), nil
+			case "/v1/exchange":
+				if r.Header.Get("Authorization") != "Bearer synthetic-oauth-access" {
+					t.Fatal("temporary credential exchange did not use OAuth")
+				}
+				return qwenJSONResponse(200, fmt.Sprintf(`{"accessKeyId":"temporary-oauth-id","accessKeySecret":"temporary-oauth-secret","securityToken":"temporary-oauth-sts","expiration":%q}`, now.Add(time.Hour).Format(time.RFC3339))), nil
+			}
+		}
+		if r.URL.Path == "/modelstudio/cli/generateAccessToken" {
+			if r.Header.Get("x-acs-security-token") != "temporary-oauth-sts" || !strings.Contains(r.Header.Get("Authorization"), "Credential=temporary-oauth-id,") {
+				t.Fatal("Cloud authorization did not use OAuth-derived temporary credentials")
+			}
+			return qwenJSONResponse(200, `{"cliAccessToken":"synthetic-browser-console-token"}`), nil
+		}
 		if r.URL.Path == "/compatible-mode/v1/models" {
 			if r.Header.Get("Authorization") != "Bearer sk-sp-browser-test-key" {
 				t.Fatal("model discovery did not use the inference API key")
@@ -34,7 +56,7 @@ func qwenBrowserTestHandler(t *testing.T) *proxyHandler {
 		case "usage":
 			return qwenJSONResponse(200, qwenCloudEnvelope(fmt.Sprintf(`{"per1MonthPercentage":0.25,"per1MonthResetTime":%d}`, end))), nil
 		default:
-			t.Fatalf("unexpected browser session operation: %s", r.URL.Query().Get("api"))
+			t.Fatalf("unexpected browser session operation: %s", r.URL)
 			return nil, nil
 		}
 	}))
@@ -45,12 +67,12 @@ func qwenBrowserTestHandler(t *testing.T) *proxyHandler {
 func startQwenBrowserTest(t *testing.T, h *proxyHandler, session, csrf, accountID string) (string, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"account_id": accountID})
-	req := passportContributionRequest("POST", "http://localhost:8080/api/pool/accounts/qwen/login/init", session, csrf, body)
-	req.Header.Set("Origin", "http://localhost:8080")
+	req := passportContributionRequest("POST", "https://pool.example/api/pool/accounts/qwen/login/init", session, csrf, body)
+	req.Header.Set("Origin", "https://pool.example")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != 200 {
-		t.Fatalf("login init: %d %s", rr.Code, rr.Body.String())
+	if rr.Code != 200 || rr.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatalf("HTTPS login init: %d %s", rr.Code, rr.Body.String())
 	}
 	var result struct {
 		SessionID string `json:"session_id"`
@@ -60,30 +82,28 @@ func startQwenBrowserTest(t *testing.T, h *proxyHandler, session, csrf, accountI
 		t.Fatal("missing browser login session")
 	}
 	authorize, err := url.Parse(result.URL)
-	if err != nil || authorize.Scheme+"://"+authorize.Host != qwenLoginOrigin || authorize.Path != "/console-login" || authorize.Query().Has("needapikey") {
-		t.Fatal("login must authorize the console without creating a general Model Studio key")
+	if err != nil || authorize.Scheme+"://"+authorize.Host != qwenCloudSignInOrigin || authorize.Path != "/oauth2/v1/auth" || authorize.Query().Get("redirect_uri") != qwenOAuthRedirectURI || authorize.Query().Has("notice") || authorize.Query().Get("client_id") != qwenCloudOAuthClient || authorize.Query().Get("code_challenge_method") != "S256" {
+		t.Fatal("login did not use the remote-compatible Alibaba Cloud OAuth flow")
 	}
-	callback := "http://" + authorize.Query().Get("notice")
-	parsed, err := url.Parse(callback)
-	if err != nil || parsed.Host != "localhost:8080" || parsed.Path != qwenLoginCallback || parsed.Query().Get("state") == "" || parsed.Query().Get("session_id") != result.SessionID {
-		t.Fatal("login did not use the official local callback protocol")
+	verifier := h.qwenLogin.byID[result.SessionID].verifier
+	challenge := sha256.Sum256([]byte(verifier))
+	if authorize.Query().Get("code_challenge") != base64.RawURLEncoding.EncodeToString(challenge[:]) {
+		t.Fatal("OAuth challenge does not match the server-owned verifier")
 	}
-	return result.SessionID, callback
+	return result.SessionID, qwenOAuthRedirectURI + "?" + url.Values{"state": {authorize.Query().Get("state")}, "code": {"test-authorization-code"}}.Encode()
 }
 
-func postQwenBrowserCallback(h *proxyHandler, callback string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest("POST", callback, strings.NewReader(`{"access_token":"synthetic-browser-console-token","console_site":"international","console_region":"ap-southeast-1","workspace_id":"test-workspace"}`))
-	req.Header.Set("Origin", qwenLoginOrigin)
-	req.Header.Set("Content-Type", "application/json")
+func authorizeQwenBrowserTest(h *proxyHandler, session, csrf, id, callback string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"session_id": id, "callback_url": callback})
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	h.ServeHTTP(rr, passportContributionRequest("POST", "https://pool.example/api/pool/accounts/qwen/login/authorize", session, csrf, body))
 	return rr
 }
 
-func pollQwenBrowserTest(h *proxyHandler, session, csrf, id string) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(map[string]string{"session_id": id})
+func completeQwenBrowserTest(h *proxyHandler, session, csrf, id string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"session_id": id, "api_key": "sk-sp-browser-test-key"})
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, passportContributionRequest("POST", "/api/pool/accounts/qwen/login/poll", session, csrf, body))
+	h.ServeHTTP(rr, passportContributionRequest("POST", "https://pool.example/api/pool/accounts/qwen/login/complete", session, csrf, body))
 	return rr
 }
 
@@ -91,18 +111,13 @@ func TestQwenBrowserLoginPersistsPrivateAccountAndAutomaticCredits(t *testing.T)
 	h := qwenBrowserTestHandler(t)
 	session, csrf := addTestPassportOperator(t, h.passport, "browser-owner")
 	id, callback := startQwenBrowserTest(t, h, session, csrf, "")
-	if rr := pollQwenBrowserTest(h, session, csrf, id); rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"pending"`) {
-		t.Fatal("login did not wait for browser authorization")
+	if rr := completeQwenBrowserTest(h, session, csrf, id); rr.Code != 409 {
+		t.Fatal("inference key was accepted before Cloud authorization")
 	}
-	if rr := postQwenBrowserCallback(h, callback); rr.Code != 200 || rr.Header().Get("Access-Control-Allow-Origin") != qwenLoginOrigin {
-		t.Fatalf("unauthenticated provider callback failed: %d %s", rr.Code, rr.Body.String())
+	if rr := authorizeQwenBrowserTest(h, session, csrf, id, callback); rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"awaiting_key"`) || strings.Contains(rr.Body.String(), "synthetic-oauth") {
+		t.Fatalf("remote authorization: %d %s", rr.Code, rr.Body.String())
 	}
-	if rr := pollQwenBrowserTest(h, session, csrf, id); rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"awaiting_key"`) || strings.Contains(rr.Body.String(), "synthetic-browser-console-token") {
-		t.Fatal("browser authorization did not request the existing Token Plan key safely")
-	}
-	body, _ := json.Marshal(map[string]string{"session_id": id, "api_key": "sk-sp-browser-test-key"})
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, passportContributionRequest("POST", "/api/pool/accounts/qwen/login/complete", session, csrf, body))
+	rr := completeQwenBrowserTest(h, session, csrf, id)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"complete"`) {
 		t.Fatalf("complete: %d %s", rr.Code, rr.Body.String())
 	}
@@ -118,60 +133,43 @@ func TestQwenBrowserLoginPersistsPrivateAccountAndAutomaticCredits(t *testing.T)
 		t.Fatal("browser account lost private ownership")
 	}
 	encrypted, err := os.ReadFile(account.File)
-	if err != nil || strings.Contains(string(encrypted), "synthetic-browser-console-token") || strings.Contains(string(encrypted), "sk-sp-browser-test-key") {
+	if err != nil || strings.Contains(string(encrypted), "synthetic-oauth") || strings.Contains(string(encrypted), "sk-sp-browser-test-key") {
 		t.Fatal("browser credentials were not encrypted")
+	}
+	data, err := readAccountFile(account.File)
+	var stored QwenAuthJSON
+	if err != nil || json.Unmarshal(data, &stored) != nil || stored.TokenPlan.CloudOAuth.snapshot().RefreshToken != "synthetic-oauth-refresh" {
+		t.Fatal("OAuth renewal credentials were not persisted")
 	}
 	view := httptest.NewRecorder()
 	h.ServeHTTP(view, passportContributionRequest("GET", "/api/accounts/qwen/"+account.ID+"/token-plan", session, csrf, nil))
-	if view.Code != 200 || strings.Contains(view.Body.String(), "console_token") || strings.Contains(view.Body.String(), "synthetic-browser-console-token") {
-		t.Fatal("credit management leaked the browser credential")
+	if view.Code != 200 || strings.Contains(view.Body.String(), "cloud_oauth") || strings.Contains(view.Body.String(), "synthetic-oauth") {
+		t.Fatal("credit management leaked OAuth credentials")
 	}
-	if h.qwenLogin.byID[id].token != "" {
-		t.Fatal("completed login retained a temporary token")
-	}
-	replay := httptest.NewRecorder()
-	h.ServeHTTP(replay, passportContributionRequest("POST", "/api/pool/accounts/qwen/login/complete", session, csrf, body))
-	if replay.Code != 400 || len(h.pool.allAccounts()) != 1 {
-		t.Fatal("login completion was replayed")
+	if h.qwenLogin.byID[id].oauth != nil || h.qwenLogin.byID[id].verifier != "" || completeQwenBrowserTest(h, session, csrf, id).Code != 409 {
+		t.Fatal("completed authorization retained temporary credentials or accepted replay")
 	}
 }
 
-func TestQwenBrowserCallbackChecksStateOriginRegionExpiryAndReplay(t *testing.T) {
+func TestQwenBrowserOAuthCallbackChecksStateAddressExpiryAndReplay(t *testing.T) {
 	h := qwenBrowserTestHandler(t)
 	session, csrf := addTestPassportOperator(t, h.passport, "browser-owner")
 	id, callback := startQwenBrowserTest(t, h, session, csrf, "")
-	for _, test := range []struct{ name, origin, target, body string }{
-		{"origin", "https://attacker.example", callback, `{"access_token":"token"}`},
-		{"state", qwenLoginOrigin, callback + "wrong", `{"access_token":"token"}`},
-		{"host", qwenLoginOrigin, strings.Replace(callback, "localhost:8080", "localhost:8081", 1), `{"access_token":"token"}`},
-		{"region", qwenLoginOrigin, callback, `{"access_token":"token","console_site":"international","console_region":"cn-beijing"}`},
-		{"size", qwenLoginOrigin, callback, `{"access_token":"` + strings.Repeat("a", 65<<10) + `"}`},
+	for _, invalid := range []string{
+		callback + "wrong", callback + "&state=duplicate", callback + "&code=duplicate", callback + "#fragment",
+		strings.Replace(callback, "127.0.0.1:12345", "attacker.example", 1), strings.Replace(callback, "http:", "https:", 1),
+		strings.Replace(callback, "/cli/callback", "/another-path", 1), strings.Replace(callback, "test-authorization-code", "", 1),
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", test.target, strings.NewReader(test.body))
-			req.Header.Set("Origin", test.origin)
-			req.Header.Set("Content-Type", "application/json")
-			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, req)
-			if rr.Code < 400 || h.qwenLogin.byID[id].status != "pending" {
-				t.Fatal("invalid callback changed the pending login")
-			}
-		})
+		if rr := authorizeQwenBrowserTest(h, session, csrf, id, invalid); rr.Code != 400 || h.qwenLogin.byID[id].status != "pending" {
+			t.Fatalf("invalid callback consumed authorization: %d", rr.Code)
+		}
 	}
-	preflight := httptest.NewRequest("OPTIONS", callback, nil)
-	preflight.Header.Set("Origin", qwenLoginOrigin)
-	preflight.Header.Set("Access-Control-Request-Private-Network", "true")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, preflight)
-	if rr.Code != 204 || rr.Header().Get("Access-Control-Allow-Private-Network") != "true" || h.qwenLogin.byID[id].status != "pending" {
-		t.Fatal("local network preflight consumed or rejected authorization")
-	}
-	if postQwenBrowserCallback(h, callback).Code != 200 || postQwenBrowserCallback(h, callback).Code != 409 {
-		t.Fatal("callback did not enforce one-time authorization")
+	if authorizeQwenBrowserTest(h, session, csrf, id, callback).Code != 200 || authorizeQwenBrowserTest(h, session, csrf, id, callback).Code != 409 {
+		t.Fatal("authorization did not enforce one-time use")
 	}
 	h.qwenLogin.byID[id].expiresAt = time.Now().Add(-time.Second)
-	if postQwenBrowserCallback(h, callback).Code != 410 || h.qwenLogin.byID[id].token != "" {
-		t.Fatal("expired authorization retained its token")
+	if completeQwenBrowserTest(h, session, csrf, id).Code != 410 || h.qwenLogin.byID[id].oauth != nil {
+		t.Fatal("expired authorization retained its credentials")
 	}
 }
 
@@ -180,35 +178,11 @@ func TestQwenBrowserLoginIsActorScopedAndRequiresCSRF(t *testing.T) {
 	session, csrf := addTestPassportOperator(t, h.passport, "browser-owner")
 	id, callback := startQwenBrowserTest(t, h, session, csrf, "")
 	other, otherCSRF := addTestPassportOperator(t, h.passport, "other")
-	if pollQwenBrowserTest(h, other, otherCSRF, id).Code != 403 || pollQwenBrowserTest(h, session, "invalid", id).Code != 403 {
-		t.Fatal("login polling accepted another actor or invalid CSRF")
+	if authorizeQwenBrowserTest(h, other, otherCSRF, id, callback).Code != 403 || authorizeQwenBrowserTest(h, session, "invalid", id, callback).Code != 403 || authorizeQwenBrowserTest(h, "", "", id, callback).Code < 400 {
+		t.Fatal("OAuth exchange accepted another actor, missing authentication or invalid CSRF")
 	}
-	if postQwenBrowserCallback(h, callback).Code != 200 {
-		t.Fatal("valid callback failed")
-	}
-	body, _ := json.Marshal(map[string]string{"session_id": id, "api_key": "sk-sp-browser-test-key"})
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, passportContributionRequest("POST", "/api/pool/accounts/qwen/login/complete", other, otherCSRF, body))
-	if rr.Code != 403 || len(h.pool.allAccounts()) != 0 {
-		t.Fatal("another actor finalized the browser account")
-	}
-	h.qwenLogin.byID[id].expiresAt = time.Now().Add(-time.Second)
-	if rr := pollQwenBrowserTest(h, session, csrf, id); !strings.Contains(rr.Body.String(), `"status":"error"`) || h.qwenLogin.byID[id].token != "" {
-		t.Fatal("expired login remained usable")
-	}
-}
-
-func TestQwenBrowserLoginRejectsUnsupportedCallbackAddresses(t *testing.T) {
-	h := qwenBrowserTestHandler(t)
-	session, csrf := addTestPassportOperator(t, h.passport, "browser-owner")
-	for _, origin := range []string{"", "https://localhost:8080", "https://pool.example", "http://192.168.1.20:8080", "http://localhost:8080/invalid"} {
-		req := passportContributionRequest("POST", "/api/pool/accounts/qwen/login/init", session, csrf, []byte(`{}`))
-		req.Header.Set("Origin", origin)
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, req)
-		if rr.Code != 400 || len(h.qwenLogin.byID) != 0 {
-			t.Fatalf("unsupported browser callback address was accepted: %q", origin)
-		}
+	if authorizeQwenBrowserTest(h, session, csrf, id, callback).Code != 200 || completeQwenBrowserTest(h, other, otherCSRF, id).Code != 403 {
+		t.Fatal("OAuth completion was not scoped to its authenticated actor")
 	}
 }
 
@@ -222,42 +196,32 @@ func TestQwenBrowserLoginLinksExistingKeyAccountWithoutReplacingIt(t *testing.T)
 		t.Fatal(err)
 	}
 	id, callback := startQwenBrowserTest(t, h, session, csrf, accountID)
-	if postQwenBrowserCallback(h, callback).Code != 200 {
-		t.Fatal("existing account callback failed")
-	}
-	rr := pollQwenBrowserTest(h, session, csrf, id)
+	rr := authorizeQwenBrowserTest(h, session, csrf, id, callback)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"complete"`) {
 		t.Fatalf("existing account link: %d %s", rr.Code, rr.Body.String())
 	}
 	accounts := h.pool.allAccounts()
-	if len(accounts) != 1 || accounts[0].ID != accountID || accounts[0].AccessToken != "sk-sp-browser-test-key" || accounts[0].QwenTokenPlan.Mode != qwenPersonalBrowser || accounts[0].QwenCredits.Remaining != 33750 {
+	if len(accounts) != 1 || accounts[0].ID != accountID || accounts[0].AccessToken != "sk-sp-browser-test-key" || accounts[0].QwenTokenPlan.CloudOAuth == nil || accounts[0].QwenCredits.Remaining != 33750 {
 		t.Fatal("Cloud linking replaced the existing account or failed to load its balance")
-	}
-	other, otherCSRF := addTestPassportOperator(t, h.passport, "other")
-	body, _ := json.Marshal(map[string]string{"account_id": accountID})
-	req := passportContributionRequest("POST", "/api/pool/accounts/qwen/login/init", other, otherCSRF, body)
-	req.Header.Set("Origin", "http://localhost:8080")
-	denied := httptest.NewRecorder()
-	h.ServeHTTP(denied, req)
-	if denied.Code != 403 {
-		t.Fatal("another actor linked the private account")
 	}
 }
 
 func TestQwenBrowserLoginFailsClosedWhenCloudRejectsSession(t *testing.T) {
 	h := qwenBrowserTestHandler(t)
+	original := h.transport
 	calls := 0
-	h.transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-		calls++
-		return qwenJSONResponse(401, `{"error":"synthetic-private-upstream-response"}`), nil
+	h.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/modelstudio/cli/generateAccessToken" {
+			calls++
+			return qwenJSONResponse(401, `{"error":"synthetic-private-upstream-response"}`), nil
+		}
+		return original.RoundTrip(r)
 	})
 	session, csrf := addTestPassportOperator(t, h.passport, "browser-owner")
 	id, callback := startQwenBrowserTest(t, h, session, csrf, "")
-	postQwenBrowserCallback(h, callback)
-	body, _ := json.Marshal(map[string]string{"session_id": id, "api_key": "sk-sp-browser-test-key"})
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, passportContributionRequest("POST", "/api/pool/accounts/qwen/login/complete", session, csrf, body))
-	if !strings.Contains(rr.Body.String(), `"status":"error"`) || strings.Contains(rr.Body.String(), "synthetic-private") || calls != 1 || len(h.pool.allAccounts()) != 0 || h.qwenLogin.byID[id].token != "" {
-		t.Fatal("rejected browser session was reused, leaked or produced an account")
+	authorizeQwenBrowserTest(h, session, csrf, id, callback)
+	rr := completeQwenBrowserTest(h, session, csrf, id)
+	if !strings.Contains(rr.Body.String(), `"status":"error"`) || strings.Contains(rr.Body.String(), "synthetic-private") || calls != 1 || len(h.pool.allAccounts()) != 0 || h.qwenLogin.byID[id].oauth != nil {
+		t.Fatal("rejected Cloud authorization was reused, leaked or produced an account")
 	}
 }
