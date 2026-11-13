@@ -38,6 +38,20 @@ type streamTranslationState struct {
 	inputTokens       int64
 	outputTokens      int64
 	cachedInputTokens int64
+	blockOpen         bool                      // a Claude content block is started and not yet stopped
+	blockKind         string                    // type of the open block
+	oaiTools          map[string]*oaiStreamTool // Chat Completions tool calls by stream index
+	lastToolKey       string
+	sawToolUse        bool
+}
+
+// oaiStreamTool tracks one Chat Completions tool call while it streams so its
+// argument fragments land in the Claude tool_use block that call opened.
+type oaiStreamTool struct {
+	id, name     string
+	block        int
+	started      bool
+	pendingInput string
 }
 
 func (sw *sseTranslateWriter) Write(p []byte) (int, error) {
@@ -137,8 +151,9 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 		return
 	}
 
-	// First chunk with role - emit message_start
-	if role, ok := delta["role"].(string); ok && role != "" && !sw.state.messageStarted {
+	// Some providers omit the role chunk, so the first delta of any kind
+	// opens the message.
+	if !sw.state.messageStarted {
 		sw.state.messageStarted = true
 		sw.emitClaudeMessageStart()
 	}
@@ -151,12 +166,10 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 		reasoningText = rc
 	}
 	if reasoningText != "" {
-		if !sw.state.sentThinking {
+		if !sw.state.blockOpen || sw.state.blockKind != "thinking" {
 			sw.state.sentThinking = true
 			sw.state.sentRole = true
-			sw.emitClaudeEvent("content_block_start", fmt.Sprintf(
-				`{"type":"content_block_start","index":%d,"content_block":{"type":"thinking","thinking":""}}`,
-				sw.state.contentBlockIndex))
+			sw.emitClaudeBlockStart("thinking", `{"type":"thinking","thinking":""}`)
 		}
 		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%s}}`,
@@ -165,17 +178,10 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 
 	// Text content
 	if content, ok := delta["content"].(string); ok && content != "" {
-		if !sw.state.sentText {
-			// Close thinking block if it was open, then start text block
-			if sw.state.sentThinking {
-				sw.emitClaudeContentBlockStop()
-				sw.state.contentBlockIndex++
-			}
+		if !sw.state.blockOpen || sw.state.blockKind != "text" {
 			sw.state.sentText = true
 			sw.state.sentRole = true
-			sw.emitClaudeEvent("content_block_start", fmt.Sprintf(
-				`{"type":"content_block_start","index":%d,"content_block":{"type":"text","text":""}}`,
-				sw.state.contentBlockIndex))
+			sw.emitClaudeBlockStart("text", `{"type":"text","text":""}`)
 		}
 		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%s}}`,
@@ -185,46 +191,74 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 	// Tool calls
 	if tcs, ok := delta["tool_calls"].([]any); ok {
 		for _, tc := range tcs {
-			call, ok := tc.(map[string]any)
-			if !ok {
-				continue
-			}
-			fn, _ := call["function"].(map[string]any)
-
-			// New tool call (has name)
-			if fn != nil {
-				if name, ok := fn["name"].(string); ok && name != "" {
-					// Close previous content block if any
-					if sw.state.sentRole {
-						sw.emitClaudeContentBlockStop()
-						sw.state.contentBlockIndex++
-					}
-					sw.state.sentRole = true
-
-					toolID := ""
-					if id, ok := call["id"].(string); ok {
-						toolID = id
-					}
-					sw.state.currentToolID = toolID
-					sw.state.currentToolName = name
-					sw.state.toolCallIndex++
-
-					sw.emitClaudeEvent("content_block_start", fmt.Sprintf(
-						`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%s,"name":%s,"input":{}}}`,
-						sw.state.contentBlockIndex, mustMarshalString(toolID), mustMarshalString(name)))
-				}
-			}
-
-			// Tool call arguments delta
-			if fn != nil {
-				if args, ok := fn["arguments"].(string); ok && args != "" {
-					sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
-						`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`,
-						sw.state.contentBlockIndex, mustMarshalString(args)))
-				}
+			if call, ok := tc.(map[string]any); ok {
+				sw.translateOAIToolCallDelta(call)
 			}
 		}
 	}
+}
+
+// translateOAIToolCallDelta maps one streamed Chat Completions tool call
+// fragment onto Claude tool_use events. Fragments are matched by their stream
+// index, so parallel calls and providers that repeat the name in every chunk
+// keep their arguments in the block their call opened.
+func (sw *sseTranslateWriter) translateOAIToolCallDelta(call map[string]any) {
+	if sw.state.oaiTools == nil {
+		sw.state.oaiTools = map[string]*oaiStreamTool{}
+	}
+	id, _ := call["id"].(string)
+	key := sw.state.lastToolKey
+	if index, ok := call["index"].(float64); ok {
+		key = fmt.Sprintf("index:%d", int(index))
+	} else if current := sw.state.oaiTools[key]; key == "" || (id != "" && current != nil && current.id != "" && current.id != id) {
+		key = fmt.Sprintf("call:%d", len(sw.state.oaiTools))
+	}
+	sw.state.lastToolKey = key
+	tool := sw.state.oaiTools[key]
+	if tool == nil {
+		tool = &oaiStreamTool{}
+		sw.state.oaiTools[key] = tool
+	}
+	if tool.id == "" {
+		tool.id = id
+	}
+	fn, _ := call["function"].(map[string]any)
+	if name, ok := fn["name"].(string); ok && name != "" && !tool.started {
+		tool.name = name
+	}
+	args, _ := fn["arguments"].(string)
+	if !tool.started {
+		tool.pendingInput += args
+		if tool.name == "" {
+			return
+		}
+		tool.started = true
+		sw.state.sawToolUse = true
+		sw.state.sentRole = true
+		sw.state.toolCallIndex++
+		sw.state.currentToolID, sw.state.currentToolName = tool.id, tool.name
+		tool.block = sw.emitClaudeBlockStart("tool_use", fmt.Sprintf(`{"type":"tool_use","id":%s,"name":%s,"input":{}}`,
+			mustMarshalString(tool.id), mustMarshalString(tool.name)))
+		args, tool.pendingInput = tool.pendingInput, ""
+	}
+	if args != "" {
+		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
+			`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`,
+			tool.block, mustMarshalString(args)))
+	}
+}
+
+// emitClaudeBlockStart closes the open content block, starts the next one and
+// returns its index.
+func (sw *sseTranslateWriter) emitClaudeBlockStart(kind, contentBlock string) int {
+	if sw.state.blockOpen {
+		sw.emitClaudeContentBlockStop()
+		sw.state.contentBlockIndex++
+	}
+	sw.state.blockOpen, sw.state.blockKind = true, kind
+	sw.emitClaudeEvent("content_block_start", fmt.Sprintf(
+		`{"type":"content_block_start","index":%d,"content_block":%s}`, sw.state.contentBlockIndex, contentBlock))
+	return sw.state.contentBlockIndex
 }
 
 func (sw *sseTranslateWriter) emitClaudeMessageStart() {
@@ -242,6 +276,10 @@ func (sw *sseTranslateWriter) emitClaudeMessageStart() {
 }
 
 func (sw *sseTranslateWriter) emitClaudeContentBlockStop() {
+	if !sw.state.blockOpen {
+		return
+	}
+	sw.state.blockOpen = false
 	sw.emitClaudeEvent("content_block_stop", fmt.Sprintf(
 		`{"type":"content_block_stop","index":%d}`, sw.state.contentBlockIndex))
 }
@@ -253,6 +291,9 @@ func (sw *sseTranslateWriter) emitClaudeMessageDelta() {
 	stopReason := sw.state.finishReason
 	if stopReason == "" {
 		stopReason = "end_turn"
+	}
+	if stopReason == "end_turn" && sw.state.sawToolUse {
+		stopReason = "tool_use"
 	}
 	input, cached := claudeInputUsage(sw.state.inputTokens, sw.state.cachedInputTokens)
 	msg := fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%s,"stop_sequence":null},"usage":{"input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":%d}}`,
