@@ -115,6 +115,13 @@ func (h *proxyHandler) pollUpstreamUsage() {
 			continue
 		}
 
+		// AI Studio has no usage endpoint; model discovery validates the key.
+		// Falling through would probe the Codex usage API with a Google key and
+		// retire the account on the resulting 401.
+		if accType == AccountTypeAIStudio {
+			continue
+		}
+
 		if accType == AccountTypeQwen {
 			if retrievedAt.IsZero() || now.Sub(retrievedAt) >= qwenCreditPollInterval {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

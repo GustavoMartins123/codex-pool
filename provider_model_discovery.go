@@ -338,6 +338,10 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 		account.HealthError = ""
 		saveErr := saveAccount(account)
 		account.mu.Unlock()
+		if saveErr == nil && account.Type == AccountTypeAIStudio {
+			// Listing models authenticates the key, so it clears a stale dead flag.
+			restoreValidatedAccount(account, "AI Studio model discovery")
+		}
 		return saveErr
 	}
 	if account.Type == AccountTypeCodex {

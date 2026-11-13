@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const aistudioModelsFixture = `{"models":[
@@ -65,6 +66,8 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 	if err != nil || account == nil || account.AccessToken != "AIza-test-key" || account.HealthError == "" {
 		t.Fatalf("account = %+v err=%v", account, err)
 	}
+	// A stale dead flag from an earlier probe must not outlive a valid key.
+	account.Dead, account.Penalty = true, 100
 	status := http.StatusOK
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != "https://aistudio.example/v1beta/models?pageSize=1000" || req.Header.Get("x-goog-api-key") != "AIza-test-key" || req.Header.Get("Authorization") != "" {
@@ -76,8 +79,8 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
-	if account.HealthError != "" || len(account.Models) != 1 {
-		t.Fatalf("account after discovery: health=%q models=%v", account.HealthError, account.Models)
+	if account.HealthError != "" || len(account.Models) != 1 || account.Dead || account.Penalty != 0 {
+		t.Fatalf("account after discovery: health=%q dead=%v penalty=%v models=%v", account.HealthError, account.Dead, account.Penalty, account.Models)
 	}
 	saved, _ := os.ReadFile(file)
 	reloaded, err := provider.LoadAccount("key.json", file, saved)
@@ -96,5 +99,26 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 	}
 	if account.HealthError == "" || len(account.Models) != 0 {
 		t.Fatalf("failed discovery kept routing state: health=%q models=%v", account.HealthError, account.Models)
+	}
+}
+
+func TestAIStudioUsagePollerLeavesKeysAlive(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "key.json")
+	if err := os.WriteFile(file, []byte(`{"api_key":"AIza-poller"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	account := aistudioTestAccount("key", "AIza-poller")
+	account.File = file
+	h := &proxyHandler{
+		cfg:  &config{usageRefresh: time.Minute},
+		pool: newPoolState([]*Account{account}, false),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatalf("AI Studio usage poller called %s", req.URL)
+			return nil, nil
+		}),
+	}
+	h.pollUpstreamUsage()
+	if account.Dead {
+		t.Fatal("AI Studio key was retired by the usage poller")
 	}
 }
