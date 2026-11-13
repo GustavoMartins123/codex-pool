@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"codex-pool-proxy/internal/runnerproto"
@@ -157,5 +158,24 @@ func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
 	}
 	if string(injectResponsesPoolModels([]byte("not json"), discoveredModelsForPool(pool))) != "not json" {
 		t.Fatal("invalid upstream catalog was rewritten")
+	}
+}
+
+func TestCodexModelsEndpointListsQwenModels(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "codex-catalog-qwen-secret")
+	codex := &Account{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-codex", PlanType: "pro"}
+	qwen := &Account{ID: "qwen", Type: AccountTypeQwen, AccessToken: "sk-sp-catalog", Models: map[string]DiscoveredModel{"qwen3.8-max": {ID: "qwen3.8-max", Protocol: "openai"}}}
+	h := qwenTestHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, "/codex/models") {
+			t.Fatalf("unexpected upstream request %s", req.URL)
+		}
+		return qwenJSONResponse(200, `{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT"}]}`), nil
+	}), codex, qwen)
+	req := httptest.NewRequest("GET", "/backend-api/codex/models?client_version=0.164.0", nil)
+	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("codex-catalog-qwen-secret", "codex-client"))
+	rr := httptest.NewRecorder()
+	testPoolProxyRequest(t, h, rr, req, "codex-catalog")
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"slug":"gpt-6.1-sol"`) || !strings.Contains(rr.Body.String(), `"slug":"qwen3.8-max"`) {
+		t.Fatalf("status=%d catalog=%.400s", rr.Code, rr.Body.String())
 	}
 }
