@@ -57,7 +57,7 @@ func TestAntigravityUsageAndRemainingTokensTracking(t *testing.T) {
 		BillableTokens:  620,
 	}
 
-	handler.recordAntigravityUsage(account, ru, "gemini-3.8-flash-high", "user-1", "origin-1", "req-1")
+	handler.recordAntigravityUsage(account, ru, "gemini-3.8-flash-high", "user-1", "origin-1", "req-1", AccountTypeAntigravity)
 
 	// Verify account ID and plan type were attached
 	if ru.AccountID != "test-anti-account" {

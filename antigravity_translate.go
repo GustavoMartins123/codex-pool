@@ -66,6 +66,14 @@ type antigravityPreparedRequest struct {
 	ResponsesNamespacedTools map[string]bool
 	ResponsesCustomTools     map[string]bool
 	EstimatedInputTokens     int
+	Provider                 AccountType // upstream account type; empty means Antigravity
+}
+
+func (prepared antigravityPreparedRequest) provider() AccountType {
+	if prepared.Provider == "" {
+		return AccountTypeAntigravity
+	}
+	return prepared.Provider
 }
 
 func shouldRouteAntigravityModel(model string) bool {
@@ -122,6 +130,33 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 		return antigravityPreparedRequest{}, errors.New("Antigravity project ID is required")
 	}
 	upstreamModel := antigravityCanonicalModel(publicModel)
+	return prepareGeminiNativeRequest(path, body, publicModel, upstreamModel, conversationID, func(gemini map[string]any) map[string]any {
+		if !strings.Contains(strings.ToLower(upstreamModel), "claude") {
+			if generationConfig := mapValue(gemini["generationConfig"]); generationConfig != nil {
+				delete(generationConfig, "maxOutputTokens")
+			}
+		}
+		requestType := "agent"
+		if strings.Contains(strings.ToLower(upstreamModel), "image") {
+			requestType = "image_gen"
+		}
+		requestID := "agent-" + uuid.NewString()
+		if requestType == "image_gen" {
+			requestID = fmt.Sprintf("image_gen/%d/%s/12", time.Now().UnixMilli(), uuid.NewString())
+		}
+		return map[string]any{
+			"model": upstreamModel, "userAgent": "antigravity", "requestType": requestType,
+			"project": projectID, "requestId": requestID, "request": gemini,
+		}
+	})
+}
+
+// prepareGeminiNativeRequest translates a client request (Gemini, Chat
+// Completions, Anthropic Messages or Responses) into a native Gemini
+// generateContent request. envelope wraps it the way the upstream expects; the
+// wrapped body keeps "model" and "request" so the signature replay cache can
+// scope it.
+func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamModel, conversationID string, envelope func(map[string]any) map[string]any) (antigravityPreparedRequest, error) {
 	format := antigravityFormatGemini
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
@@ -171,27 +206,10 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 	delete(gemini, "stream")
 	delete(gemini, "model")
 	delete(gemini, "safetySettings")
-	if !strings.Contains(strings.ToLower(upstreamModel), "claude") {
-		if generationConfig := mapValue(gemini["generationConfig"]); generationConfig != nil {
-			delete(generationConfig, "maxOutputTokens")
-		}
-	}
-	requestType := "agent"
-	if strings.Contains(strings.ToLower(upstreamModel), "image") {
-		requestType = "image_gen"
-	}
-	requestID := "agent-" + uuid.NewString()
-	if requestType == "image_gen" {
-		requestID = fmt.Sprintf("image_gen/%d/%s/12", time.Now().UnixMilli(), uuid.NewString())
-	}
 	delete(root, "previous_response_id")
 	delete(root, "prompt_cache_key")
 	gemini["sessionId"] = antigravityFormatSessionID(conversationID, gemini)
-	envelope := map[string]any{
-		"model": upstreamModel, "userAgent": "antigravity", "requestType": requestType,
-		"project": projectID, "requestId": requestID, "request": gemini,
-	}
-	encoded, err := json.Marshal(envelope)
+	encoded, err := json.Marshal(envelope(gemini))
 	var responsesRequest map[string]any
 	var responsesFunctionNames map[string]string
 	if format == antigravityFormatResponses {
@@ -2239,13 +2257,13 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 		if conversationID != "" {
-			h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
+			h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), prepared.provider())
 			if text := responseTextFromObject(result); text != "" {
-				h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, text)
+				h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), prepared.provider(), text)
 			}
 		}
 		h.recordAntigravityTokenDrift(reqID, prepared, usage)
-		h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
+		h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID, prepared.provider())
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -2295,13 +2313,13 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		flusher.Flush()
 	}
 	if conversationID != "" && validResponseSeen && scanner.Err() == nil {
-		h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), AccountTypeAntigravity)
+		h.getContextHandoff().MarkNativeSessionEstablished(conversationScopedKey(userID, conversationID), prepared.provider())
 	}
 	if conversationID != "" {
-		h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, assistantText.String())
+		h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), prepared.provider(), assistantText.String())
 	}
 	h.recordAntigravityTokenDrift(reqID, prepared, usage)
-	h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID)
+	h.recordAntigravityUsage(account, usage, prepared.PublicModel, userID, originID, reqID, prepared.provider())
 }
 
 func (h *proxyHandler) recordAntigravityTokenDrift(reqID string, prepared antigravityPreparedRequest, usage *RequestUsage) {
@@ -2315,7 +2333,7 @@ func (h *proxyHandler) recordAntigravityTokenDrift(reqID string, prepared antigr
 	log.Printf("[%s] provider=antigravity estimated_input_tokens=%d upstream_input_tokens=%d residual=%d", reqID, prepared.EstimatedInputTokens, usage.InputTokens, residual)
 }
 
-func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUsage, model, userID, originID, reqID string) {
+func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUsage, model, userID, originID, reqID string, provider AccountType) {
 	if usage == nil {
 		return
 	}
@@ -2323,7 +2341,7 @@ func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUs
 		usage.AccountID = account.ID
 		usage.PlanType = account.PlanType
 	}
-	usage.Model, usage.UserID, usage.OriginID, usage.RequestID, usage.AccountType = model, userID, originID, reqID, AccountTypeAntigravity
+	usage.Model, usage.UserID, usage.OriginID, usage.RequestID, usage.AccountType = model, userID, originID, reqID, provider
 	h.recordUsage(account, *usage)
 }
 
