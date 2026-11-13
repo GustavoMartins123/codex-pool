@@ -273,11 +273,12 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 		case "additional_tools":
 			continue
 		case "reasoning":
+			// Only visible summaries carry reasoning Qwen can read. Encrypted
+			// reasoning belongs to the provider that produced it (for example a
+			// GPT turn earlier in a conversation that switched to Qwen), so it
+			// is left out while the rest of the history is kept.
 			for _, part := range anySlice(item["summary"]) {
 				reasoning.WriteString(stringValue(mapValue(part)["text"]))
-			}
-			if reasoning.Len() == 0 && item["encrypted_content"] != nil {
-				return nil, fmt.Errorf("Qwen cannot replay opaque reasoning without a visible summary")
 			}
 		case "function_call", "custom_tool_call":
 			if pending == nil && len(calls) != len(results) {

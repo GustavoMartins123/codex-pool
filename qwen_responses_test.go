@@ -94,7 +94,6 @@ func TestQwenResponsesRejectsUnsupportedAndBrokenToolContracts(t *testing.T) {
 		{"undeclared choice", `{"input":"hi","tool_choice":{"type":"function","name":"missing"}}`},
 		{"invalid parallel", `{"input":"hi","parallel_tool_calls":"true"}`},
 		{"invalid stream", `{"input":"hi","stream":"true"}`},
-		{"opaque reasoning", `{"input":[{"type":"reasoning","encrypted_content":"private"}]}`},
 		{"item reference", `{"input":[{"type":"item_reference","id":"item"}]}`},
 		{"missing input", `{"previous_response_id":"resp-old"}`},
 	} {
@@ -124,5 +123,35 @@ func TestQwenResponsesPreservesImagesAndAvoidsToolNameCollisions(t *testing.T) {
 	image := mapValue(anySlice(mapValue(anySlice(request["messages"])[0])["content"])[0])
 	if image["type"] != "image_url" || mapValue(image["image_url"])["url"] != "data:image/png;base64,dGVzdA==" || mapValue(image["image_url"])["detail"] != "high" {
 		t.Fatal("image input was lost in Responses conversion")
+	}
+}
+
+func TestQwenResponsesDropsOtherProvidersEncryptedReasoning(t *testing.T) {
+	// A conversation that started on a GPT model carries encrypted reasoning
+	// items; switching to Qwen must keep the visible history.
+	body := `{"input":[
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"plan the work"}]},
+		{"type":"reasoning","summary":[],"encrypted_content":"gAAAAopaque-openai-ciphertext"},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Here is the plan."}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+	]}`
+	prepared, err := prepareQwenResponsesRequest("/v1/responses", []byte(body), "qwen4-max-preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(prepared.Body, &request); err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(prepared.Body)
+	if strings.Contains(encoded, "ciphertext") || strings.Contains(encoded, "reasoning_content") {
+		t.Fatalf("encrypted reasoning leaked to Qwen: %s", encoded)
+	}
+	var roles []string
+	for _, raw := range anySlice(request["messages"]) {
+		roles = append(roles, stringValue(mapValue(raw)["role"]))
+	}
+	if strings.Join(roles, ",") != "user,assistant,user" || !strings.Contains(encoded, "Here is the plan.") {
+		t.Fatalf("visible history was not kept: %s", encoded)
 	}
 }
