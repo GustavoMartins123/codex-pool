@@ -1,7 +1,8 @@
 import { antigravityOAuthStatus, contributeAPIKey, contributeGrok, exchangeAccountOAuth, exchangeAntigravityOAuth, exchangeAntigravityRelogin, exchangeClaudeRelogin, exchangeCodexRelogin, startAccountOAuth, startAntigravityOAuth, startAntigravityRelogin, startClaudeRelogin, startCodexRelogin, startZAILogin, zaiLoginStatus } from "../api";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { emptyQwenTokenPlan, QwenTokenPlanFields, qwenTokenPlanConfig } from "./QwenTokenPlan";
 
-type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go";
+type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go" | "qwen";
 
 
 const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; mode: "oauth" | "key" | "json" }> = [
@@ -15,6 +16,7 @@ const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; 
   { id: "xiaomi", label: "Xiaomi", mode: "key" },
   { id: "grok", label: "Grok", mode: "json" },
   { id: "opencode_go", label: "OpenCode Go", mode: "key" },
+  { id: "qwen", label: "Qwen", mode: "key" },
 ];
 
 
@@ -37,6 +39,7 @@ function oauthCode(value: string, expectedState: string | undefined, provider: C
 export function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvider = "codex" }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string; reloginProvider?: "codex" | "claude" | "antigravity" }) {
   const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? reloginProvider : "codex");
   const [credential, setCredential] = useState("");
+  const [tokenPlan, setTokenPlan] = useState(emptyQwenTokenPlan);
 	  const [oauth, setOAuth] = useState<{ verifier?: string; sessionID?: string; state?: string; url: string } | null>(null);
 	  const oauthCompleted = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +102,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	    oauthCompleted.current = false;
     setProvider(next);
     setCredential("");
+    setTokenPlan(emptyQwenTokenPlan());
     setOAuth(null);
     setError("");
   };
@@ -168,8 +172,10 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	        }
       } else if (selected.mode === "json") {
         await contributeGrok(credential);
+      } else if (provider === "qwen") {
+        await contributeAPIKey("qwen", credential, qwenTokenPlanConfig(tokenPlan));
       } else {
-        await contributeAPIKey(provider === "zai_key" ? "zai" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go", credential);
+        await contributeAPIKey(provider === "zai_key" ? "zai" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go" | "qwen", credential);
       }
       setCredential("");
       await onAdded();
@@ -207,6 +213,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
         ) : (
           <label className="contribution-field"><span>{provider === "zai_key" ? "Z.ai API key" : `${selected.label} API key`}</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
         )}
+        {provider === "qwen" && <QwenTokenPlanFields draft={tokenPlan} onChange={setTokenPlan} />}
         {error && <div className="access-error" role="alert">{error}</div>}
         <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? reloginAccountID ? "Saving…" : "Adding…" : reloginAccountID ? "Save credentials" : "Add to pool"}</button>}</div>
       </form>

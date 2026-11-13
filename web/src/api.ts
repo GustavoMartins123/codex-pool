@@ -1,5 +1,5 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
-import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics } from "./types";
+import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics, TokenPlanCredits } from "./types";
 
 import { validCompatibility } from "./compatibility";
 
@@ -243,13 +243,44 @@ export interface AccountContributionResult {
 	  error?: string;
 }
 
-export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go", apiKey: string) {
+export interface QwenTokenPlanConfig {
+  mode: "personal_manual" | "team_api" | "personal_cloud";
+  plan?: string;
+  total_credits?: number;
+  remaining_credits?: number;
+  cycle_start?: string;
+  cycle_end?: string;
+  access_key_id?: string;
+  access_key_secret?: string;
+  security_token?: string;
+  seat_id?: string;
+}
+
+interface QwenTokenPlanView {
+  token_plan: QwenTokenPlanConfig | null;
+  credits: TokenPlanCredits | null;
+  error: string;
+}
+
+export async function loadQwenTokenPlan(id: string): Promise<QwenTokenPlanView> {
+  return decode(await fetch(`/api/accounts/qwen/${encodeURIComponent(id)}/token-plan`, { credentials: "same-origin" }));
+}
+
+export async function saveQwenTokenPlan(id: string, tokenPlan: QwenTokenPlanConfig | null): Promise<QwenTokenPlanView> {
+  return decode(await fetch(`/api/accounts/qwen/${encodeURIComponent(id)}/token-plan`, { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: JSON.stringify({ token_plan: tokenPlan }) }));
+}
+
+export async function refreshQwenTokenPlan(id: string): Promise<QwenTokenPlanView> {
+  return decode(await fetch(`/api/accounts/qwen/${encodeURIComponent(id)}/token-plan`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
+}
+
+export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go" | "qwen", apiKey: string, tokenPlan?: QwenTokenPlanConfig | null) {
   // The backend route uses a hyphen (opencode-go); the pool type uses an underscore.
   const route = provider === "opencode_go" ? "opencode-go" : provider;
   return decode<AccountContributionResult>(await fetch(`/api/pool/accounts/${route}/add`, {
     method: "POST",
     credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, ...(provider === "qwen" ? { token_plan: tokenPlan } : {}) }),
   }));
 }
 

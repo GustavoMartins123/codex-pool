@@ -2,19 +2,48 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AccountContribution } from "./AccountContribution";
-import { exchangeAccountOAuth, exchangeClaudeRelogin, exchangeCodexRelogin, startAccountOAuth, startClaudeRelogin, startCodexRelogin } from "../api";
+import { contributeAPIKey, exchangeAccountOAuth, exchangeClaudeRelogin, exchangeCodexRelogin, startAccountOAuth, startClaudeRelogin, startCodexRelogin } from "../api";
 
 vi.mock("../api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api")>(),
   startAccountOAuth: vi.fn(), exchangeAccountOAuth: vi.fn(),
   startClaudeRelogin: vi.fn(), exchangeClaudeRelogin: vi.fn(),
   startCodexRelogin: vi.fn(), exchangeCodexRelogin: vi.fn(),
+  contributeAPIKey: vi.fn(),
 }));
 
 beforeEach(() => {
   vi.spyOn(window, "open").mockReturnValue(null);
   vi.mocked(startAccountOAuth).mockResolvedValue({ oauth_url: "https://claude.com/authorize", verifier: "synthetic-verifier", state: "session-state" });
   vi.mocked(exchangeAccountOAuth).mockResolvedValue({ success: true, account_id: "claude-account" });
+});
+
+it("links a Qwen key with an explicitly configured Personal credit allowance", async () => {
+  vi.mocked(contributeAPIKey).mockResolvedValue({ success: true, account_id: "qwen-account" });
+  const onAdded = vi.fn().mockResolvedValue(undefined);
+  render(<AccountContribution onClose={vi.fn()} onAdded={onAdded} />);
+  fireEvent.click(screen.getByRole("button", { name: "Qwen" }));
+  fireEvent.change(screen.getByLabelText("Qwen API key"), { target: { value: "sk-sp-synthetic-test-key" } });
+  fireEvent.change(screen.getByLabelText("Credit source"), { target: { value: "personal_manual" } });
+  fireEvent.change(screen.getByLabelText("Cycle credit allowance"), { target: { value: "25000" } });
+  fireEvent.change(screen.getByLabelText("Credits remaining"), { target: { value: "18750" } });
+  const now = Date.now();
+  fireEvent.change(screen.getByLabelText("Subscription cycle start"), { target: { value: new Date(now - 86400000).toISOString().slice(0, 16) } });
+  fireEvent.change(screen.getByLabelText("Subscription cycle end"), { target: { value: new Date(now + 29 * 86400000).toISOString().slice(0, 16) } });
+  fireEvent.click(screen.getByRole("button", { name: "Add to pool" }));
+  await waitFor(() => expect(onAdded).toHaveBeenCalledOnce());
+  expect(contributeAPIKey).toHaveBeenCalledWith("qwen", "sk-sp-synthetic-test-key", expect.objectContaining({ mode: "personal_manual", total_credits: 25000, remaining_credits: 18750 }));
+});
+
+it("keeps a rejected Qwen contribution open and shows the discovery error", async () => {
+  vi.mocked(contributeAPIKey).mockRejectedValue(new Error("Qwen model discovery failed; the account was not added"));
+  const onAdded = vi.fn();
+  render(<AccountContribution onClose={vi.fn()} onAdded={onAdded} />);
+  fireEvent.click(screen.getByRole("button", { name: "Qwen" }));
+  fireEvent.change(screen.getByLabelText("Qwen API key"), { target: { value: "sk-sp-test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add to pool" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("discovery failed");
+  expect(onAdded).not.toHaveBeenCalled();
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.restoreAllMocks(); });
 

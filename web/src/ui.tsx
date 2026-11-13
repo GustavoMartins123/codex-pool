@@ -4,6 +4,7 @@ import { type AccountStats, type PoolStats, type Provider, type ResetWindowKind 
 import { type ReactNode, useState } from "react";
 
 export const PROVIDERS: Record<Provider, { label: string; color: string; dither: DitherColor; glyph: string }> = {
+	qwen: { label: "Qwen", color: "#a678ff", dither: "purple", glyph: "Q" },
   codex: { label: "Codex", color: "#39e75f", dither: "green", glyph: "◎" },
   claude: { label: "Claude", color: "#a678ff", dither: "purple", glyph: "◉" },
   gemini: { label: "Gemini", color: "#27d8d1", dither: "cyan", glyph: "✦" },
@@ -124,6 +125,7 @@ const RESET_WINDOW_LABELS: Record<ResetWindowKind, string> = {
   five_hour: "5 hour",
   daily: "Daily",
   weekly: "Weekly",
+  monthly: "Monthly credits",
   tokens: "Tokens",
   requests: "Requests",
   primary: "Primary",

@@ -602,6 +602,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .contribution-field input, .contribution-field textarea { display: block; flex: 0 0 auto; position: relative; width: 100%; margin: 0; border: 1px solid var(--rule); background: #050504; color: var(--ink); padding: 11px 12px; font: .76rem/1.5 "IBM Plex Mono", monospace; }
 .contribution-field input { min-height: 45px; }
 .contribution-field textarea { min-height: 150px; resize: vertical; }
+.qwen-token-plan-fields { display: grid; gap: 12px; min-width: 0; margin: 18px 0; padding: 14px; border: 1px solid var(--rule); }
+.qwen-token-plan-fields legend { padding: 0 6px; color: var(--ink); }
+.qwen-token-plan-fields p { margin: 0; color: var(--muted); font-size: .85rem; line-height: 1.5; }
+.qwen-token-plan-fields select { width: 100%; min-height: 45px; border: 1px solid var(--rule); background: var(--void); color: var(--ink); padding: 10px; }
 .oauth-launch { min-height: 48px !important; border-color: var(--gold-hot) !important; color: var(--gold-hot); }
 
 .setup-grid { display: grid; grid-template-columns: 170px minmax(0,1fr); border: 1px solid var(--rule-hot); }

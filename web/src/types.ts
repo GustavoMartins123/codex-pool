@@ -1,6 +1,6 @@
-export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go" | "pool";
+export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go" | "qwen" | "pool";
 
-export type ResetWindowKind = "none" | "five_hour" | "daily" | "weekly" | "tokens" | "requests" | "primary" | "secondary";
+export type ResetWindowKind = "none" | "five_hour" | "daily" | "weekly" | "monthly" | "tokens" | "requests" | "primary" | "secondary";
 
 export interface ResetWindowPolicy {
   tier: "unknown" | "plus" | "team_basic" | "pro_or_higher";
@@ -141,6 +141,20 @@ export interface AccountStats {
   reset_credits_available?: number;
   reset_credit_expirations?: string[];
   reset_credits_known?: boolean;
+  token_plan_credits?: TokenPlanCredits;
+  token_plan_credits_error?: string;
+}
+
+export interface TokenPlanCredits {
+  edition: "personal" | "team";
+  plan: string;
+  total: number;
+  used: number;
+  remaining: number;
+  cycle_start: string;
+  cycle_end: string;
+  updated_at: string;
+  source: "manual" | "alibaba-api" | "alibaba-console";
 }
 
 export interface PoolStats {
