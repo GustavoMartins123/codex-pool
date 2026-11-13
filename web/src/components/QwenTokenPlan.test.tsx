@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { loadQwenTokenPlan, saveQwenTokenPlan, refreshQwenTokenPlan, startQwenLogin, qwenLoginStatus } from "../api";
+import { loadQwenTokenPlan, saveQwenTokenPlan, refreshQwenTokenPlan, startQwenLogin, authorizeQwenLogin } from "../api";
 import { emptyQwenTokenPlan, QwenCreditBalance, QwenCreditManager, qwenTokenPlanConfig } from "./QwenTokenPlan";
 import type { TokenPlanCredits } from "../types";
 
-vi.mock("../api", () => ({ loadQwenTokenPlan: vi.fn(), saveQwenTokenPlan: vi.fn(), refreshQwenTokenPlan: vi.fn(), startQwenLogin: vi.fn(), qwenLoginStatus: vi.fn(), completeQwenLogin: vi.fn() }));
+vi.mock("../api", () => ({ loadQwenTokenPlan: vi.fn(), saveQwenTokenPlan: vi.fn(), refreshQwenTokenPlan: vi.fn(), startQwenLogin: vi.fn(), authorizeQwenLogin: vi.fn(), completeQwenLogin: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 function credits(): TokenPlanCredits {
@@ -64,8 +64,8 @@ it("links the Personal Cloud account without manual credit values", async () => 
   vi.mocked(loadQwenTokenPlan).mockResolvedValueOnce({ token_plan: null, credits: null, error: "Not configured" });
   const balance = { ...credits(), source: "alibaba-console" as const };
   vi.mocked(loadQwenTokenPlan).mockResolvedValueOnce({ token_plan: { mode: "personal_browser" }, credits: balance, error: "" });
-  vi.mocked(startQwenLogin).mockResolvedValue({ session_id: "cloud-session", oauth_url: "https://modelstudio.console.alibabacloud.com/console-login" });
-  vi.mocked(qwenLoginStatus).mockResolvedValue({ status: "complete", account_id: "cloud-qwen" });
+  vi.mocked(startQwenLogin).mockResolvedValue({ session_id: "cloud-session", oauth_url: "https://signin.alibabacloud.com/oauth2/v1/auth" });
+  vi.mocked(authorizeQwenLogin).mockResolvedValue({ status: "complete", account_id: "cloud-qwen" });
   render(<QwenCreditManager id="cloud-qwen" />);
   fireEvent.click(screen.getByRole("button", { name: "Manage Token Plan credits" }));
   fireEvent.change(await screen.findByLabelText("Credit source"), { target: { value: "personal_browser" } });
@@ -75,7 +75,9 @@ it("links the Personal Cloud account without manual credit values", async () => 
   expect(screen.queryByLabelText("Token Plan seat ID")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Sign in to Alibaba Cloud" }));
   await waitFor(() => expect(startQwenLogin).toHaveBeenCalledWith("cloud-qwen"));
-  expect(await screen.findByText(/Automatic balance/, {}, { timeout: 4000 })).toBeTruthy();
+  fireEvent.change(await screen.findByLabelText("Alibaba Cloud callback URL"), { target: { value: "http://127.0.0.1:12345/cli/callback?code=fixture&state=fixture" } });
+  fireEvent.click(screen.getByRole("button", { name: "Confirm Alibaba Cloud authorization" }));
+  expect(await screen.findByText(/Automatic balance/)).toBeTruthy();
   expect(saveQwenTokenPlan).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Refresh Cloud balance" })).toBeTruthy();
 });

@@ -326,11 +326,11 @@ export async function startQwenLogin(accountID?: string) {
   }));
 }
 
-export async function qwenLoginStatus(sessionID: string) {
-  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/qwen/login/poll", {
+export async function authorizeQwenLogin(sessionID: string, callbackURL: string) {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/qwen/login/authorize", {
     method: "POST", credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-    body: JSON.stringify({ session_id: sessionID }),
+    body: JSON.stringify({ session_id: sessionID, callback_url: callbackURL }),
   }));
 }
 
