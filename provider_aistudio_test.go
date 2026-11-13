@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -137,5 +139,69 @@ func TestAIStudioUsagePollerLeavesKeysAlive(t *testing.T) {
 	h.pollUpstreamUsage()
 	if account.Dead {
 		t.Fatal("AI Studio key was retired by the usage poller")
+	}
+}
+
+func TestAIStudioCatalogPublishesDocumentedThinkingLevels(t *testing.T) {
+	models, err := parseAIStudioModels([]byte(`{"models":[
+		{"name":"models/gemini-4-hydrogen","supportedGenerationMethods":["generateContent"]},
+		{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]},
+		{"name":"models/gemma-4-31b-it","supportedGenerationMethods":["generateContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"aistudio/gemini-4-hydrogen": "[low medium high xhigh]/high",
+		"aistudio/gemini-2.5-flash":  "[none low medium high]/high",
+		"aistudio/gemma-4-31b-it":    "[]/",
+	} {
+		model := models[id]
+		if got := fmt.Sprintf("%v/%s", model.ReasoningEfforts, model.DefaultReasoningEffort); got != want {
+			t.Errorf("%s levels = %s, want %s", id, got, want)
+		}
+	}
+}
+
+func TestAIStudioMapsEffortToDocumentedThinking(t *testing.T) {
+	for _, test := range []struct {
+		name, path, body string
+		want             string // thinkingConfig JSON, or "" when absent
+	}{
+		{"gemini 4 xhigh", "/v1/responses", `{"model":"aistudio/gemini-4-hydrogen","input":"hi","reasoning":{"effort":"xhigh"}}`, `{"includeThoughts":true,"thinkingLevel":"xhigh"}`},
+		{"undocumented level keeps default", "/v1/responses", `{"model":"aistudio/gemini-3.8-flash","input":"hi","reasoning":{"effort":"xhigh"}}`, `{"includeThoughts":true}`},
+		{"gemini 3 cannot turn off", "/v1/responses", `{"model":"aistudio/gemini-3.8-flash","input":"hi","reasoning":{"effort":"none"}}`, `{"includeThoughts":false}`},
+		{"gemini 2.5 budget", "/v1/responses", `{"model":"aistudio/gemini-2.5-flash","input":"hi","reasoning":{"effort":"low"}}`, `{"includeThoughts":true,"thinkingBudget":1024}`},
+		{"gemini 2.5 off", "/v1/chat/completions", `{"model":"aistudio/gemini-2.5-flash","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`, `{"includeThoughts":false,"thinkingBudget":0}`},
+		{"2.5 pro cannot turn off", "/v1/responses", `{"model":"aistudio/gemini-2.5-pro","input":"hi","reasoning":{"effort":"none"}}`, `{"includeThoughts":false}`},
+		{"claude effort", "/v1/messages", `{"model":"aistudio/gemini-4-argon","max_tokens":64,"messages":[{"role":"user","content":"hi"}],"output_config":{"effort":"medium"}}`, `{"includeThoughts":true,"thinkingLevel":"medium"}`},
+		{"undocumented model", "/v1/responses", `{"model":"aistudio/gemma-4-31b-it","input":"hi","reasoning":{"effort":"high"}}`, ``},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prepared, err := prepareAIStudioRequest(test.path, []byte(test.body), stringValue(func() map[string]any {
+				var root map[string]any
+				_ = json.Unmarshal([]byte(test.body), &root)
+				return root
+			}()["model"]), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire, err := aistudioWireBody(prepared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request map[string]any
+			if err := json.Unmarshal(wire, &request); err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if config := mapValue(mapValue(request["generationConfig"])["thinkingConfig"]); config != nil {
+				encoded, _ := json.Marshal(config)
+				got = string(encoded)
+			}
+			if got != test.want {
+				t.Fatalf("thinkingConfig = %s, want %s", got, test.want)
+			}
+		})
 	}
 }

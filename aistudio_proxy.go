@@ -27,7 +27,9 @@ func prepareAIStudioRequest(path string, body []byte, requestedModel, conversati
 	if upstream == "" {
 		return antigravityPreparedRequest{}, errors.New("AI Studio model is required")
 	}
+	effort := aistudioRequestedEffort(body)
 	prepared, err := prepareGeminiNativeRequest(path, body, strings.TrimSpace(requestedModel), upstream, conversationID, func(gemini map[string]any) map[string]any {
+		aistudioApplyThinking(gemini, upstream, effort)
 		return map[string]any{"model": upstream, "request": gemini}
 	})
 	prepared.Provider = AccountTypeAIStudio
@@ -245,4 +247,63 @@ func (h *proxyHandler) handleAIStudioProxy(w http.ResponseWriter, r *http.Reques
 	}
 	antigravityWriteError(w, format, http.StatusServiceUnavailable, []byte(lastError.Error()))
 	return true
+}
+
+// aistudioRequestedEffort reads the reasoning effort a client asked for:
+// Responses reasoning.effort, Chat Completions reasoning_effort, or Anthropic
+// output_config.effort.
+func aistudioRequestedEffort(body []byte) string {
+	var request struct {
+		Reasoning struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		ReasoningEffort string `json:"reasoning_effort"`
+		OutputConfig    struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return ""
+	}
+	for _, effort := range []string{request.Reasoning.Effort, request.ReasoningEffort, request.OutputConfig.Effort} {
+		if effort = strings.ToLower(strings.TrimSpace(effort)); effort != "" {
+			return effort
+		}
+	}
+	return ""
+}
+
+// aistudioApplyThinking replaces the translated thinking settings with what
+// the Gemini API documents for model: a thinkingLevel for Gemini 3 and 4, a
+// thinkingBudget for Gemini 2.5. An effort the model does not document, or a
+// model outside the table, keeps the model's default thinking, because the
+// API rejects unknown levels and Gemini 4 rejects a level and budget together.
+func aistudioApplyThinking(gemini map[string]any, model, effort string) {
+	config := mapValue(gemini["generationConfig"])
+	thinking, known := aistudioThinkingFor(model)
+	if !known {
+		if config != nil {
+			delete(config, "thinkingConfig")
+		}
+		return
+	}
+	if config == nil {
+		config = map[string]any{}
+		gemini["generationConfig"] = config
+	}
+	settings := map[string]any{"includeThoughts": effort != "none"}
+	if thinking.budgets != nil && effort == "minimal" {
+		effort = "low"
+	}
+	if containsString(thinking.levels, effort) {
+		switch {
+		case thinking.budgets == nil:
+			settings["thinkingLevel"] = effort
+		case effort == "none":
+			settings["thinkingBudget"] = 0
+		default:
+			settings["thinkingBudget"] = thinking.budgets[effort]
+		}
+	}
+	config["thinkingConfig"] = settings
 }

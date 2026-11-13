@@ -152,14 +152,55 @@ func parseAIStudioModels(body []byte) (map[string]DiscoveredModel, error) {
 		if display == "" || names[display] > 1 {
 			display = id
 		}
-		models[public] = DiscoveredModel{
+		model := DiscoveredModel{
 			ID: public, DisplayName: display + " · AI Studio", Description: row.Description,
 			ContextWindow: row.InputTokenLimit, MaxOutputTokens: row.OutputTokenLimit,
 			Reasoning: row.Thinking, Protocol: "gemini", Modalities: []string{"text", "image"},
 		}
+		if thinking, ok := aistudioThinkingFor(id); ok {
+			model.ReasoningEfforts = append([]string(nil), thinking.levels...)
+			model.DefaultReasoningEffort = thinking.defaultLevel
+		}
+		models[public] = model
 	}
 	if len(models) == 0 {
 		return nil, errors.New("AI Studio returned no text generation models")
 	}
 	return models, nil
+}
+
+// aistudioThinking is what the Gemini API documents for one model: either
+// thinkingLevel values (Gemini 3 and 4) or thinkingBudget tokens per effort
+// (Gemini 2.5). Models absent from the table keep their default thinking.
+type aistudioThinking struct {
+	levels       []string
+	defaultLevel string
+	budgets      map[string]int // Gemini 2.5: effort -> thinkingBudget
+}
+
+// aistudioBudgets follows the Gemini OpenAI-compatibility mapping for 2.5
+// models: minimal/low 1024, medium 8192, high 24576.
+var aistudioBudgets = map[string]int{"low": 1024, "medium": 8192, "high": 24576}
+
+// aistudioThinkingModels transcribes the thinking tables of the Gemini API
+// documentation (thinkingLevel per model, thinkingBudget ranges for 2.5).
+var aistudioThinkingModels = map[string]aistudioThinking{
+	"gemini-4-hydrogen":      {levels: []string{"low", "medium", "high", "xhigh"}, defaultLevel: "high"},
+	"gemini-4-argon":         {levels: []string{"low", "medium", "high"}, defaultLevel: "medium"},
+	"gemini-4-carbon":        {levels: []string{"low", "medium", "high"}, defaultLevel: "medium"},
+	"gemini-3.8-flash":       {levels: []string{"low", "medium", "high"}, defaultLevel: "medium"},
+	"gemini-3.6-flash":       {levels: []string{"minimal", "low", "medium", "high"}, defaultLevel: "medium"},
+	"gemini-3.5-flash-lite":  {levels: []string{"minimal", "low", "medium", "high"}, defaultLevel: "minimal"},
+	"gemini-3.1-pro-preview": {levels: []string{"low", "medium", "high"}, defaultLevel: "high"},
+	"gemini-3.1-flash-lite":  {levels: []string{"minimal", "low", "medium", "high"}, defaultLevel: "minimal"},
+	"gemini-3-flash-preview": {levels: []string{"minimal", "low", "medium", "high"}, defaultLevel: "high"},
+	"gemini-3-pro-preview":   {levels: []string{"low", "high"}, defaultLevel: "high"},
+	"gemini-2.5-pro":         {levels: []string{"low", "medium", "high"}, defaultLevel: "high", budgets: aistudioBudgets},
+	"gemini-2.5-flash":       {levels: []string{"none", "low", "medium", "high"}, defaultLevel: "high", budgets: aistudioBudgets},
+	"gemini-2.5-flash-lite":  {levels: []string{"none", "low", "medium", "high"}, defaultLevel: "none", budgets: aistudioBudgets},
+}
+
+func aistudioThinkingFor(model string) (aistudioThinking, bool) {
+	thinking, ok := aistudioThinkingModels[aistudioUpstreamModel(model)]
+	return thinking, ok
 }
