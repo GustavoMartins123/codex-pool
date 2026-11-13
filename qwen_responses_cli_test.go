@@ -87,7 +87,7 @@ func TestQwenResponsesRealCodexCLI(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Errorf("Codex did not execute and return %s: %v", wantID, request["messages"])
+				t.Errorf("Codex did not execute and return %s; tool results: %s", wantID, qwenCLIToolResults(request["messages"]))
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -153,14 +153,56 @@ func TestQwenResponsesRealCodexCLI(t *testing.T) {
 	command.Env = append(os.Environ(), "CODEX_HOME="+control, "QWEN_CODEX_TEST_TOKEN="+generateClaudePoolToken("qwen-cli-test-secret", "codex-cli"), "OTEL_SDK_DISABLED=true")
 	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Codex CLI tool round trip failed: %v\n%s", err, output)
+		t.Fatalf("Codex CLI tool round trip failed: %v\n%s", err, codexCLIOutputTail(output))
 	}
 	result, err := os.ReadFile(lastMessage)
 	if err != nil || strings.TrimSpace(string(result)) != "QWEN_CODEX_COMPLETE" || calls.Load() != 3 {
-		t.Fatalf("Codex did not finish the tool conversation: calls=%d last=%q err=%v\n%s", calls.Load(), result, err, output)
+		t.Fatalf("Codex did not finish the tool conversation: calls=%d last=%q err=%v\n%s", calls.Load(), result, err, codexCLIOutputTail(output))
 	}
 	created, err := os.ReadFile(filepath.Join(workspace, "qwen-output.txt"))
 	if err != nil || strings.TrimSpace(string(created)) != "QWEN_TOOL_OUTPUT" {
-		t.Fatalf("Codex did not apply the Qwen patch: %q %v\n%s", created, err, output)
+		t.Fatalf("Codex did not apply the Qwen patch: %q %v\n%s", created, err, codexCLIOutputTail(output))
 	}
+}
+
+const codexCLIDiagnosticLines, codexCLIDiagnosticWidth = 12, 240
+
+// qwenCLIToolResults summarizes only the tool messages so a failed turn does
+// not dump the whole converted conversation history.
+func qwenCLIToolResults(messages any) string {
+	var results []string
+	for _, raw := range anySlice(messages) {
+		message := mapValue(raw)
+		if message["role"] == "tool" {
+			results = append(results, fmt.Sprintf("%s=%q", stringValue(message["tool_call_id"]), clipDiagnostic(stringValue(message["content"]), 120)))
+		}
+	}
+	if len(results) == 0 {
+		return "none"
+	}
+	return strings.Join(results, ", ")
+}
+
+// codexCLIOutputTail keeps the last JSON events of the CLI run, where the
+// failure is reported, and clips each one to a readable width.
+func codexCLIOutputTail(output []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	omitted := 0
+	if len(lines) > codexCLIDiagnosticLines {
+		omitted, lines = len(lines)-codexCLIDiagnosticLines, lines[len(lines)-codexCLIDiagnosticLines:]
+	}
+	for i, line := range lines {
+		lines[i] = clipDiagnostic(line, codexCLIDiagnosticWidth)
+	}
+	if omitted > 0 {
+		lines = append([]string{fmt.Sprintf("... %d earlier output lines omitted", omitted)}, lines...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func clipDiagnostic(value string, width int) string {
+	if len(value) <= width {
+		return value
+	}
+	return value[:width] + fmt.Sprintf("... (%d bytes)", len(value))
 }
