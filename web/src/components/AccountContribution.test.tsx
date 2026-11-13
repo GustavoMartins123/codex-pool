@@ -18,28 +18,29 @@ beforeEach(() => {
   vi.mocked(exchangeAccountOAuth).mockResolvedValue({ success: true, account_id: "claude-account" });
 });
 
-it("links a Qwen key with an explicitly configured Personal credit allowance", async () => {
+it("separates Qwen browser sign-in from the API-key-only form", async () => {
   vi.mocked(contributeAPIKey).mockResolvedValue({ success: true, account_id: "qwen-account" });
   const onAdded = vi.fn().mockResolvedValue(undefined);
   render(<AccountContribution onClose={vi.fn()} onAdded={onAdded} />);
   fireEvent.click(screen.getByRole("button", { name: "Qwen" }));
+  expect(screen.getByRole("button", { name: "Sign in to Qwen" })).toBeTruthy();
+  expect(screen.queryByLabelText("Qwen API key")).toBeNull();
+  expect(screen.queryByLabelText("Credit source")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Qwen API key" }));
   fireEvent.change(screen.getByLabelText("Qwen API key"), { target: { value: "sk-sp-synthetic-test-key" } });
-  fireEvent.change(screen.getByLabelText("Credit source"), { target: { value: "personal_manual" } });
-  fireEvent.change(screen.getByLabelText("Cycle credit allowance"), { target: { value: "25000" } });
-  fireEvent.change(screen.getByLabelText("Credits remaining"), { target: { value: "18750" } });
-  const now = Date.now();
-  fireEvent.change(screen.getByLabelText("Subscription cycle start"), { target: { value: new Date(now - 86400000).toISOString().slice(0, 16) } });
-  fireEvent.change(screen.getByLabelText("Subscription cycle end"), { target: { value: new Date(now + 29 * 86400000).toISOString().slice(0, 16) } });
+  expect(screen.queryByRole("button", { name: "Sign in to Qwen" })).toBeNull();
+  expect(screen.queryByLabelText("Credit source")).toBeNull();
+  expect(screen.queryByLabelText("Alibaba Cloud AccessKey ID")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Add to pool" }));
   await waitFor(() => expect(onAdded).toHaveBeenCalledOnce());
-  expect(contributeAPIKey).toHaveBeenCalledWith("qwen", "sk-sp-synthetic-test-key", expect.objectContaining({ mode: "personal_manual", total_credits: 25000, remaining_credits: 18750 }));
+  expect(contributeAPIKey).toHaveBeenCalledWith("qwen", "sk-sp-synthetic-test-key");
 });
 
 it("keeps a rejected Qwen contribution open and shows the discovery error", async () => {
   vi.mocked(contributeAPIKey).mockRejectedValue(new Error("Qwen model discovery failed; the account was not added"));
   const onAdded = vi.fn();
   render(<AccountContribution onClose={vi.fn()} onAdded={onAdded} />);
-  fireEvent.click(screen.getByRole("button", { name: "Qwen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Qwen API key" }));
   fireEvent.change(screen.getByLabelText("Qwen API key"), { target: { value: "sk-sp-test" } });
   fireEvent.click(screen.getByRole("button", { name: "Add to pool" }));
   expect((await screen.findByRole("alert")).textContent).toContain("discovery failed");

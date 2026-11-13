@@ -76,7 +76,7 @@ export function MyAccounts({ principal }: { principal: PassportPrincipal }) {
       </div>
       {armed === account.id && <p>New requests will stop using this account. Withdrawal is permanent.</p>}
       {account.status === "active" && <AccountGovernance provider={account.provider} id={account.id} onChanged={load} />}
-      {account.status === "active" && account.provider === "qwen" && <QwenCreditManager id={account.id} onChanged={load} />}
+      {account.status === "active" && account.provider === "qwen" && <QwenCreditManager id={account.id} />}
       <OwnedAccountOperatorAccess provider={account.provider} id={account.id} />
     </article>)}
     {adding && <AccountContribution onClose={() => setAdding(false)} onAdded={added} />}

@@ -1,8 +1,8 @@
 import { antigravityOAuthStatus, contributeAPIKey, contributeGrok, exchangeAccountOAuth, exchangeAntigravityOAuth, exchangeAntigravityRelogin, exchangeClaudeRelogin, exchangeCodexRelogin, startAccountOAuth, startAntigravityOAuth, startAntigravityRelogin, startClaudeRelogin, startCodexRelogin, startZAILogin, zaiLoginStatus } from "../api";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { emptyQwenTokenPlan, QwenTokenPlanFields, qwenTokenPlanConfig } from "./QwenTokenPlan";
+import { QwenLogin } from "./QwenLogin";
 
-type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go" | "qwen";
+type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go" | "qwen" | "qwen_key";
 
 
 const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; mode: "oauth" | "key" | "json" }> = [
@@ -16,7 +16,8 @@ const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; 
   { id: "xiaomi", label: "Xiaomi", mode: "key" },
   { id: "grok", label: "Grok", mode: "json" },
   { id: "opencode_go", label: "OpenCode Go", mode: "key" },
-  { id: "qwen", label: "Qwen", mode: "key" },
+  { id: "qwen", label: "Qwen", mode: "oauth" },
+  { id: "qwen_key", label: "Qwen API key", mode: "key" },
 ];
 
 
@@ -39,7 +40,6 @@ function oauthCode(value: string, expectedState: string | undefined, provider: C
 export function AccountContribution({ onClose, onAdded, reloginAccountID, reloginProvider = "codex" }: { onClose: () => void; onAdded: () => Promise<void>; reloginAccountID?: string; reloginProvider?: "codex" | "claude" | "antigravity" }) {
   const [provider, setProvider] = useState<ContributableProvider>(reloginAccountID ? reloginProvider : "codex");
   const [credential, setCredential] = useState("");
-  const [tokenPlan, setTokenPlan] = useState(emptyQwenTokenPlan);
 	  const [oauth, setOAuth] = useState<{ verifier?: string; sessionID?: string; state?: string; url: string } | null>(null);
 	  const oauthCompleted = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -102,7 +102,6 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	    oauthCompleted.current = false;
     setProvider(next);
     setCredential("");
-    setTokenPlan(emptyQwenTokenPlan());
     setOAuth(null);
     setError("");
   };
@@ -140,6 +139,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (provider === "qwen") return;
     setBusy(true);
     setError("");
     try {
@@ -172,10 +172,8 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
 	        }
       } else if (selected.mode === "json") {
         await contributeGrok(credential);
-      } else if (provider === "qwen") {
-        await contributeAPIKey("qwen", credential, qwenTokenPlanConfig(tokenPlan));
       } else {
-        await contributeAPIKey(provider === "zai_key" ? "zai" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go" | "qwen", credential);
+        await contributeAPIKey(provider === "zai_key" ? "zai" : provider === "qwen_key" ? "qwen" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go", credential);
       }
       setCredential("");
       await onAdded();
@@ -196,7 +194,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
         {!reloginAccountID && <div className="contribution-providers" aria-label="Provider">
           {CONTRIBUTION_PROVIDERS.map((candidate) => <button type="button" key={candidate.id} className={provider === candidate.id ? "active" : ""} disabled={busy} aria-pressed={provider === candidate.id} onClick={() => choose(candidate.id)}>{candidate.label}</button>)}
         </div>}
-        {selected.mode === "oauth" ? (
+        {provider === "qwen" ? <QwenLogin onLinked={onAdded} /> : selected.mode === "oauth" ? (
           <div className="contribution-oauth">
             {!oauth ? (
               <button type="button" className="oauth-launch" disabled={busy} onClick={startOAuth}>{busy ? "Opening…" : `Sign in to ${selected.label}`}</button>
@@ -211,11 +209,10 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
         ) : selected.mode === "json" ? (
           <label className="contribution-field"><span>Grok auth JSON</span><textarea value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus spellCheck={false} required /></label>
         ) : (
-          <label className="contribution-field"><span>{provider === "zai_key" ? "Z.ai API key" : `${selected.label} API key`}</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
+          <label className="contribution-field"><span>{provider === "zai_key" || provider === "qwen_key" ? selected.label : `${selected.label} API key`}</span><input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} autoFocus autoComplete="off" required /></label>
         )}
-        {provider === "qwen" && <QwenTokenPlanFields draft={tokenPlan} onChange={setTokenPlan} />}
         {error && <div className="access-error" role="alert">{error}</div>}
-        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && <button className="gold-button" disabled={busy}>{busy ? reloginAccountID ? "Saving…" : "Adding…" : reloginAccountID ? "Save credentials" : "Add to pool"}</button>}</div>
+        <div><button type="button" onClick={onClose}>Cancel</button>{(selected.mode !== "oauth" || oauth) && provider !== "zai" && provider !== "qwen" && <button className="gold-button" disabled={busy}>{busy ? reloginAccountID ? "Saving…" : "Adding…" : reloginAccountID ? "Save credentials" : "Add to pool"}</button>}</div>
       </form>
     </div>
   );

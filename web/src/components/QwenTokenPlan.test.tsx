@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { loadQwenTokenPlan, saveQwenTokenPlan, refreshQwenTokenPlan } from "../api";
+import { loadQwenTokenPlan, saveQwenTokenPlan, refreshQwenTokenPlan, startQwenLogin, qwenLoginStatus } from "../api";
 import { emptyQwenTokenPlan, QwenCreditBalance, QwenCreditManager, qwenTokenPlanConfig } from "./QwenTokenPlan";
 import type { TokenPlanCredits } from "../types";
 
-vi.mock("../api", () => ({ loadQwenTokenPlan: vi.fn(), saveQwenTokenPlan: vi.fn(), refreshQwenTokenPlan: vi.fn() }));
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+vi.mock("../api", () => ({ loadQwenTokenPlan: vi.fn(), saveQwenTokenPlan: vi.fn(), refreshQwenTokenPlan: vi.fn(), startQwenLogin: vi.fn(), qwenLoginStatus: vi.fn(), completeQwenLogin: vi.fn() }));
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.restoreAllMocks(); });
 
 function credits(): TokenPlanCredits {
   return { edition: "personal", plan: "essential", total: 25000, used: 6250, remaining: 18750, cycle_start: new Date(Date.now() - 86400000).toISOString(), cycle_end: new Date(Date.now() + 29 * 86400000).toISOString(), updated_at: new Date().toISOString(), source: "manual" };
@@ -60,19 +60,22 @@ it("rejects a balance larger than its allowance", () => {
 });
 
 it("links the Personal Cloud account without manual credit values", async () => {
-  vi.mocked(loadQwenTokenPlan).mockResolvedValue({ token_plan: null, credits: null, error: "Not configured" });
+  vi.spyOn(window, "open").mockReturnValue(null);
+  vi.mocked(loadQwenTokenPlan).mockResolvedValueOnce({ token_plan: null, credits: null, error: "Not configured" });
   const balance = { ...credits(), source: "alibaba-console" as const };
-  vi.mocked(saveQwenTokenPlan).mockResolvedValue({ token_plan: { mode: "personal_cloud" }, credits: balance, error: "" });
+  vi.mocked(loadQwenTokenPlan).mockResolvedValueOnce({ token_plan: { mode: "personal_browser" }, credits: balance, error: "" });
+  vi.mocked(startQwenLogin).mockResolvedValue({ session_id: "cloud-session", oauth_url: "https://modelstudio.console.alibabacloud.com/console-login" });
+  vi.mocked(qwenLoginStatus).mockResolvedValue({ status: "complete", account_id: "cloud-qwen" });
   render(<QwenCreditManager id="cloud-qwen" />);
   fireEvent.click(screen.getByRole("button", { name: "Manage Token Plan credits" }));
-  fireEvent.change(await screen.findByLabelText("Credit source"), { target: { value: "personal_cloud" } });
-  fireEvent.change(screen.getByLabelText("Alibaba Cloud AccessKey ID"), { target: { value: "synthetic-key-id" } });
-  fireEvent.change(screen.getByLabelText("Alibaba Cloud AccessKey secret"), { target: { value: "synthetic-secret" } });
+  fireEvent.change(await screen.findByLabelText("Credit source"), { target: { value: "personal_browser" } });
+  expect(screen.queryByLabelText("Alibaba Cloud AccessKey ID")).toBeNull();
+  expect(screen.queryByLabelText("Alibaba Cloud AccessKey secret")).toBeNull();
   expect(screen.queryByLabelText("Cycle credit allowance")).toBeNull();
   expect(screen.queryByLabelText("Token Plan seat ID")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Save credit tracking" }));
-  await waitFor(() => expect(saveQwenTokenPlan).toHaveBeenCalledWith("cloud-qwen", { mode: "personal_cloud", access_key_id: "synthetic-key-id", access_key_secret: "synthetic-secret", security_token: "" }));
-  expect(await screen.findByText(/Automatic balance/)).toBeTruthy();
-  expect((screen.getByLabelText("Alibaba Cloud AccessKey secret") as HTMLInputElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Sign in to Alibaba Cloud" }));
+  await waitFor(() => expect(startQwenLogin).toHaveBeenCalledWith("cloud-qwen"));
+  expect(await screen.findByText(/Automatic balance/, {}, { timeout: 4000 })).toBeTruthy();
+  expect(saveQwenTokenPlan).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Refresh Cloud balance" })).toBeTruthy();
 });

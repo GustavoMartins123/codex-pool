@@ -239,12 +239,12 @@ export interface AccountContributionResult {
   verifier?: string;
   state?: string;
 	  session_id?: string;
-	  status?: "pending" | "exchanging" | "complete" | "error";
+          status?: "pending" | "exchanging" | "awaiting_key" | "complete" | "error";
 	  error?: string;
 }
 
 export interface QwenTokenPlanConfig {
-  mode: "personal_manual" | "team_api" | "personal_cloud";
+  mode: "personal_manual" | "team_api" | "personal_cloud" | "personal_browser";
   plan?: string;
   total_credits?: number;
   remaining_credits?: number;
@@ -274,13 +274,13 @@ export async function refreshQwenTokenPlan(id: string): Promise<QwenTokenPlanVie
   return decode(await fetch(`/api/accounts/qwen/${encodeURIComponent(id)}/token-plan`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 
-export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go" | "qwen", apiKey: string, tokenPlan?: QwenTokenPlanConfig | null) {
+export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go" | "qwen", apiKey: string) {
   // The backend route uses a hyphen (opencode-go); the pool type uses an underscore.
   const route = provider === "opencode_go" ? "opencode-go" : provider;
   return decode<AccountContributionResult>(await fetch(`/api/pool/accounts/${route}/add`, {
     method: "POST",
     credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-    body: JSON.stringify({ api_key: apiKey, ...(provider === "qwen" ? { token_plan: tokenPlan } : {}) }),
+    body: JSON.stringify({ api_key: apiKey }),
   }));
 }
 
@@ -315,6 +315,30 @@ export async function zaiLoginStatus(sessionID: string) {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
     body: JSON.stringify({ session_id: sessionID }),
+  }));
+}
+
+export async function startQwenLogin(accountID?: string) {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/qwen/login/init", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify(accountID ? { account_id: accountID } : {}),
+  }));
+}
+
+export async function qwenLoginStatus(sessionID: string) {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/qwen/login/poll", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ session_id: sessionID }),
+  }));
+}
+
+export async function completeQwenLogin(sessionID: string, apiKey: string) {
+  return decode<AccountContributionResult>(await fetch("/api/pool/accounts/qwen/login/complete", {
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ session_id: sessionID, api_key: apiKey }),
   }));
 }
 

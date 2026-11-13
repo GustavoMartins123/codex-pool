@@ -16,7 +16,12 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
   await page.setViewport({ width: 1365, height: 1000 });
   const errors = [];
   const ownMode = mode.startsWith('my-');
-  let owned = ownMode ? [{ id: 'private-kimi', provider: 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
+  let owned = ownMode ? [{ id: mode === 'my-qwen-link' ? 'private-qwen' : 'private-kimi', provider: mode === 'my-qwen-link' ? 'qwen' : 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
+  const qwenRequests = [];
+  let qwenAuthorized = false;
+  let qwenLinked = false;
+  let qwenAccountID = '';
+  const qwenCredits = () => ({ edition: 'personal', plan: 'essential', total: 45000, used: 11250, remaining: 33750, source: 'alibaba-console', cycle_start: new Date(Date.now() - 86400000).toISOString(), cycle_end: new Date(Date.now() + 28 * 86400000).toISOString(), updated_at: new Date().toISOString() });
   let createdClient;
   let registrationAllowed = false;
   let operatorAccount = { provider: 'kimi', id: 'private-kimi', owner_id: 'private-owner', revision: 2, enabled: false };
@@ -38,6 +43,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
     if (!url.pathname.startsWith('/api/') && url.pathname !== '/admin/accounts') { await request.continue(); return; }
     let body = {};
     let status = 200;
+    if (url.pathname.includes('/qwen/')) qwenRequests.push({ path: url.pathname, method: request.method(), body: request.postData() ? JSON.parse(request.postData()) : null });
     if (url.pathname === '/api/auth/me') { body = mode === 'guest' ? { ...principal, kind: 'guest' } : ownMode ? { ...principal, kind: 'member', can_contribute: mode !== 'my-disabled' } : principal; if (mode === 'signed-out') { status = 401; body = { error: 'Sign in required' }; } }
     else if (url.pathname === '/api/auth/join') body = { switch_required: true, current: principal };
     else if (url.pathname === '/api/auth/config') body = { operator_exists: true, legacy_signup: true };
@@ -72,6 +78,33 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
       owned.push({ id: 'new-private-kimi', provider: 'kimi', status: 'active', state: 'ready', revision: 2 });
       body = { success: true, account_id: 'new-private-kimi' };
     }
+    else if (url.pathname === '/api/pool/accounts/qwen/add') {
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      assert.deepEqual(JSON.parse(request.postData()), { api_key: 'sk-sp-browser-fixture' });
+      if (mode === 'my-qwen-key-error') { status = 502; body = { error: 'Qwen model discovery failed; the account was not added' }; }
+      else { owned.push({ id: 'private-qwen', provider: 'qwen', status: 'active', state: 'ready', revision: 2 }); body = { success: true, account_id: 'private-qwen' }; }
+    }
+    else if (url.pathname === '/api/pool/accounts/qwen/login/init') {
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      qwenAccountID = JSON.parse(request.postData()).account_id || '';
+      if (mode === 'my-qwen-login-error') { status = 400; body = { error: 'Alibaba Cloud only returns browser authorization to a local HTTP address' }; }
+      else body = { session_id: 'qwen-browser-session', oauth_url: 'about:blank#qwen-browser-authorization' };
+    }
+    else if (url.pathname === '/api/pool/accounts/qwen/login/poll') {
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      assert.deepEqual(JSON.parse(request.postData()), { session_id: 'qwen-browser-session' });
+      if (qwenAuthorized && qwenAccountID) qwenLinked = true;
+      body = { status: !qwenAuthorized ? 'pending' : qwenAccountID ? 'complete' : 'awaiting_key', ...(qwenAccountID ? { account_id: qwenAccountID } : {}) };
+    }
+    else if (url.pathname === '/api/pool/accounts/qwen/login/complete') {
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      assert.equal(qwenAuthorized, true);
+      assert.deepEqual(JSON.parse(request.postData()), { session_id: 'qwen-browser-session', api_key: 'sk-sp-browser-fixture' });
+      qwenLinked = true;
+      owned.push({ id: 'private-qwen', provider: 'qwen', status: 'active', state: 'ready', revision: 2 });
+      body = { status: 'complete', account_id: 'private-qwen' };
+    }
+    else if (url.pathname === '/api/accounts/qwen/private-qwen/token-plan') body = { token_plan: qwenLinked ? { mode: 'personal_browser' } : null, credits: qwenLinked ? qwenCredits() : null, error: qwenLinked ? '' : 'Token Plan credit tracking is not configured' };
     else if (url.pathname === '/api/accounts/kimi/private-kimi/controls') {
       if (request.method() === 'PUT') { assert.equal(request.headers()['x-csrf-token'], 'browser-fixture'); const value = JSON.parse(request.postData()); assert.equal(value.revision, accountControls.revision); accountControls = { ...accountControls, revision: accountControls.revision + 1, controls: value.controls }; owned = owned.map(item => ({ ...item, revision: accountControls.revision })); }
       body = accountControls;
@@ -124,7 +157,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in') => {
   });
   await page.goto(origin + path);
   await page.waitForSelector('h1');
-  return { page, errors };
+  return { page, errors, qwenRequests, authorizeQwen: () => { qwenAuthorized = true; } };
 };
 const clickText = async (page, selector, text) => {
   await page.waitForFunction((selector, text) => [...document.querySelectorAll(selector)].some(el => el.textContent.trim() === text), {}, selector, text);
@@ -262,6 +295,87 @@ try {
     }
     assert.deepEqual(errors, []);
     await page.close();
+  });
+  await check('Qwen API key stays separate from browser sign-in and adds a private account', async () => {
+    const { page, errors, qwenRequests } = await open('/?view=mine', 'my-qwen-key');
+    await clickText(page, '.mine-accounts button', 'Add account');
+    await clickText(page, '.contribution-providers button', 'Qwen');
+    await page.waitForSelector('.contribution-oauth .oauth-launch');
+    assert.equal(await page.$('.contribution-dialog input'), null);
+    await clickText(page, '.contribution-providers button', 'Qwen API key');
+    assert.equal(await page.$$eval('.contribution-dialog input', inputs => inputs.length), 1);
+    assert.equal(await page.$('.contribution-dialog select'), null);
+    assert.equal(await page.$('.contribution-oauth'), null);
+    assert.equal(await page.$eval('.contribution-dialog', dialog => dialog.textContent.includes('AccessKey')), false);
+    for (const width of [390, 1365]) {
+      await page.setViewport({ width, height: 1000 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Qwen contribution overflows at ${width}px`);
+    }
+    await page.type('.contribution-dialog input[type=password]', 'sk-sp-browser-fixture');
+    await page.click('.contribution-dialog .gold-button');
+    await page.waitForFunction(() => !document.querySelector('.contribution-dialog') && document.querySelector('.mine-accounts')?.textContent.includes('private-qwen'));
+    assert.deepEqual(qwenRequests.map(request => request.path), ['/api/pool/accounts/qwen/add']);
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('Qwen browser authorization adds models and displays proportional automatic credits', async () => {
+    const { page, errors, qwenRequests, authorizeQwen } = await open('/?view=mine', 'my-qwen-browser');
+    await clickText(page, '.mine-accounts button', 'Add account');
+    await clickText(page, '.contribution-providers button', 'Qwen');
+    const popupOpened = new Promise(resolve => page.once('popup', resolve));
+    await page.click('.contribution-oauth .oauth-launch');
+    const popup = await popupOpened;
+    await popup.waitForFunction(() => location.hash === '#qwen-browser-authorization');
+    assert.equal(await page.$('.contribution-dialog input'), null);
+    await page.waitForFunction(() => document.querySelector('.contribution-oauth')?.textContent.includes('authorize access'));
+    authorizeQwen();
+    await popup.close();
+    await page.waitForSelector('.contribution-dialog input[type=password]');
+    await page.type('.contribution-dialog input[type=password]', 'sk-sp-browser-fixture');
+    await page.click('.contribution-dialog .gold-button');
+    await page.waitForFunction(() => !document.querySelector('.contribution-dialog') && document.querySelector('.mine-accounts')?.textContent.includes('private-qwen'));
+    await clickText(page, 'button', 'Manage Token Plan credits');
+    await page.waitForFunction(() => document.querySelector('.mine-accounts')?.textContent.includes('25.0%'));
+    assert.ok(await page.$eval('.mine-accounts', element => element.textContent.includes('Automatic balance')));
+    assert.equal(await page.$$eval('label > span', labels => labels.some(label => label.textContent.includes('AccessKey'))), false);
+    assert.equal(qwenRequests.some(request => request.path.endsWith('/login/complete')), true);
+    assert.equal(qwenRequests.some(request => request.path.endsWith('/qwen/add')), false);
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('Qwen API key accounts link Cloud credits without entering Cloud credentials', async () => {
+    const { page, errors, qwenRequests, authorizeQwen } = await open('/?view=mine', 'my-qwen-link');
+    await clickText(page, 'button', 'Manage Token Plan credits');
+    await page.waitForSelector('.qwen-token-plan-fields select');
+    await page.select('.qwen-token-plan-fields select', 'personal_browser');
+    const popupOpened = new Promise(resolve => page.once('popup', resolve));
+    await page.click('.contribution-oauth .oauth-launch');
+    const popup = await popupOpened;
+    authorizeQwen(); await popup.close();
+    await page.waitForFunction(() => document.querySelector('.mine-accounts')?.textContent.includes('25.0%'));
+    assert.equal(await page.$('.contribution-oauth input'), null);
+    assert.ok(await page.$eval('.mine-accounts', element => element.textContent.includes('Alibaba Cloud account linked.')));
+    assert.deepEqual(qwenRequests.find(request => request.path.endsWith('/login/init')).body, { account_id: 'private-qwen' });
+    assert.equal(qwenRequests.some(request => request.path.endsWith('/login/complete') || request.path.endsWith('/qwen/add')), false);
+    await clickText(page, 'button', 'Refresh Cloud balance');
+    await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === 'Refresh Cloud balance')?.disabled);
+    assert.equal(qwenRequests.some(request => request.method === 'POST' && request.path.endsWith('/token-plan')), true);
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('Qwen key and browser failures keep the dialog open with explicit errors', async () => {
+    const { page, errors } = await open('/?view=mine', 'my-qwen-key-error');
+    await clickText(page, '.mine-accounts button', 'Add account');
+    await clickText(page, '.contribution-providers button', 'Qwen API key');
+    await page.type('.contribution-dialog input[type=password]', 'sk-sp-browser-fixture');
+    await page.click('.contribution-dialog .gold-button');
+    await page.waitForSelector('.contribution-dialog [role=alert]');
+    assert.equal(await page.$eval('.contribution-dialog input', input => input.value), 'sk-sp-browser-fixture');
+    assert.deepEqual(errors, []); await page.close();
+    const { page: unavailable, errors: loginErrors } = await open('/?view=mine', 'my-qwen-login-error');
+    await clickText(unavailable, '.mine-accounts button', 'Add account');
+    await clickText(unavailable, '.contribution-providers button', 'Qwen');
+    await unavailable.click('.contribution-oauth .oauth-launch');
+    await unavailable.waitForFunction(() => document.querySelector('.contribution-dialog [role=alert]')?.textContent.includes('local HTTP address'));
+    assert.equal(await unavailable.$('.contribution-dialog input'), null);
+    assert.deepEqual(loginErrors, []); await unavailable.close();
   });
   for (const view of ['mine', 'setup', 'passes', 'console']) {
     await check(`${view} renders at desktop and mobile widths`, async () => {

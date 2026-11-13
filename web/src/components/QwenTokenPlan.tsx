@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { loadQwenTokenPlan, refreshQwenTokenPlan, saveQwenTokenPlan, type QwenTokenPlanConfig } from "../api";
 import type { TokenPlanCredits } from "../types";
 import { Instrument } from "../ui";
+import { QwenLogin } from "./QwenLogin";
 
 export interface QwenTokenPlanDraft {
-  mode: "none" | "personal_manual" | "team_api" | "personal_cloud";
+  mode: "none" | "personal_manual" | "team_api" | "personal_cloud" | "personal_browser";
   plan: string;
   total: string;
   remaining: string;
@@ -20,9 +21,10 @@ export const emptyQwenTokenPlan = (): QwenTokenPlanDraft => ({ mode: "none", pla
 
 export function qwenTokenPlanConfig(draft: QwenTokenPlanDraft): QwenTokenPlanConfig | null {
   if (draft.mode === "none") return null;
-  if (draft.mode === "team_api" || draft.mode === "personal_cloud") {
-    if (!draft.accessKeyID.trim() || !draft.accessKeySecret.trim() || draft.mode === "team_api" && !draft.seatID.trim()) throw new Error(draft.mode === "team_api" ? "AccessKey ID, AccessKey secret and seat ID are required." : "Alibaba Cloud AccessKey ID and AccessKey secret are required.");
-    return { mode: draft.mode, access_key_id: draft.accessKeyID.trim(), access_key_secret: draft.accessKeySecret.trim(), security_token: draft.securityToken.trim(), ...(draft.mode === "team_api" ? { seat_id: draft.seatID.trim() } : {}) };
+  if (draft.mode === "personal_browser" || draft.mode === "personal_cloud") throw new Error("Sign in to Alibaba Cloud to link automatic credit tracking.");
+  if (draft.mode === "team_api") {
+    if (!draft.accessKeyID.trim() || !draft.accessKeySecret.trim() || !draft.seatID.trim()) throw new Error("AccessKey ID, AccessKey secret and seat ID are required.");
+    return { mode: draft.mode, access_key_id: draft.accessKeyID.trim(), access_key_secret: draft.accessKeySecret.trim(), security_token: draft.securityToken.trim(), seat_id: draft.seatID.trim() };
   }
   const total = Number(draft.total), remaining = Number(draft.remaining);
   const start = new Date(draft.cycleStart), end = new Date(draft.cycleEnd);
@@ -36,7 +38,8 @@ export function QwenTokenPlanFields({ draft, onChange }: { draft: QwenTokenPlanD
   return <fieldset className="qwen-token-plan-fields"><legend>Token Plan credit tracking</legend>
     <p>Personal and Team keys share the same prefix. The model API key does not reveal your edition or credit balance.</p>
     <label className="contribution-field"><span>Credit source</span><select value={draft.mode} onChange={event => onChange({ ...emptyQwenTokenPlan(), mode: event.target.value as QwenTokenPlanDraft["mode"] })}>
-      <option value="none">Not configured</option><option value="personal_manual">Personal — manual balance</option><option value="personal_cloud">Personal — Alibaba Cloud account</option><option value="team_api">Team — automatic balance</option>
+      <option value="none">Not configured</option><option value="personal_manual">Personal — manual balance</option><option value="personal_browser">Personal — Alibaba Cloud sign-in</option><option value="team_api">Team — AccessKey balance</option>
+      {draft.mode === "personal_cloud" && <option value="personal_cloud">Personal — configured AccessKey balance</option>}
     </select></label>
     {draft.mode === "personal_manual" && <>
       <p>Copy your current monthly allowance and remaining credits from the Alibaba Cloud console. These values stay manual until you update them. Add-on bundles are separate from this subscription allowance.</p>
@@ -46,8 +49,10 @@ export function QwenTokenPlanFields({ draft, onChange }: { draft: QwenTokenPlanD
       <label className="contribution-field"><span>Subscription cycle start</span><input type="datetime-local" required value={draft.cycleStart} onChange={event => field("cycleStart", event.target.value)} /></label>
       <label className="contribution-field"><span>Subscription cycle end</span><input type="datetime-local" required value={draft.cycleEnd} onChange={event => field("cycleEnd", event.target.value)} /></label>
     </>}
-    {(draft.mode === "team_api" || draft.mode === "personal_cloud") && <>
-      <p>{draft.mode === "team_api" ? "Connect an Alibaba Cloud AccessKey with permission to read this seat. Shared add-on packages are separate from this seat allowance." : "Connect your Alibaba Cloud account using an AccessKey with Token Plan read access and permission to generate a CLI access token. The plan, monthly allowance and usage are read automatically."} Credentials are stored in the encrypted account vault.</p>
+    {draft.mode === "personal_browser" && <p>Authorize your Alibaba Cloud account in the browser to read your subscription and monthly credits automatically.</p>}
+    {draft.mode === "personal_cloud" && <p>This balance uses a configured AccessKey. Sign in to Alibaba Cloud to replace it with browser authorization.</p>}
+    {draft.mode === "team_api" && <>
+      <p>Connect an Alibaba Cloud AccessKey with permission to read this Team seat. Credentials are stored in the encrypted account vault. Shared add-on packages are separate from this seat allowance.</p>
       <a href="https://ram.console.alibabacloud.com/profile/access-keys" target="_blank" rel="noreferrer">Open Alibaba Cloud AccessKey management</a>
       <label className="contribution-field"><span>Alibaba Cloud AccessKey ID</span><input autoComplete="off" required value={draft.accessKeyID} onChange={event => field("accessKeyID", event.target.value)} /></label>
       <label className="contribution-field"><span>Alibaba Cloud AccessKey secret</span><input type="password" autoComplete="off" required value={draft.accessKeySecret} onChange={event => field("accessKeySecret", event.target.value)} /></label>
@@ -93,7 +98,7 @@ function QwenCreditForm({ id, onChanged }: { id: string; onChanged?: () => Promi
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const [loaded, setLoaded] = useState(false);
-  const [savedSource, setSavedSource] = useState<QwenTokenPlanDraft["mode"]>("none");
+  const [savedSource, setSavedSource] = useState<QwenTokenPlanConfig["mode"] | "none">("none");
   useEffect(() => {
     let active = true;
     loadQwenTokenPlan(id).then(view => {
@@ -117,7 +122,13 @@ function QwenCreditForm({ id, onChanged }: { id: string; onChanged?: () => Promi
   return <form onSubmit={event => { event.preventDefault(); void submit(); }}>
     <QwenCreditBalance credits={credits} error={balanceError} />
     {loaded && <QwenTokenPlanFields draft={draft} onChange={setDraft} />}
+    {loaded && (draft.mode === "personal_browser" || draft.mode === "personal_cloud") && <QwenLogin accountID={id} onLinked={async () => {
+      const view = await loadQwenTokenPlan(id);
+      setCredits(view.credits); setBalanceError(view.error); setSavedSource(view.token_plan?.mode ?? "none");
+      setDraft(current => ({ ...current, mode: view.token_plan?.mode ?? "none" }));
+      await onChanged?.();
+    }} />}
     {error && <p role="alert">{error}</p>}
-    {loaded && <div className="row-actions"><button type="submit" disabled={busy}>Save credit tracking</button>{(savedSource === "team_api" || savedSource === "personal_cloud") && <button type="button" disabled={busy} onClick={() => void submit(true)}>{savedSource === "personal_cloud" ? "Refresh Cloud balance" : "Refresh Team balance"}</button>}</div>}
+    {loaded && <div className="row-actions">{draft.mode !== "personal_browser" && draft.mode !== "personal_cloud" && <button type="submit" disabled={busy}>Save credit tracking</button>}{(savedSource === "team_api" || savedSource === "personal_cloud" || savedSource === "personal_browser") && <button type="button" disabled={busy} onClick={() => void submit(true)}>{savedSource === "team_api" ? "Refresh Team balance" : "Refresh Cloud balance"}</button>}</div>}
   </form>;
 }
