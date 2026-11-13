@@ -2330,7 +2330,7 @@ func (h *proxyHandler) recordAntigravityTokenDrift(reqID string, prepared antigr
 	if residual > 0 {
 		h.metrics.recordAntigravityInputResidual(residual)
 	}
-	log.Printf("[%s] provider=antigravity estimated_input_tokens=%d upstream_input_tokens=%d residual=%d", reqID, prepared.EstimatedInputTokens, usage.InputTokens, residual)
+	log.Printf("[%s] provider=%s estimated_input_tokens=%d upstream_input_tokens=%d residual=%d", reqID, prepared.provider(), prepared.EstimatedInputTokens, usage.InputTokens, residual)
 }
 
 func (h *proxyHandler) recordAntigravityUsage(account *Account, usage *RequestUsage, model, userID, originID, reqID string, provider AccountType) {
