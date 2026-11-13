@@ -12,7 +12,13 @@ const aistudioModelsFixture = `{"models":[
 	{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","inputTokenLimit":1048576,"outputTokenLimit":65536,"supportedGenerationMethods":["generateContent","countTokens"],"thinking":true},
 	{"name":"models/gemini-embedding-002","supportedGenerationMethods":["embedContent"]},
 	{"name":"models/gemini-3.8-flash-tts","supportedGenerationMethods":["generateContent"]},
-	{"name":"models/imagen-5","supportedGenerationMethods":["predict"]}
+	{"name":"models/imagen-5","supportedGenerationMethods":["predict"]},
+	{"name":"models/gemini-3.1-flash-image","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/nano-banana-pro-preview","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/deep-research-preview-04-2026","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/gemini-2.5-computer-use-preview-10-2025","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/gemini-robotics-er-2-preview","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/gemini-3.5-transcribe","supportedGenerationMethods":["generateContent"]}
 ]}`
 
 func TestParseAIStudioModelsKeepsTextGenerationModels(t *testing.T) {

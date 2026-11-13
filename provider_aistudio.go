@@ -98,9 +98,13 @@ func aistudioModelsURL(base *url.URL) *url.URL {
 	return &target
 }
 
-// aistudioUnsupportedFamilies use media, embedding or realtime APIs instead of
-// the text generateContent routes the pool translates.
-var aistudioUnsupportedFamilies = []string{"embedding", "imagen", "veo", "tts", "aqa", "audio", "live", "lyria", "image-generation"}
+// aistudioUnsupportedFamilies are not text coding models: media generation,
+// embeddings, realtime audio, transcription, and agents that need their own
+// tools or API (deep research, computer use, robotics).
+var aistudioUnsupportedFamilies = []string{
+	"embedding", "imagen", "veo", "tts", "aqa", "audio", "live", "lyria", "image", "nano-banana",
+	"transcribe", "deep-research", "computer-use", "robotics",
+}
 
 // parseAIStudioModels reads the native Gemini models list:
 // {"models":[{"name":"models/<id>","inputTokenLimit":...,"outputTokenLimit":...,
