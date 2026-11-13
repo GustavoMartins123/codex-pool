@@ -124,6 +124,10 @@ func parseAIStudioModels(body []byte) (map[string]DiscoveredModel, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("invalid AI Studio model list: %w", err)
 	}
+	names := make(map[string]int, len(payload.Models))
+	for _, row := range payload.Models {
+		names[strings.TrimSpace(row.DisplayName)]++
+	}
 	models := make(map[string]DiscoveredModel)
 	for _, row := range payload.Models {
 		id := strings.TrimPrefix(strings.TrimSpace(row.Name), "models/")
@@ -142,8 +146,14 @@ func parseAIStudioModels(body []byte) (map[string]DiscoveredModel, error) {
 			continue
 		}
 		public := aistudioModelPrefix + id
+		// Antigravity publishes the same Google display names, and AI Studio
+		// reuses one name for several preview ids; the picker must tell them apart.
+		display := strings.TrimSpace(row.DisplayName)
+		if display == "" || names[display] > 1 {
+			display = id
+		}
 		models[public] = DiscoveredModel{
-			ID: public, DisplayName: row.DisplayName, Description: row.Description,
+			ID: public, DisplayName: display + " · AI Studio", Description: row.Description,
 			ContextWindow: row.InputTokenLimit, MaxOutputTokens: row.OutputTokenLimit,
 			Reasoning: row.Thinking, Protocol: "gemini", Modalities: []string{"text", "image"},
 		}

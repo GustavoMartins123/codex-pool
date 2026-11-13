@@ -31,8 +31,25 @@ func TestParseAIStudioModelsKeepsTextGenerationModels(t *testing.T) {
 	if len(models) != 1 || !ok {
 		t.Fatalf("models = %v", models)
 	}
-	if model.ID != "aistudio/gemini-3.8-flash" || model.ContextWindow != 1048576 || model.MaxOutputTokens != 65536 || !model.Reasoning {
+	if model.ID != "aistudio/gemini-3.8-flash" || model.DisplayName != "Gemini 3.8 Flash · AI Studio" || model.ContextWindow != 1048576 || model.MaxOutputTokens != 65536 || !model.Reasoning {
 		t.Fatalf("model = %+v", model)
+	}
+	shared, err := parseAIStudioModels([]byte(`{"models":[
+		{"name":"models/antigravity-preview-05-2026","displayName":"Antigravity Agent Preview","supportedGenerationMethods":["generateContent"]},
+		{"name":"models/antigravity-preview-09-2026","displayName":"Antigravity Agent Preview","supportedGenerationMethods":["generateContent"]},
+		{"name":"models/gemini-4-hydrogen","supportedGenerationMethods":["generateContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{
+		"aistudio/antigravity-preview-05-2026": "antigravity-preview-05-2026 · AI Studio",
+		"aistudio/antigravity-preview-09-2026": "antigravity-preview-09-2026 · AI Studio",
+		"aistudio/gemini-4-hydrogen":           "gemini-4-hydrogen · AI Studio",
+	} {
+		if shared[id].DisplayName != want {
+			t.Errorf("%s display name = %q, want %q", id, shared[id].DisplayName, want)
+		}
 	}
 	if _, err := parseAIStudioModels([]byte(`{"models":[{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}]}`)); err == nil {
 		t.Fatal("a catalog without text models was accepted")
