@@ -634,13 +634,17 @@ func TestExtractCodexWebSocketRequestedModel(t *testing.T) {
 	}
 }
 
-func TestModelRequiresHTTPProviderRoute(t *testing.T) {
+func TestWebSocketModelUsesProviderBridge(t *testing.T) {
 	t.Parallel()
-	if !modelRequiresHTTPProviderRoute("grok-4.5") {
-		t.Fatal("expected grok-4.5 to require HTTP model routing")
+	for _, model := range []string{"grok-4.5", "qwen3.8-max", "aistudio/gemini-4-hydrogen", "antigravity/gemini-3.8-flash-high", "claude-opus-5"} {
+		if !webSocketModelUsesProviderBridge(model) {
+			t.Errorf("%s must be served by its own provider", model)
+		}
 	}
-	if modelRequiresHTTPProviderRoute("gpt-5.6-sol") {
-		t.Fatal("Codex models must remain websocket-eligible")
+	for _, model := range []string{"gpt-5.6-sol", "gpt-6.1-sol", "codex-auto-review", ""} {
+		if webSocketModelUsesProviderBridge(model) {
+			t.Errorf("%q must stay on the Codex websocket upstream", model)
+		}
 	}
 }
 

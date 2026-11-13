@@ -291,7 +291,13 @@ type codexRelayState struct {
 	recordedResponses    map[string]struct{}
 	// history is the complete input behind the latest completed response,
 	// so a swap can replay a request that chains from it.
-	history         *codexInputHistory
+	history *codexInputHistory
+	// bridgedResponses are response IDs the provider bridge served; the
+	// Codex upstream never minted them.
+	bridgedResponses map[string]struct{}
+	// activity is the current round's idle-timer signal, so bridged turns
+	// that bypass the frame pumps still keep the relay alive.
+	activity        chan<- struct{}
 	handedOff       bool
 	clientClosing   bool
 	upstreamClosing bool
@@ -395,6 +401,9 @@ func (s *codexRelayState) relayOnce() error {
 	upstreamErrCh := make(chan error, 1)
 	clientErrCh := make(chan error, 1)
 	activityCh := make(chan struct{}, 1)
+	s.turnMu.Lock()
+	s.activity = activityCh
+	s.turnMu.Unlock()
 
 	debug := s.h != nil && s.h.cfg != nil && s.h.cfg.debug.Load()
 	go func() {
@@ -672,6 +681,18 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	if conversationID == "" {
 		conversationID = s.activeConversationID
 	}
+	if model := extractCodexWebSocketRequestedModel(data); s.h != nil && webSocketModelUsesProviderBridge(model) {
+		// Another provider owns this model: serve the turn through the HTTP
+		// model routing instead of the ChatGPT websocket upstream.
+		turn := &codexRelayTurn{request: append([]byte(nil), data...), model: model, conversationID: conversationID, account: s.activeAccount}
+		s.bindTurnInput(turn)
+		s.turns = append(s.turns, turn)
+		if conversationID != "" {
+			s.activeConversationID = conversationID
+		}
+		s.startProviderBridge(turn)
+		return []byte{}, nil
+	}
 	if s.h != nil && conversationID != "" {
 		rewritten, result, err := s.h.getContextHandoff().Prepare(
 			conversationScopedKey(s.owner, conversationID),
@@ -700,6 +721,21 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	turn.grantAdmission = grantAdmission
 	s.bindTurnInput(turn)
 	s.turns = append(s.turns, turn)
+	if _, bridged := s.bridgedResponses[turn.continues]; bridged && turn.continues != "" {
+		// The chain head came from another provider, so the Codex upstream
+		// gets the complete input instead of a response ID it never minted.
+		replay, err := swapReplayFrame(turn)
+		if err != nil {
+			s.finishTurn(turn)
+			payload, _ := json.Marshal(map[string]any{"type": "error", "status": 400, "error": map[string]any{
+				"type": "invalid_request_error", "code": "previous_response_not_found",
+				"message": fmt.Sprintf("Previous response with id '%s' not found.", turn.continues),
+			}})
+			go s.writeBridgeFrame(payload)
+			return []byte{}, nil
+		}
+		data, turn.request, turn.continues = replay, replay, ""
+	}
 	if s.h != nil && s.h.pool != nil && s.h.pool.discoveredModelRequiresEntitlement(AccountTypeCodex, model) && !accountSupportsDiscoveredModel(s.activeAccount, model) {
 		if len(s.turns) > 1 {
 			s.finishTurn(turn)
@@ -731,25 +767,6 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 			log.Printf("[%s] account %s is at the usage threshold before turn; swapping to %s", s.opts.ReqID, s.activeAccount.ID, cand.ID)
 			return nil, &swapPendingErr{next: cand, quota: true}
 		}
-	}
-	if modelRequiresHTTPProviderRoute(model) {
-		s.finishTurn(turn)
-		payload, _ := json.Marshal(map[string]any{
-			"type":   "error",
-			"status": 400,
-			"error": map[string]any{
-				"type": "invalid_request_error",
-				"message": fmt.Sprintf(
-					"model %q is not supported on the Codex Responses WebSocket; use HTTP POST /responses so the pool can route it",
-					model,
-				),
-			},
-		})
-		if s.clientWriter != nil {
-			_ = s.clientWriter.Write(s.ctx, websocket.MessageText, payload)
-		}
-		log.Printf("[%s] rejecting websocket model %q (HTTP model-route only)", s.opts.ReqID, model)
-		return nil, fmt.Errorf("websocket model route rejected: %s", model)
 	}
 	if s.contextEnabled() {
 		data, err = s.h.prepareContextFrame(s.opts.UserID, s.opts.ClientIP, data, s.contextAccount)
@@ -1404,22 +1421,6 @@ func extractCodexWebSocketRequestedModel(data []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(nested.Response.Model)
-}
-
-// modelRequiresHTTPProviderRoute reports models that the HTTP proxy would
-// divert away from ChatGPT/Codex via modelRouteOverride. The Codex websocket
-// tunnel is dialed before the body arrives, so these must not be forwarded.
-func modelRequiresHTTPProviderRoute(model string) bool {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	return isGrokModel(model) ||
-		isKimiModel(model) ||
-		isMinimaxModel(model) ||
-		isZAIModel(model) ||
-		isXiaomiModel(model) ||
-		isAdverserialModel(model)
 }
 
 // writeWebSocketRejection owns only failed handshake bodies. Successful
