@@ -68,6 +68,12 @@ func capabilitiesFor(provider AccountType) ProviderCapabilities {
 			SupportsImages: true, SupportsReasoning: true,
 			SupportsFullHistoryHandoff: true,
 		}
+	case AccountTypeAIStudio:
+		return ProviderCapabilities{
+			WireFormat: WireGemini, SupportsForeignHistory: true,
+			SupportsToolHistory: true, SupportsParallelTools: true,
+			SupportsImages: true, SupportsReasoning: true,
+		}
 	default:
 		if isGenericProviderType(provider) {
 			return ProviderCapabilities{WireFormat: WireOpenAI, SupportsForeignHistory: true, SupportsToolHistory: true}

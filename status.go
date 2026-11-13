@@ -150,6 +150,7 @@ func allProviderTypes() map[AccountType]struct{} {
 		AccountTypeGrok: {}, AccountTypeAntigravity: {}, AccountTypeAdverserial: {},
 		AccountTypeOpencodeGo: {},
 		AccountTypeQwen:       {},
+		AccountTypeAIStudio:   {},
 	}
 }
 

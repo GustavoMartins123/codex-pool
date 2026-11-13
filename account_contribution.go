@@ -17,7 +17,7 @@ import (
 
 func contributionDirectory(provider AccountType) (string, error) {
 	switch provider {
-	case AccountTypeCodex, AccountTypeClaude, AccountTypeAntigravity, AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi, AccountTypeGrok, AccountTypeAdverserial, AccountTypeQwen:
+	case AccountTypeCodex, AccountTypeClaude, AccountTypeAntigravity, AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi, AccountTypeGrok, AccountTypeAdverserial, AccountTypeQwen, AccountTypeAIStudio:
 		return string(provider), nil
 	case AccountTypeOpencodeGo:
 		return "opencode_go", nil

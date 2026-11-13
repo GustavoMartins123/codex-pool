@@ -31,6 +31,7 @@ const (
 	AccountTypeAdverserial AccountType = "adverserial"
 	AccountTypeOpencodeGo  AccountType = "opencode_go"
 	AccountTypeQwen        AccountType = "qwen"
+	AccountTypeAIStudio    AccountType = "aistudio"
 
 	// For ordinary Codex traffic, cyber-approved accounts receive twice the
 	// routing weight of non-cyber accounts when their quota health is
@@ -395,6 +396,7 @@ func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
 		"adverserial": AccountTypeAdverserial,
 		"opencode_go": AccountTypeOpencodeGo,
 		"qwen":        AccountTypeQwen,
+		"aistudio":    AccountTypeAIStudio,
 	}
 
 	for subdir, accountType := range providerDirs {
@@ -907,7 +909,7 @@ func (p *poolState) discoveredModelRequiresEntitlement(accountType AccountType, 
 	if model == "" {
 		return false
 	}
-	if accountType == AccountTypeQwen {
+	if accountType == AccountTypeQwen || accountType == AccountTypeAIStudio {
 		return true
 	}
 	if entry, ok := modelForProvider(accountType, model); ok {
@@ -1697,7 +1699,7 @@ func saveAccount(a *Account) error {
 		return saveAPIKeyAccount(a)
 	case AccountTypeOpencodeGo:
 		return saveAPIKeyAccount(a)
-	case AccountTypeQwen:
+	case AccountTypeQwen, AccountTypeAIStudio:
 		return saveAPIKeyAccount(a)
 	case AccountTypeGrok:
 		return saveGrokAccount(a)
@@ -1707,7 +1709,7 @@ func saveAccount(a *Account) error {
 }
 
 func persistAccountAddedAt(root map[string]any, a *Account) {
-	if len(a.Models) > 0 || a.Type == AccountTypeQwen {
+	if len(a.Models) > 0 || providerRequiresModelDiscovery(a.Type) {
 		root["provider_model_snapshot"] = providerModelSnapshot{FetchedAt: a.ModelsFetchedAt, Models: a.Models}
 	}
 	if a.AddedAt.IsZero() {

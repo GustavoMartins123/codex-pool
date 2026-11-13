@@ -51,6 +51,7 @@ type config struct {
 	adverserialBase        *url.URL // platform.adverserial.ai Anthropic-compatible endpoint
 	opencodeGoBase         *url.URL // OpenCode Go subscription endpoint (zen/go/v1)
 	qwenBase               *url.URL
+	aistudioBase           *url.URL
 	qwenPlanBase           *url.URL
 	poolDir                string
 
@@ -209,6 +210,7 @@ func buildConfig() *config {
 	cfg.adverserialBase = mustParse(getenv("UPSTREAM_ADVERSERIAL_BASE", "https://platform.adverserial.ai/api"))
 	cfg.opencodeGoBase = mustParse(getenv("UPSTREAM_OPENCODE_GO_BASE", "https://opencode.ai/zen/go/v1"))
 	cfg.qwenBase = mustParse(getenv("UPSTREAM_QWEN_BASE", defaultQwenBase))
+	cfg.aistudioBase = mustParse(getenv("UPSTREAM_AISTUDIO_BASE", defaultAIStudioBase))
 	cfg.qwenPlanBase = mustParse(getenv("UPSTREAM_QWEN_PLAN_BASE", defaultQwenPlanBase))
 	cfg.poolDir = getConfigString("POOL_DIR", fileCfg.PoolDir, "pool")
 
@@ -513,6 +515,7 @@ func main() {
 	adverserialProvider := NewAdverserialProvider(cfg.adverserialBase)
 	opencodeGoProvider := NewOpencodeGoProvider(cfg.opencodeGoBase)
 	qwenProvider := NewQwenProvider(cfg.qwenBase)
+	aistudioProvider := NewAIStudioProvider(cfg.aistudioBase)
 	genericProviders, genericAccounts, err := buildGenericProviders(cfg.genericProviders)
 	if err != nil {
 		log.Fatalf("configure generic providers: %v", err)
@@ -521,7 +524,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure federation: %v", err)
 	}
-	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider, qwenProvider}
+	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider, qwenProvider, aistudioProvider}
 	extraProviders = append(extraProviders, genericProviders...)
 	extraProviders = append(extraProviders, federatedProviders...)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)

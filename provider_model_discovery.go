@@ -243,6 +243,11 @@ func providerModelsURL(provider Provider) (*url.URL, bool) {
 		}
 		target = *base
 		target.Path = singleJoin(target.Path, "/v1/models")
+	case *AIStudioProvider:
+		if typed.base == nil {
+			return nil, false
+		}
+		target = *aistudioModelsURL(typed.base)
 	case *OpencodeGoProvider, *QwenProvider:
 		base := provider.UpstreamURL("/models")
 		if base == nil {
@@ -284,7 +289,12 @@ func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provi
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return providerModelSnapshot{}, &providerModelHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: safeText(body)}
 	}
-	models, err := parseProviderModels(body)
+	var models map[string]DiscoveredModel
+	if provider.Type() == AccountTypeAIStudio {
+		models, err = parseAIStudioModels(body)
+	} else {
+		models, err = parseProviderModels(body)
+	}
 	if err != nil {
 		return providerModelSnapshot{}, err
 	}
@@ -307,11 +317,11 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	}
 	snapshot, err := fetchProviderModels(ctx, transport, provider, account)
 	if err != nil {
-		if account.Type == AccountTypeQwen {
+		if providerRequiresModelDiscovery(account.Type) {
 			account.mu.Lock()
 			account.Models = nil
 			account.ModelsFetchedAt = time.Time{}
-			account.HealthError = "Qwen model discovery failed; refresh the catalog before routing requests"
+			account.HealthError = discoveryFailureMessage(account.Type)
 			saveErr := saveAccount(account)
 			account.mu.Unlock()
 			if saveErr != nil {
@@ -324,7 +334,7 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	changed := !reflect.DeepEqual(account.Models, snapshot.Models)
 	account.Models = snapshot.Models
 	account.ModelsFetchedAt = snapshot.FetchedAt
-	if account.Type == AccountTypeQwen {
+	if providerRequiresModelDiscovery(account.Type) {
 		account.HealthError = ""
 		saveErr := saveAccount(account)
 		account.mu.Unlock()
@@ -430,7 +440,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 	for _, key := range keys {
 		entry := aggregates[key]
 		protocol := "anthropic"
-		if entry.provider == AccountTypeCodex || entry.provider == AccountTypeGrok || entry.provider == AccountTypeQwen {
+		if entry.provider == AccountTypeCodex || entry.provider == AccountTypeGrok || entry.provider == AccountTypeQwen || entry.provider == AccountTypeAIStudio {
 			protocol = "openai"
 		} else if entry.model.Protocol != "" {
 			protocol = entry.model.Protocol
@@ -439,7 +449,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 		}
 		capabilities := map[string]bool{"reasoning": entry.model.Reasoning, "tools": true}
 		protocols := []string{protocol}
-		if entry.provider == AccountTypeQwen {
+		if entry.provider == AccountTypeQwen || entry.provider == AccountTypeAIStudio {
 			protocols = []string{"openai", "responses", "anthropic"}
 		}
 		if entry.model.WebSearch {
@@ -455,4 +465,18 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 		})
 	}
 	return descriptors
+}
+
+// providerRequiresModelDiscovery reports providers whose routable models come
+// only from their live catalog, so a failed discovery stops routing to them.
+func providerRequiresModelDiscovery(accountType AccountType) bool {
+	return accountType == AccountTypeQwen || accountType == AccountTypeAIStudio
+}
+
+func discoveryFailureMessage(accountType AccountType) string {
+	name := "Qwen"
+	if accountType == AccountTypeAIStudio {
+		name = "AI Studio"
+	}
+	return name + " model discovery failed; refresh the catalog before routing requests"
 }

@@ -1,0 +1,94 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+const aistudioModelsFixture = `{"models":[
+	{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","inputTokenLimit":1048576,"outputTokenLimit":65536,"supportedGenerationMethods":["generateContent","countTokens"],"thinking":true},
+	{"name":"models/gemini-embedding-002","supportedGenerationMethods":["embedContent"]},
+	{"name":"models/gemini-3.8-flash-tts","supportedGenerationMethods":["generateContent"]},
+	{"name":"models/imagen-5","supportedGenerationMethods":["predict"]}
+]}`
+
+func TestParseAIStudioModelsKeepsTextGenerationModels(t *testing.T) {
+	models, err := parseAIStudioModels([]byte(aistudioModelsFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, ok := models["aistudio/gemini-3.8-flash"]
+	if len(models) != 1 || !ok {
+		t.Fatalf("models = %v", models)
+	}
+	if model.ID != "aistudio/gemini-3.8-flash" || model.ContextWindow != 1048576 || model.MaxOutputTokens != 65536 || !model.Reasoning {
+		t.Fatalf("model = %+v", model)
+	}
+	if _, err := parseAIStudioModels([]byte(`{"models":[{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}]}`)); err == nil {
+		t.Fatal("a catalog without text models was accepted")
+	}
+}
+
+func TestAIStudioUpstreamModel(t *testing.T) {
+	for input, want := range map[string]string{
+		"aistudio/gemini-3.8-flash": "gemini-3.8-flash",
+		"AIStudio/gemini-3.8-flash": "gemini-3.8-flash",
+		"models/gemini-3.8-flash":   "gemini-3.8-flash",
+	} {
+		if got := aistudioUpstreamModel(input); got != want {
+			t.Errorf("aistudioUpstreamModel(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if isAIStudioModel("gemini-3.8-flash") || !isAIStudioModel("aistudio/gemini-3.8-flash") {
+		t.Fatal("AI Studio routes must require the aistudio/ prefix")
+	}
+}
+
+func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "key.json")
+	if err := os.WriteFile(file, []byte(`{"api_key":"AIza-test-key"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	provider := NewAIStudioProvider(mustParse("https://aistudio.example"))
+	data, _ := os.ReadFile(file)
+	account, err := provider.LoadAccount("key.json", file, data)
+	if err != nil || account == nil || account.AccessToken != "AIza-test-key" || account.HealthError == "" {
+		t.Fatalf("account = %+v err=%v", account, err)
+	}
+	status := http.StatusOK
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://aistudio.example/v1beta/models?pageSize=1000" || req.Header.Get("x-goog-api-key") != "AIza-test-key" || req.Header.Get("Authorization") != "" {
+			t.Fatalf("discovery request = %s headers=%v", req.URL, req.Header)
+		}
+		return qwenJSONResponse(status, aistudioModelsFixture), nil
+	})
+	registry := NewProviderRegistry(nil, nil, nil, provider)
+	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
+		t.Fatal(err)
+	}
+	if account.HealthError != "" || len(account.Models) != 1 {
+		t.Fatalf("account after discovery: health=%q models=%v", account.HealthError, account.Models)
+	}
+	saved, _ := os.ReadFile(file)
+	reloaded, err := provider.LoadAccount("key.json", file, saved)
+	if err != nil || reloaded.HealthError != "" {
+		t.Fatalf("persisted model snapshot was not reloaded: %+v %v", reloaded, err)
+	}
+
+	descriptors := discoveredModelsForPool(newPoolState([]*Account{account}, false))
+	if len(descriptors) != 1 || descriptors[0].ID != "aistudio/gemini-3.8-flash" || !supportsAgent(descriptors[0].Protocols, "responses") || !supportsAgent(descriptors[0].Protocols, "anthropic") {
+		t.Fatalf("pool descriptors = %+v", descriptors)
+	}
+
+	status = http.StatusBadRequest
+	if err := syncProviderModels(context.Background(), transport, registry, account); err == nil {
+		t.Fatal("a rejected API key did not fail discovery")
+	}
+	if account.HealthError == "" || len(account.Models) != 0 {
+		t.Fatalf("failed discovery kept routing state: health=%q models=%v", account.HealthError, account.Models)
+	}
+}

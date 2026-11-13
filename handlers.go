@@ -281,7 +281,7 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.QwenTokenPlan = loaded.QwenTokenPlan
 	existing.QwenCredits = loaded.QwenCredits
 	existing.QwenCreditsError = loaded.QwenCreditsError
-	if existing.Type == AccountTypeQwen {
+	if providerRequiresModelDiscovery(existing.Type) {
 		existing.HealthError = loaded.HealthError
 		existing.Usage = loaded.Usage
 		return

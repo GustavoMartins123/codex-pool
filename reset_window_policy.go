@@ -91,7 +91,7 @@ func resetWindowPolicy(provider AccountType, plan string) ResetWindowPolicy {
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowRequests, Secondary: ResetWindowTokens}
 	case AccountTypeClaude:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowTokens, Secondary: ResetWindowRequests}
-	case AccountTypeGemini:
+	case AccountTypeGemini, AccountTypeAIStudio:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowDaily, Secondary: ResetWindowNone}
 	case AccountTypeQwen:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowMonthly, Secondary: ResetWindowNone}
