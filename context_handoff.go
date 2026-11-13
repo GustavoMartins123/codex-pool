@@ -1069,6 +1069,13 @@ func detectContextWarnings(object map[string]any, switched bool) []string {
 
 func renderResponsesContext(object map[string]any, messages []Message) {
 	var input []any
+	// These client tool declarations are not conversation messages. Preserve them
+	// when rebuilding history so the next provider can still issue real tool calls.
+	for _, raw := range anySlice(object["input"]) {
+		if item := mapValue(raw); item["type"] == "additional_tools" {
+			input = append(input, raw)
+		}
+	}
 	var instructions []string
 	for _, message := range messages {
 		if message.Role == "system" || message.Role == "developer" {

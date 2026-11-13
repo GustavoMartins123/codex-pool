@@ -28,6 +28,46 @@ func qwenPreparedTestRequest(t *testing.T, payload map[string]any) *qwenResponse
 	return prepared
 }
 
+func TestQwenResponsesKeepsCodexToolsAcrossProviderHandoff(t *testing.T) {
+	store := newConversationHandoffStore()
+	key := conversationScopedKey("owner", "qwen-tools-handoff")
+	first := []byte(`{"model":"gpt-6.1-sol","input":[{"role":"user","content":"Inspect the repository."}]}`)
+	if _, _, err := store.Prepare(key, AccountTypeCodex, "/v1/responses", first); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{
+		"model": "qwen4-max-preview", "stream": true,
+		"input": []any{
+			map[string]any{"type": "additional_tools", "tools": qwenCodexToolDeclarations()},
+			map[string]any{"role": "user", "content": "Continue inspecting the repository."},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten, result, err := store.Prepare(key, AccountTypeQwen, "/v1/responses", body)
+	if err != nil || !result.Switched {
+		t.Fatalf("provider switch failed: %v, switched=%t", err, result.Switched)
+	}
+	prepared, err := prepareQwenResponsesRequest("/v1/responses", rewritten, "qwen4-max-preview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chat map[string]any
+	if err := json.Unmarshal(prepared.Body, &chat); err != nil {
+		t.Fatal(err)
+	}
+	if len(anySlice(chat["tools"])) != 2 {
+		t.Fatalf("Qwen received %d tools after provider handoff, want 2", len(anySlice(chat["tools"])))
+	}
+	for _, tool := range prepared.Tools {
+		if tool.Name == "exec_command" && tool.Namespace != "functions" {
+			t.Fatalf("command tool namespace was lost: %+v", tool)
+		}
+	}
+}
+
 func TestQwenResponsesConvertsCodexToolsHistoryAndRawPatch(t *testing.T) {
 	patch := "*** Begin Patch\n*** Add File: café.txt\n+Olá\n*** End Patch"
 	payload := map[string]any{
