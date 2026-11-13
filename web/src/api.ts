@@ -274,7 +274,7 @@ export async function refreshQwenTokenPlan(id: string): Promise<QwenTokenPlanVie
   return decode(await fetch(`/api/accounts/qwen/${encodeURIComponent(id)}/token-plan`, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } }));
 }
 
-export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go" | "qwen", apiKey: string) {
+export async function contributeAPIKey(provider: "kimi" | "minimax" | "zai" | "xiaomi" | "opencode_go" | "qwen" | "aistudio", apiKey: string) {
   // The backend route uses a hyphen (opencode-go); the pool type uses an underscore.
   const route = provider === "opencode_go" ? "opencode-go" : provider;
   return decode<AccountContributionResult>(await fetch(`/api/pool/accounts/${route}/add`, {

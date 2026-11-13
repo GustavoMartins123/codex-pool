@@ -1,4 +1,4 @@
-export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go" | "qwen" | "pool";
+export type Provider = "codex" | "claude" | "gemini" | "antigravity" | "kimi" | "minimax" | "zai" | "xiaomi" | "grok" | "adverserial" | "opencode_go" | "qwen" | "aistudio" | "pool";
 
 export type ResetWindowKind = "none" | "five_hour" | "daily" | "weekly" | "monthly" | "tokens" | "requests" | "primary" | "secondary";
 

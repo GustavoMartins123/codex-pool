@@ -128,3 +128,14 @@ it("keeps the Claude relogin dialog open when another account is rejected", asyn
   expect(onAdded).not.toHaveBeenCalled();
   expect(screen.getByRole("dialog")).toBeTruthy();
 });
+
+it("adds a Google AI Studio API key", async () => {
+  vi.mocked(contributeAPIKey).mockResolvedValue({ success: true, account_id: "aistudio-account" });
+  const onAdded = vi.fn().mockResolvedValue(undefined);
+  render(<AccountContribution onClose={vi.fn()} onAdded={onAdded} />);
+  fireEvent.click(screen.getByRole("button", { name: "Google AI Studio" }));
+  fireEvent.change(screen.getByLabelText("Google AI Studio API key"), { target: { value: "AIza-synthetic-test-key" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add to pool" }));
+  await waitFor(() => expect(onAdded).toHaveBeenCalledOnce());
+  expect(contributeAPIKey).toHaveBeenCalledWith("aistudio", "AIza-synthetic-test-key");
+});

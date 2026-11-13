@@ -16,6 +16,7 @@ export const PROVIDERS: Record<Provider, { label: string; color: string; dither:
   grok: { label: "Grok", color: "#86efff", dither: "cyan", glyph: "⌁" },
   adverserial: { label: "Adverserial", color: "#ff5454", dither: "red", glyph: "◬" },
   opencode_go: { label: "OpenCode Go", color: "#ffd23f", dither: "gold", glyph: "⬢" },
+  aistudio: { label: "AI Studio", color: "#4f8cff", dither: "blue", glyph: "✶" },
   pool: { label: "Pool", color: "#d5a638", dither: "gold", glyph: "⊛" },
 };
 

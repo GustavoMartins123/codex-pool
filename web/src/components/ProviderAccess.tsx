@@ -1,6 +1,6 @@
 import type { Policy } from "../governance-api";
 
-export const accessProviders = ["codex", "claude", "gemini", "antigravity", "kimi", "minimax", "zai", "xiaomi", "grok", "adverserial", "opencode_go", "qwen"];
+export const accessProviders = ["codex", "claude", "gemini", "antigravity", "kimi", "minimax", "zai", "xiaomi", "grok", "adverserial", "opencode_go", "qwen", "aistudio"];
 
 export function ProviderAccess({ value, onChange }: { value: Policy["providers"]; onChange: (value: Policy["providers"]) => void }) {
   const denied = value.deny ?? [];

@@ -2,7 +2,7 @@ import { antigravityOAuthStatus, contributeAPIKey, contributeGrok, exchangeAccou
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { QwenLogin } from "./QwenLogin";
 
-type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go" | "qwen" | "qwen_key";
+type ContributableProvider = "codex" | "claude" | "antigravity" | "kimi" | "minimax" | "zai" | "zai_key" | "xiaomi" | "grok" | "opencode_go" | "qwen" | "qwen_key" | "aistudio";
 
 
 const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; mode: "oauth" | "key" | "json" }> = [
@@ -18,6 +18,7 @@ const CONTRIBUTION_PROVIDERS: Array<{ id: ContributableProvider; label: string; 
   { id: "opencode_go", label: "OpenCode Go", mode: "key" },
   { id: "qwen", label: "Qwen", mode: "oauth" },
   { id: "qwen_key", label: "Qwen API key", mode: "key" },
+  { id: "aistudio", label: "Google AI Studio", mode: "key" },
 ];
 
 
@@ -173,7 +174,7 @@ export function AccountContribution({ onClose, onAdded, reloginAccountID, relogi
       } else if (selected.mode === "json") {
         await contributeGrok(credential);
       } else {
-        await contributeAPIKey(provider === "zai_key" ? "zai" : provider === "qwen_key" ? "qwen" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go", credential);
+        await contributeAPIKey(provider === "zai_key" ? "zai" : provider === "qwen_key" ? "qwen" : provider as "kimi" | "minimax" | "xiaomi" | "opencode_go" | "aistudio", credential);
       }
       setCredential("");
       await onAdded();
