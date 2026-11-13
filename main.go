@@ -2732,6 +2732,22 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 	}
 
+	// AI Studio keys share the native Gemini conversion with Antigravity but
+	// call the public Gemini API, so their prefixed models are routed first.
+	if requestedModel != "" && isAIStudioModel(requestedModel) {
+		if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(AccountTypeAIStudio) }) {
+			return
+		}
+		bodyBytes, err = h.prepareProviderContextHandoff(w, userID, conversationID, AccountTypeAIStudio, r.URL.Path, bodyBytes)
+		if err != nil {
+			http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if h.handleAIStudioProxy(w, r, bodyBytes, requestedModel, conversationID, userID, originID, originIP, reqID) {
+			return
+		}
+	}
+
 	// Antigravity owns its complete upstream envelope and protocol conversion.
 	// Handle it before the generic provider translator so every public protocol
 	// consumes the same model registry and quota scheduler.
