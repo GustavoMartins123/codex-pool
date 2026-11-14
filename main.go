@@ -28,6 +28,7 @@ import (
 	"codex-pool-proxy/internal/orderedjson"
 	"codex-pool-proxy/internal/ratelimit"
 	"codex-pool-proxy/internal/transport"
+	"codex-pool-proxy/internal/wire"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
@@ -3910,7 +3911,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				// Error response - translate error format
 				if translateDir == TranslateClaudeToResponses {
 					// Translate Codex error to Claude error format
-					translated = translateErrorToClaudeFormat(respBody, resp.StatusCode)
+					translated = wire.ErrorToClaudeFormat(respBody, resp.StatusCode)
 				} else if translateDir == TranslateChatToResponses || translateDir == TranslateCompletionsToResponses || translateDir == TranslateImagesToResponses || translateDir == TranslateResponsesToClaude {
 					translated = respBody // Pass through error as-is
 				} else {
