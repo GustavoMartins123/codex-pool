@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/sse"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 )
@@ -49,7 +50,7 @@ type codexBridgeWriter struct {
 	header  http.Header
 	status  int
 	isSSE   bool
-	framer  sseFramer
+	framer  sse.Framer
 	buf     []byte
 	body    bytes.Buffer
 	onEvent func([]byte) error
@@ -81,12 +82,12 @@ func (w *codexBridgeWriter) Write(p []byte) (int, error) {
 	}
 	w.buf = append(w.buf, p...)
 	for {
-		event, advance, ok := w.framer.next(w.buf)
+		event, advance, ok := w.framer.Next(w.buf)
 		if !ok {
 			break
 		}
 		w.buf = w.buf[advance:]
-		_, data := parseSSEEvent(event)
+		_, data := sse.ParseEvent(event)
 		data = bytes.TrimSpace(data)
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue

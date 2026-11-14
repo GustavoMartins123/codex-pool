@@ -9,14 +9,16 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 // frameAll feeds buf through a single framer and returns the events.
 func frameAll(buf []byte) [][]byte {
-	var f sseFramer
+	var f sse.Framer
 	var events [][]byte
 	for {
-		event, advance, ok := f.next(buf)
+		event, advance, ok := f.Next(buf)
 		if !ok {
 			return events
 		}
@@ -29,17 +31,17 @@ func frameAll(buf []byte) [][]byte {
 // pattern: it returns the bytes that would be forwarded to the client and
 // the extracted data payloads, mirroring eventBytes = buf[:advance].
 func auditRelay(chunks [][]byte) (forwarded []byte, datas [][]byte) {
-	var f sseFramer
+	var f sse.Framer
 	pending := []byte(nil)
 	for _, chunk := range chunks {
 		pending = append(pending, chunk...)
 		for {
-			event, advance, ok := f.next(pending)
+			event, advance, ok := f.Next(pending)
 			if !ok {
 				break
 			}
 			forwarded = append(forwarded, pending[:advance]...)
-			if d := extractSSEEventData(event); d != nil {
+			if d := sse.ExtractEventData(event); d != nil {
 				datas = append(datas, append([]byte(nil), d...))
 			}
 			pending = append([]byte(nil), pending[advance:]...)
@@ -113,7 +115,7 @@ func FuzzAuditSSEDataExtractionLineEndingIndependence(f *testing.F) {
 			if len(events) == 0 {
 				continue
 			}
-			_, data := parseSSEEvent(events[0])
+			_, data := sse.ParseEvent(events[0])
 			if !set {
 				want = data
 				set = true
@@ -219,7 +221,7 @@ func FuzzAuditParseSSEEventRobustness(f *testing.F) {
 	f.Add([]byte{0x00, 0x01, 0xff, 'd', 'a', 't', 'a', ':', ' ', 0xfe})
 	f.Add([]byte("event: e\r\ndata: {\"a\":1}\r\nid: 7\r\n"))
 	f.Fuzz(func(t *testing.T, event []byte) {
-		eventType, data := parseSSEEvent(event)
+		eventType, data := sse.ParseEvent(event)
 		for _, extracted := range append(strings.Split(string(data), "\n"), eventType) {
 			if extracted == "" {
 				continue
@@ -228,6 +230,6 @@ func FuzzAuditParseSSEEventRobustness(f *testing.F) {
 				t.Fatalf("extracted %q is not a substring of the event %q", extracted, event)
 			}
 		}
-		extractSSEEventData(event)
+		sse.ExtractEventData(event)
 	})
 }

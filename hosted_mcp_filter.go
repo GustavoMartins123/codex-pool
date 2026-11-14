@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 const hostedMCPToolType = "mcp"
@@ -168,7 +170,7 @@ const hostedMCPMaxSSEEventBytes = 512 * 1024 * 1024
 type hostedMCPResponseFilterWriter struct {
 	w      io.Writer
 	buf    []byte
-	framer sseFramer
+	framer sse.Framer
 	err    error
 }
 
@@ -178,7 +180,7 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 	}
 	fw.buf = append(fw.buf, p...)
 	for {
-		event, advance, ok := fw.framer.next(fw.buf)
+		event, advance, ok := fw.framer.Next(fw.buf)
 		if !ok {
 			if len(fw.buf) > hostedMCPMaxSSEEventBytes {
 				fw.err = fmt.Errorf("Responses SSE event exceeded %d bytes", hostedMCPMaxSSEEventBytes)
@@ -188,7 +190,7 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 		}
 		rawEvent := fw.buf[:advance]
 		fw.buf = fw.buf[advance:]
-		eventName, data := parseSSEEvent(event)
+		eventName, data := sse.ParseEvent(event)
 		filtered, drop, changed := filterHostedMCPResponseJSON(bytes.TrimSpace(data))
 		if drop {
 			continue
@@ -200,7 +202,7 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 				rawEvent = []byte(fmt.Sprintf("data: %s\n\n", filtered))
 			}
 		}
-		writeSSE(fw.w, rawEvent, &fw.err)
+		sse.Write(fw.w, rawEvent, &fw.err)
 		if fw.err != nil {
 			fw.buf = nil
 			return len(p), fw.err

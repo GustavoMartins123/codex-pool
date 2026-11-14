@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/sse"
 	"github.com/google/uuid"
 )
 
@@ -77,7 +78,7 @@ func (sw *antigravityStreamWriter) Write(p []byte) (int, error) {
 		}
 		event := sw.buf[:idx]
 		sw.buf = sw.buf[idx+advance:]
-		_, data := parseSSEEvent(event)
+		_, data := sse.ParseEvent(event)
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}

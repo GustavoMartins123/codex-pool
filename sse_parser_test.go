@@ -5,16 +5,6 @@ import (
 	"testing"
 )
 
-func TestParseSSEEventJoinsMultilineData(t *testing.T) {
-	eventType, data := parseSSEEvent([]byte("event: example\r\ndata: first\r\ndata: second\r\n"))
-	if eventType != "example" {
-		t.Fatalf("event type = %q", eventType)
-	}
-	if string(data) != "first\nsecond" {
-		t.Fatalf("data = %q", data)
-	}
-}
-
 func TestResponsesToClaudeBufferingWriterTracksInterleavedToolCalls(t *testing.T) {
 	writer := &responsesToClaudeBufferingWriter{}
 	events := [][]byte{

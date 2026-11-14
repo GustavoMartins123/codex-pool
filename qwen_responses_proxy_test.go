@@ -11,13 +11,15 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 func qwenResponsesEvents(t *testing.T, body []byte) []map[string]any {
 	t.Helper()
 	var events []map[string]any
 	for _, frame := range strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n\n") {
-		kind, data := parseSSEEvent([]byte(frame))
+		kind, data := sse.ParseEvent([]byte(frame))
 		if len(data) == 0 {
 			continue
 		}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/credstore"
+	"codex-pool-proxy/internal/logredact"
 )
 
 // captureLogRedirects the standard logger into a buffer through the
@@ -25,7 +26,7 @@ func captureLog(t *testing.T) func() string {
 	previousOut := log.Writer()
 	previousFlags := log.Flags()
 	previousPrefix := log.Prefix()
-	log.SetOutput(&redactingWriter{w: &buf})
+	log.SetOutput(logredact.NewWriter(&buf))
 	log.SetFlags(0)
 	log.SetPrefix("")
 	t.Cleanup(func() {
@@ -101,56 +102,6 @@ func TestInvariantNoCredentialsReachTheLog(t *testing.T) {
 // TestRedactingWriterPreservesFraming guards the wrapper itself: the trailing
 // newline the stdlib logger adds must survive (or every entry would run
 // together), while newlines embedded in the content are escaped.
-func TestRedactingWriterPreservesFraming(t *testing.T) {
-	var buf bytes.Buffer
-	rw := &redactingWriter{w: &buf}
-
-	for _, in := range []string{
-		"plain line\n",
-		"secret sk-abcdef1234567890abcd\n",
-		"no trailing newline",
-		"multi\nline\ninput\n",
-		"",
-	} {
-		n, err := rw.Write([]byte(in))
-		if err != nil {
-			t.Fatalf("Write(%q): %v", in, err)
-		}
-		if n != len(in) {
-			t.Fatalf("Write(%q) consumed %d bytes, want %d", in, n, len(in))
-		}
-	}
-
-	got := buf.String()
-	// One newline per Write that had one, and none from the embedded content.
-	if want := 3; strings.Count(got, "\n") != want {
-		t.Fatalf("expected %d newlines, got %d:\n%q", want, strings.Count(got, "\n"), got)
-	}
-	if !strings.HasSuffix(got, `line\ninput`+"\n") {
-		t.Fatalf("embedded newlines were not escaped and trailing framing lost:\n%q", got)
-	}
-	if strings.Contains(got, "sk-abcdef1234567890abcd") {
-		t.Fatalf("writer did not redact:\n%q", got)
-	}
-	if !strings.Contains(got, "no trailing newline") {
-		t.Fatalf("content was dropped:\n%q", got)
-	}
-}
-
-// TestInstallRedactingLogIsIdempotent makes sure a second call does not stack
-// writers (which would double-redact and re-fragment output).
-func TestInstallRedactingLogIsIdempotent(t *testing.T) {
-	previous := log.Writer()
-	t.Cleanup(func() { log.SetOutput(previous) })
-
-	installRedactingLog()
-	first := log.Writer()
-	installRedactingLog()
-	if log.Writer() != first {
-		t.Fatal("installRedactingLog wrapped the writer twice")
-	}
-}
-
 // TestUpstreamAuthFailureDoesNotLeakHeadersOrBody drives the real proxy retry
 // loop against a fake upstream that returns credentials in both the body and
 // the headers. This is the regression main.go used to log verbatim on every
@@ -484,7 +435,7 @@ func TestIsSensitiveHeaderCoversProviderInventedNames(t *testing.T) {
 // layers do not interfere: a credential decrypted out of the vault must be
 // redacted when it reaches the log.
 //
-// Note the deliberate shape choice. redactSecrets is pattern-based, so it can
+// Note the deliberate shape choice. logredact.Redact is pattern-based, so it can
 // only mask credentials it recognizes (sk-, ya29., JWT, bearer, secret:).
 // That is exactly why the high-risk call sites were fixed structurally
 // (do not log the upstream body, summarize headers through an allowlist)

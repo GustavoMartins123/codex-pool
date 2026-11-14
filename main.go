@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/orderedjson"
 	"codex-pool-proxy/internal/ratelimit"
 	"github.com/coder/websocket"
@@ -408,8 +409,8 @@ func analyticsDBPathFor(storePath string) string {
 func main() {
 	// Before anything can log: the pool has hundreds of log call sites and the
 	// stdlib logger offers no per-call redaction hook, so the output stream
-	// itself is wrapped. installRedactingLog is idempotent.
-	installRedactingLog()
+	// itself is wrapped. logredact.Install is idempotent.
+	logredact.Install()
 	if err := prepareStartupEnvironment(os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
