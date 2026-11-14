@@ -27,6 +27,7 @@ import (
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/orderedjson"
 	"codex-pool-proxy/internal/ratelimit"
+	"codex-pool-proxy/internal/transport"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
@@ -643,19 +644,19 @@ func main() {
 
 	// Anthropic traffic defaults to the Node.js 24.x uTLS profile used by Claude
 	// Code. Other providers retain their existing transports.
-	var transport http.RoundTripper = newBunHybridTransport(standardTransport)
+	var upstream http.RoundTripper = transport.NewBunHybrid(standardTransport)
 	switch strings.ToLower(os.Getenv("CODEX_TLS_FINGERPRINT")) {
 	case "rustls":
-		transport = newRustlsHybridTransport(standardTransport)
+		upstream = transport.NewRustlsHybrid(standardTransport)
 		log.Printf("codex rustls/uTLS hybrid transport enabled")
 	case "off", "go", "standard":
-		transport = standardTransport
+		upstream = standardTransport
 		log.Printf("standard Go TLS transport enabled")
 	case "bun":
-		transport = newBunHybridTransport(standardTransport)
+		upstream = transport.NewBunHybrid(standardTransport)
 		log.Printf("Node.js/uTLS hybrid transport enabled (Anthropic traffic only)")
 	case "bun-all":
-		transport = createBunTransport()
+		upstream = transport.NewBun()
 		log.Printf("Node.js/uTLS transport enabled (all traffic)")
 	default:
 		log.Printf("Node.js/uTLS hybrid transport enabled by default (Anthropic traffic only)")
@@ -668,11 +669,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid CODEX_ANTHROPIC_PROXY_URL: %v", err)
 		}
-		proxyTransport := createBunTransportWithProxy(proxyURL)
-		transport = &anthropicHostProxyTransport{
-			anthropic: proxyTransport,
-			direct:    transport,
-		}
+		proxyTransport := transport.NewBunWithProxy(proxyURL)
+		upstream = transport.NewAnthropicHostProxy(proxyTransport, upstream)
 		log.Printf("anthropic proxy enabled: %s", proxyURL.Host)
 	}
 
@@ -787,7 +785,7 @@ func main() {
 	}
 	h := &proxyHandler{
 		cfg:                  cfg,
-		transport:            transport,
+		transport:            upstream,
 		antigravityTransport: antigravityTransport,
 		refreshTransport:     refreshTransport,
 		pool:                 pool,

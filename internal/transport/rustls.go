@@ -1,4 +1,4 @@
-package main
+package transport
 
 import (
 	"bufio"
@@ -194,21 +194,21 @@ func createRustlsTransport() *http.Transport {
 	return tr
 }
 
-// rustlsHybridTransport uses rustls fingerprint for chatgpt.com, standard for others
-type rustlsHybridTransport struct {
+// RustlsHybrid uses rustls fingerprint for chatgpt.com, standard for others
+type RustlsHybrid struct {
 	rustls   *http.Transport
 	standard http.RoundTripper
 	mu       sync.Mutex
 }
 
-func newRustlsHybridTransport(standard http.RoundTripper) *rustlsHybridTransport {
-	return &rustlsHybridTransport{
+func NewRustlsHybrid(standard http.RoundTripper) *RustlsHybrid {
+	return &RustlsHybrid{
 		rustls:   createRustlsTransport(),
 		standard: standard,
 	}
 }
 
-func (h *rustlsHybridTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (h *RustlsHybrid) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := strings.ToLower(req.URL.Hostname())
 	if host == "" {
 		host = strings.ToLower(req.URL.Host)
@@ -219,4 +219,4 @@ func (h *rustlsHybridTransport) RoundTrip(req *http.Request) (*http.Response, er
 	return h.standard.RoundTrip(req)
 }
 
-var _ http.RoundTripper = (*rustlsHybridTransport)(nil)
+var _ http.RoundTripper = (*RustlsHybrid)(nil)
