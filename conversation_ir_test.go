@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func TestConversationIRContainsOnlyPortableContent(t *testing.T) {
@@ -18,10 +20,10 @@ func TestConversationIRContainsOnlyPortableContent(t *testing.T) {
 	if len(ir.System) != 2 || len(ir.Messages) != 3 || ir.Metadata.ConversationID != "conv" || ir.Metadata.Epoch != 4 {
 		t.Fatalf("IR shape=%+v", ir)
 	}
-	if ir.System[1].Role != IRRoleDeveloper || ir.Messages[0].Content[1].Type != IRImage {
+	if ir.System[1].Role != wire.RoleDeveloper || ir.Messages[0].Content[1].Type != wire.ContentImage {
 		t.Fatalf("role or image lost: %+v", ir)
 	}
-	roundTrip := ir.legacyMessages()
+	roundTrip := irLegacyMessages(ir)
 	if len(roundTrip) != len(messages) || roundTrip[1].Role != "developer" || roundTrip[2].Parts[1].ImageURL != "data:image/png;base64,aGVsbG8=" {
 		t.Fatalf("IR roundtrip lost content: %+v", roundTrip)
 	}
@@ -64,7 +66,7 @@ func TestConversationIRPreservesImagesAcrossSupportedProviders(t *testing.T) {
 			found := false
 			for _, message := range ir.Messages {
 				for _, part := range message.Content {
-					if part.Type == IRImage && part.Data == "aGVsbG8=" && part.MimeType == "image/png" {
+					if part.Type == wire.ContentImage && part.Data == "aGVsbG8=" && part.MimeType == "image/png" {
 						found = true
 					}
 				}

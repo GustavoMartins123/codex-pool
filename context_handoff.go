@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 const (
@@ -33,7 +35,7 @@ const (
 type ConversationState struct {
 	ID                 string                                `json:"id"`
 	Messages           []Message                             `json:"messages"`
-	IR                 ConversationIR                        `json:"ir"`
+	IR                 wire.Conversation                     `json:"ir"`
 	Tools              []ToolCall                            `json:"tools,omitempty"`
 	Summary            string                                `json:"summary,omitempty"`
 	Metadata           map[string]any                        `json:"metadata,omitempty"`
@@ -1317,7 +1319,7 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	if format == contextFormatUnknown {
 		return body, contextHandoffResult{}, nil
 	}
-	current := normalizeConversationIR(format, object, key.conversationID, 0).legacyMessages()
+	current := irLegacyMessages(normalizeConversationIR(format, object, key.conversationID, 0))
 	localState := extractProviderLocalState(object)
 
 	s.mu.Lock()

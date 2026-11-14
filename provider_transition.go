@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 type TransitionMode string
@@ -52,11 +54,11 @@ func CanTransition(state ConversationState, from, to AccountType) TransitionComp
 		calls := 0
 		for _, part := range message.Content {
 			switch part.Type {
-			case IRImage:
+			case wire.ContentImage:
 				hasImage = true
-			case IRToolCall, IRToolResult:
+			case wire.ContentToolCall, wire.ContentToolResult:
 				hasTool = true
-				if part.Type == IRToolCall {
+				if part.Type == wire.ContentToolCall {
 					calls++
 				}
 			}
@@ -73,11 +75,11 @@ func CanTransition(state ConversationState, from, to AccountType) TransitionComp
 	if len(state.IR.Messages) > 0 {
 		last := state.IR.Messages[len(state.IR.Messages)-1]
 		for _, part := range last.Content {
-			if part.Type == IRImage && !caps.SupportsImages {
+			if part.Type == wire.ContentImage && !caps.SupportsImages {
 				result.Allowed = false
 				result.Warnings = append(result.Warnings, "current_image_unsupported")
 			}
-			if part.Type == IRToolResult && !caps.SupportsToolHistory {
+			if part.Type == wire.ContentToolResult && !caps.SupportsToolHistory {
 				result.Allowed = false
 				result.Warnings = append(result.Warnings, "current_tool_result_unsupported")
 			}
