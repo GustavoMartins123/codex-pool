@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 // sseTranslateWriter intercepts upstream SSE events, translates them to the
@@ -16,8 +17,8 @@ import (
 type sseTranslateWriter struct {
 	framer    sse.Framer
 	err       error
-	w         io.Writer          // underlying writer (flushWriter)
-	direction TranslateDirection // which way to translate
+	w         io.Writer               // underlying writer (flushWriter)
+	direction wire.TranslateDirection // which way to translate
 	state     streamTranslationState
 	buf       []byte
 	callback  func([]byte) // called with original event data for usage parsing
@@ -89,9 +90,9 @@ func (sw *sseTranslateWriter) processEvent(event []byte) {
 	}
 
 	switch sw.direction {
-	case TranslateOAIToClaude:
+	case wire.TranslateOAIToClaude:
 		sw.translateOAIEventToClaude(eventType, data)
-	case TranslateClaudeToOAI:
+	case wire.TranslateClaudeToOAI:
 		sw.translateClaudeEventToOAI(eventType, data)
 	}
 }

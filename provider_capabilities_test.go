@@ -1,20 +1,24 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"codex-pool-proxy/internal/wire"
+)
 
 func TestProviderCapabilitiesMatchWireAndHandoffContract(t *testing.T) {
 	tests := []struct {
 		provider AccountType
 		wire     WireFormat
-		target   RequestFormat
+		target   wire.RequestFormat
 		full     bool
 		replay   bool
 	}{
-		{AccountTypeCodex, WireResponses, FormatOpenAI, false, false},
-		{AccountTypeAntigravity, WireGemini, FormatUnknown, false, true},
-		{AccountTypeClaude, WireAnthropic, FormatClaude, true, false},
-		{AccountTypeZAI, WireAnthropic, FormatClaude, true, false},
-		{AccountTypeGemini, WireGemini, FormatUnknown, false, false},
+		{AccountTypeCodex, WireResponses, wire.FormatOpenAI, false, false},
+		{AccountTypeAntigravity, WireGemini, wire.FormatUnknown, false, true},
+		{AccountTypeClaude, WireAnthropic, wire.FormatClaude, true, false},
+		{AccountTypeZAI, WireAnthropic, wire.FormatClaude, true, false},
+		{AccountTypeGemini, WireGemini, wire.FormatUnknown, false, false},
 	}
 	for _, test := range tests {
 		t.Run(string(test.provider), func(t *testing.T) {

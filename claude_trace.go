@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 type claudeTracePayload struct {
@@ -84,7 +86,7 @@ func (h *proxyHandler) attachClaudeTrace(
 	upstream *http.Request,
 	upstreamBody []byte,
 	resp *http.Response,
-	translateDir TranslateDirection,
+	translateDir wire.TranslateDirection,
 	buf *bytes.Buffer,
 	limit int64,
 ) {
@@ -113,7 +115,7 @@ func (h *proxyHandler) writeClaudeTrace(
 	upstream *http.Request,
 	upstreamBody []byte,
 	resp *http.Response,
-	translateDir TranslateDirection,
+	translateDir wire.TranslateDirection,
 	respSample []byte,
 	traceErr string,
 ) {
@@ -245,19 +247,19 @@ func traceHeaderValue(key, value string, includeSecrets bool) string {
 	}
 }
 
-func translateDirectionName(dir TranslateDirection) string {
+func translateDirectionName(dir wire.TranslateDirection) string {
 	switch dir {
-	case TranslateNone:
+	case wire.TranslateNone:
 		return ""
-	case TranslateClaudeToOAI:
+	case wire.TranslateClaudeToOAI:
 		return "claude_to_oai"
-	case TranslateOAIToClaude:
+	case wire.TranslateOAIToClaude:
 		return "oai_to_claude"
-	case TranslateClaudeToResponses:
+	case wire.TranslateClaudeToResponses:
 		return "claude_to_responses"
-	case TranslateChatToResponses:
+	case wire.TranslateChatToResponses:
 		return "chat_to_responses"
-	case TranslateResponsesToClaude:
+	case wire.TranslateResponsesToClaude:
 		return "responses_to_claude"
 	default:
 		return "unknown"

@@ -12,82 +12,48 @@ import (
 	"codex-pool-proxy/internal/wire"
 )
 
-// RequestFormat represents the API format of a request.
-type RequestFormat int
-
-const (
-	FormatUnknown RequestFormat = iota
-	FormatOpenAI                // OpenAI Chat Completions API
-	FormatClaude                // Anthropic Messages API
-)
-
-func (f RequestFormat) String() string {
-	switch f {
-	case FormatOpenAI:
-		return "openai"
-	case FormatClaude:
-		return "claude"
-	default:
-		return "unknown"
-	}
-}
-
-// TranslateDirection indicates which way we're translating.
-type TranslateDirection int
-
-const (
-	TranslateNone                   TranslateDirection = iota
-	TranslateClaudeToOAI                               // Client sent Claude format, upstream expects OpenAI Chat Completions
-	TranslateOAIToClaude                               // Client sent OpenAI format, upstream expects Claude
-	TranslateChatToResponses                           // Client sent Chat Completions, upstream expects Responses API
-	TranslateCompletionsToResponses                    // Client sent legacy Completions, upstream expects Responses API
-	TranslateResponsesToClaude                         // Client sent Responses API, upstream expects Claude Messages
-	TranslateClaudeToResponses                         // Client sent Claude format, upstream expects Responses API
-	TranslateImagesToResponses                         // Client sent OpenAI Images API, upstream expects Responses image_generation tool
-)
-
 // detectRequestFormat determines the API format from the request path.
-func detectRequestFormat(path string) RequestFormat {
+func detectRequestFormat(path string) wire.RequestFormat {
 	switch {
 	case path == "/v1/messages" || strings.HasPrefix(path, "/v1/messages?"):
-		return FormatClaude
+		return wire.FormatClaude
 	case strings.HasPrefix(path, "/v1/chat/completions"):
-		return FormatOpenAI
+		return wire.FormatOpenAI
 	case strings.HasPrefix(path, "/v1/completions"):
-		return FormatOpenAI
+		return wire.FormatOpenAI
 	default:
-		return FormatUnknown
+		return wire.FormatUnknown
 	}
 }
 
 // providerTargetFormat returns the format the provider expects.
-func providerTargetFormat(accountType AccountType) RequestFormat {
+func providerTargetFormat(accountType AccountType) wire.RequestFormat {
 	switch capabilitiesFor(accountType).WireFormat {
 	case WireAnthropic:
-		return FormatClaude
+		return wire.FormatClaude
 	case WireResponses, WireOpenAI:
-		return FormatOpenAI
+		return wire.FormatOpenAI
 	default:
-		return FormatUnknown
+		return wire.FormatUnknown
 	}
 }
 
-func shouldTranslateResponsesToAnthropic(path string, targetFormat RequestFormat) bool {
-	if targetFormat != FormatClaude {
+func shouldTranslateResponsesToAnthropic(path string, targetFormat wire.RequestFormat) bool {
+	if targetFormat != wire.FormatClaude {
 		return false
 	}
 	return strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/responses")
 }
 
 // translateRequestBody translates a request body between formats.
-func translateRequestBody(body []byte, src, dst RequestFormat) ([]byte, error) {
-	if src == dst || src == FormatUnknown || dst == FormatUnknown {
+func translateRequestBody(body []byte, src, dst wire.RequestFormat) ([]byte, error) {
+	if src == dst || src == wire.FormatUnknown || dst == wire.FormatUnknown {
 		return body, nil
 	}
 	switch {
-	case src == FormatClaude && dst == FormatOpenAI:
+	case src == wire.FormatClaude && dst == wire.FormatOpenAI:
 		return translateClaudeReqToOpenAI(body)
-	case src == FormatOpenAI && dst == FormatClaude:
+	case src == wire.FormatOpenAI && dst == wire.FormatClaude:
 		return translateOpenAIReqToClaude(body)
 	}
 	return body, nil
@@ -95,14 +61,14 @@ func translateRequestBody(body []byte, src, dst RequestFormat) ([]byte, error) {
 
 // translateResponseBody translates a response body between formats.
 // For error responses (status >= 400), use translateErrorBody instead.
-func translateResponseBody(body []byte, src, dst RequestFormat, requestModel string) ([]byte, error) {
-	if src == dst || src == FormatUnknown || dst == FormatUnknown {
+func translateResponseBody(body []byte, src, dst wire.RequestFormat, requestModel string) ([]byte, error) {
+	if src == dst || src == wire.FormatUnknown || dst == wire.FormatUnknown {
 		return body, nil
 	}
 	switch {
-	case src == FormatOpenAI && dst == FormatClaude:
+	case src == wire.FormatOpenAI && dst == wire.FormatClaude:
 		return translateOpenAIRespToClaude(body, requestModel)
-	case src == FormatClaude && dst == FormatOpenAI:
+	case src == wire.FormatClaude && dst == wire.FormatOpenAI:
 		return translateClaudeRespToOpenAI(body)
 	}
 	return body, nil
@@ -110,8 +76,8 @@ func translateResponseBody(body []byte, src, dst RequestFormat, requestModel str
 
 // translateErrorBody translates an error response body between formats so
 // the client gets errors in its expected format.
-func translateErrorBody(body []byte, src, dst RequestFormat) []byte {
-	if src == dst || src == FormatUnknown || dst == FormatUnknown {
+func translateErrorBody(body []byte, src, dst wire.RequestFormat) []byte {
+	if src == dst || src == wire.FormatUnknown || dst == wire.FormatUnknown {
 		return body
 	}
 
@@ -121,9 +87,9 @@ func translateErrorBody(body []byte, src, dst RequestFormat) []byte {
 	}
 
 	switch {
-	case src == FormatOpenAI && dst == FormatClaude:
+	case src == wire.FormatOpenAI && dst == wire.FormatClaude:
 		return wire.OpenAIErrorToClaude(parsed, body)
-	case src == FormatClaude && dst == FormatOpenAI:
+	case src == wire.FormatClaude && dst == wire.FormatOpenAI:
 		return wire.ClaudeErrorToOpenAI(parsed, body)
 	}
 	return body
@@ -1212,22 +1178,22 @@ func generateToolCallID() string {
 }
 
 // logTranslation logs format translation at debug level.
-func logTranslation(reqID string, direction TranslateDirection, debug bool) {
+func logTranslation(reqID string, direction wire.TranslateDirection, debug bool) {
 	if !debug {
 		return
 	}
 	switch direction {
-	case TranslateClaudeToOAI:
+	case wire.TranslateClaudeToOAI:
 		log.Printf("[%s] format translation: claude -> openai", reqID)
-	case TranslateOAIToClaude:
+	case wire.TranslateOAIToClaude:
 		log.Printf("[%s] format translation: openai -> claude", reqID)
-	case TranslateChatToResponses:
+	case wire.TranslateChatToResponses:
 		log.Printf("[%s] format translation: chat completions -> responses api", reqID)
-	case TranslateCompletionsToResponses:
+	case wire.TranslateCompletionsToResponses:
 		log.Printf("[%s] format translation: completions -> responses api", reqID)
-	case TranslateResponsesToClaude:
+	case wire.TranslateResponsesToClaude:
 		log.Printf("[%s] format translation: responses api -> claude", reqID)
-	case TranslateClaudeToResponses:
+	case wire.TranslateClaudeToResponses:
 		log.Printf("[%s] format translation: claude -> responses api", reqID)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func TestCanTransitionAccountsForHistoryAndCurrentContent(t *testing.T) {
@@ -80,7 +82,7 @@ func TestFallbackPayloadRebuiltForTargetProtocol(t *testing.T) {
 		t.Fatalf("handoff=%+v err=%v", result, err)
 	}
 	translated, path, direction, err := translateFallbackPayload(clean, "/v1/responses", AccountTypeClaude)
-	if err != nil || path != "/v1/messages" || direction != TranslateResponsesToClaude {
+	if err != nil || path != "/v1/messages" || direction != wire.TranslateResponsesToClaude {
 		t.Fatalf("translation path=%s direction=%d err=%v", path, direction, err)
 	}
 	if strings.Contains(string(translated), "resp_previous_provider") || strings.Contains(string(translated), "opaque-reasoning") {
