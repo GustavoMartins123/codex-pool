@@ -46,6 +46,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     poolStats = { ...stats, total_accounts: 2, active_accounts: 2, accounts: [probeAccountStats('pool-codex', 'codex'), probeAccountStats('pool-xiaomi', 'xiaomi')] };
   }
   const qwenRequests = [];
+  const exportRequests = [];
   let qwenAuthorized = false;
   let qwenLinked = false;
   let qwenAccountID = '';
@@ -190,6 +191,18 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     else if (url.pathname === '/api/console/members') body = { principal, link: `${origin}/recover#fixture-invite`, expires_at: '2026-09-04T12:30:00Z' };
     else if (url.pathname === '/api/console/audit') body = [];
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
+    else if (url.pathname === '/api/console/usage-export' || url.pathname === '/api/me/usage-export') {
+      exportRequests.push({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
+      const format = url.searchParams.get('format') || 'csv';
+      const scope = url.pathname === '/api/console/usage-export' ? (url.searchParams.get('principal') || 'all') : 'me';
+      await request.respond({
+        status: 200,
+        contentType: format === 'csv' ? 'text/csv; charset=utf-8' : 'application/json',
+        headers: { 'Content-Disposition': `attachment; filename="usage-export-${scope}-fixture.${format}"`, 'X-Usage-Export-Rows': '1', 'X-Usage-Export-Truncated': 'false' },
+        body: format === 'csv' ? 'observed_at,principal_id\n2026-11-16T12:00:00Z,fixture-member\n' : JSON.stringify({ rows: [], rows_count: 0, truncated: false, hours: Number(url.searchParams.get('hours')), limit: 50000, excludes_passthrough: true }),
+      });
+      return;
+    }
     else if (url.pathname === '/api/pool/stats') body = poolStats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
     else if (url.pathname === '/api/pool/recent-errors') body = { errors: [{ at: '2026-11-16T12:00:00Z', message: 'codex upstream returned 502' }] };
@@ -199,7 +212,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
   });
   await page.goto(origin + path);
   await page.waitForSelector('h1');
-  return { page, errors, qwenRequests };
+  return { page, errors, qwenRequests, exportRequests };
 };
 const clickText = async (page, selector, text) => {
   await page.waitForFunction((selector, text) => [...document.querySelectorAll(selector)].some(el => el.textContent.trim() === text), {}, selector, text);
@@ -450,6 +463,41 @@ try {
       return { width: rect.width, height: rect.height, right: rect.right, limit: innerWidth };
     });
     assert.ok(box.width > 200 && box.height > 0 && box.right <= box.limit, `Recent error message is squeezed or clipped: ${JSON.stringify(box)}`);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+  await check('console exports the active window for everyone and for the selected member', async () => {
+    const { page, errors, exportRequests } = await open('/?view=console');
+    const exportIdle = selector => page.waitForFunction(sel => [...document.querySelectorAll(`${sel} button`)].every(button => !button.disabled), {}, selector);
+    await page.waitForSelector('.console-toolbar .usage-export');
+    await clickText(page, '.console-toolbar .usage-export button', 'Export CSV');
+    await page.waitForNetworkIdle();
+    assert.deepEqual(exportRequests, [{ path: '/api/console/usage-export', query: { hours: '168', format: 'csv' } }]);
+    await page.select('.console-toolbar select', '720');
+    await exportIdle('.console-toolbar .usage-export');
+    await clickText(page, '.console-toolbar .usage-export button', 'Export JSON');
+    await page.waitForNetworkIdle();
+    assert.deepEqual(exportRequests[1], { path: '/api/console/usage-export', query: { hours: '720', format: 'json' } });
+    await page.evaluate(() => [...document.querySelectorAll('.principal-row')].find(row => row.textContent.includes('Sam')).click());
+    await page.waitForSelector('.detail-actions .usage-export');
+    await clickText(page, '.detail-actions .usage-export button', 'Export CSV');
+    await page.waitForNetworkIdle();
+    assert.deepEqual(exportRequests[2], { path: '/api/console/usage-export', query: { hours: '720', format: 'csv', principal: 'guest' } });
+    assert.equal(await page.$('.usage-export [role="alert"]'), null);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+  await check('members export only their own usage window', async () => {
+    const { page, errors, exportRequests } = await open('/?view=mine', 'my-controls');
+    await page.waitForSelector('.signal-panel .usage-export');
+    await clickText(page, '.signal-panel .usage-export button', 'Export CSV');
+    await page.waitForNetworkIdle();
+    assert.deepEqual(exportRequests, [{ path: '/api/me/usage-export', query: { hours: '168', format: 'csv' } }]);
+    await page.waitForFunction(() => [...document.querySelectorAll('.signal-panel .usage-export button')].every(button => !button.disabled));
+    await clickText(page, '.signal-panel .usage-export button', 'Export JSON');
+    await page.waitForNetworkIdle();
+    assert.deepEqual(exportRequests[1], { path: '/api/me/usage-export', query: { hours: '168', format: 'json' } });
+    assert.equal(await page.$('.usage-export [role="alert"]'), null);
     assert.deepEqual(errors, []);
     await page.close();
   });
