@@ -41,6 +41,8 @@ var logSecretRules = []struct {
 	{regexp.MustCompile(`\bsk-ant-[A-Za-z0-9\-_]{8,}`), "sk-<redacted>"},
 	// Cloudflare and session cookies that carry identity.
 	{regexp.MustCompile(`(?i)\b((?:__cf_bm|cf_clearance|__Host-[A-Za-z0-9_\-]*session[A-Za-z0-9_\-]*|__Secure-[A-Za-z0-9_\-]*session[A-Za-z0-9_\-]*|sessionKey|session_token)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/]{8,}`), "${1}<redacted>"},
+	// Continuation tokens carried in Google appeal/verification URLs.
+	{regexp.MustCompile(`(?i)([?&](?:continue|continuation|token)=)[A-Za-z0-9\-._~+/=%]{16,}`), "${1}<redacted>"},
 	// Credentials embedded in a URL (https://user:pass@host).
 	{regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/\s:@]+:[^/\s@]+@`), "${1}<redacted>@"},
 }

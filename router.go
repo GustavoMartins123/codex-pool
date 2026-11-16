@@ -834,6 +834,24 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Account access verification: /admin/accounts/:id/verify
+	if strings.HasPrefix(r.URL.Path, "/admin/accounts/") && strings.HasSuffix(r.URL.Path, "/verify") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
+		accountID := strings.TrimSuffix(path, "/verify")
+		if !h.authorizeAccountManagement(w, r, accountID) {
+			return
+		}
+		h.handleAccountVerify(w, r, accountID)
+		return
+	}
+
 	// Consume one banked Codex reset: /admin/accounts/:id/reset-credit/consume
 	if strings.HasPrefix(r.URL.Path, "/admin/accounts/") && strings.HasSuffix(r.URL.Path, "/reset-credit/consume") {
 		if !h.checkAdminAuth(w, r) {
@@ -1010,6 +1028,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.URL.Path == "/admin/antigravity/models/verify" && r.Method == http.MethodPost {
 			h.handleAntigravityModelVerify(w, r)
+			return
+		}
+		if r.URL.Path == "/admin/antigravity/verify" && r.Method == http.MethodPost {
+			h.handleAntigravityVerifyBatch(w, r)
 			return
 		}
 		http.NotFound(w, r)

@@ -2009,7 +2009,7 @@ var antigravityVerificationURLPattern = regexp.MustCompile(`https://[^\s"'<>]+`)
 func classifyAntigravityForbidden(body []byte) (needsVerification, banned bool, verificationURL string) {
 	lower := strings.ToLower(string(body))
 	needsVerification = strings.Contains(lower, "validation_required") || strings.Contains(lower, "verify your account") || strings.Contains(lower, "validation_url")
-	banned = strings.Contains(lower, "terms of service") || strings.Contains(lower, "terms violation") || strings.Contains(lower, "policy violation")
+	banned = strings.Contains(lower, "terms of service") || strings.Contains(lower, "terms violation") || strings.Contains(lower, "policy violation") || strings.Contains(lower, "disabled in this account for violation")
 	var root any
 	if json.Unmarshal(body, &root) == nil {
 		var walk func(any) string
@@ -2036,6 +2036,30 @@ func classifyAntigravityForbidden(body []byte) (needsVerification, banned bool, 
 			return ""
 		}
 		verificationURL = walk(root)
+		var tosViolation func(any) bool
+		tosViolation = func(value any) bool {
+			switch node := value.(type) {
+			case map[string]any:
+				if reason, _ := node["reason"].(string); strings.EqualFold(reason, "TOS_VIOLATION") {
+					return true
+				}
+				for _, child := range node {
+					if tosViolation(child) {
+						return true
+					}
+				}
+			case []any:
+				for _, child := range node {
+					if tosViolation(child) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		if tosViolation(root) {
+			banned = true
+		}
 	}
 	if verificationURL == "" {
 		verificationURL = antigravityVerificationURLPattern.FindString(string(body))
