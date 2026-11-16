@@ -79,6 +79,60 @@ func TestRestorePreservesWithdrawalsOwnershipAndBudget(t *testing.T) {
 	})
 }
 
+func TestRestorePreservesAccountDeletions(t *testing.T) {
+	dir := t.TempDir()
+	current, staged := filepath.Join(dir, "current.db"), filepath.Join(dir, "staged.db")
+	resource := accountResource{Version: 2, ID: "private", Provider: AccountTypeKimi, OwnerID: "alice", AddedBy: "alice", Identity: "identity", SecretRef: "kimi/private.json", Status: "active", Revision: 2}
+	grant := testGrant("deleted-grant", "bob", &Account{ID: resource.ID, Type: resource.Provider})
+	grant.CreatedBy, grant.CreatedAt, grant.Revision = "alice", time.Now().UTC(), 1
+	mutateRestoreAuthority(t, current, func(tx *bbolt.Tx) error {
+		for _, name := range []string{bucketAccountResources, bucketAccountGrants} {
+			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+				return err
+			}
+		}
+		if err := putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(resource.Provider, resource.ID), resource); err != nil {
+			return err
+		}
+		return putJSON(tx.Bucket([]byte(bucketAccountGrants)), grant.ID, grant)
+	})
+	if err := copyFile(current, staged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateRestoreAuthority(t, current, func(tx *bbolt.Tx) error {
+		if err := tx.Bucket([]byte(bucketAccountResources)).Delete([]byte(resourceKey(resource.Provider, resource.ID))); err != nil {
+			return err
+		}
+		if err := tx.Bucket([]byte(bucketAccountGrants)).Delete([]byte(grant.ID)); err != nil {
+			return err
+		}
+		deletions, err := tx.CreateBucketIfNotExists([]byte(bucketAccountDeletions))
+		if err != nil {
+			return err
+		}
+		return putJSON(deletions, resourceKey(resource.Provider, resource.ID), accountDeletion{Provider: resource.Provider, ID: resource.ID, Identity: resource.Identity, DeletedAt: time.Now().UTC(), Actor: "alice"})
+	})
+	if err := preserveAccountSecurityOnRestore(current, staged); err != nil {
+		t.Fatal(err)
+	}
+	mutateRestoreAuthority(t, staged, func(tx *bbolt.Tx) error {
+		if raw := tx.Bucket([]byte(bucketAccountResources)).Get([]byte(resourceKey(resource.Provider, resource.ID))); raw != nil {
+			t.Fatal("restore resurrected a deleted account")
+		}
+		if raw := tx.Bucket([]byte(bucketAccountDeletions)).Get([]byte(resourceKey(resource.Provider, resource.ID))); raw == nil {
+			t.Fatal("restore lost deletion tombstone")
+		}
+		grants, err := readAccountGrants(tx.Bucket([]byte(bucketAccountGrants)))
+		if err != nil {
+			return err
+		}
+		if len(grants) != 0 {
+			t.Fatal("restore resurrected deleted grants")
+		}
+		return initializeAccountGrantIndex(tx)
+	})
+}
+
 func TestRestoreRejectsOwnershipConflicts(t *testing.T) {
 	dir := t.TempDir()
 	current := filepath.Join(dir, "current.db")

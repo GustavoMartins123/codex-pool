@@ -201,7 +201,9 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 		if err != nil {
 			return err
 		}
-		if r.WithdrawnAt != nil {
+		// A withdrawn account stays purgeable by its owner or an operator:
+		// hard delete is the only escape from the member withdraw tombstone.
+		if r.WithdrawnAt != nil && action != "delete" {
 			return errors.New("account withdrawn")
 		}
 		if r.Status != "active" {
@@ -214,7 +216,7 @@ func (p *PassportStore) authorizeAccount(identity string, a *Account, action str
 			}
 			_, err := accountReadPermission(tx, r, actor, identity, "")
 			return err
-		case "manage", "withdraw":
+		case "manage", "withdraw", "delete":
 			if actor != "" && actor == r.OwnerID || r.OperatorManaged && (identity == "break-glass" || principal != nil && principal.Kind == PrincipalOperator) {
 				return nil
 			}

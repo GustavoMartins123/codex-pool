@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"go.etcd.io/bbolt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -160,6 +161,109 @@ func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
 	clearAccountNeedsLogin(loaded)
 	if loaded.NeedsLogin || loaded.AuthError != "" {
 		t.Fatalf("needs-login state not cleared: %+v", loaded)
+	}
+}
+
+func TestDeleteWithdrawnAccountPurgesAuthorityAndUsage(t *testing.T) {
+	p, pool := ownershipFixture(t)
+	acc := pool.allAccounts()[1]
+	if err := p.withdrawAccount("alice", AccountTypeCodex, "private", 1); err != nil {
+		t.Fatal(err)
+	}
+	grant := testGrant("delete-grant", "bob", acc)
+	grant.CreatedBy, grant.CreatedAt, grant.Revision = "alice", time.Now().UTC(), 1
+	privateUsageKey := []byte(safeID("private") + "|00000000000000000001|req")
+	sharedUsageKey := []byte(safeID("shared") + "|00000000000000000001|req")
+	privateWeeklyKey := []byte("2026-W46|origin|" + hashAccountID("private") + "|codex")
+	sharedWeeklyKey := []byte("2026-W46|origin|" + hashAccountID("shared") + "|kimi")
+	if err := p.db.Update(func(tx *bbolt.Tx) error {
+		if err := putAccountGrant(tx, grant); err != nil {
+			return err
+		}
+		for _, name := range []string{bucketUsageRequests, bucketAccountUsage, bucketOriginWeeklyUsage, bucketAnalyticsOutbox, bucketUserUsage} {
+			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+				return err
+			}
+		}
+		for _, k := range [][]byte{privateUsageKey, sharedUsageKey} {
+			if err := tx.Bucket([]byte(bucketUsageRequests)).Put(k, []byte(`{}`)); err != nil {
+				return err
+			}
+		}
+		if err := tx.Bucket([]byte(bucketAccountUsage)).Put([]byte("private"), []byte(`{}`)); err != nil {
+			return err
+		}
+		for _, k := range [][]byte{privateWeeklyKey, sharedWeeklyKey} {
+			if err := tx.Bucket([]byte(bucketOriginWeeklyUsage)).Put(k, []byte(`{}`)); err != nil {
+				return err
+			}
+		}
+		for i, accountID := range []string{"private", "shared"} {
+			fact, err := json.Marshal(AnalyticsFact{AccountID: accountID})
+			if err != nil {
+				return err
+			}
+			seq := []byte{0, 0, 0, 0, 0, 0, 0, byte(i + 1)}
+			if err := tx.Bucket([]byte(bucketAnalyticsOutbox)).Put(seq, fact); err != nil {
+				return err
+			}
+		}
+		return tx.Bucket([]byte(bucketUserUsage)).Put([]byte("alice"), []byte(`{"requests":5}`))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.deleteAccount("alice", AccountTypeCodex, "private"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.deleteAccount("alice", AccountTypeCodex, "private"); err == nil {
+		t.Fatal("double delete succeeded")
+	}
+	if err := p.authorizeAccount("alice", acc, "use"); err == nil {
+		t.Fatal("deleted account still authorized")
+	}
+	if err := p.db.View(func(tx *bbolt.Tx) error {
+		if _, err := readAccountResource(tx.Bucket([]byte(bucketAccountResources)), AccountTypeCodex, "private"); err == nil {
+			t.Fatal("deleted resource still readable")
+		}
+		raw := tx.Bucket([]byte(bucketAccountDeletions)).Get([]byte(resourceKey(AccountTypeCodex, "private")))
+		if raw == nil {
+			t.Fatal("deletion tombstone missing")
+		}
+		var tombstone accountDeletion
+		if err := json.Unmarshal(raw, &tombstone); err != nil {
+			return err
+		}
+		if tombstone.Actor != "alice" || tombstone.ID != "private" || tombstone.DeletedAt.IsZero() {
+			t.Fatalf("tombstone: %+v", tombstone)
+		}
+		grant, err := readAccountGrant(tx.Bucket([]byte(bucketAccountGrants)), "delete-grant")
+		if err != nil {
+			return err
+		}
+		if grant != nil {
+			t.Fatal("deleted grant survived")
+		}
+		if err := initializeAccountGrantIndex(tx); err != nil {
+			return err
+		}
+		if tx.Bucket([]byte(bucketUsageRequests)).Get(privateUsageKey) != nil || tx.Bucket([]byte(bucketUsageRequests)).Get(sharedUsageKey) == nil {
+			t.Fatal("usage_requests purge incorrect")
+		}
+		if tx.Bucket([]byte(bucketAccountUsage)).Get([]byte("private")) != nil {
+			t.Fatal("account_usage purge incorrect")
+		}
+		if tx.Bucket([]byte(bucketOriginWeeklyUsage)).Get(privateWeeklyKey) != nil || tx.Bucket([]byte(bucketOriginWeeklyUsage)).Get(sharedWeeklyKey) == nil {
+			t.Fatal("origin_weekly_usage purge incorrect")
+		}
+		if tx.Bucket([]byte(bucketAnalyticsOutbox)).Get([]byte{0, 0, 0, 0, 0, 0, 0, 1}) != nil || tx.Bucket([]byte(bucketAnalyticsOutbox)).Get([]byte{0, 0, 0, 0, 0, 0, 0, 2}) == nil {
+			t.Fatal("analytics outbox purge incorrect")
+		}
+		if string(tx.Bucket([]byte(bucketUserUsage)).Get([]byte("alice"))) != `{"requests":5}` {
+			t.Fatal("user aggregate was purged")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

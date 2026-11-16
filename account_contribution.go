@@ -101,6 +101,13 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 		if err := putJSON(b, key, &accountResource{Version: 2, ID: id, Provider: provider, OwnerID: actor, AddedBy: actor, OperatorManaged: actor == "break-glass", SecretRef: ref, Identity: fingerprint, Revision: 1, Status: "pending", PendingExpiresAt: &expires}); err != nil {
 			return err
 		}
+		// Re-adding a deleted account reuses the deterministic key; clear its
+		// tombstone in the same tx so restore cannot drop the new resource.
+		if deletions := tx.Bucket([]byte(bucketAccountDeletions)); deletions != nil {
+			if err := deletions.Delete([]byte(key)); err != nil {
+				return err
+			}
+		}
 		return p.audit(tx, actor, "account.contribution_started", id, string(provider))
 	})
 	if err != nil {

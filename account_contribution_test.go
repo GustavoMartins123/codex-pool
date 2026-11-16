@@ -170,6 +170,44 @@ func TestContributionConcurrentDuplicateAndInvalidSecret(t *testing.T) {
 	}
 }
 
+func TestContributionReaddedAfterHardDelete(t *testing.T) {
+	base, _ := url.Parse("https://provider.example")
+	h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, nil, nil, NewKimiProvider(base))}
+	attachContributionFixture(t, h, "alice")
+	session, csrf := addTestPassportOperator(t, h.passport, "alice")
+	r := contributionRequestActor(httptest.NewRequest("POST", "/", nil), "alice")
+	id, err := h.saveContribution(r, AccountTypeKimi, "key", map[string]any{"api_key": "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, passportContributionRequest("POST", "/admin/accounts/"+id+"/delete", session, csrf, nil))
+	if w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if len(h.pool.allAccounts()) != 0 {
+		t.Fatal("deleted account still pooled")
+	}
+	again, err := h.saveContribution(r, AccountTypeKimi, "key", map[string]any{"api_key": "key"})
+	if err != nil {
+		t.Fatalf("re-add after delete: %v", err)
+	}
+	if again != id {
+		t.Fatalf("deterministic id changed: %s != %s", again, id)
+	}
+	if err := h.passport.db.View(func(tx *bbolt.Tx) error {
+		if b := tx.Bucket([]byte(bucketAccountDeletions)); b != nil && b.Get([]byte(resourceKey(AccountTypeKimi, id))) != nil {
+			t.Fatal("tombstone survived re-add")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.pool.visiblePool("alice").allAccounts()) != 1 {
+		t.Fatal("re-added account not visible")
+	}
+}
+
 func TestContributionVaultAndOAuthSessionAreFailClosed(t *testing.T) {
 	base, _ := url.Parse("https://provider.example")
 	h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, nil, nil, NewKimiProvider(base))}

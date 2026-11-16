@@ -8,6 +8,14 @@ import (
 )
 
 func (h *proxyHandler) authorizeAccountManagement(w http.ResponseWriter, r *http.Request, id string) bool {
+	return h.authorizeAccountAction(w, r, id, "manage")
+}
+
+func (h *proxyHandler) authorizeAccountDeletion(w http.ResponseWriter, r *http.Request, id string) bool {
+	return h.authorizeAccountAction(w, r, id, "delete")
+}
+
+func (h *proxyHandler) authorizeAccountAction(w http.ResponseWriter, r *http.Request, id, action string) bool {
 	if h.passport == nil {
 		return true
 	}
@@ -16,7 +24,7 @@ func (h *proxyHandler) authorizeAccountManagement(w http.ResponseWriter, r *http
 		if a.ID != id {
 			continue
 		}
-		if err := h.passport.authorizeAccount(actor, a, "manage"); err != nil {
+		if err := h.passport.authorizeAccount(actor, a, action); err != nil {
 			respondJSONError(w, http.StatusForbidden, "account management denied")
 			return false
 		}

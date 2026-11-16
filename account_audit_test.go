@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +29,7 @@ func TestAccountActionsHaveAtomicSanitizedAudit(t *testing.T) {
 			t.Fatalf("foreign visibility %s: %d %s", path, w.Code, w.Body.String())
 		}
 	}
-	for _, path := range []string{"/admin/accounts/" + id + "/disable", "/admin/kimi/" + id + "/remove"} {
+	for _, path := range []string{"/admin/accounts/" + id + "/disable", "/admin/accounts/" + id + "/delete", "/admin/kimi/" + id + "/remove"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, passportContributionRequest("POST", path, bob, bobCSRF, nil))
 		if w.Code != 403 {
@@ -38,6 +40,17 @@ func TestAccountActionsHaveAtomicSanitizedAudit(t *testing.T) {
 	h.ServeHTTP(w, passportContributionRequest("POST", "/api/me/accounts/kimi/"+id+"/withdraw", alice, csrf, []byte(`{"revision":2}`)))
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, passportContributionRequest("POST", "/admin/accounts/"+id+"/delete", alice, csrf, nil))
+	if w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if len(h.pool.allAccounts()) != 0 {
+		t.Fatal("deleted account still in pool")
+	}
+	if _, err := os.Stat(filepath.Join(h.cfg.poolDir, "kimi", id+".json")); !os.IsNotExist(err) {
+		t.Fatalf("credential file survived delete: %v", err)
 	}
 	entries, err := h.passport.recentAudit(100)
 	if err != nil {
@@ -52,7 +65,7 @@ func TestAccountActionsHaveAtomicSanitizedAudit(t *testing.T) {
 			}
 		}
 	}
-	for _, action := range []string{"account.contribution_started", "account.contributed", "account.withdrawn"} {
+	for _, action := range []string{"account.contribution_started", "account.contributed", "account.withdrawn", "account.deleted"} {
 		if counts[action] != 1 {
 			t.Fatalf("audit %s: %+v", action, counts)
 		}
@@ -70,6 +83,17 @@ func TestMissingAuditRollsBackAccountChanges(t *testing.T) {
 	}
 	if err := p.withdrawAccount("alice", AccountTypeCodex, "private", 1); err == nil {
 		t.Fatal("withdrawal succeeded without audit")
+	}
+	if err := p.deleteAccount("alice", AccountTypeCodex, "private"); err == nil {
+		t.Fatal("delete succeeded without audit")
+	}
+	if err := p.db.View(func(tx *bbolt.Tx) error {
+		if b := tx.Bucket([]byte(bucketAccountDeletions)); b != nil && b.Get([]byte(resourceKey(AccountTypeCodex, "private"))) != nil {
+			t.Fatal("failed audit left deletion tombstone")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := p.authorizeAccount("alice", pool.allAccounts()[1], "use"); err != nil {
 		t.Fatal("failed audit left tombstone")

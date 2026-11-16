@@ -86,7 +86,7 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 					return err
 				}
 			}
-			for _, name := range []string{bucketContributionAttempts, bucketPassportAudit} {
+			for _, name := range []string{bucketContributionAttempts, bucketPassportAudit, bucketAccountDeletions} {
 				sourceBucket := source.Bucket([]byte(name))
 				if sourceBucket == nil {
 					continue
@@ -127,6 +127,24 @@ func preserveAccountSecurityOnRestore(currentPath, stagedPath string) error {
 					return putJSON(destination, string(k), current)
 				}); err != nil {
 					return err
+				}
+			}
+			// A pre-delete backup still carries resources that were hard
+			// deleted since; the tombstones must drop them from the staged db.
+			if deletions := source.Bucket([]byte(bucketAccountDeletions)); deletions != nil {
+				if destination := target.Bucket([]byte(bucketAccountResources)); destination != nil {
+					var tombstoned [][]byte
+					if err := deletions.ForEach(func(k, _ []byte) error {
+						tombstoned = append(tombstoned, append([]byte(nil), k...))
+						return nil
+					}); err != nil {
+						return err
+					}
+					for _, k := range tombstoned {
+						if err := destination.Delete(k); err != nil {
+							return err
+						}
+					}
 				}
 			}
 			if sourceBucket := source.Bucket([]byte(bucketPassportPolicyUsage)); sourceBucket != nil {

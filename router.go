@@ -816,6 +816,24 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Account hard delete: /admin/accounts/:id/delete
+	if strings.HasPrefix(r.URL.Path, "/admin/accounts/") && strings.HasSuffix(r.URL.Path, "/delete") {
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/accounts/")
+		accountID := strings.TrimSuffix(path, "/delete")
+		if !h.authorizeAccountDeletion(w, r, accountID) {
+			return
+		}
+		h.handleAccountDelete(w, r, accountID)
+		return
+	}
+
 	// Consume one banked Codex reset: /admin/accounts/:id/reset-credit/consume
 	if strings.HasPrefix(r.URL.Path, "/admin/accounts/") && strings.HasSuffix(r.URL.Path, "/reset-credit/consume") {
 		if !h.checkAdminAuth(w, r) {
