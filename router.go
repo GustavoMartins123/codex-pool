@@ -552,6 +552,12 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/me/usage":
 		h.handlePassportUsage(w, r)
 		return
+	case "/api/me/usage-export":
+		h.handleMyUsageExport(w, r)
+		return
+	case "/api/console/usage-export":
+		h.handleConsoleUsageExport(w, r)
+		return
 	case "/api/console/principals":
 		h.handleConsolePrincipals(w, r)
 		return
