@@ -20,10 +20,10 @@ const principal = { id: 'fixture-member', kind: 'operator', status: 'active', di
 const clients = [{ id: 'laptop', label: 'Work laptop', status: 'active' }, { id: 'server', label: 'Home server', status: 'active' }, { id: 'old', label: 'Old machine', status: 'revoked' }];
 const pass = { id: 'guest', note: 'Sam', display_name: 'Sam', status: 'active', expires_at: '2026-10-12T18:30:00Z', clients: 1, link: '/join#fixture-pass' };
 const stats = { accounts: [], active_accounts: 0, total_accounts: 0, last_24h_tokens: 0, generated_at: '2026-09-04T12:00:00Z', aggregate: { total_api_cost: 0, total_subscription_cost: 0, total_subscription_monthly: 0, overall_roi: 0 } };
-const open = async (path = '/?view=mine', mode = 'signed-in') => {
+const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width: 1365, height: 1000 }) => {
   const page = await browser.newPage();
   await page.emulateTimezone('America/Los_Angeles');
-  await page.setViewport({ width: 1365, height: 1000 });
+  await page.setViewport(viewport);
   const errors = [];
   const ownMode = mode.startsWith('my-');
   let owned = ownMode ? [{ id: mode === 'my-qwen-link' ? 'private-qwen' : 'private-kimi', provider: mode === 'my-qwen-link' ? 'qwen' : 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
@@ -610,8 +610,8 @@ try {
     assert.deepEqual(errors, []); await page.close();
   });
   await check('charts load on scroll and expose keyboard-readable values on mobile', async () => {
-    const { page, errors } = await open('/?view=mine', 'chart-data');
-    await page.setViewport({ width: 390, height: 700 });
+    // Load at mobile width so the chart starts below the fold instead of latching visible at desktop width.
+    const { page, errors } = await open('/?view=mine', 'chart-data', { width: 390, height: 700 });
     await page.waitForSelector('.chart-placeholder');
     assert.equal(await page.$('.chart-stage canvas'), null);
     await page.$eval('.chart-stage', node => node.scrollIntoView());
