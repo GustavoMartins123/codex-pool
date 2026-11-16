@@ -703,7 +703,13 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.reloadAccounts()
+		detail := ""
+		if err := h.reloadAccounts(); err != nil {
+			detail = err.Error()
+		} else {
+			detail = fmt.Sprintf("%d accounts", h.pool.count())
+		}
+		h.recordAdminAudit(r, "pool.accounts_reloaded", "", detail)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 		return
@@ -745,7 +751,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.clearAllRateLimits(w)
+		h.clearAllRateLimits(w, r)
 		return
 	case "/admin/purge-anonymous":
 		if !h.checkAdminAuth(w, r) {
@@ -755,7 +761,7 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.purgeAnonymousUsers(w)
+		h.purgeAnonymousUsers(w, r)
 		return
 	}
 

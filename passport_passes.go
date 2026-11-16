@@ -92,6 +92,15 @@ func (h *proxyHandler) auditProviderContribution(r *http.Request, provider, acco
 	}
 }
 
+func (h *proxyHandler) recordAdminAudit(r *http.Request, action, subject, detail string) {
+	if h.passport == nil {
+		return
+	}
+	if err := h.passport.recordAudit(providerContributionActor(r), action, subject, detail); err != nil {
+		log.Printf("record %s audit: %v", action, err)
+	}
+}
+
 // Member-issued guest passes are bounded so one member cannot hand out
 // unlimited or permanent access to the shared pool. Operators are exempt.
 const (

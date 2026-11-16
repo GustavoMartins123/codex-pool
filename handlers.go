@@ -353,7 +353,7 @@ func (h *proxyHandler) resurrectAccount(w http.ResponseWriter, accountID string)
 }
 
 // clearAllRateLimits clears rate limits on all accounts.
-func (h *proxyHandler) clearAllRateLimits(w http.ResponseWriter) {
+func (h *proxyHandler) clearAllRateLimits(w http.ResponseWriter, r *http.Request) {
 	h.pool.mu.Lock()
 	defer h.pool.mu.Unlock()
 
@@ -369,11 +369,12 @@ func (h *proxyHandler) clearAllRateLimits(w http.ResponseWriter) {
 	}
 
 	log.Printf("cleared rate limits on %d accounts", cleared)
+	h.recordAdminAudit(r, "pool.rate_limits_cleared", "", fmt.Sprintf("cleared %d accounts", cleared))
 	respondJSON(w, map[string]any{"status": "ok", "cleared": cleared})
 }
 
 // purgeAnonymousUsers removes all usage data for users that are not registered pool users.
-func (h *proxyHandler) purgeAnonymousUsers(w http.ResponseWriter) {
+func (h *proxyHandler) purgeAnonymousUsers(w http.ResponseWriter, r *http.Request) {
 	allowed := make(map[string]bool)
 	if h.passport != nil {
 		h.passport.mu.RLock()
@@ -395,6 +396,7 @@ func (h *proxyHandler) purgeAnonymousUsers(w http.ResponseWriter) {
 	}
 
 	log.Printf("purged %d anonymous usage entries (kept %d pool users)", deleted, len(allowed))
+	h.recordAdminAudit(r, "pool.anonymous_usage_purged", "", fmt.Sprintf("deleted %d entries, kept %d users", deleted, len(allowed)))
 	respondJSON(w, map[string]any{"status": "ok", "deleted": deleted, "kept_users": len(allowed)})
 }
 
