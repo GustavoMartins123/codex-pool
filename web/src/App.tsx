@@ -30,6 +30,7 @@ export function App() {
   const { managed, data, loading, error, refresh } = usePageData(view, passport, !booting);
   const stats = data && "stats" in data ? data.stats : null;
   const signal = data && "signal" in data ? data.signal : null;
+  const recentErrors = data && "recentErrors" in data ? data.recentErrors : [];
 
   const goToView = useCallback((nextView: View, params: Record<string, string | null> = {}) => {
     const cleanup: Record<string, string | null> = { account: null, member: null };
@@ -150,7 +151,7 @@ export function App() {
           {error && <div className="signal-error" role="alert"> {error}</div>}
           {allowedViews(passport).includes(view) && !error && <PageBoundary key={view}>
             <Suspense fallback={<p role="status">Loading page…</p>}>
-              {view === "pulse" && <Pulse stats={stats} signal={signal} onAccounts={() => goToView("accounts", { accounts: "attention" })} />}
+              {view === "pulse" && <Pulse stats={stats} signal={signal} recentErrors={recentErrors} onAccounts={() => goToView("accounts", { accounts: "attention" })} />}
               {view === "insights" && <Insights stats={stats} signal={signal} onAccounts={() => goToView("accounts", { accounts: null })} />}
               {view === "mine" && <PassportMine principal={passport} onPrincipal={setPassport} />}
               {view === "passes" && passport && passport.kind !== "guest" && <Passes operator={passport.kind === "operator"} />}

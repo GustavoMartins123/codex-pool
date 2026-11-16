@@ -1172,6 +1172,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .audit-list strong { color: var(--gold); }
 .audit-list details summary { min-height: 32px; display: flex; align-items: center; color: var(--gold-dim); cursor: pointer; }
 .audit-list details code { display: block; margin-top: 6px; color: var(--faint); overflow-wrap: anywhere; }
+.error-list > div { grid-template-columns: 170px minmax(0,1fr); }
+.error-list span { color: var(--ink); overflow-wrap: anywhere; }
 @media (max-width: 760px) {
   .passes-layout, .setup-selector { grid-template-columns: 1fr; }
   .identity-strip { flex-wrap: wrap; }

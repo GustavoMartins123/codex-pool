@@ -1,20 +1,21 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { loadAdminAccounts, loadModelCatalog, loadPoolStats, loadSignalAnalytics } from "./api";
+import { loadAdminAccounts, loadModelCatalog, loadPoolStats, loadRecentErrors, loadSignalAnalytics } from "./api";
 import type { View } from "./navigation";
-import type { ModelDescriptor, PassportPrincipal, PoolStats, SignalAnalytics } from "./types";
+import type { ModelDescriptor, PassportPrincipal, PoolStats, RecentError, SignalAnalytics } from "./types";
 import { usePageData } from "./usePageData";
 
 vi.mock("./api", () => ({
-  loadAdminAccounts: vi.fn(), loadModelCatalog: vi.fn(), loadPoolStats: vi.fn(), loadSignalAnalytics: vi.fn(),
+  loadAdminAccounts: vi.fn(), loadModelCatalog: vi.fn(), loadPoolStats: vi.fn(), loadRecentErrors: vi.fn(), loadSignalAnalytics: vi.fn(),
 }));
 
 const operator: PassportPrincipal = { id: "alice", kind: "operator", status: "active" };
 const stats = { generated_at: "2026-09-29T00:00:00Z" } as PoolStats;
 const analytics = { generated_at: "2026-09-29T00:00:00Z" } as SignalAnalytics;
 const model = (id: string) => ({ id } as ModelDescriptor);
-const endpoints = [loadPoolStats, loadSignalAnalytics, loadAdminAccounts, loadModelCatalog];
+const recentErrors: RecentError[] = [{ at: "2026-09-29T00:00:00Z", message: "codex upstream returned 502" }];
+const endpoints = [loadPoolStats, loadSignalAnalytics, loadAdminAccounts, loadModelCatalog, loadRecentErrors];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,6 +30,7 @@ beforeEach(() => {
   vi.mocked(loadSignalAnalytics).mockResolvedValue(analytics);
   vi.mocked(loadAdminAccounts).mockResolvedValue([]);
   vi.mocked(loadModelCatalog).mockResolvedValue({ models: [model("current")] });
+  vi.mocked(loadRecentErrors).mockResolvedValue(recentErrors);
 });
 afterEach(() => {
   cleanup();
@@ -43,10 +45,10 @@ async function setVisibility(state: DocumentVisibilityState) {
 
 describe("page data requests", () => {
   it.each([
-    ["pulse", [1, 1, 0, 0]], ["insights", [1, 1, 0, 0]],
-    ["accounts", [1, 0, 1, 0]], ["models", [0, 0, 0, 1]],
-    ["mine", [0, 0, 0, 0]], ["passes", [0, 0, 0, 0]],
-    ["console", [0, 0, 0, 0]], ["setup", [0, 0, 0, 0]],
+    ["pulse", [1, 1, 0, 0, 1]], ["insights", [1, 1, 0, 0, 0]],
+    ["accounts", [1, 0, 1, 0, 0]], ["models", [0, 0, 0, 1, 0]],
+    ["mine", [0, 0, 0, 0, 0]], ["passes", [0, 0, 0, 0, 0]],
+    ["console", [0, 0, 0, 0, 0]], ["setup", [0, 0, 0, 0, 0]],
   ] as const)("loads only the endpoints needed by %s", async (view, calls) => {
     const { result } = renderHook(() => usePageData(view, operator, true));
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -64,6 +66,16 @@ describe("page data requests", () => {
     expect(result.current.data).toBeNull();
   });
 
+  it("carries recent errors on pulse only", async () => {
+    const { result, rerender } = renderHook(({ view }: { view: View }) => usePageData(view, operator, true), { initialProps: { view: "pulse" as View } });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data).toEqual({ view: "pulse", stats, signal: analytics, recentErrors });
+    rerender({ view: "insights" });
+    await waitFor(() => expect(result.current.data?.view).toBe("insights"));
+    expect(result.current.data).toEqual({ view: "insights", stats, signal: analytics });
+    expect(loadRecentErrors).toHaveBeenCalledOnce();
+  });
+
   it("polls the active endpoints and stops polling on a page with its own data", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const { result, rerender } = renderHook(({ view }: { view: View }) => usePageData(view, operator, true), { initialProps: { view: "pulse" } });
@@ -72,6 +84,7 @@ describe("page data requests", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(loadPoolStats).toHaveBeenCalledTimes(2);
     expect(loadSignalAnalytics).toHaveBeenCalledTimes(2);
+    expect(loadRecentErrors).toHaveBeenCalledTimes(2);
     rerender({ view: "models" });
     await act(async () => { await Promise.resolve(); });
     expect(result.current.loading).toBe(false);
@@ -79,6 +92,7 @@ describe("page data requests", () => {
     expect(loadModelCatalog).toHaveBeenCalledTimes(2);
     expect(loadPoolStats).toHaveBeenCalledTimes(2);
     expect(loadSignalAnalytics).toHaveBeenCalledTimes(2);
+    expect(loadRecentErrors).toHaveBeenCalledTimes(2);
     rerender({ view: "setup" });
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
     expect(loadModelCatalog).toHaveBeenCalledTimes(2);

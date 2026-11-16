@@ -162,6 +162,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
     else if (url.pathname === '/api/pool/stats') body = stats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
+    else if (url.pathname === '/api/pool/recent-errors') body = { errors: [{ at: '2026-11-16T12:00:00Z', message: 'codex upstream returned 502' }] };
     else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }, { id: 'kimi-k2.5', provider: 'kimi', protocol: 'messages', available_now: true }, { id: 'claude-haiku-5-5', provider: 'claude', protocol: 'messages', available_now: true }] };
     else { status = 503; body = { error: 'Request failed. Try again.' }; }
     await request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -392,7 +393,19 @@ try {
     assert.equal(await unavailable.$('.contribution-dialog input'), null);
     assert.deepEqual(loginErrors, []); await unavailable.close();
   });
-  for (const view of ['mine', 'setup', 'passes', 'console']) {
+  await check('pulse lists recent provider errors', async () => {
+    const { page, errors } = await open('/?view=pulse');
+    await page.waitForFunction(() => document.querySelector('.error-list')?.textContent.includes('codex upstream returned 502'));
+    await page.setViewport({ width: 390, height: 1000 });
+    const box = await page.evaluate(() => {
+      const rect = document.querySelector('.error-list span').getBoundingClientRect();
+      return { width: rect.width, height: rect.height, right: rect.right, limit: innerWidth };
+    });
+    assert.ok(box.width > 200 && box.height > 0 && box.right <= box.limit, `Recent error message is squeezed or clipped: ${JSON.stringify(box)}`);
+    assert.deepEqual(errors, []);
+    await page.close();
+  });
+  for (const view of ['pulse', 'mine', 'setup', 'passes', 'console']) {
     await check(`${view} renders at desktop and mobile widths`, async () => {
       const { page, errors } = await open(`/?view=${view}`);
       await page.waitForNetworkIdle();

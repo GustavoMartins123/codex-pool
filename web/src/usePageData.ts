@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadAdminAccounts, loadModelCatalog, loadPoolStats, loadSignalAnalytics } from "./api";
+import { loadAdminAccounts, loadModelCatalog, loadPoolStats, loadRecentErrors, loadSignalAnalytics } from "./api";
 import type { View } from "./navigation";
 import { ResponseVersion } from "./response-version";
-import type { AdminAccount, ModelDescriptor, PassportPrincipal, PoolStats, SignalAnalytics } from "./types";
+import type { AdminAccount, ModelDescriptor, PassportPrincipal, PoolStats, RecentError, SignalAnalytics } from "./types";
 
 type PageData =
-  | { view: "pulse" | "insights"; stats: PoolStats; signal: SignalAnalytics }
+  | { view: "pulse"; stats: PoolStats; signal: SignalAnalytics; recentErrors: RecentError[] }
+  | { view: "insights"; stats: PoolStats; signal: SignalAnalytics }
   | { view: "accounts"; stats: PoolStats; accounts: AdminAccount[] }
   | { view: "models"; models: ModelDescriptor[] };
 
@@ -30,7 +31,13 @@ export function usePageData(view: View, principal: PassportPrincipal | null, ena
     try {
       let data: PageData;
       switch (view) {
-        case "pulse":
+        case "pulse": {
+          const [stats, signal, recentErrors] = await Promise.all([
+            loadPoolStats(controller.signal), loadSignalAnalytics(controller.signal), loadRecentErrors(controller.signal),
+          ]);
+          data = { view, stats, signal, recentErrors };
+          break;
+        }
         case "insights": {
           const [stats, signal] = await Promise.all([loadPoolStats(controller.signal), loadSignalAnalytics(controller.signal)]);
           data = { view, stats, signal };

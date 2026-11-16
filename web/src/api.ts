@@ -1,5 +1,5 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
-import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, SignalAnalytics, TokenPlanCredits } from "./types";
+import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, RecentError, SignalAnalytics, TokenPlanCredits } from "./types";
 
 import { validCompatibility } from "./compatibility";
 
@@ -185,6 +185,12 @@ export async function loadSignalAnalytics(signal?: AbortSignal): Promise<SignalA
     if (!Array.isArray(analytics[field])) throw new Error(`Invalid analytics response: ${field} must be an array`);
   }
   return analytics;
+}
+
+export async function loadRecentErrors(signal?: AbortSignal): Promise<RecentError[]> {
+  const result = await decode<{ errors: RecentError[] }>(await fetch("/api/pool/recent-errors", { credentials: "same-origin", cache: "no-store", signal }));
+  if (!Array.isArray(result.errors) || result.errors.some(item => !item || typeof item.message !== "string" || typeof item.at !== "string")) throw new Error("Invalid recent errors response");
+  return result.errors;
 }
 
 export async function loadModelCatalog(signal?: AbortSignal): Promise<ModelCatalog> {

@@ -1,11 +1,11 @@
 import { Area, AreaChart, Bar, BarChart, Grid, Legend, Line, LineChart, Sparkline, Tooltip, XAxis, YAxis, type ChartConfig, type DitherColor } from "../charts";
 import { accountFlow, capacityForecasts, dailyDemandSeries, demandSummary, modelMix, originConcentration, peakHeatmap, type AccountFlow, type CapacityForecast } from "../insights";
-import { type AccountStats, type HourlyUsage, type ModelDailyUsage, type ModelQuotaEfficiency, type OriginWeeklyUsage, type PoolStats, type Provider, type QuotaCapacityPoint, type ResetObservation, type SignalAnalytics } from "../types";
+import { type AccountStats, type HourlyUsage, type ModelDailyUsage, type ModelQuotaEfficiency, type OriginWeeklyUsage, type PoolStats, type Provider, type QuotaCapacityPoint, type RecentError, type ResetObservation, type SignalAnalytics } from "../types";
 import { INSIGHT_MODES, queryValue, type InsightMode, updateURL } from "../navigation";
 import { EmptyChart, Instrument, PROVIDERS, SignalPanel, SignalSkeleton, accountThroughput, classNames, compact, formatReset, formatTokens, money, originHandle, poolSurplus, preciseMoney, providerDisplay, tokenThroughput } from "../ui";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 
-export function Pulse({ stats, signal, onAccounts }: { stats: PoolStats | null; signal: SignalAnalytics | null; onAccounts: () => void }) {
+export function Pulse({ stats, signal, recentErrors, onAccounts }: { stats: PoolStats | null; signal: SignalAnalytics | null; recentErrors: RecentError[]; onAccounts: () => void }) {
   if (!stats || !signal) return <SignalSkeleton />;
   const surplus = poolSurplus(stats.aggregate);
   const burn = burnSummary(signal.hourly);
@@ -73,6 +73,19 @@ export function Pulse({ stats, signal, onAccounts }: { stats: PoolStats | null; 
           <OriginDrain rows={signal.origin_weekly} />
         </SignalPanel>
       </section>
+
+      <SignalPanel title="Recent provider errors">
+        {recentErrors.length === 0
+          ? <div className="empty-state">No provider errors recorded since the pool started.</div>
+          : <div className="audit-list error-list" role="log" aria-label="Recent provider errors">
+            {recentErrors.slice(0, 20).map((error, index) => (
+              <div key={`${error.at}-${index}`}>
+                <time dateTime={error.at}>{new Date(error.at).toLocaleString()}</time>
+                <span>{error.message}</span>
+              </div>
+            ))}
+          </div>}
+      </SignalPanel>
     </div>
   );
 }

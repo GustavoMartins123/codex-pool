@@ -321,6 +321,11 @@ export interface ResetObservation {
   timing: "early" | "late" | "on_time" | "observed";
 }
 
+export interface RecentError {
+  at: string;
+  message: string;
+}
+
 export interface SignalAnalytics {
   generated_at: string;
   origin_data_since: string;
