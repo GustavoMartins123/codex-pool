@@ -70,114 +70,143 @@ Share your pool with others using guest passes and member invites.
 
 ## Quick Start
 
-### 1. Add your accounts
+### 1. Deploy
+
+One command generates the secrets, prepares the storage directories, builds
+the image, and starts the pool. It requires Docker with Compose, plus Bash 4.4+
+and OpenSSL on Linux/macOS or PowerShell on Windows.
 
 ```bash
-mkdir -p pool/codex pool/claude pool/gemini pool/antigravity pool/zai pool/opencode_go pool/grok pool/xiaomi pool/kimi pool/minimax
+bash setup.sh --deploy
+```
 
-# Codex accounts
-cp ~/.codex/auth.json pool/codex/work.json
-cp ~/backup/.codex/auth.json pool/codex/personal.json
+```powershell
+.\setup.ps1 -Deploy
+```
 
-# Claude accounts
-cp ~/.claude/credentials.json pool/claude/main.json
+The script:
 
-# Gemini accounts
+- Creates `.env` from `.env.example` and generates `ADMIN_TOKEN`,
+  `POOL_AUTH_ENCRYPTION_KEY`, `POOL_JWT_SECRET`, and `POOL_CREDENTIAL_KEY` with
+  cryptographically secure randomness. Reruns fill only missing or empty
+  secrets; existing values, rotation keys, provider credentials, and other
+  settings stay unchanged. Duplicate or invalid secret assignments cause an
+  error before writing. Secrets are never printed, and the file is restricted
+  to the current user.
+- Creates `pool/` and `data/` owned by your user, so the unprivileged container
+  can write to them.
+- Builds and starts the stack with `scripts/deploy.sh` (Windows:
+  `scripts\windows\deploy.ps1`) and waits until the container reports healthy.
+
+Add `--monitoring` (Windows: `-Monitoring`) to also start Prometheus and
+Grafana. If the deploy fails, `.env` is kept: fix Docker and rerun the same
+command. Inspect failures with `docker compose logs codex-pool`.
+
+`--deploy` always uses the repo-root `.env` because Docker Compose reads only
+that file; it cannot be combined with a custom environment path. To manage
+another file, run `bash setup.sh /path/to/.env` or
+`.\setup.ps1 -EnvPath C:\path\to\.env` without the deploy flag. Keep this file
+private and retain its keys across restarts. Key rotation remains an explicit
+operation.
+
+Without `--deploy`, the scripts only generate the environment file. The server
+requires the vault key and encrypts existing plaintext credentials on first
+start. Development scripts use the same `.env` as native binaries.
+
+### 2. Create the operator
+
+Open http://127.0.0.1:8989/. On first start the dashboard shows
+**"Set up this pool"**: create the operator account with a password of at
+least 12 characters. The form asks for the admin token generated in step 1:
+
+```bash
+grep "^ADMIN_TOKEN=" .env
+```
+
+```powershell
+Select-String "^ADMIN_TOKEN=" .env
+```
+
+`ADMIN_TOKEN` remains a break-glass administrative credential after the
+operator exists.
+
+### 3. Add provider accounts
+
+In the dashboard, use **"Add pool account"**:
+
+- **Browser OAuth**: Codex, Claude, Antigravity, Z.ai, and Qwen.
+- **Paste an auth JSON**: Grok.
+- **Paste an API key**: Kimi, MiniMax, Xiaomi (MiMo), OpenCode Go, and
+  AI Studio (Gemini).
+
+No credential files need to be copied by hand for these flows.
+
+#### Advanced: add accounts by file
+
+Gemini OAuth is the only flow that requires a file drop: place the credentials
+in `pool/gemini/` and the pool picks them up without a restart.
+
+```bash
+mkdir -p pool/gemini
 cp ~/.gemini/oauth_creds.json pool/gemini/main.json
-
-# Z.ai accounts (or use Dashboard / ZCode Desktop import)
-cat > pool/zai/main.json <<'EOF'
-{"api_key": "your-zcode-api-key"}
-EOF
-
-# OpenCode Go subscription (API key from https://opencode.ai/auth)
-cat > pool/opencode_go/main.json <<'EOF'
-{"api_key": "sk-..."}
-EOF
-
-# Xiaomi MiMo accounts
-cat > pool/xiaomi/main.json <<'EOF'
-{"api_key": "tp-..."}
-EOF
-
-# Kimi accounts
-cat > pool/kimi/main.json <<'EOF'
-{"api_key": "sk-..."}
-EOF
-
-# MiniMax accounts
-cat > pool/minimax/main.json <<'EOF'
-{"api_key": "..."}
-EOF
-
-chmod 600 pool/*/*.json
+chmod 600 pool/gemini/*.json
 ```
 
-Structure:
-```
-pool/
-├── codex/
-│   ├── work.json
-│   └── personal.json
-├── claude/
-│   └── main.json
-├── gemini/
-│   └── main.json
-├── antigravity/
-│   └── main.json
-├── zai/
-│   └── main.json
-├── opencode_go/
-│   └── main.json
-├── grok/
-│   └── main.json
-├── xiaomi/
-│   └── main.json
-├── kimi/
-│   └── main.json
-└── minimax/
-    └── main.json
+Other providers also accept credential files under `pool/<provider>/` (for
+example `pool/codex/work.json` from `~/.codex/auth.json` or
+`pool/claude/main.json` from `~/.claude/credentials.json`); see
+[Credential Formats](#credential-formats). The watcher hot-reloads added or
+changed files, plaintext credentials are encrypted into the vault at startup,
+and files must be readable only by their owner (`chmod 600`).
+
+### 4. Point your CLI
+
+**Codex** - `~/.codex/config.toml`:
+```toml
+model_provider = "codex-pool"
+chatgpt_base_url = "http://127.0.0.1:8989/backend-api"
+
+[model_providers.codex-pool]
+name = "OpenAI via codex-pool proxy"
+base_url = "http://127.0.0.1:8989/v1"
+wire_api = "responses"
+requires_openai_auth = true
 ```
 
-### 2. Generate the local environment
-
-On Linux/macOS (Bash 4.4+ and OpenSSL):
-
+**Claude Code**:
 ```bash
-bash setup.sh
+export ANTHROPIC_BASE_URL="http://127.0.0.1:8989"
+export ANTHROPIC_API_KEY="pool"
 ```
 
-On Windows (PowerShell):
-
-```powershell
-.\setup.ps1
-```
-
-The scripts create `.env` from `.env.example` and generate `ADMIN_TOKEN`,
-`POOL_AUTH_ENCRYPTION_KEY`, `POOL_JWT_SECRET`, and `POOL_CREDENTIAL_KEY` with
-cryptographically secure randomness. Reruns fill only missing or empty secrets;
-existing values, rotation keys, provider credentials, and other settings stay
-unchanged. Duplicate or invalid secret assignments cause an error before writing.
-Secrets are never printed, and the file is restricted to the current user.
-
-To use another file, run `bash setup.sh /path/to/.env` or
-`.\setup.ps1 -EnvPath C:\path\to\.env`. Keep this file private and retain its
-keys across restarts. Key rotation remains an explicit operation.
-
-The server requires the vault key and encrypts existing plaintext credentials
-on first start. Development scripts use the same `.env` as native binaries.
-
-### 3. Run it
-
-Docker Compose reads the generated `.env` automatically:
-
+**Gemini CLI**:
 ```bash
-bash scripts/deploy.sh
+export CODE_ASSIST_ENDPOINT="http://127.0.0.1:8989"
 ```
 
-```powershell
-.\scripts\windows\deploy.ps1
+**Antigravity CLI** (`agy`): install with `curl -fsSL https://antigravity.google/cli/install.sh | bash` (Windows: `irm https://antigravity.google/cli/install.ps1 | iex`). The setup script selects Gemini API key mode in `~/.gemini/antigravity-cli/settings.json` (`modelProvider: "gemini"`) and exports the pool key, so requests hit `/v1beta/` with `x-goog-api-key` authentication:
+```bash
+export GEMINI_API_KEY="AIzaSy-pool-..."
+export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:8989"
 ```
+
+Smoke-test the full chain with the real CLI:
+```bash
+agy models
+agy -p "Reply with exactly: pool-ok" --model gemini-3.8-flash-high --output-format json
+```
+
+To disconnect a client and restore the default Google sign-in, delete the `Antigravity Pool Configuration` block from `~/.zshrc`/`~/.bashrc` (Windows: clear the user-scope variables with `[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $null, 'User')` and the same for `GOOGLE_GEMINI_BASE_URL`), then remove `modelProvider` from `~/.gemini/antigravity-cli/settings.json`.
+
+**Google Antigravity account**: open the dashboard, choose "Contribute an account", then press "Google Antigravity". The popup completes the callback automatically. Pasting the callback URL remains available when popups are blocked.
+
+The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `http://localhost:51121/oauth-callback` redirect, matching CLIProxyAPI and VibeProxy. When the pool runs on the same machine as the browser, the popup completes on its own. For a remote pool, paste the failed localhost callback URL into the contribution dialog; the state and PKCE verifier are still checked before exchange.
+
+`ANTIGRAVITY_OAUTH_CLIENT_ID`, `ANTIGRAVITY_OAUTH_CLIENT_SECRET`, and `ANTIGRAVITY_OAUTH_REDIRECT_URI` remain available for tests or a separately registered Google OAuth client. `ANTIGRAVITY_CLIENT_VERSION` overrides the Antigravity client version used in upstream requests. `UPSTREAM_ANTIGRAVITY_BASE`, `UPSTREAM_ANTIGRAVITY_DAILY_BASE`, and `UPSTREAM_ANTIGRAVITY_ONBOARD_BASE` override the production, generation, and onboarding Cloud Code Assist hosts.
+
+**Z.ai Individual Coding Plan account**: choose "Z.ai" in "Contribute an account" to sign in via the browser ZCode OAuth flow (with automated session polling), import your existing configuration with a single click from ZCode Desktop (`~/.zcode/cli/config.json`), or enter an API key manually. The pool checks the active Individual Coding Plan and a model request before saving the linked account with full identity metadata in `pool/zai/`. On Linux, files are created with mode `0600`.
+
+### Run without Docker
 
 Native binaries load `.env` from the working directory before configuration.
 Change `POOL_DIR`, `PROXY_DB_PATH`, and `DUCKDB_PATH` to local paths before
@@ -241,53 +270,6 @@ For a VPS behind Traefik, see [Traefik deployment and migration](docs/deploy-tra
 To run agents on another machine, see the [runner guide](docs/runner.md).
 The `runner-v*` releases publish `runnerd` binaries for Windows, Linux, and macOS
 with `SHA256SUMS`. Pairing and execution use a single `runner.launch.json` file.
-
-### 4. Point your CLI
-
-**Codex** - `~/.codex/config.toml`:
-```toml
-model_provider = "codex-pool"
-chatgpt_base_url = "http://127.0.0.1:8989/backend-api"
-
-[model_providers.codex-pool]
-name = "OpenAI via codex-pool proxy"
-base_url = "http://127.0.0.1:8989/v1"
-wire_api = "responses"
-requires_openai_auth = true
-```
-
-**Claude Code**:
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8989"
-export ANTHROPIC_API_KEY="pool"
-```
-
-**Gemini CLI**:
-```bash
-export CODE_ASSIST_ENDPOINT="http://127.0.0.1:8989"
-```
-
-**Antigravity CLI** (`agy`): install with `curl -fsSL https://antigravity.google/cli/install.sh | bash` (Windows: `irm https://antigravity.google/cli/install.ps1 | iex`). The setup script selects Gemini API key mode in `~/.gemini/antigravity-cli/settings.json` (`modelProvider: "gemini"`) and exports the pool key, so requests hit `/v1beta/` with `x-goog-api-key` authentication:
-```bash
-export GEMINI_API_KEY="AIzaSy-pool-..."
-export GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:8989"
-```
-
-Smoke-test the full chain with the real CLI:
-```bash
-agy models
-agy -p "Reply with exactly: pool-ok" --model gemini-3.8-flash-high --output-format json
-```
-
-To disconnect a client and restore the default Google sign-in, delete the `Antigravity Pool Configuration` block from `~/.zshrc`/`~/.bashrc` (Windows: clear the user-scope variables with `[Environment]::SetEnvironmentVariable('GEMINI_API_KEY', $null, 'User')` and the same for `GOOGLE_GEMINI_BASE_URL`), then remove `modelProvider` from `~/.gemini/antigravity-cli/settings.json`.
-
-**Google Antigravity account**: open the dashboard, choose "Contribute an account", then press "Google Antigravity". The popup completes the callback automatically. Pasting the callback URL remains available when popups are blocked.
-
-The sign-in flow uses Antigravity's shipped Google OAuth client and its fixed `http://localhost:51121/oauth-callback` redirect, matching CLIProxyAPI and VibeProxy. When the pool runs on the same machine as the browser, the popup completes on its own. For a remote pool, paste the failed localhost callback URL into the contribution dialog; the state and PKCE verifier are still checked before exchange.
-
-`ANTIGRAVITY_OAUTH_CLIENT_ID`, `ANTIGRAVITY_OAUTH_CLIENT_SECRET`, and `ANTIGRAVITY_OAUTH_REDIRECT_URI` remain available for tests or a separately registered Google OAuth client. `ANTIGRAVITY_CLIENT_VERSION` overrides the Antigravity client version used in upstream requests. `UPSTREAM_ANTIGRAVITY_BASE`, `UPSTREAM_ANTIGRAVITY_DAILY_BASE`, and `UPSTREAM_ANTIGRAVITY_ONBOARD_BASE` override the production, generation, and onboarding Cloud Code Assist hosts.
-
-**Z.ai Individual Coding Plan account**: choose "Z.ai" in "Contribute an account" to sign in via the browser ZCode OAuth flow (with automated session polling), import your existing configuration with a single click from ZCode Desktop (`~/.zcode/cli/config.json`), or enter an API key manually. The pool checks the active Individual Coding Plan and a model request before saving the linked account with full identity metadata in `pool/zai/`. On Linux, files are created with mode `0600`.
 
 ---
 
