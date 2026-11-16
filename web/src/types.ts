@@ -342,6 +342,7 @@ export interface SignalAnalytics {
 export interface AdminAccount {
   can_manage: boolean;
   can_consume_reset?: boolean;
+  can_verify: boolean;
   id: string;
   public_id: string;
   type: Provider;

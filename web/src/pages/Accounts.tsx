@@ -1,4 +1,4 @@
-import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts, verifyAccount, verifyAllAntigravity, type AntigravityVerifyResult } from "../api";
+import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts, verifyAccount, verifyAllAccounts, type AccountVerifyResult } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
@@ -14,8 +14,9 @@ const VERIFY_STATUS_LABELS: Record<string, string> = {
   healthy: "Access healthy",
   banned: "Banned — Terms of Service violation",
   needs_verification: "Verification required",
-  revoked: "Refresh token revoked",
+  revoked: "Access revoked",
   quota_exhausted: "Quota exhausted",
+  rate_limited: "Rate limited — cooling down",
   error: "Access check failed",
 };
 
@@ -43,7 +44,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [verifying, setVerifying] = useState<string | null>(null);
-  const [verifyResults, setVerifyResults] = useState<Record<string, AntigravityVerifyResult>>({});
+  const [verifyResults, setVerifyResults] = useState<Record<string, AccountVerifyResult>>({});
   const inspectorRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -139,7 +140,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const selectedVerifyLink = selectedVerifyResult
     ? safeVerificationURL(selectedVerifyResult.appeal_url) || safeVerificationURL(selectedVerifyResult.verification_url)
     : "";
-  const canVerifyAll = adminAccounts.some((account) => account.type === "antigravity" && account.can_manage);
+  const canVerifyAll = adminAccounts.some((account) => account.can_verify && account.can_manage);
   const toggleAction: AccountAction | null = selectedAdmin ? selectedAdmin.disabled ? "enable" : "disable" : null;
 
   // The reset is already spent once the request succeeds, so a failed list
@@ -236,7 +237,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     setVerifying("all");
     setMessage(null);
     try {
-      const { accounts } = await verifyAllAntigravity();
+      const { accounts } = await verifyAllAccounts();
       setVerifyResults((current) => {
         const next = { ...current };
         for (const result of accounts) next[result.account_id] = result;
@@ -246,7 +247,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
       const healthy = accounts.filter((result) => result.status === "healthy").length;
       setMessage({
         tone: banned > 0 ? "error" : "success",
-        text: `${accounts.length} Antigravity account${accounts.length === 1 ? "" : "s"} checked · ${healthy} healthy · ${banned} banned`,
+        text: `${accounts.length} account${accounts.length === 1 ? "" : "s"} checked · ${healthy} healthy · ${banned} banned`,
       });
       await onAccountsChanged().catch(() => {});
     } catch (cause) {
@@ -263,7 +264,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         <div className="account-title-actions">
           <button className="contribute-button" onClick={() => { setReloginAccountID(null); setReloginProvider("codex"); setContributing(true); }}>Add pool account</button>
           <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>
-          {canVerifyAll && <button className="operator-badge" disabled={busy || verifying !== null} onClick={verifyAll} title="Probe every Antigravity account for bans or lost access. No generation cost.">{verifying === "all" ? "Verifying…" : "Verify all Antigravity"}</button>}
+          {canVerifyAll && <button className="operator-badge" disabled={busy || verifying !== null} onClick={verifyAll} title="Probe every manageable account for bans or lost access. No generation cost.">{verifying === "all" ? "Verifying…" : "Verify all accounts"}</button>}
         </div>
       </div>
       {message && <div className={classNames("account-message", message.tone)} role="status" aria-live="polite">{message.text}</div>}
@@ -382,7 +383,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
-                      {selectedAccount.type === "antigravity" && <button disabled={busy || verifying !== null} onClick={() => verifyAccess(selectedAdmin.id)} title="Probe the quota endpoint for bans or lost access. No generation cost.">{verifying === selectedAdmin.id ? "Verifying…" : "Verify access"}</button>}
+                      {selectedAdmin.can_verify && <button disabled={busy || verifying !== null} onClick={() => verifyAccess(selectedAdmin.id)} title="Probe the provider for bans or lost access. No generation cost.">{verifying === selectedAdmin.id ? "Verifying…" : "Verify access"}</button>}
                       <button disabled={busy} className={classNames("danger-action", isArmedAccountAction(action, selectedAdmin.id, "delete") && "confirm")} onClick={() => perform("delete")} title="Permanently removes the credential, access grants and stored usage for this account.">{isArmedAccountAction(action, selectedAdmin.id, "delete") ? "Confirm delete" : "Delete account"}</button>
                     </div>}
 

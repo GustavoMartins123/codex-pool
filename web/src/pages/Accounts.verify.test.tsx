@@ -2,13 +2,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Accounts } from "./Accounts";
-import { verifyAccount, verifyAllAntigravity, type AntigravityVerifyResult } from "../api";
-import type { AccountStats, AdminAccount, PoolStats } from "../types";
+import { verifyAccount, verifyAllAccounts, type AccountVerifyResult } from "../api";
+import type { AccountStats, AdminAccount, PoolStats, Provider } from "../types";
 
 vi.mock("../api", async (importOriginal) => ({
   ...await importOriginal<typeof import("../api")>(),
   verifyAccount: vi.fn(),
-  verifyAllAntigravity: vi.fn(),
+  verifyAllAccounts: vi.fn(),
 }));
 vi.mock("../components/AccountGovernance", () => ({ AccountGovernance: () => null }));
 
@@ -24,13 +24,13 @@ const stats: PoolStats = {
   total_accounts: 1, active_accounts: 1, accounts: [account], generated_at: new Date().toISOString(),
   aggregate: { total_input_tokens: 0, total_cached_tokens: 0, total_output_tokens: 0, total_billable_tokens: 0, total_reasoning_tokens: 0, overall_cache_hit_rate_pct: 0, total_api_cost: 0, total_subscription_cost: 0, total_subscription_monthly: 0, overall_roi: 0 },
 };
-const admin = (canManage: boolean, type: "antigravity" | "codex" = "antigravity") => ({
-  can_manage: canManage, id: "pool-ag", public_id: account.id, type, plan_type: "pro", needs_login: false,
+const admin = (canManage: boolean, type: Provider = "antigravity", canVerify = true) => ({
+  can_manage: canManage, can_verify: canVerify, id: "pool-ag", public_id: account.id, type, plan_type: "pro", needs_login: false,
   disabled: false, dead: false, inflight: 0, penalty: 0, score: 1, is_primary: false, state: "healthy", state_routable: true, usage: {}, totals: {},
 }) as unknown as AdminAccount;
 
-const healthyResult: AntigravityVerifyResult = { account_id: "pool-ag", status: "healthy", checked_at: "2026-11-15T12:00:00Z" };
-const bannedResult: AntigravityVerifyResult = {
+const healthyResult: AccountVerifyResult = { account_id: "pool-ag", status: "healthy", checked_at: "2026-11-15T12:00:00Z" };
+const bannedResult: AccountVerifyResult = {
   account_id: "pool-ag", status: "banned", detail: "403 PERMISSION_DENIED: TOS_VIOLATION",
   appeal_url: "https://forms.gle/appeal?continue=AbCdEf0123456789", checked_at: "2026-11-15T12:00:00Z",
 };
@@ -80,28 +80,43 @@ it("drops appeal and verification links outside the Google host allowlist", asyn
   expect(screen.queryByRole("link", { name: "Open verification" })).toBeNull();
 });
 
+it("labels a cooling-down probe as rate limited instead of healthy", async () => {
+  vi.mocked(verifyAccount).mockResolvedValue({ ...healthyResult, status: "rate_limited", detail: "429 Too Many Requests" });
+  render(<Accounts stats={stats} adminAccounts={[admin(true, "codex")]} onAccountsChanged={vi.fn().mockResolvedValue(undefined)} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Verify access" }));
+
+  expect(await screen.findByText("Rate limited — cooling down")).toBeTruthy();
+});
+
 it("hides verify controls when the user has use access without management permission", () => {
   render(<Accounts stats={stats} adminAccounts={[admin(false)]} onAccountsChanged={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Verify access" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Verify all Antigravity" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify all accounts" })).toBeNull();
 });
 
-it("hides verify controls for non-antigravity accounts", () => {
+it("offers verify for any provider with a probe and hides it where none exists", () => {
   const codexStats = { ...stats, accounts: [{ ...account, type: "codex" as const }] };
-  render(<Accounts stats={codexStats} adminAccounts={[admin(true, "codex")]} onAccountsChanged={vi.fn()} />);
+  const { unmount } = render(<Accounts stats={codexStats} adminAccounts={[admin(true, "codex")]} onAccountsChanged={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Verify access" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Verify all accounts" })).toBeTruthy();
+  unmount();
+
+  const xiaomiStats = { ...stats, accounts: [{ ...account, type: "xiaomi" as const }] };
+  render(<Accounts stats={xiaomiStats} adminAccounts={[admin(true, "xiaomi", false)]} onAccountsChanged={vi.fn()} />);
   expect(screen.queryByRole("button", { name: "Verify access" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Verify all Antigravity" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Verify all accounts" })).toBeNull();
 });
 
-it("verifies every antigravity account in batch and summarizes the results", async () => {
-  vi.mocked(verifyAllAntigravity).mockResolvedValue({ accounts: [bannedResult, { ...healthyResult, account_id: "pool-ag-2" }] });
+it("verifies every probeable account in batch and summarizes the results", async () => {
+  vi.mocked(verifyAllAccounts).mockResolvedValue({ accounts: [bannedResult, { ...healthyResult, account_id: "pool-ag-2" }] });
   const onAccountsChanged = vi.fn().mockResolvedValue(undefined);
   render(<Accounts stats={stats} adminAccounts={[admin(true)]} onAccountsChanged={onAccountsChanged} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Verify all Antigravity" }));
+  fireEvent.click(screen.getByRole("button", { name: "Verify all accounts" }));
 
-  await waitFor(() => expect(verifyAllAntigravity).toHaveBeenCalledOnce());
-  expect(await screen.findByText("2 Antigravity accounts checked · 1 healthy · 1 banned")).toBeTruthy();
+  await waitFor(() => expect(verifyAllAccounts).toHaveBeenCalledOnce());
+  expect(await screen.findByText("2 accounts checked · 1 healthy · 1 banned")).toBeTruthy();
   expect(screen.getByText("Banned — Terms of Service violation")).toBeTruthy();
   await waitFor(() => expect(onAccountsChanged).toHaveBeenCalledOnce());
 });
@@ -120,14 +135,14 @@ it("shows the server error when the verification fails", async () => {
 it("posts both verify mutations with the operator CSRF token", async () => {
   document.cookie = "pool_csrf=operator-csrf";
   const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(
-    JSON.stringify(url === "/admin/antigravity/verify" ? { accounts: [healthyResult] } : healthyResult),
+    JSON.stringify(url === "/admin/accounts/verify" ? { accounts: [healthyResult] } : healthyResult),
     { status: 200 },
   ));
   vi.stubGlobal("fetch", fetchMock);
   const api = await vi.importActual<typeof import("../api")>("../api");
 
   const single = await api.verifyAccount("pool-ag");
-  const batch = await api.verifyAllAntigravity();
+  const batch = await api.verifyAllAccounts();
 
   expect(single.status).toBe("healthy");
   expect(batch.accounts).toHaveLength(1);
@@ -137,7 +152,7 @@ it("posts both verify mutations with the operator CSRF token", async () => {
   expect(singleInit.credentials).toBe("same-origin");
   expect((singleInit.headers as Record<string, string>)["X-CSRF-Token"]).toBe("operator-csrf");
   const [batchURL, batchInit] = fetchMock.mock.calls[1] as [string, RequestInit];
-  expect(batchURL).toBe("/admin/antigravity/verify");
+  expect(batchURL).toBe("/admin/accounts/verify");
   expect(batchInit.method).toBe("POST");
   expect((batchInit.headers as Record<string, string>)["X-CSRF-Token"]).toBe("operator-csrf");
 });

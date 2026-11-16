@@ -236,9 +236,9 @@ export async function deleteAccount(accountID: string) {
   }));
 }
 
-export interface AntigravityVerifyResult {
+export interface AccountVerifyResult {
   account_id: string;
-  status: "healthy" | "banned" | "needs_verification" | "revoked" | "quota_exhausted" | "error";
+  status: "healthy" | "banned" | "needs_verification" | "revoked" | "quota_exhausted" | "rate_limited" | "error";
   detail?: string;
   verification_url?: string;
   appeal_url?: string;
@@ -246,14 +246,14 @@ export interface AntigravityVerifyResult {
 }
 
 export async function verifyAccount(accountID: string) {
-  return decode<AntigravityVerifyResult>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/verify`, {
+  return decode<AccountVerifyResult>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/verify`, {
     method: "POST",
     credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
   }));
 }
 
-export async function verifyAllAntigravity() {
-  const result = await decode<{ accounts: AntigravityVerifyResult[] }>(await fetch("/admin/antigravity/verify", {
+export async function verifyAllAccounts() {
+  const result = await decode<{ accounts: AccountVerifyResult[] }>(await fetch("/admin/accounts/verify", {
     method: "POST",
     credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
   }));

@@ -20,6 +20,18 @@ const principal = { id: 'fixture-member', kind: 'operator', status: 'active', di
 const clients = [{ id: 'laptop', label: 'Work laptop', status: 'active' }, { id: 'server', label: 'Home server', status: 'active' }, { id: 'old', label: 'Old machine', status: 'revoked' }];
 const pass = { id: 'guest', note: 'Sam', display_name: 'Sam', status: 'active', expires_at: '2026-10-12T18:30:00Z', clients: 1, link: '/join#fixture-pass' };
 const stats = { accounts: [], active_accounts: 0, total_accounts: 0, last_24h_tokens: 0, generated_at: '2026-09-04T12:00:00Z', aggregate: { total_api_cost: 0, total_subscription_cost: 0, total_subscription_monthly: 0, overall_roi: 0 } };
+const probeAccountStats = (id, type) => ({
+  id: `public-${id}`, type, plan_type: 'pro', status: 'healthy', penalty: 0,
+  reset_windows: { tier: 'unknown', primary: 'five_hour', secondary: 'weekly' },
+  primary_window_used_pct: 12, secondary_window_used_pct: 30, primary_window_available: true, secondary_window_available: true,
+  primary_reset_minutes: 60, secondary_reset_minutes: 600, primary_window_minutes: 300, secondary_window_minutes: 10080, primary_pace_ratio: 1, secondary_pace_ratio: 1,
+  total_input_tokens: 0, total_cached_tokens: 0, total_output_tokens: 0, total_reasoning_tokens: 0, total_billable_tokens: 0, cache_hit_rate_pct: 0,
+  score: 1, is_primary: false, subscription_cost_monthly: 20, subscription_spend: 20, subscription_billing_cycles: 1, subscription_label: 'Pro', api_cost_estimate: 0, api_cost_last_30d: 0, roi: 0,
+});
+const probeAdminAccount = (id, type, canVerify) => ({
+  can_manage: true, can_verify: canVerify, id, public_id: `public-${id}`, type, plan_type: 'pro',
+  disabled: false, dead: false, inflight: 0, penalty: 0, score: 1, is_primary: false, usage: {}, totals: {},
+});
 const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width: 1365, height: 1000 }) => {
   const page = await browser.newPage();
   await page.emulateTimezone('America/Los_Angeles');
@@ -27,6 +39,12 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
   const errors = [];
   const ownMode = mode.startsWith('my-');
   let owned = ownMode ? [{ id: mode === 'my-qwen-link' ? 'private-qwen' : 'private-kimi', provider: mode === 'my-qwen-link' ? 'qwen' : 'kimi', status: 'active', state: 'ready', revision: 2 }] : [];
+  let poolStats = stats;
+  let adminRows = [];
+  if (mode === 'verify-probe') {
+    adminRows = [probeAdminAccount('pool-codex', 'codex', true), probeAdminAccount('pool-xiaomi', 'xiaomi', false)];
+    poolStats = { ...stats, total_accounts: 2, active_accounts: 2, accounts: [probeAccountStats('pool-codex', 'codex'), probeAccountStats('pool-xiaomi', 'xiaomi')] };
+  }
   const qwenRequests = [];
   let qwenAuthorized = false;
   let qwenLinked = false;
@@ -50,7 +68,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
   page.on('request', async request => {
     const url = new URL(request.url());
     if (url.origin !== origin) { await request.abort(); return; }
-    if (!url.pathname.startsWith('/api/') && url.pathname !== '/admin/accounts') { await request.continue(); return; }
+    if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/admin/accounts')) { await request.continue(); return; }
     let body = {};
     let status = 200;
     if (url.pathname.includes('/qwen/')) qwenRequests.push({ path: url.pathname, method: request.method(), body: request.postData() ? JSON.parse(request.postData()) : null });
@@ -58,7 +76,19 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     else if (url.pathname === '/api/auth/join') body = { switch_required: true, current: principal };
     else if (url.pathname === '/api/auth/config') body = { operator_exists: true, legacy_signup: true };
     else if (url.pathname === '/api/auth/recover/status') body = { valid: true, expires_at: new Date(Date.now() + 600000).toISOString() };
-    else if (url.pathname === '/admin/accounts') body = [];
+    else if (url.pathname === '/admin/accounts') body = adminRows;
+    else if (url.pathname === '/admin/accounts/verify') {
+      assert.equal(request.method(), 'POST');
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      body = { accounts: adminRows.filter(row => row.can_verify).map(row => ({ account_id: row.id, status: 'healthy', checked_at: '2026-11-16T12:00:00Z' })) };
+    }
+    else if (url.pathname.startsWith('/admin/accounts/') && url.pathname.endsWith('/verify')) {
+      assert.equal(request.method(), 'POST');
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      const id = url.pathname.split('/')[3];
+      assert.equal(adminRows.find(row => row.id === id)?.can_verify, true);
+      body = { account_id: id, status: 'healthy', detail: 'primary 12% used', checked_at: '2026-11-16T12:00:00Z' };
+    }
     else if (url.pathname === '/api/me/clients') {
       body = createdClient ? [createdClient] : ['empty', 'create'].includes(mode) ? [] : clients;
       if (request.method() === 'POST') {
@@ -160,7 +190,7 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     else if (url.pathname === '/api/console/members') body = { principal, link: `${origin}/recover#fixture-invite`, expires_at: '2026-09-04T12:30:00Z' };
     else if (url.pathname === '/api/console/audit') body = [];
     else if (url.pathname === '/api/console/analytics-health') body = { health: { state: 'CURRENT', outbox_depth: 0 }, accounting_gaps: [] };
-    else if (url.pathname === '/api/pool/stats') body = stats;
+    else if (url.pathname === '/api/pool/stats') body = poolStats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
     else if (url.pathname === '/api/pool/recent-errors') body = { errors: [{ at: '2026-11-16T12:00:00Z', message: 'codex upstream returned 502' }] };
     else if (url.pathname === '/api/pool/catalog') body = { models: [{ id: 'gpt-5.5', provider: 'codex', protocol: 'responses', available_now: true }, { id: 'claude-opus-5', provider: 'claude', protocol: 'messages', available_now: false }, { id: 'kimi-k2.5', provider: 'kimi', protocol: 'messages', available_now: true }, { id: 'claude-haiku-5-5', provider: 'claude', protocol: 'messages', available_now: true }] };
@@ -392,6 +422,24 @@ try {
     await unavailable.waitForFunction(() => document.querySelector('.contribution-dialog [role=alert]')?.textContent.includes('Too many pending Qwen logins'));
     assert.equal(await unavailable.$('.contribution-dialog input'), null);
     assert.deepEqual(loginErrors, []); await unavailable.close();
+  });
+  await check('verify probes reach every provider with a probe and skip the rest', async () => {
+    const { page, errors } = await open('/?view=accounts&account=pool-codex', 'verify-probe');
+    await page.waitForSelector('.operator-actions');
+    await clickText(page, '.operator-actions button', 'Verify access');
+    await page.waitForFunction(() => document.querySelector('.verify-result')?.textContent.includes('Access healthy'));
+    await clickText(page, 'button', 'Verify all accounts');
+    await page.waitForFunction(() => document.querySelector('.account-message')?.textContent.includes('1 account checked · 1 healthy · 0 banned'));
+    await page.evaluate(() => [...document.querySelectorAll('.account-row')].find(row => row.textContent.includes('pool-xiaomi')).click());
+    await page.waitForFunction(() => document.querySelector('.inspector-code.operator-section')?.textContent.includes('pool-xiaomi'));
+    assert.equal(await page.$$eval('.operator-actions button', nodes => nodes.some(node => node.textContent === 'Verify access')), false);
+    assert.ok(await page.$$eval('button', nodes => nodes.some(node => node.textContent === 'Verify all accounts')));
+    for (const width of [390, 1365]) {
+      await page.setViewport({ width, height: 1000 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Accounts verify overflows at ${width}px`);
+    }
+    assert.deepEqual(errors, []);
+    await page.close();
   });
   await check('pulse lists recent provider errors', async () => {
     const { page, errors } = await open('/?view=pulse');
