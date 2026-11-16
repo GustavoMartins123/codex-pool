@@ -1,11 +1,20 @@
 package main
 
-import "sync"
+import (
+	"net/http"
+	"sync"
+	"time"
+)
+
+type recentError struct {
+	At      time.Time `json:"at"`
+	Message string    `json:"message"`
+}
 
 type recentErrors struct {
 	mu   sync.Mutex
 	max  int
-	list []string
+	list []recentError
 }
 
 func newRecentErrors(max int) *recentErrors {
@@ -18,19 +27,23 @@ func (r *recentErrors) add(msg string) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.list = append([]string{msg}, r.list...)
+	r.list = append([]recentError{{At: time.Now().UTC(), Message: msg}}, r.list...)
 	if len(r.list) > r.max {
 		r.list = r.list[:r.max]
 	}
 }
 
-func (r *recentErrors) snapshot() []string {
+func (r *recentErrors) snapshot() []recentError {
 	if r == nil {
-		return nil
+		return []recentError{}
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]string, len(r.list))
+	out := make([]recentError, len(r.list))
 	copy(out, r.list)
 	return out
+}
+
+func (h *proxyHandler) serveRecentErrors(w http.ResponseWriter) {
+	respondJSON(w, map[string]any{"errors": h.recent.snapshot()})
 }

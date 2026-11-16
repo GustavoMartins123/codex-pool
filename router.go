@@ -667,6 +667,16 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serveClientPoolModels(w, visible)
 		}
 		return
+	case "/api/pool/recent-errors":
+		if !h.checkAdminAuth(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.serveRecentErrors(w)
+		return
 	case "/api/pool/experiments":
 		if !h.checkAdminAuth(w, r) {
 			return
