@@ -217,6 +217,19 @@ export async function mutateAccount(accountID: string, action: "enable" | "disab
   }));
 }
 
+export interface AccountDeletionResult {
+  id: string;
+  status: string;
+  partial_purge?: boolean;
+}
+
+export async function deleteAccount(accountID: string) {
+  return decode<AccountDeletionResult>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/delete`, {
+    method: "POST",
+    credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
+  }));
+}
+
 export interface ResetCreditConsumption {
   credit_id: string;
   code: string;

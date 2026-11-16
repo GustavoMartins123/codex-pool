@@ -543,6 +543,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .operator-actions button, .operator-actions a { display: flex; align-items: center; justify-content: center; min-height: 38px; padding: 0 11px; border: 1px solid var(--rule-hot); background: transparent; color: var(--gold); cursor: pointer; font: .59rem "IBM Plex Mono", monospace; line-height: 1.35; text-align: center; text-decoration: none; }
 .operator-actions button:hover, .operator-actions a:hover { border-color: var(--gold-hot); color: var(--gold-hot); }
 .operator-actions button.confirm { background: var(--gold-hot); color: var(--void); }
+.operator-actions button.danger-action { color: #ff8b80; border-color: rgba(255,91,77,.45); }
+.operator-actions button.danger-action:hover { background: rgba(255,91,77,.1); border-color: var(--danger); color: #ff8b80; }
+.operator-actions button.danger-action.confirm { background: var(--danger); border-color: var(--danger); color: var(--void); }
 .account-identity-hint { margin: 0 0 10px; color: var(--muted); font: .66rem/1.5 "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
 .account-message { margin: -8px 0 14px; padding: 9px 11px; border-left: 2px solid var(--success); background: rgba(87,230,123,.045); color: var(--success); font: .68rem "IBM Plex Mono", monospace; }
 .account-message.error { border-color: var(--danger); background: rgba(255,91,77,.055); color: #ff8b80; }

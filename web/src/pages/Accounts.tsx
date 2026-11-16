@@ -1,4 +1,4 @@
-import { consumeResetCredit, mutateAccount, reloadAccounts } from "../api";
+import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
@@ -8,7 +8,7 @@ import { queryValue, updateURL } from "../navigation";
 import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 
-type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset";
+type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
 
 type ArmedAccountAction = { accountID: string; kind: AccountAction } | null;
 
@@ -162,6 +162,21 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         await consumeReset(selectedAdmin.id);
         return;
       }
+      if (nextAction === "delete") {
+        // The account is already gone once the request succeeds, so a failed
+        // list refresh must never read as a failed delete.
+        const result = await deleteAccount(selectedAdmin.id);
+        const deleted = `${selectedAdmin.id} deleted${result.partial_purge ? " · some stored usage could not be purged; check the server logs" : ""}`;
+        setAction(null);
+        closeInspector();
+        setMessage({ tone: "success", text: deleted });
+        try {
+          await onAccountsChanged();
+        } catch {
+          setMessage({ tone: "success", text: `${deleted} · reload the pool to refresh the list` });
+        }
+        return;
+      }
       await mutateAccount(selectedAdmin.id, nextAction);
       setMessage({ tone: "success", text: `${selectedAdmin.id} ${nextAction} complete` });
       setAction(null);
@@ -304,6 +319,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
+                      <button disabled={busy} className={classNames("danger-action", isArmedAccountAction(action, selectedAdmin.id, "delete") && "confirm")} onClick={() => perform("delete")} title="Permanently removes the credential, access grants and stored usage for this account.">{isArmedAccountAction(action, selectedAdmin.id, "delete") ? "Confirm delete" : "Delete account"}</button>
                     </div>}
 
                   </>
