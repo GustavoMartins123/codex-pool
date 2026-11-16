@@ -2408,8 +2408,8 @@ type CodexUsageSummary struct {
 type ClaudeUsageSummary struct {
 	HealthyCount int              `json:"healthy_count"`
 	TotalCount   int              `json:"total_count"`
-	Tokens       UsageWindowStats `json:"tokens"`   // Token rate limit
-	Requests     UsageWindowStats `json:"requests"` // Request rate limit
+	FiveHour     UsageWindowStats `json:"five_hour"` // Primary window
+	Weekly       UsageWindowStats `json:"weekly"`    // Secondary window
 }
 
 // GeminiUsageSummary contains Gemini-specific usage info.
@@ -2656,26 +2656,26 @@ func (p *poolState) getPoolStats() UsagePoolStats {
 		stats.Providers.Claude = &ClaudeUsageSummary{
 			TotalCount:   claudeStats.total,
 			HealthyCount: claudeStats.healthy,
-			Tokens: UsageWindowStats{
-				WindowName:     "tokens",
+			FiveHour: UsageWindowStats{
+				WindowName:     "5 hours",
 				AvailableCount: claudeStats.primaryCount,
 			},
-			Requests: UsageWindowStats{
-				WindowName:     "requests",
+			Weekly: UsageWindowStats{
+				WindowName:     "7 days",
 				AvailableCount: claudeStats.secondaryCount,
 			},
 		}
 		if claudeStats.primaryCount > 0 {
-			stats.Providers.Claude.Tokens.AvgUsedPct = (claudeStats.primarySum / float64(claudeStats.primaryCount)) * 100
-			stats.Providers.Claude.Tokens.MinUsedPct = claudeStats.primaryMin * 100
-			stats.Providers.Claude.Tokens.MaxUsedPct = claudeStats.primaryMax * 100
-			stats.Providers.Claude.Tokens.NextResetAt = claudeStats.nextPrimaryReset
+			stats.Providers.Claude.FiveHour.AvgUsedPct = (claudeStats.primarySum / float64(claudeStats.primaryCount)) * 100
+			stats.Providers.Claude.FiveHour.MinUsedPct = claudeStats.primaryMin * 100
+			stats.Providers.Claude.FiveHour.MaxUsedPct = claudeStats.primaryMax * 100
+			stats.Providers.Claude.FiveHour.NextResetAt = claudeStats.nextPrimaryReset
 		}
 		if claudeStats.secondaryCount > 0 {
-			stats.Providers.Claude.Requests.AvgUsedPct = (claudeStats.secondarySum / float64(claudeStats.secondaryCount)) * 100
-			stats.Providers.Claude.Requests.MinUsedPct = claudeStats.secondaryMin * 100
-			stats.Providers.Claude.Requests.MaxUsedPct = claudeStats.secondaryMax * 100
-			stats.Providers.Claude.Requests.NextResetAt = claudeStats.nextSecondaryReset
+			stats.Providers.Claude.Weekly.AvgUsedPct = (claudeStats.secondarySum / float64(claudeStats.secondaryCount)) * 100
+			stats.Providers.Claude.Weekly.MinUsedPct = claudeStats.secondaryMin * 100
+			stats.Providers.Claude.Weekly.MaxUsedPct = claudeStats.secondaryMax * 100
+			stats.Providers.Claude.Weekly.NextResetAt = claudeStats.nextSecondaryReset
 		}
 	}
 

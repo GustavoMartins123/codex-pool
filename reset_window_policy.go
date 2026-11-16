@@ -90,7 +90,9 @@ func resetWindowPolicy(provider AccountType, plan string) ResetWindowPolicy {
 		// do not establish a daily or weekly Coding Plan quota window.
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowRequests, Secondary: ResetWindowTokens}
 	case AccountTypeClaude:
-		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowTokens, Secondary: ResetWindowRequests}
+		// Claude's OAuth usage and unified headers expose the same 5-hour +
+		// weekly windows as Codex, on every plan (Pro and Max alike).
+		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowFiveHour, Secondary: ResetWindowWeekly}
 	case AccountTypeGemini, AccountTypeAIStudio:
 		return ResetWindowPolicy{Tier: AccountTierUnknown, Primary: ResetWindowDaily, Secondary: ResetWindowNone}
 	case AccountTypeQwen:

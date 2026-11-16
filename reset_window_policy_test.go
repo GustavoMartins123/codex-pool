@@ -21,6 +21,9 @@ func TestResetWindowPolicyByProviderAndCodexTier(t *testing.T) {
 		{"codex business pro", AccountTypeCodex, "business_pro", ResetWindowPolicy{AccountTierProOrHigher, ResetWindowNone, ResetWindowWeekly}},
 		{"codex enterprise", AccountTypeCodex, "enterprise", ResetWindowPolicy{AccountTierProOrHigher, ResetWindowNone, ResetWindowWeekly}},
 		{"antigravity", AccountTypeAntigravity, "pro", ResetWindowPolicy{AccountTierUnknown, ResetWindowFiveHour, ResetWindowWeekly}},
+		{"claude pro", AccountTypeClaude, "pro", ResetWindowPolicy{AccountTierUnknown, ResetWindowFiveHour, ResetWindowWeekly}},
+		{"claude max", AccountTypeClaude, "max", ResetWindowPolicy{AccountTierUnknown, ResetWindowFiveHour, ResetWindowWeekly}},
+		{"claude unknown plan", AccountTypeClaude, "", ResetWindowPolicy{AccountTierUnknown, ResetWindowFiveHour, ResetWindowWeekly}},
 		{"zai", AccountTypeZAI, "coding_plan", ResetWindowPolicy{AccountTierUnknown, ResetWindowRequests, ResetWindowTokens}},
 	}
 	for _, test := range tests {
@@ -38,6 +41,7 @@ func TestPoolStatsExposesNormalizedResetWindows(t *testing.T) {
 		{ID: "team", Type: AccountTypeCodex, PlanType: "team_basic"},
 		{ID: "pro", Type: AccountTypeCodex, PlanType: "pro"},
 		{ID: "antigravity", Type: AccountTypeAntigravity, PlanType: "pro"},
+		{ID: "claude", Type: AccountTypeClaude, PlanType: "pro"},
 		{ID: "zai", Type: AccountTypeZAI, PlanType: "coding_plan"},
 	}
 	handler := &proxyHandler{pool: newPoolState(accounts, false)}

@@ -36,6 +36,14 @@ describe("account reset windows", () => {
     }
   });
 
+  it("shows Claude Pro and Max five-hour and weekly windows like Codex", () => {
+    const markup = renderWindows({ tier: "unknown", primary: "five_hour", secondary: "weekly" });
+    expect(markup).toContain("5 hour");
+    expect(markup).toContain("Weekly");
+    expect(markup).not.toContain("Requests");
+    expect(markup).not.toContain("Tokens");
+  });
+
   it("shows only the weekly window for Codex Pro and labels Z.ai rate limits honestly", () => {
     const pro = renderWindows({ tier: "pro_or_higher", primary: "none", secondary: "weekly" });
     expect(pro).toContain("Weekly");
