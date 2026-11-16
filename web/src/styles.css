@@ -518,6 +518,15 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .inspector-alert b { display: block; color: var(--danger); font: .68rem "IBM Plex Mono", monospace; letter-spacing: .04em; }
 .inspector-alert span { display: block; margin-top: 5px; color: #ff8b80; font: .62rem/1.5 "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
 .inspector-alert small { display: block; margin-top: 6px; color: var(--muted); font: .61rem/1.5 "IBM Plex Sans Condensed", sans-serif; }
+.verify-result { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--rule-hot); border-left-width: 2px; background: rgba(200,155,54,.05); }
+.verify-result b { display: block; color: var(--gold); font: .68rem "IBM Plex Mono", monospace; letter-spacing: .04em; }
+.verify-result span { display: block; margin-top: 5px; color: var(--muted); font: .62rem/1.5 "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
+.verify-result a { display: inline-block; margin-top: 6px; color: var(--gold-hot); font: .65rem "IBM Plex Mono", monospace; }
+.verify-result small { display: block; margin-top: 6px; color: var(--faint); font: .61rem/1.5 "IBM Plex Sans Condensed", sans-serif; }
+.verify-result.healthy { border-color: var(--success); background: rgba(87,230,123,.045); }
+.verify-result.healthy b { color: var(--success); }
+.verify-result.banned, .verify-result.revoked, .verify-result.error { border-color: var(--danger); background: rgba(255,91,77,.06); }
+.verify-result.banned b, .verify-result.revoked b, .verify-result.error b { color: var(--danger); }
 .account-admission { margin-top: 8px; color: var(--gold-dim); font: .65rem "IBM Plex Mono", monospace; }
 .inspector-windows { display: grid; gap: 4px; margin-top: 24px; }
 .inspector-windows .reset-window { min-height: 38px; padding: 0; font-size: .7rem; }

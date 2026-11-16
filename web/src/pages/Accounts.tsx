@@ -1,4 +1,4 @@
-import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts } from "../api";
+import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts, verifyAccount, verifyAllAntigravity, type AntigravityVerifyResult } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
@@ -9,6 +9,15 @@ import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 
 type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
+
+const VERIFY_STATUS_LABELS: Record<string, string> = {
+  healthy: "Access healthy",
+  banned: "Banned — Terms of Service violation",
+  needs_verification: "Verification required",
+  revoked: "Refresh token revoked",
+  quota_exhausted: "Quota exhausted",
+  error: "Access check failed",
+};
 
 type ArmedAccountAction = { accountID: string; kind: AccountAction } | null;
 
@@ -33,6 +42,8 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [action, setAction] = useState<ArmedAccountAction>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [verifying, setVerifying] = useState<string | null>(null);
+  const [verifyResults, setVerifyResults] = useState<Record<string, AntigravityVerifyResult>>({});
   const inspectorRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -124,6 +135,11 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const selectedVerificationURL = selectedAdmin
     ? safeVerificationURL(selectedAdmin.account_verification_url) || safeVerificationURL(selectedAdmin.verification_url)
     : "";
+  const selectedVerifyResult = selectedAdmin ? verifyResults[selectedAdmin.id] : undefined;
+  const selectedVerifyLink = selectedVerifyResult
+    ? safeVerificationURL(selectedVerifyResult.appeal_url) || safeVerificationURL(selectedVerifyResult.verification_url)
+    : "";
+  const canVerifyAll = adminAccounts.some((account) => account.type === "antigravity" && account.can_manage);
   const toggleAction: AccountAction | null = selectedAdmin ? selectedAdmin.disabled ? "enable" : "disable" : null;
 
   // The reset is already spent once the request succeeds, so a failed list
@@ -202,6 +218,44 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     }
   };
 
+  const verifyAccess = async (accountID: string) => {
+    setVerifying(accountID);
+    try {
+      const result = await verifyAccount(accountID);
+      setVerifyResults((current) => ({ ...current, [accountID]: result }));
+      // The chip already reports the probe; a failed list refresh must not read as a failed check.
+      await onAccountsChanged().catch(() => {});
+    } catch (cause) {
+      setMessage({ tone: "error", text: cause instanceof Error ? cause.message : "Verification failed" });
+    } finally {
+      setVerifying(null);
+    }
+  };
+
+  const verifyAll = async () => {
+    setVerifying("all");
+    setMessage(null);
+    try {
+      const { accounts } = await verifyAllAntigravity();
+      setVerifyResults((current) => {
+        const next = { ...current };
+        for (const result of accounts) next[result.account_id] = result;
+        return next;
+      });
+      const banned = accounts.filter((result) => result.status === "banned").length;
+      const healthy = accounts.filter((result) => result.status === "healthy").length;
+      setMessage({
+        tone: banned > 0 ? "error" : "success",
+        text: `${accounts.length} Antigravity account${accounts.length === 1 ? "" : "s"} checked · ${healthy} healthy · ${banned} banned`,
+      });
+      await onAccountsChanged().catch(() => {});
+    } catch (cause) {
+      setMessage({ tone: "error", text: cause instanceof Error ? cause.message : "Verification failed" });
+    } finally {
+      setVerifying(null);
+    }
+  };
+
   return (
     <div className="signal-view accounts-view">
       <div className="view-title account-title">
@@ -209,6 +263,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         <div className="account-title-actions">
           <button className="contribute-button" onClick={() => { setReloginAccountID(null); setReloginProvider("codex"); setContributing(true); }}>Add pool account</button>
           <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>
+          {canVerifyAll && <button className="operator-badge" disabled={busy || verifying !== null} onClick={verifyAll} title="Probe every Antigravity account for bans or lost access. No generation cost.">{verifying === "all" ? "Verifying…" : "Verify all Antigravity"}</button>}
         </div>
       </div>
       {message && <div className={classNames("account-message", message.tone)} role="status" aria-live="polite">{message.text}</div>}
@@ -309,6 +364,14 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <Instrument label="Primary" value={selectedAdmin.is_primary ? "Yes" : "No"} />
                     </div>
                     <pre className="score-trace">{selectedAdmin.score_tooltip || "No score detail is available."}</pre>
+                    {selectedVerifyResult && (
+                      <div className={classNames("verify-result", selectedVerifyResult.status)} role="status">
+                        <b>{VERIFY_STATUS_LABELS[selectedVerifyResult.status] ?? selectedVerifyResult.status}</b>
+                        {selectedVerifyResult.detail && <span>{selectedVerifyResult.detail}</span>}
+                        {selectedVerifyLink && <a href={selectedVerifyLink} target="_blank" rel="noreferrer">{selectedVerifyResult.status === "banned" ? "Open appeal form" : "Open verification"}</a>}
+                        <small>Checked {new Date(selectedVerifyResult.checked_at).toLocaleString()}</small>
+                      </div>
+                    )}
                     {!selectedAdmin.can_manage && <p>You have use access. Account management remains with the owner.</p>}
                     {selectedAdmin.can_manage && <AccountGovernance key={`${selectedAccount.type}:${selectedAdmin.id}`} provider={selectedAccount.type} id={selectedAdmin.id} onChanged={onAccountsChanged} />}
                     {selectedAdmin.can_manage && selectedAccount.type === "qwen" && <QwenCreditManager key={`qwen-credits:${selectedAdmin.id}`} id={selectedAdmin.id} onChanged={onAccountsChanged} />}
@@ -319,6 +382,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
                       {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
+                      {selectedAccount.type === "antigravity" && <button disabled={busy || verifying !== null} onClick={() => verifyAccess(selectedAdmin.id)} title="Probe the quota endpoint for bans or lost access. No generation cost.">{verifying === selectedAdmin.id ? "Verifying…" : "Verify access"}</button>}
                       <button disabled={busy} className={classNames("danger-action", isArmedAccountAction(action, selectedAdmin.id, "delete") && "confirm")} onClick={() => perform("delete")} title="Permanently removes the credential, access grants and stored usage for this account.">{isArmedAccountAction(action, selectedAdmin.id, "delete") ? "Confirm delete" : "Delete account"}</button>
                     </div>}
 
@@ -335,11 +399,18 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 }
 
 
+// Google serves verification and appeal links from these hosts only; the
+// links carry continuation tokens, so anything off-list never reaches an href.
+const VERIFICATION_HOSTS = new Set(["accounts.google.com", "forms.gle", "docs.google.com"]);
+
 function safeVerificationURL(raw: string | undefined) {
   if (!raw) return "";
   try {
     const parsed = new URL(raw);
-    return parsed.protocol === "https:" ? parsed.toString() : "";
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) return "";
+    if (!VERIFICATION_HOSTS.has(parsed.hostname)) return "";
+    if (parsed.port && parsed.port !== "443") return "";
+    return parsed.toString();
   } catch {
     return "";
   }

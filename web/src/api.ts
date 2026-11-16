@@ -230,6 +230,31 @@ export async function deleteAccount(accountID: string) {
   }));
 }
 
+export interface AntigravityVerifyResult {
+  account_id: string;
+  status: "healthy" | "banned" | "needs_verification" | "revoked" | "quota_exhausted" | "error";
+  detail?: string;
+  verification_url?: string;
+  appeal_url?: string;
+  checked_at: string;
+}
+
+export async function verifyAccount(accountID: string) {
+  return decode<AntigravityVerifyResult>(await fetch(`/admin/accounts/${encodeURIComponent(accountID)}/verify`, {
+    method: "POST",
+    credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
+  }));
+}
+
+export async function verifyAllAntigravity() {
+  const result = await decode<{ accounts: AntigravityVerifyResult[] }>(await fetch("/admin/antigravity/verify", {
+    method: "POST",
+    credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() },
+  }));
+  if (!Array.isArray(result.accounts)) throw new Error("Invalid verification response");
+  return result;
+}
+
 export interface ResetCreditConsumption {
   credit_id: string;
   code: string;
