@@ -1127,6 +1127,10 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .console-toolbar span, .console-toolbar small { color: var(--muted); font: .75rem "IBM Plex Sans Condensed", sans-serif; }
 .console-toolbar label select { width: 100%; min-height: 40px; border: 1px solid var(--rule); background: #050504; color: var(--ink); padding: 0 8px; font: .75rem "IBM Plex Mono", monospace; }
 .console-toolbar > small { align-self: center; justify-self: end; padding: 0 14px; }
+.console-toolbar:has(.usage-export) { grid-template-columns: 120px minmax(170px,1fr) 170px auto 170px; }
+.usage-export { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.usage-export small { color: #ff8b80; font: .75rem "IBM Plex Sans Condensed", sans-serif; }
+.panel-body > .usage-export { margin-bottom: 14px; }
 .members-page .view-title .quiet-button { min-height: 40px; }
 .analytics-health.current strong { color: var(--muted); }
 .analytics-health.lagging strong { color: #f0ba55; }

@@ -1,4 +1,5 @@
 import { MyAccounts } from "../components/MyAccounts";
+import { UsageExport } from "../components/UsageExport";
 import { beginPasskeyRegistration, createMyClient, finishPasskeyRegistration, loadMyClients, loadMyUsage, loadPasskeys, loadPassportMe, removePasskey, revokeMyClient, rotateMyClient, setupLinkMyClient, updateMyProfile, uploadMyAvatar } from "../api";
 import { Bar, BarChart, Grid, Tooltip, XAxis, YAxis } from "../charts";
 import { ResponseVersion } from "../response-version";
@@ -308,6 +309,7 @@ export function PassportMine({ principal, onPrincipal }: { principal: PassportPr
       <Instrument label="Active clients" value={clientsLoading ? "…" : String(clients.filter((client) => client.status === "active").length)} />
     </div>
     <SignalPanel title="Usage · last 7 days">
+      <UsageExport scope="me" hours={168} />
       {usageLoading ? <div className="empty-state">Loading usage…</div> : chartData.length ? <div className="chart-stage medium"><BarChart data={chartData} config={{ tokens: { label: "Tokens", color: "orange" } }} margins={{ left: 52, bottom: 34 }}><Grid horizontal /><Bar dataKey="tokens" variant="hatched" isClickable /><XAxis dataKey="hour" tickFormatter={(value) => String(value).slice(11, 16)} maxTicks={8} /><YAxis tickFormatter={(value) => compact.format(Number(value))} /><Tooltip /></BarChart></div> : <div className="empty-state">No usage in the last 7 days.</div>}
     </SignalPanel>
 

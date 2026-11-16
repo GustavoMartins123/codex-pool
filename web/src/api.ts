@@ -133,6 +133,26 @@ export async function loadMemberQuotas(signal?: AbortSignal): Promise<{ models: 
 export async function loadMyUsage(hours = 168): Promise<{ hourly: PassportUsagePoint[]; excludes_passthrough: boolean }> {
   return decode(await fetch(`/api/me/usage?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
 }
+export async function downloadUsageExport(scope: "console" | "me", options: { hours: number; format: "csv" | "json"; principal?: string }): Promise<void> {
+  const params = new URLSearchParams({ hours: String(options.hours), format: options.format });
+  if (scope === "console" && options.principal) params.set("principal", options.principal);
+  const path = scope === "console" ? "/api/console/usage-export" : "/api/me/usage-export";
+  const response = await fetch(`${path}?${params}`, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) {
+    await decode(response);
+    return;
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const filename = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? `usage-export.${options.format}`;
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 export async function loadConsolePrincipals(hours = 168): Promise<{ principals: ConsolePrincipal[]; hours: number; excludes_passthrough: boolean }> {
   const result = await decode<{ principals: ConsolePrincipal[]; hours: number; excludes_passthrough: boolean }>(await fetch(`/api/console/principals?hours=${hours}`, { cache: "no-store", credentials: "same-origin" }));
   if (!Array.isArray(result.principals) || result.principals.some(item => !item || typeof item.can_contribute !== "boolean")) throw new Error("Invalid member registration permissions response");

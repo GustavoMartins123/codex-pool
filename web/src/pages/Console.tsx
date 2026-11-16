@@ -1,4 +1,5 @@
 import { PolicyEditor } from "../components/PolicyEditor";
+import { UsageExport } from "../components/UsageExport";
 import { OperatorSharing } from "../components/AccountGovernance";
 import { MemberContributionPermission, OperatorAccounts } from "../components/OperatorAccountAccess";
 import { createMemberLink, loadAnalyticsHealth, loadConsoleAudit, loadConsolePrincipalUsage, loadConsolePrincipals, setPrincipalReasoningEffort, setPrincipalStatus } from "../api";
@@ -176,6 +177,7 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
       <div><strong>{principals.length}</strong><span>Members and guests</span></div>
       <div><strong>{formatTokens(total)}</strong><span>Tokens in window</span></div>
       <label><span>Window</span><select value={hours} onChange={(event) => setHours(Number(event.target.value))}><option value={24}>24 hours</option><option value={168}>7 days</option><option value={720}>30 days</option><option value={8760}>1 year</option></select></label>
+      {principal.kind === "operator" && <UsageExport scope="console" hours={hours} />}
       <div className={classNames("analytics-health", health?.health.state.toLowerCase())}><strong>{health?.health.state || "…"}</strong><span>Outbox {health?.health.outbox_depth ?? "–"}</span></div>
     </div>
     {health?.active_gap && <div className="accounting-gap" role="alert"><strong>Accounting gap open since {new Date(health.active_gap.started_at).toLocaleString()}</strong><span>Traffic is still being served. Totals spanning this interval are incomplete.</span></div>}
@@ -207,6 +209,7 @@ export function PassportConsole({ principal }: { principal: PassportPrincipal })
             {principal.kind === "operator" && selected.kind !== "operator" && <div className="detail-actions">
               {selected.kind === "member" && <button className="quiet-button" disabled={busy === `recover:${selected.id}`} onClick={() => issueRecovery(selected)}>{busy === `recover:${selected.id}` ? "Creating…" : "Recovery link"}</button>}
               <button className={selected.status === "active" ? "danger-action" : "quiet-button"} disabled={busy === `status:${selected.id}`} onClick={() => changeStatus(selected)}>{busy === `status:${selected.id}` ? "Updating…" : selected.status === "active" ? "Suspend" : "Restore"}</button>
+              <UsageExport scope="console" hours={hours} principal={selected.id} />
             </div>}
           </div>
           {principal.kind === "operator" && <div className="effort-cap-row">
