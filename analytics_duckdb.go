@@ -647,3 +647,68 @@ func (a *DuckAnalytics) UserHourly(ctx context.Context, principalID string, sinc
 	}
 	return out, rows.Err()
 }
+
+type UsageExportRow struct {
+	ObservedAt           time.Time `json:"observed_at"`
+	PrincipalID          string    `json:"principal_id"`
+	ClientCredentialID   string    `json:"client_credential_id"`
+	OriginID             string    `json:"origin_id"`
+	AccountID            string    `json:"account_id"`
+	AccountType          string    `json:"account_type"`
+	PlanType             string    `json:"plan_type"`
+	Model                string    `json:"model"`
+	InputTokens          int64     `json:"input_tokens"`
+	CacheReadTokens      int64     `json:"cache_read_tokens"`
+	CacheCreationTokens  int64     `json:"cache_creation_tokens"`
+	OutputTokens         int64     `json:"output_tokens"`
+	ReasoningTokens      int64     `json:"reasoning_tokens"`
+	BillableTokens       int64     `json:"billable_tokens"`
+	APIEquivalentCostUSD float64   `json:"api_equivalent_cost_usd"`
+}
+
+type UsageExportQuery struct {
+	PrincipalID string
+	Since       time.Time
+	Limit       int
+}
+
+// ExportUsage streams the raw request ledger newest-first. Rows are handed to
+// emit one at a time so a large export never materializes in memory.
+func (a *DuckAnalytics) ExportUsage(ctx context.Context, q UsageExportQuery, emit func(UsageExportRow) error) (int, bool, error) {
+	a.queryMu.RLock()
+	defer a.queryMu.RUnlock()
+	query := `SELECT observed_at, principal_id, client_credential_id, COALESCE(origin_id,''), account_id, account_type,
+ COALESCE(plan_type,''), COALESCE(NULLIF(model_normalized,''), model_reported, ''),
+ input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens, reasoning_tokens, billable_tokens,
+ CAST(api_equivalent_cost_usd AS DOUBLE)
+ FROM usage_events WHERE observed_at>=?`
+	args := []any{q.Since.UTC()}
+	if q.PrincipalID != "" {
+		query += " AND principal_id=?"
+		args = append(args, q.PrincipalID)
+	}
+	query += " ORDER BY observed_at DESC LIMIT ?"
+	args = append(args, q.Limit+1)
+	rows, err := a.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, false, err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		if count == q.Limit {
+			return count, true, rows.Err()
+		}
+		var row UsageExportRow
+		if err := rows.Scan(&row.ObservedAt, &row.PrincipalID, &row.ClientCredentialID, &row.OriginID, &row.AccountID,
+			&row.AccountType, &row.PlanType, &row.Model, &row.InputTokens, &row.CacheReadTokens, &row.CacheCreationTokens,
+			&row.OutputTokens, &row.ReasoningTokens, &row.BillableTokens, &row.APIEquivalentCostUSD); err != nil {
+			return count, false, err
+		}
+		if err := emit(row); err != nil {
+			return count, false, err
+		}
+		count++
+	}
+	return count, false, rows.Err()
+}
