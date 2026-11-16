@@ -16,8 +16,8 @@ export async function loadAuthConfig(): Promise<{ operator_exists: boolean }> {
 }
 export async function operatorBootstrap(username: string, email: string, password: string, adminToken: string, displayName = ""): Promise<PassportPrincipal> {
   const result = await decode<{ principal: PassportPrincipal }>(await fetch("/api/setup/operator", {
-    method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken }, credentials: "same-origin",
-    body: JSON.stringify({ username, email, password, display_name: displayName }),
+    method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Token": adminToken.trim() }, credentials: "same-origin",
+    body: JSON.stringify({ username: username.trim(), email: email.trim(), password, display_name: displayName.trim() }),
   }));
   return result.principal;
 }

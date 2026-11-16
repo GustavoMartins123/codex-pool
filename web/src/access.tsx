@@ -215,7 +215,7 @@ export function AccessGate({ onAccess }: { onAccess: (principal: PassportPrincip
           </label>
           <label className="threshold-field">
             <span>Username<i>letters, numbers, . _ -</i></span>
-            <input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9._-]+" required autoComplete="username" />
+            <input value={username} onChange={(event) => setUsername(event.target.value)} minLength={3} maxLength={32} pattern="[A-Za-z0-9._\-]+" required autoComplete="username" />
           </label>
           <label className="threshold-field">
             <span>Display name<i>optional</i></span>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import { loadAdminAccounts, loadConsolePrincipals } from "./api";
+import { loadAdminAccounts, loadConsolePrincipals, operatorBootstrap } from "./api";
 import { loadOperatorAccounts, loadOperatorAccess, setOperatorAccountAccess, setContributionPermission } from "./governance-api";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -16,6 +16,16 @@ it("sends an explicit activation, revision and CSRF without accepting an operato
   expect(options.credentials).toBe("same-origin");
   expect(options.headers).toMatchObject({ "X-CSRF-Token": "operator-test" });
   expect(JSON.parse(String(options.body))).toEqual({ revision: 2, enabled: true, reason: "Support" });
+});
+
+it("trims whitespace around the bootstrap admin token and identity fields", async () => {
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ principal: { id: "root", kind: "operator" } })));
+  vi.stubGlobal("fetch", fetchMock);
+  await operatorBootstrap("  root  ", "  root@local  ", "correct-horse-battery", "  admin-token\n", "  Root  ");
+  const [path, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(path).toBe("/api/setup/operator");
+  expect(options.headers).toMatchObject({ "X-Admin-Token": "admin-token" });
+  expect(JSON.parse(String(options.body))).toEqual({ username: "root", email: "root@local", password: "correct-horse-battery", display_name: "Root" });
 });
 
 it("rejects incomplete permissions and corrupt history", async () => {
