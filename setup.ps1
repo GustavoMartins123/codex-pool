@@ -1,4 +1,4 @@
-param([string]$EnvPath = (Join-Path $PSScriptRoot '.env'), [switch]$Monitoring)
+param([string]$EnvPath = (Join-Path $PSScriptRoot '.env'), [switch]$Monitoring, [switch]$Deploy)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -41,6 +41,10 @@ function Protect-EnvFile([string]$Path) {
 }
 
 try {
+    if ($Deploy) {
+        if ($PSBoundParameters.ContainsKey('EnvPath')) { throw '-Deploy requires the default .env; Docker Compose reads only the repo-root .env.' }
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw 'Docker is required for -Deploy.' }
+    }
     Assert-RegularEnv
     if (-not (Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($EnvPath)) -PathType Container)) {
         throw 'The destination directory does not exist.'
@@ -116,6 +120,38 @@ try {
     }
     Protect-EnvFile $EnvPath
     Write-Output "Environment ready; generated $generated secret(s)."
+    if ($Deploy) {
+        foreach ($name in @('pool', 'data')) {
+            $dir = Join-Path $PSScriptRoot $name
+            if (Test-Path -LiteralPath $dir) {
+                if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw "$dir exists and is not a directory." }
+            } else {
+                New-Item -ItemType Directory -Path $dir | Out-Null
+            }
+        }
+        $deployScript = Join-Path $PSScriptRoot 'scripts\windows\deploy.ps1'
+        try {
+            if ($Monitoring) { & $deployScript -Monitoring } else { & $deployScript }
+            if ($LASTEXITCODE -ne 0) { throw "deploy exited with $LASTEXITCODE" }
+        } catch {
+            throw 'Deploy failed; .env is ready. Fix Docker and rerun .\setup.ps1 -Deploy. See: docker compose logs codex-pool'
+        }
+        $retries = 60
+        if ($env:CODEX_POOL_HEALTH_RETRIES) { $retries = [int]$env:CODEX_POOL_HEALTH_RETRIES }
+        $interval = 2
+        if ($env:CODEX_POOL_HEALTH_INTERVAL) { $interval = [int]$env:CODEX_POOL_HEALTH_INTERVAL }
+        $healthy = $false
+        for ($attempt = 0; $attempt -lt $retries; $attempt++) {
+            $status = & docker inspect -f '{{.State.Health.Status}}' codex-pool
+            if ($LASTEXITCODE -eq 0 -and "$status".Trim() -eq 'healthy') { $healthy = $true; break }
+            Start-Sleep -Seconds $interval
+        }
+        if (-not $healthy) { throw 'The pool did not become healthy in time. See: docker compose logs codex-pool' }
+        Write-Output 'Pool is running. Next steps:'
+        Write-Output '  1. Open http://127.0.0.1:8989/ and complete "Set up this pool" to create the operator.'
+        Write-Output '     The form asks for the admin token; read it with: Select-String "^ADMIN_TOKEN=" .env'
+        Write-Output '  2. Add provider accounts with "Add pool account" in the dashboard.'
+    }
 } catch {
     [Console]::Error.WriteLine("Setup failed: $($_.Exception.Message)")
     exit 1
