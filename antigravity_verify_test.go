@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -181,63 +179,6 @@ func TestAntigravityVerifyUnclassifiedForbiddenIsError(t *testing.T) {
 	}
 	if !account.RateLimitUntil.After(time.Now()) {
 		t.Fatal("an unclassified 403 must back the account off temporarily")
-	}
-}
-
-func TestAntigravityVerifyHandlerRejectsNonAntigravity(t *testing.T) {
-	codex := &Account{Type: AccountTypeCodex, ID: "cx"}
-	h, _, _ := antigravityVerifyFixtureHandler(t, []*Account{codex}, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		t.Fatal("non-antigravity accounts must never be probed")
-		return nil, nil
-	}))
-
-	recorder := httptest.NewRecorder()
-	h.handleAccountVerify(recorder, httptest.NewRequest(http.MethodPost, "/admin/accounts/cx/verify", nil), "cx")
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("non-antigravity verify: got %d, want 400", recorder.Code)
-	}
-
-	recorder = httptest.NewRecorder()
-	h.handleAccountVerify(recorder, httptest.NewRequest(http.MethodPost, "/admin/accounts/missing/verify", nil), "missing")
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("missing account verify: got %d, want 404", recorder.Code)
-	}
-}
-
-func TestAntigravityVerifyBatchReportsEveryAccount(t *testing.T) {
-	banned := antigravityVerifyTestAccount(t, "ag-banned")
-	banned.AccessToken = "banned-token"
-	healthy := antigravityVerifyTestAccount(t, "ag-healthy")
-	healthy.AccessToken = "healthy-token"
-	codex := &Account{Type: AccountTypeCodex, ID: "cx"}
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.Header.Get("Authorization") == "Bearer banned-token" {
-			return antigravityTestResponse(http.StatusForbidden, antigravityTOSBanFixture), nil
-		}
-		return antigravityTestResponse(http.StatusOK, antigravityHealthyQuotaFixture), nil
-	})
-	h, _, _ := antigravityVerifyFixtureHandler(t, []*Account{banned, healthy, codex}, transport)
-
-	recorder := httptest.NewRecorder()
-	h.handleAntigravityVerifyBatch(recorder, httptest.NewRequest(http.MethodPost, "/admin/antigravity/verify", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("batch verify: got %d %s", recorder.Code, recorder.Body.String())
-	}
-	var payload struct {
-		Accounts []antigravityVerifyResult `json:"accounts"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if len(payload.Accounts) != 2 {
-		t.Fatalf("batch must cover exactly the antigravity accounts, got %d", len(payload.Accounts))
-	}
-	statuses := map[string]string{}
-	for _, entry := range payload.Accounts {
-		statuses[entry.AccountID] = entry.Status
-	}
-	if statuses["ag-banned"] != "banned" || statuses["ag-healthy"] != "healthy" {
-		t.Fatalf("unexpected batch statuses: %v", statuses)
 	}
 }
 

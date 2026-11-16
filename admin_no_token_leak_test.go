@@ -98,7 +98,7 @@ func TestAntigravityVerifySurfacesNeverLeakUpstreamCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(h.ServeHTTP))
 	t.Cleanup(srv.Close)
 
-	for _, path := range []string{"/admin/accounts/ag-leak/verify", "/admin/antigravity/verify"} {
+	for _, path := range []string{"/admin/accounts/ag-leak/verify", "/admin/accounts/verify"} {
 		t.Run(path, func(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, srv.URL+path, nil)
 			req.Header.Set("X-Admin-Token", "admin-token-test")
