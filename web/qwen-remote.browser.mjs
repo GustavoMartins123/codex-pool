@@ -9,7 +9,8 @@ assert.equal(origin.hostname, 'pool.example.test');
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME_PATH,
   headless: true,
-  args: [`--ignore-certificate-errors-spki-list=${process.env.QWEN_TEST_TLS_SPKI}`, '--host-resolver-rules=MAP pool.example.test 127.0.0.1, MAP * ~NOTFOUND', '--no-proxy-server', ...(process.env.BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])],
+  timeout: 60000,
+  args: ['--disable-dev-shm-usage', `--ignore-certificate-errors-spki-list=${process.env.QWEN_TEST_TLS_SPKI}`, '--host-resolver-rules=MAP pool.example.test 127.0.0.1, MAP * ~NOTFOUND', '--no-proxy-server', ...(process.env.BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])],
 });
 const errors = [];
 const requests = [];

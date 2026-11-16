@@ -4,7 +4,17 @@ import puppeteer from 'puppeteer-core';
 assert.ok(process.env.CHROME_PATH, 'CHROME_PATH is required');
 assert.ok(process.env.UI_TEST_ORIGIN, 'UI_TEST_ORIGIN is required');
 const origin = process.env.UI_TEST_ORIGIN;
-const browser = await puppeteer.launch({ executablePath: process.env.CHROME_PATH, headless: true, args: process.env.BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : [] });
+// CI Chrome can fail to start (small /dev/shm, slow spawn); retry the launch, not the tests.
+async function launchBrowser(options) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await puppeteer.launch(options); }
+    catch (error) {
+      if (attempt >= 3) throw error;
+      console.error(`Chrome launch attempt ${attempt} failed: ${error.message}; retrying`);
+    }
+  }
+}
+const browser = await launchBrowser({ executablePath: process.env.CHROME_PATH, headless: true, timeout: 120000, args: ['--disable-dev-shm-usage', ...(process.env.BROWSER_NO_SANDBOX === '1' ? ['--no-sandbox'] : [])] });
 const failures = [];
 const principal = { id: 'fixture-member', kind: 'operator', status: 'active', display_name: 'Alex Morgan', email: 'alex@example.test', can_contribute: true };
 const clients = [{ id: 'laptop', label: 'Work laptop', status: 'active' }, { id: 'server', label: 'Home server', status: 'active' }, { id: 'old', label: 'Old machine', status: 'revoked' }];
