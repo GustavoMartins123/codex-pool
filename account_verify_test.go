@@ -228,6 +228,18 @@ func TestAccountVerifyBatchCoversEverySupportedProvider(t *testing.T) {
 	}
 }
 
+func putAccountVerifyResource(t *testing.T, passport *PassportStore, account *Account, owner string, operatorManaged bool) {
+	t.Helper()
+	if err := passport.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket([]byte(bucketAccountResources)), resourceKey(account.Type, account.ID), &accountResource{
+			Version: 2, ID: account.ID, Provider: account.Type, OwnerID: owner, AddedBy: owner,
+			OperatorManaged: operatorManaged, Revision: 1, Status: "active",
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAccountVerifyBatchRouteSkipsAccountsTheOperatorCannotManage(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
 	store := testUsageStore(t)
@@ -238,15 +250,8 @@ func TestAccountVerifyBatchRouteSkipsAccountsTheOperatorCannotManage(t *testing.
 	operator := addAuthorityPrincipal(t, passport, "operator", PrincipalOperator)
 	managed := accountVerifyTestAccount(t, AccountTypeCodex, "pool-codex")
 	private := accountVerifyTestAccount(t, AccountTypeCodex, "carol-codex")
-	if err := passport.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bucketAccountResources))
-		if err := putJSON(bucket, resourceKey(AccountTypeCodex, managed.ID), &accountResource{Version: 2, ID: managed.ID, Provider: AccountTypeCodex, OwnerID: "operator-managed", AddedBy: "operator-managed", OperatorManaged: true, Revision: 1, Status: "active"}); err != nil {
-			return err
-		}
-		return putJSON(bucket, resourceKey(AccountTypeCodex, private.ID), &accountResource{Version: 2, ID: private.ID, Provider: AccountTypeCodex, OwnerID: "carol", AddedBy: "carol", Revision: 1, Status: "active"})
-	}); err != nil {
-		t.Fatal(err)
-	}
+	putAccountVerifyResource(t, passport, managed, "operator-managed", true)
+	putAccountVerifyResource(t, passport, private, "carol", false)
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(accountVerifyWhamFixture), nil
 	})
@@ -280,5 +285,59 @@ func TestAccountVerifyBatchRouteSkipsAccountsTheOperatorCannotManage(t *testing.
 	}
 	if single.AccountID != managed.ID || single.Status != "healthy" {
 		t.Fatalf("single verify = %+v, want a healthy answer for %s", single, managed.ID)
+	}
+}
+
+func TestAdminAccountsProjectsVerifyCapability(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addAuthorityPrincipal(t, passport, "operator", PrincipalOperator)
+	addAuthorityPrincipal(t, passport, "carol", PrincipalMember)
+	codex := accountVerifyTestAccount(t, AccountTypeCodex, "pool-codex")
+	xiaomi := accountVerifyTestAccount(t, AccountTypeXiaomi, "pool-xiaomi")
+	own := accountVerifyTestAccount(t, AccountTypeCodex, "carol-codex")
+	putAccountVerifyResource(t, passport, codex, "operator-managed", true)
+	putAccountVerifyResource(t, passport, xiaomi, "operator-managed", true)
+	putAccountVerifyResource(t, passport, own, "carol", false)
+	h := accountVerifyFixtureHandler(t, []*Account{codex, xiaomi, own}, nil)
+	h.passport = passport
+	h.store = store
+
+	type projection struct {
+		CanVerify bool
+		CanManage bool
+	}
+	listing := func(actor string) map[string]projection {
+		recorder := httptest.NewRecorder()
+		h.serveAccounts(recorder, contributionRequestActor(httptest.NewRequest(http.MethodGet, "/admin/accounts", nil), actor))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("listing: got %d %s", recorder.Code, recorder.Body.String())
+		}
+		var rows []struct {
+			ID        string `json:"id"`
+			CanVerify bool   `json:"can_verify"`
+			CanManage bool   `json:"can_manage"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]projection{}
+		for _, row := range rows {
+			out[row.ID] = projection{CanVerify: row.CanVerify, CanManage: row.CanManage}
+		}
+		return out
+	}
+
+	operatorRows := listing("operator")
+	if !operatorRows["pool-codex"].CanVerify || operatorRows["pool-xiaomi"].CanVerify {
+		t.Fatalf("can_verify must follow the provider probe, got %+v", operatorRows)
+	}
+	memberRows := listing("carol")
+	if len(memberRows) != 1 || !memberRows["carol-codex"].CanVerify {
+		t.Fatalf("owners must see the capability on their own accounts only: %+v", memberRows)
 	}
 }

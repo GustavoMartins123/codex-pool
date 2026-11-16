@@ -52,6 +52,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 	type row struct {
 		CanManage               bool        `json:"can_manage"`
 		CanConsumeReset         bool        `json:"can_consume_reset"`
+		CanVerify               bool        `json:"can_verify"`
 		ID                      string      `json:"id"`
 		PublicID                string      `json:"public_id"`
 		Type                    AccountType `json:"type"`
@@ -128,6 +129,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row{
 			CanManage:               canManage,
 			CanConsumeReset:         canConsumeReset,
+			CanVerify:               accountVerifySupported(a.Type),
 			ID:                      a.ID,
 			PublicID:                hashAccountID(a.ID),
 			Type:                    a.Type,
