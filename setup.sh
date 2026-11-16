@@ -3,16 +3,26 @@ set -euo pipefail
 umask 077
 
 fail() { printf '%s\n' "Setup failed: $*" >&2; exit 1; }
-[[ $# -le 2 ]] || fail 'Usage: bash setup.sh [env-file] [--monitoring]'
+[[ $# -le 3 ]] || fail 'Usage: bash setup.sh [env-file] [--monitoring] [--deploy]'
 monitoring=false
+deploy=false
 env_arg=''
 for arg in "$@"; do
-  if [[ $arg == --monitoring ]]; then monitoring=true
-  elif [[ -z $env_arg ]]; then env_arg=$arg
-  else fail 'Only one environment path is allowed.'; fi
+  case $arg in
+    --monitoring) monitoring=true ;;
+    --deploy) deploy=true ;;
+    --*) fail "Unknown option: $arg" ;;
+    *)
+      [[ -z $env_arg ]] || fail 'Only one environment path is allowed.'
+      env_arg=$arg ;;
+  esac
 done
 (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || fail 'Bash 4.4 or newer is required.'
 command -v openssl >/dev/null || fail 'OpenSSL is required.'
+if $deploy; then
+  [[ -z $env_arg ]] || fail '--deploy requires the default .env; Docker Compose reads only the repo-root .env.'
+  command -v docker >/dev/null || fail 'Docker is required for --deploy.'
+fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 env_path=${env_arg:-"$script_dir/.env"}
 [[ ! -L "$env_path" ]] || fail 'The environment file must not be a symlink.'
@@ -93,3 +103,30 @@ if [[ ! -f "$env_path" || $generated -gt 0 ]]; then
 fi
 chmod 600 -- "$env_path"
 printf 'Environment ready; generated %d secret(s).\n' "$generated"
+
+if $deploy; then
+  for name in pool data; do
+    dir="$script_dir/$name"
+    if [[ -e $dir ]]; then
+      [[ -d $dir ]] || fail "$dir exists and is not a directory."
+    else
+      mkdir -m 700 -- "$dir" || fail "Could not create $dir."
+    fi
+  done
+  deploy_args=()
+  if $monitoring; then deploy_args+=(--monitoring); fi
+  bash "$script_dir/scripts/deploy.sh" "${deploy_args[@]}" || fail 'Deploy failed; .env is ready. Fix Docker and rerun bash setup.sh --deploy. See: docker compose logs codex-pool'
+  retries=${CODEX_POOL_HEALTH_RETRIES:-60}
+  interval=${CODEX_POOL_HEALTH_INTERVAL:-2}
+  healthy=false
+  for ((attempt = 0; attempt < retries; attempt++)); do
+    status=$(docker inspect -f '{{.State.Health.Status}}' codex-pool 2>/dev/null) || status=''
+    if [[ $status == healthy ]]; then healthy=true; break; fi
+    sleep "$interval"
+  done
+  $healthy || fail 'The pool did not become healthy in time. See: docker compose logs codex-pool'
+  printf 'Pool is running. Next steps:\n'
+  printf '  1. Open http://127.0.0.1:8989/ and complete "Set up this pool" to create the operator.\n'
+  printf '     The form asks for the admin token; read it with: grep "^ADMIN_TOKEN=" .env\n'
+  printf '  2. Add provider accounts with "Add pool account" in the dashboard.\n'
+fi
