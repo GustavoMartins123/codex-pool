@@ -21,9 +21,9 @@ func testPoolAuthenticatedHandler(t *testing.T, h *proxyHandler) http.Handler {
 		t.Fatal(err)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := prepareTestPoolCredential(t, h, r); err != nil {
-			t.Errorf("pool credential fixture: %v", err)
-			http.Error(w, "pool credential fixture failed", http.StatusInternalServerError)
+		// Hijacked websocket handlers outlive the test, so never touch t here.
+		if err := prepareTestPoolCredentialRequest(h, r); err != nil {
+			http.Error(w, "pool credential fixture failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -78,11 +78,14 @@ func testPoolIdentity(t *testing.T, h *proxyHandler, subject string) string {
 	}
 	testPoolCredentialMu.Lock()
 	defer testPoolCredentialMu.Unlock()
-	return subject + "-c-" + testPoolFixtureClientIDLocked(t, h, subject)
+	clientID, err := testPoolFixtureClientIDLocked(h, subject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return subject + "-c-" + clientID
 }
 
-func testPoolFixtureClientIDLocked(t *testing.T, h *proxyHandler, identity string) string {
-	t.Helper()
+func testPoolFixtureClientIDLocked(h *proxyHandler, identity string) (string, error) {
 	var clientID string
 	h.passport.mu.RLock()
 	for id, client := range h.passport.clients {
@@ -93,7 +96,7 @@ func testPoolFixtureClientIDLocked(t *testing.T, h *proxyHandler, identity strin
 	}
 	h.passport.mu.RUnlock()
 	if clientID != "" {
-		return clientID
+		return clientID, nil
 	}
 	principal := h.passport.principal(identity)
 	if principal == nil {
@@ -101,7 +104,7 @@ func testPoolFixtureClientIDLocked(t *testing.T, h *proxyHandler, identity strin
 		if err := h.passport.db.Update(func(tx *bbolt.Tx) error {
 			return putJSON(tx.Bucket([]byte(bucketPrincipals)), identity, principal)
 		}); err != nil {
-			t.Fatal(err)
+			return "", err
 		}
 		h.passport.mu.Lock()
 		h.passport.principals[identity] = principal
@@ -109,15 +112,22 @@ func testPoolFixtureClientIDLocked(t *testing.T, h *proxyHandler, identity strin
 	}
 	client, err := h.passport.createClient(identity, "integration fixture", nil)
 	if err != nil {
-		t.Fatal(err)
+		return "", err
 	}
-	return client.ID
+	return client.ID, nil
 }
 
 func prepareTestPoolCredential(t *testing.T, h *proxyHandler, r *http.Request) error {
 	t.Helper()
 	if err := ensureTestPassport(t, h); err != nil {
 		return err
+	}
+	return prepareTestPoolCredentialRequest(h, r)
+}
+
+func prepareTestPoolCredentialRequest(h *proxyHandler, r *http.Request) error {
+	if h.passport == nil {
+		return errors.New("test passport not initialized")
 	}
 	secret := getPoolJWTSecret()
 	identity, _, kind, ok := parsePoolCredentialRequest(r, secret)
@@ -133,7 +143,10 @@ func prepareTestPoolCredential(t *testing.T, h *proxyHandler, r *http.Request) e
 	}
 	testPoolCredentialMu.Lock()
 	defer testPoolCredentialMu.Unlock()
-	clientID := testPoolFixtureClientIDLocked(t, h, identity)
+	clientID, err := testPoolFixtureClientIDLocked(h, identity)
+	if err != nil {
+		return err
+	}
 	if passthrough {
 		if secret == "" {
 			session, _, err := h.passport.createSession(identity)

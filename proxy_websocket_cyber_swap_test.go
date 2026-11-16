@@ -47,7 +47,7 @@ func newFakeCodexUpstream(t *testing.T) *fakeCodexUpstream {
 		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
-			t.Logf("upstream accept error: %v", err)
+			// This goroutine can outlive the test, so it must not touch t.
 			return
 		}
 		defer conn.CloseNow()
@@ -103,8 +103,18 @@ func newCodexProxyFixture(t *testing.T, base *url.URL, accounts []*Account) *cod
 		recent:    newRecentErrors(8),
 	}
 	h.cfg.debug.Store(true)
-	srv := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
-	t.Cleanup(srv.Close)
+	handler := testPoolAuthenticatedHandler(t, h)
+	var inflight sync.WaitGroup
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inflight.Add(1)
+		defer inflight.Done()
+		handler.ServeHTTP(w, r)
+	}))
+	// Drain hijacked websocket handlers, which httptest.Server.Close ignores.
+	t.Cleanup(func() {
+		srv.Close()
+		inflight.Wait()
+	})
 	return &codexProxyFixture{server: srv, handler: h}
 }
 
@@ -114,7 +124,7 @@ func dialClientWS(t *testing.T, fx *codexProxyFixture, headers http.Header) *web
 	u.Scheme = "ws"
 	u.Path = "/responses"
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	t.Cleanup(cancel)
+	defer cancel()
 	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPHeader: headers})
 	if err != nil {
 		t.Fatalf("client dial: %v", err)
