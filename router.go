@@ -207,7 +207,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") != "" {
 		ip := getClientIP(r)
 		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
-			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+			respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 			return false
 		}
 		if secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
@@ -221,11 +221,11 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	if h.passport != nil {
 		if principal, session := h.passport.authenticate(r); principal != nil {
 			if principal.Kind != PrincipalOperator {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				respondJSONError(w, http.StatusForbidden, "forbidden")
 				return false
 			}
 			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions && !h.passportCSRF(r, session) {
-				http.Error(w, "invalid CSRF token", http.StatusForbidden)
+				respondJSONError(w, http.StatusForbidden, "invalid CSRF token")
 				return false
 			}
 			*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, principal.ID))
@@ -234,14 +234,14 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	}
 	ip := getClientIP(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
-		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
+		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return false
 	}
 
 	if h.cfg.adminToken == "" {
 		// No admin token configured - deny all admin access
 		log.Printf("admin auth: no token configured")
-		http.Error(w, "admin access disabled", http.StatusForbidden)
+		respondJSONError(w, http.StatusForbidden, "admin access disabled")
 		return false
 	}
 
@@ -255,7 +255,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	if h.bruteForce != nil {
 		h.bruteForce.recordFailure(ip)
 	}
-	http.Error(w, "unauthorized", http.StatusUnauthorized)
+	respondJSONError(w, http.StatusUnauthorized, "invalid admin token")
 	return false
 }
 

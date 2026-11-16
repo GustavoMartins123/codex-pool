@@ -68,6 +68,17 @@ func TestOperatorBootstrapRequiresAdminToken(t *testing.T) {
 		if rr.Code != http.StatusUnauthorized {
 			t.Fatalf("bootstrap with token %q = %d, want 401", token, rr.Code)
 		}
+		// The setup form surfaces JSON error fields; a plain-text 401 would
+		// render as an opaque "Invalid JSON response" instead of a hint.
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &errBody); err != nil {
+			t.Fatalf("bootstrap 401 body is not JSON: %v (%s)", err, rr.Body.String())
+		}
+		if errBody.Error != "invalid admin token" {
+			t.Fatalf("bootstrap 401 error = %q, want invalid admin token", errBody.Error)
+		}
 		if p.hasOperator() {
 			t.Fatal("unauthorized bootstrap created an operator")
 		}
