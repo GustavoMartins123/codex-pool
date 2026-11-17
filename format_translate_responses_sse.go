@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"strings"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 func responseFinishReason(response map[string]any) string {
@@ -22,7 +24,7 @@ func responseFinishReason(response map[string]any) string {
 }
 
 type responsesBufferingWriter struct {
-	framer              sseFramer
+	framer              sse.Framer
 	buf                 []byte
 	id                  string
 	model               string
@@ -49,7 +51,7 @@ func (bw *responsesBufferingWriter) Write(p []byte) (int, error) {
 
 func (bw *responsesBufferingWriter) scanEvents() {
 	for {
-		event, advance, ok := bw.framer.next(bw.buf)
+		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
 			return
 		}
@@ -59,7 +61,7 @@ func (bw *responsesBufferingWriter) scanEvents() {
 }
 
 func (bw *responsesBufferingWriter) processEvent(event []byte) {
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return
 	}
@@ -359,7 +361,7 @@ func (bw *responsesBufferingWriter) Result() []byte {
 }
 
 type responsesToCompletionsWriter struct {
-	framer    sseFramer
+	framer    sse.Framer
 	err       error
 	terminal  bool
 	w         io.Writer
@@ -387,7 +389,7 @@ func (rw *responsesToCompletionsWriter) scanAndTranslate() {
 			rw.buf = nil
 			return
 		}
-		event, advance, ok := rw.framer.next(rw.buf)
+		event, advance, ok := rw.framer.Next(rw.buf)
 		if !ok {
 			return
 		}
@@ -400,7 +402,7 @@ func (rw *responsesToCompletionsWriter) processEvent(event []byte) {
 	if rw.terminal {
 		return
 	}
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 	if len(data) > 0 && rw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		rw.callback(data)
 	}
@@ -472,14 +474,14 @@ func (rw *responsesToCompletionsWriter) emitChunk(text, finishReason string, usa
 }
 
 func (rw *responsesToCompletionsWriter) writeRaw(s string) {
-	writeSSE(rw.w, []byte(s), &rw.err)
+	sse.Write(rw.w, []byte(s), &rw.err)
 	if rw.err != nil && rw.debug {
 		log.Printf("[%s] responses->completions write error: %v", rw.reqID, rw.err)
 	}
 }
 
 type responsesToCompletionsBufferingWriter struct {
-	framer       sseFramer
+	framer       sse.Framer
 	buf          []byte
 	callback     func([]byte)
 	debug        bool
@@ -504,7 +506,7 @@ func (bw *responsesToCompletionsBufferingWriter) Write(p []byte) (int, error) {
 
 func (bw *responsesToCompletionsBufferingWriter) scanEvents() {
 	for {
-		event, advance, ok := bw.framer.next(bw.buf)
+		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
 			return
 		}
@@ -514,7 +516,7 @@ func (bw *responsesToCompletionsBufferingWriter) scanEvents() {
 }
 
 func (bw *responsesToCompletionsBufferingWriter) processEvent(event []byte) {
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		bw.callback(data)
 	}
@@ -619,7 +621,7 @@ func (bw *responsesToCompletionsBufferingWriter) Result() []byte {
 // responsesToChatCompletionsWriter intercepts upstream Responses API SSE events
 // and translates them to OpenAI Chat Completions streaming format.
 type responsesToChatCompletionsWriter struct {
-	framer   sseFramer
+	framer   sse.Framer
 	err      error
 	terminal bool
 	w        io.Writer
@@ -657,7 +659,7 @@ func (rw *responsesToChatCompletionsWriter) scanAndTranslate() {
 			rw.buf = nil
 			return
 		}
-		event, advance, ok := rw.framer.next(rw.buf)
+		event, advance, ok := rw.framer.Next(rw.buf)
 		if !ok {
 			return
 		}
@@ -671,7 +673,7 @@ func (rw *responsesToChatCompletionsWriter) processEvent(event []byte) {
 	if rw.terminal {
 		return
 	}
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	// Forward original data to usage callback
 	if len(data) > 0 && rw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -973,7 +975,7 @@ func (rw *responsesToChatCompletionsWriter) emitChunk(delta map[string]any, fini
 }
 
 func (rw *responsesToChatCompletionsWriter) writeRaw(s string) {
-	writeSSE(rw.w, []byte(s), &rw.err)
+	sse.Write(rw.w, []byte(s), &rw.err)
 	if rw.err != nil && rw.debug {
 		log.Printf("[%s] responses->chat write error: %v", rw.reqID, rw.err)
 	}
@@ -983,7 +985,7 @@ func (rw *responsesToChatCompletionsWriter) writeRaw(s string) {
 // but buffers all SSE events and produces a single non-streaming JSON response.
 // Used when the client sends stream:false but Codex backend requires streaming.
 type responsesToChatCompletionsBufferingWriter struct {
-	framer   sseFramer
+	framer   sse.Framer
 	buf      []byte
 	callback func([]byte) // usage callback
 	debug    bool
@@ -1015,7 +1017,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) Write(p []byte) (int, error
 
 func (bw *responsesToChatCompletionsBufferingWriter) scanEvents() {
 	for {
-		event, advance, ok := bw.framer.next(bw.buf)
+		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
 			return
 		}
@@ -1025,7 +1027,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) scanEvents() {
 }
 
 func (bw *responsesToChatCompletionsBufferingWriter) processEvent(event []byte) {
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		bw.callback(data)
@@ -1270,7 +1272,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) Result() []byte {
 // responsesToClaudeBufferingWriter buffers Responses API SSE events into a
 // non-streaming Claude Messages API response.
 type responsesToClaudeBufferingWriter struct {
-	framer   sseFramer
+	framer   sse.Framer
 	buf      []byte
 	callback func([]byte)
 	debug    bool
@@ -1297,7 +1299,7 @@ func (bw *responsesToClaudeBufferingWriter) Write(p []byte) (int, error) {
 
 func (bw *responsesToClaudeBufferingWriter) scanEvents() {
 	for {
-		event, advance, ok := bw.framer.next(bw.buf)
+		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
 			return
 		}
@@ -1307,7 +1309,7 @@ func (bw *responsesToClaudeBufferingWriter) scanEvents() {
 }
 
 func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		bw.callback(data)
@@ -1508,7 +1510,7 @@ func (bw *responsesToClaudeBufferingWriter) Result() []byte {
 // to OpenAI Responses API SSE events. Used when Codex CLI sends to /responses
 // with a Claude model.
 type claudeToResponsesWriter struct {
-	framer   sseFramer
+	framer   sse.Framer
 	err      error
 	w        io.Writer
 	buf      []byte
@@ -1552,7 +1554,7 @@ func (cw *claudeToResponsesWriter) scanAndTranslate() {
 			cw.buf = nil
 			return
 		}
-		event, advance, ok := cw.framer.next(cw.buf)
+		event, advance, ok := cw.framer.Next(cw.buf)
 		if !ok {
 			return
 		}
@@ -1565,7 +1567,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 	if cw.terminal {
 		return
 	}
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	if len(data) > 0 && cw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		cw.callback(data)
@@ -1833,7 +1835,7 @@ func (cw *claudeToResponsesWriter) emitEvent(eventType string, data map[string]a
 		return
 	}
 	out := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(b))
-	writeSSE(cw.w, []byte(out), &cw.err)
+	sse.Write(cw.w, []byte(out), &cw.err)
 	if cw.err != nil && cw.debug {
 		log.Printf("[%s] claude->responses write error: %v", cw.reqID, cw.err)
 	}
@@ -1843,7 +1845,7 @@ func (cw *claudeToResponsesWriter) emitEvent(eventType string, data map[string]a
 // API SSE events. Used when Claude Code sends /v1/messages with a Codex model,
 // so the Responses API SSE from upstream needs to be converted back to Claude SSE.
 type responsesToClaudeWriter struct {
-	framer   sseFramer
+	framer   sse.Framer
 	err      error
 	terminal bool
 	w        io.Writer
@@ -1880,7 +1882,7 @@ func (rw *responsesToClaudeWriter) scanAndTranslate() {
 			rw.buf = nil
 			return
 		}
-		event, advance, ok := rw.framer.next(rw.buf)
+		event, advance, ok := rw.framer.Next(rw.buf)
 		if !ok {
 			return
 		}
@@ -1893,7 +1895,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 	if rw.terminal {
 		return
 	}
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	// Forward original data to usage callback
 	if len(data) > 0 && rw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -2120,7 +2122,7 @@ func (rw *responsesToClaudeWriter) emitClaudeEvent(eventType, data string) {
 		}
 		log.Printf("[%s] responses->claude EMIT: %s (len=%d) %s", rw.reqID, eventType, len(data), preview)
 	}
-	writeSSE(rw.w, []byte(out), &rw.err)
+	sse.Write(rw.w, []byte(out), &rw.err)
 	if rw.err != nil && rw.debug {
 		log.Printf("[%s] responses->claude write error: %v", rw.reqID, rw.err)
 	}

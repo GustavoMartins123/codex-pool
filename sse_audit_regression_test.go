@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func TestStreamingMixedEndings(t *testing.T) {
@@ -91,8 +93,8 @@ func TestStreamingDownstreamErrors(t *testing.T) {
 		{"responses-completions", response, func(w io.Writer) io.Writer { return &responsesToCompletionsWriter{w: w} }},
 		{"responses-claude", response, func(w io.Writer) io.Writer { return &responsesToClaudeWriter{w: w} }},
 		{"claude-responses", claude, func(w io.Writer) io.Writer { return &claudeToResponsesWriter{w: w} }},
-		{"claude-chat", claude, func(w io.Writer) io.Writer { return &sseTranslateWriter{w: w, direction: TranslateClaudeToOAI} }},
-		{"chat-claude", chat, func(w io.Writer) io.Writer { return &sseTranslateWriter{w: w, direction: TranslateOAIToClaude} }},
+		{"claude-chat", claude, func(w io.Writer) io.Writer { return &sseTranslateWriter{w: w, direction: wire.TranslateClaudeToOAI} }},
+		{"chat-claude", chat, func(w io.Writer) io.Writer { return &sseTranslateWriter{w: w, direction: wire.TranslateOAIToClaude} }},
 	}
 	for _, tc := range cases {
 		for _, failure := range []error{errors.New("client disconnected"), nil} {
@@ -183,8 +185,12 @@ func TestStreamingSiblingFraming(t *testing.T) {
 		{"responses-completions", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer { return &responsesToCompletionsWriter{w: out} }},
 		{"responses-claude", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer { return &responsesToClaudeWriter{w: out} }},
 		{"claude-responses", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer { return &claudeToResponsesWriter{w: out} }},
-		{"claude-chat", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer { return &sseTranslateWriter{w: out, direction: TranslateClaudeToOAI} }},
-		{"chat-claude", `{"choices":[{"delta":{"role":"assistant","content":"TOKEN"}}]}`, func(out *bytes.Buffer) io.Writer { return &sseTranslateWriter{w: out, direction: TranslateOAIToClaude} }},
+		{"claude-chat", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer {
+			return &sseTranslateWriter{w: out, direction: wire.TranslateClaudeToOAI}
+		}},
+		{"chat-claude", `{"choices":[{"delta":{"role":"assistant","content":"TOKEN"}}]}`, func(out *bytes.Buffer) io.Writer {
+			return &sseTranslateWriter{w: out, direction: wire.TranslateOAIToClaude}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

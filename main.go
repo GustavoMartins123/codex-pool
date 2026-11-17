@@ -24,6 +24,11 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/orderedjson"
+	"codex-pool-proxy/internal/ratelimit"
+	"codex-pool-proxy/internal/transport"
+	"codex-pool-proxy/internal/wire"
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
@@ -406,8 +411,8 @@ func analyticsDBPathFor(storePath string) string {
 func main() {
 	// Before anything can log: the pool has hundreds of log call sites and the
 	// stdlib logger offers no per-call redaction hook, so the output stream
-	// itself is wrapped. installRedactingLog is idempotent.
-	installRedactingLog()
+	// itself is wrapped. logredact.Install is idempotent.
+	logredact.Install()
 	if err := prepareStartupEnvironment(os.Args[1:], os.Stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
@@ -640,19 +645,19 @@ func main() {
 
 	// Anthropic traffic defaults to the Node.js 24.x uTLS profile used by Claude
 	// Code. Other providers retain their existing transports.
-	var transport http.RoundTripper = newBunHybridTransport(standardTransport)
+	var upstream http.RoundTripper = transport.NewBunHybrid(standardTransport)
 	switch strings.ToLower(os.Getenv("CODEX_TLS_FINGERPRINT")) {
 	case "rustls":
-		transport = newRustlsHybridTransport(standardTransport)
+		upstream = transport.NewRustlsHybrid(standardTransport)
 		log.Printf("codex rustls/uTLS hybrid transport enabled")
 	case "off", "go", "standard":
-		transport = standardTransport
+		upstream = standardTransport
 		log.Printf("standard Go TLS transport enabled")
 	case "bun":
-		transport = newBunHybridTransport(standardTransport)
+		upstream = transport.NewBunHybrid(standardTransport)
 		log.Printf("Node.js/uTLS hybrid transport enabled (Anthropic traffic only)")
 	case "bun-all":
-		transport = createBunTransport()
+		upstream = transport.NewBun()
 		log.Printf("Node.js/uTLS transport enabled (all traffic)")
 	default:
 		log.Printf("Node.js/uTLS hybrid transport enabled by default (Anthropic traffic only)")
@@ -665,11 +670,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid CODEX_ANTHROPIC_PROXY_URL: %v", err)
 		}
-		proxyTransport := createBunTransportWithProxy(proxyURL)
-		transport = &anthropicHostProxyTransport{
-			anthropic: proxyTransport,
-			direct:    transport,
-		}
+		proxyTransport := transport.NewBunWithProxy(proxyURL)
+		upstream = transport.NewAnthropicHostProxy(proxyTransport, upstream)
 		log.Printf("anthropic proxy enabled: %s", proxyURL.Host)
 	}
 
@@ -784,7 +786,7 @@ func main() {
 	}
 	h := &proxyHandler{
 		cfg:                  cfg,
-		transport:            transport,
+		transport:            upstream,
 		antigravityTransport: antigravityTransport,
 		refreshTransport:     refreshTransport,
 		pool:                 pool,
@@ -2852,7 +2854,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// --- Format translation: detect mismatch between client format and provider format ---
 	sourceFormat := detectRequestFormat(r.URL.Path)
 	targetFormat := providerTargetFormat(accountType)
-	translateDir := TranslateNone
+	translateDir := wire.TranslateNone
 	var qwenResponses *qwenResponsesRequest
 	if accountType == AccountTypeQwen && isCodexResponsesPath(r.URL.Path) {
 		qwenResponses, err = prepareQwenResponsesRequest(r.URL.Path, bodyBytes, requestedModel)
@@ -2863,16 +2865,16 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		bodyBytes = qwenResponses.Body
 		r.URL.Path = "/v1/chat/completions"
 	}
-	if sourceFormat != FormatUnknown && targetFormat != FormatUnknown && sourceFormat != targetFormat {
-		if sourceFormat == FormatClaude && targetFormat == FormatOpenAI {
+	if sourceFormat != wire.FormatUnknown && targetFormat != wire.FormatUnknown && sourceFormat != targetFormat {
+		if sourceFormat == wire.FormatClaude && targetFormat == wire.FormatOpenAI {
 			// Codex backend uses Responses API, not Chat Completions
 			if accountType == AccountTypeCodex {
-				translateDir = TranslateClaudeToResponses
+				translateDir = wire.TranslateClaudeToResponses
 			} else {
-				translateDir = TranslateClaudeToOAI
+				translateDir = wire.TranslateClaudeToOAI
 			}
-		} else if sourceFormat == FormatOpenAI && targetFormat == FormatClaude {
-			translateDir = TranslateOAIToClaude
+		} else if sourceFormat == wire.FormatOpenAI && targetFormat == wire.FormatClaude {
+			translateDir = wire.TranslateOAIToClaude
 		}
 	}
 	// Special case: Chat Completions -> Codex Responses API
@@ -2881,57 +2883,57 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// Codex always requires streaming, so we track whether the client originally wanted non-streaming.
 	clientWantsNonStreaming := originalJSONErr == nil && !originalStream
 	imagesResponseFormat := ""
-	if translateDir == TranslateNone && accountType == AccountTypeCodex && (strings.HasPrefix(r.URL.Path, "/v1/images/generations") || strings.HasPrefix(r.URL.Path, "/v1/images/edits")) {
-		translateDir = TranslateImagesToResponses
+	if translateDir == wire.TranslateNone && accountType == AccountTypeCodex && (strings.HasPrefix(r.URL.Path, "/v1/images/generations") || strings.HasPrefix(r.URL.Path, "/v1/images/edits")) {
+		translateDir = wire.TranslateImagesToResponses
 		clientWantsNonStreaming = true
 	}
-	if translateDir == TranslateNone && sourceFormat == FormatOpenAI && accountType == AccountTypeCodex {
+	if translateDir == wire.TranslateNone && sourceFormat == wire.FormatOpenAI && accountType == AccountTypeCodex {
 		if strings.HasPrefix(r.URL.Path, "/v1/completions") && !strings.HasPrefix(r.URL.Path, "/v1/chat/completions") {
-			translateDir = TranslateCompletionsToResponses
+			translateDir = wire.TranslateCompletionsToResponses
 		} else {
-			translateDir = TranslateChatToResponses
+			translateDir = wire.TranslateChatToResponses
 		}
 	}
 	// Special case: Responses API -> Anthropic Messages API.
 	// Route by the provider wire format so Anthropic-compatible providers such as ZAI
 	// receive the same tool-call normalization as native Claude.
-	if translateDir == TranslateNone && shouldTranslateResponsesToAnthropic(r.URL.Path, targetFormat) {
-		translateDir = TranslateResponsesToClaude
+	if translateDir == wire.TranslateNone && shouldTranslateResponsesToAnthropic(r.URL.Path, targetFormat) {
+		translateDir = wire.TranslateResponsesToClaude
 	}
 
-	if translateDir != TranslateNone {
+	if translateDir != wire.TranslateNone {
 		logTranslation(reqID, translateDir, h.cfg.debug.Load())
 		var err error
 		switch translateDir {
-		case TranslateClaudeToOAI:
+		case wire.TranslateClaudeToOAI:
 			bodyBytes, err = translateRequestBody(bodyBytes, sourceFormat, targetFormat)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/chat/completions"
-		case TranslateOAIToClaude:
+		case wire.TranslateOAIToClaude:
 			bodyBytes, err = translateRequestBody(bodyBytes, sourceFormat, targetFormat)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/messages"
-		case TranslateChatToResponses:
+		case wire.TranslateChatToResponses:
 			bodyBytes, err = translateChatCompletionsToResponses(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/responses"
-		case TranslateCompletionsToResponses:
+		case wire.TranslateCompletionsToResponses:
 			bodyBytes, err = translateCompletionsToResponses(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/responses"
-		case TranslateImagesToResponses:
+		case wire.TranslateImagesToResponses:
 			if strings.HasPrefix(r.URL.Path, "/v1/images/edits") {
 				bodyBytes, imagesResponseFormat, err = translateImagesEditToResponses(bodyBytes, r.Header.Get("Content-Type"))
 			} else {
@@ -2942,14 +2944,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				return
 			}
 			r.URL.Path = "/v1/responses"
-		case TranslateResponsesToClaude:
+		case wire.TranslateResponsesToClaude:
 			bodyBytes, err = translateResponsesToClaudeRequest(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/messages"
-		case TranslateClaudeToResponses:
+		case wire.TranslateClaudeToResponses:
 			bodyBytes, err = translateClaudeToResponsesRequest(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
@@ -2982,7 +2984,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					return
 				}
 				changed = true
-			} else if translateDir == TranslateNone && (strings.HasPrefix(r.URL.Path, "/v1/responses") || strings.HasPrefix(r.URL.Path, "/responses")) {
+			} else if translateDir == wire.TranslateNone && (strings.HasPrefix(r.URL.Path, "/v1/responses") || strings.HasPrefix(r.URL.Path, "/responses")) {
 				prepareResponsesObject(upstreamObject)
 				changed = true
 			} else {
@@ -3557,7 +3559,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			// Non-retryable error (400, unknown) — return to client.
 			// Translate error body if format translation is active.
-			if translateDir != TranslateNone {
+			if translateDir != wire.TranslateNone {
 				translated := translateErrorBody(errBody, targetFormat, sourceFormat)
 				resp.Body = io.NopCloser(bytes.NewReader(translated))
 			} else {
@@ -3668,7 +3670,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 				return
 			}
-		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateNone && accountType == AccountTypeCodex && strings.HasPrefix(r.URL.Path, "/v1/responses") {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateNone && accountType == AccountTypeCodex && strings.HasPrefix(r.URL.Path, "/v1/responses") {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3689,7 +3691,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
-		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateClaudeToResponses {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateClaudeToResponses {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3746,7 +3748,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			result := bufWriter.Result()
 			w.WriteHeader(resp.StatusCode)
 			w.Write(result)
-		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateImagesToResponses {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateImagesToResponses {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3779,7 +3781,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			recordImageGenerationResult(acc, true)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(translated)
-		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateCompletionsToResponses {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateCompletionsToResponses {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3835,7 +3837,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			result := bufWriter.Result()
 			w.WriteHeader(resp.StatusCode)
 			w.Write(result)
-		} else if clientWantsNonStreaming && isSSE && translateDir == TranslateChatToResponses {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateChatToResponses {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3891,7 +3893,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			result := bufWriter.Result()
 			w.WriteHeader(resp.StatusCode)
 			w.Write(result)
-		} else if !isSSE && translateDir != TranslateNone {
+		} else if !isSSE && translateDir != wire.TranslateNone {
 			// Non-SSE format translation: buffer the whole body, translate, write.
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
@@ -3912,15 +3914,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			var translated []byte
 			if resp.StatusCode >= 400 {
 				// Error response - translate error format
-				if translateDir == TranslateClaudeToResponses {
+				if translateDir == wire.TranslateClaudeToResponses {
 					// Translate Codex error to Claude error format
-					translated = translateErrorToClaudeFormat(respBody, resp.StatusCode)
-				} else if translateDir == TranslateChatToResponses || translateDir == TranslateCompletionsToResponses || translateDir == TranslateImagesToResponses || translateDir == TranslateResponsesToClaude {
+					translated = wire.ErrorToClaudeFormat(respBody, resp.StatusCode)
+				} else if translateDir == wire.TranslateChatToResponses || translateDir == wire.TranslateCompletionsToResponses || translateDir == wire.TranslateImagesToResponses || translateDir == wire.TranslateResponsesToClaude {
 					translated = respBody // Pass through error as-is
 				} else {
 					translated = translateErrorBody(respBody, targetFormat, sourceFormat)
 				}
-			} else if translateDir == TranslateResponsesToClaude {
+			} else if translateDir == wire.TranslateResponsesToClaude {
 				var trErr error
 				translated, trErr = translateClaudeRespToResponses(respBody)
 				if trErr != nil {
@@ -3929,7 +3931,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					}
 					translated = respBody
 				}
-			} else if translateDir == TranslateChatToResponses {
+			} else if translateDir == wire.TranslateChatToResponses {
 				var trErr error
 				translated, trErr = translateResponsesToChatCompletions(respBody)
 				if trErr != nil {
@@ -3938,7 +3940,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					}
 					translated = respBody
 				}
-			} else if translateDir == TranslateCompletionsToResponses {
+			} else if translateDir == wire.TranslateCompletionsToResponses {
 				var trErr error
 				translated, trErr = translateResponsesToCompletions(respBody)
 				if trErr != nil {
@@ -3947,7 +3949,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					}
 					translated = respBody
 				}
-			} else if translateDir == TranslateImagesToResponses {
+			} else if translateDir == wire.TranslateImagesToResponses {
 				var trErr error
 				translated, trErr = translateResponsesToImagesGeneration(respBody, imagesResponseFormat)
 				if trErr != nil {
@@ -3973,7 +3975,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			w.Write(translated)
 		} else {
 			// Normal response path (streaming or no translation needed)
-			if isSSE && translateDir != TranslateNone {
+			if isSSE && translateDir != wire.TranslateNone {
 				w.Header().Del("Content-Length")
 				w.Header().Set("Content-Type", "text/event-stream")
 			}
@@ -4015,7 +4017,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					return
 				}
 
-				if providerTargetFormat(acc.Type) == FormatClaude {
+				if providerTargetFormat(acc.Type) == wire.FormatClaude {
 					if claudeAccum == nil {
 						claudeAccum = ru
 					} else {
@@ -4058,39 +4060,39 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 
 			if isSSE {
-				if translateDir == TranslateCompletionsToResponses {
+				if translateDir == wire.TranslateCompletionsToResponses {
 					writer = &responsesToCompletionsWriter{
 						w:     writer,
 						debug: h.cfg.debug.Load(),
 						reqID: reqID,
 					}
-				} else if translateDir == TranslateChatToResponses {
+				} else if translateDir == wire.TranslateChatToResponses {
 					writer = &responsesToChatCompletionsWriter{
 						w:     writer,
 						debug: h.cfg.debug.Load(),
 						reqID: reqID,
 					}
-				} else if translateDir == TranslateResponsesToClaude {
+				} else if translateDir == wire.TranslateResponsesToClaude {
 					// Claude SSE response → Responses API SSE
 					writer = &claudeToResponsesWriter{
 						w:     writer,
 						debug: h.cfg.debug.Load(),
 						reqID: reqID,
 					}
-				} else if translateDir == TranslateClaudeToResponses {
+				} else if translateDir == wire.TranslateClaudeToResponses {
 					// Responses API SSE → Claude SSE
 					writer = &responsesToClaudeWriter{
 						w:     writer,
 						debug: h.cfg.debug.Load(),
 						reqID: reqID,
 					}
-				} else if translateDir != TranslateNone {
+				} else if translateDir != wire.TranslateNone {
 					// Response direction is opposite of request direction:
 					// TranslateOAIToClaude request → response comes in Claude format → translate to OAI
 					// TranslateClaudeToOAI request → response comes in OAI format → translate to Claude
-					responseDir := TranslateClaudeToOAI
-					if translateDir == TranslateClaudeToOAI {
-						responseDir = TranslateOAIToClaude
+					responseDir := wire.TranslateClaudeToOAI
+					if translateDir == wire.TranslateClaudeToOAI {
+						responseDir = wire.TranslateOAIToClaude
 					}
 					writer = &sseTranslateWriter{
 						w:         writer,
@@ -5272,7 +5274,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 				// Anthropic-wire providers split input (message_start) and output
 				// (message_delta); accumulate them into a single usage record.
-				if providerTargetFormat(acc.Type) == FormatClaude {
+				if providerTargetFormat(acc.Type) == wire.FormatClaude {
 					if claudeAccum2 == nil {
 						claudeAccum2 = ru
 					} else {
@@ -5627,7 +5629,7 @@ func (h *proxyHandler) applyRateLimit(a *Account, hdr http.Header) time.Duration
 			"x-ratelimit-reset",
 		} {
 			if resetStr := hdr.Get(key); resetStr != "" {
-				if resetAt, ok := parseRateLimitReset(resetStr); ok && resetAt.After(time.Now()) && resetAt.After(preciseReset) {
+				if resetAt, ok := ratelimit.ParseReset(resetStr); ok && resetAt.After(time.Now()) && resetAt.After(preciseReset) {
 					preciseReset = resetAt
 				}
 			}
@@ -5787,7 +5789,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	passthroughTranslateDir := TranslateNone
+	passthroughTranslateDir := wire.TranslateNone
 	compactRequest := providerType == AccountTypeCodex && r.Method == http.MethodPost && isCompactPath(path)
 	if compactRequest {
 		decoded, changed, err := decodeRequestBody(r.Header.Get("Content-Encoding"), bodyBytes, h.cfg.maxInMemoryBodyBytes)
@@ -5816,11 +5818,11 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	}
 	if providerType == AccountTypeCodex {
 		if strings.HasPrefix(originalPath, "/v1/completions") && !strings.HasPrefix(originalPath, "/v1/chat/completions") {
-			passthroughTranslateDir = TranslateCompletionsToResponses
+			passthroughTranslateDir = wire.TranslateCompletionsToResponses
 		} else if strings.HasPrefix(originalPath, "/v1/chat/completions") {
-			passthroughTranslateDir = TranslateChatToResponses
+			passthroughTranslateDir = wire.TranslateChatToResponses
 		} else if strings.HasPrefix(originalPath, "/v1/messages") {
-			passthroughTranslateDir = TranslateClaudeToResponses
+			passthroughTranslateDir = wire.TranslateClaudeToResponses
 		}
 		path, bodyBytes, err = codexPassthroughRewrite(path, bodyBytes)
 		if err != nil {
@@ -5915,7 +5917,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	resp, err := h.transport.RoundTrip(outReq)
 	if err != nil {
 		if providerType == AccountTypeClaude && h.cfg.claudeTraceEnabled() {
-			h.writeClaudeTrace(reqID, "passthrough", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, bodyBytes, outReq, bodyBytes, nil, TranslateNone, nil, err.Error())
+			h.writeClaudeTrace(reqID, "passthrough", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, bodyBytes, outReq, bodyBytes, nil, wire.TranslateNone, nil, err.Error())
 		}
 		h.recent.add(err.Error())
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -5933,7 +5935,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		if h.cfg.logBodies && h.cfg.bodyLogLimit > 0 {
 			sampleLimit = h.claudeTraceSampleLimit(h.cfg.bodyLogLimit)
 		}
-		h.attachClaudeTrace(reqID, "passthrough", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, bodyBytes, outReq, bodyBytes, resp, TranslateNone, &bytes.Buffer{}, sampleLimit)
+		h.attachClaudeTrace(reqID, "passthrough", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, bodyBytes, outReq, bodyBytes, resp, wire.TranslateNone, &bytes.Buffer{}, sampleLimit)
 	}
 
 	respContentType := resp.Header.Get("Content-Type")
@@ -5956,17 +5958,17 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 	}
-	if passthroughTranslateDir != TranslateNone && resp.StatusCode < 400 && clientWantsNonStreaming && isSSE {
+	if passthroughTranslateDir != wire.TranslateNone && resp.StatusCode < 400 && clientWantsNonStreaming && isSSE {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Del("Content-Length")
-		if passthroughTranslateDir == TranslateCompletionsToResponses {
+		if passthroughTranslateDir == wire.TranslateCompletionsToResponses {
 			bufWriter := &responsesToCompletionsBufferingWriter{debug: h.cfg.debug.Load(), reqID: reqID}
 			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
 			return
 		}
-		if passthroughTranslateDir == TranslateChatToResponses {
+		if passthroughTranslateDir == wire.TranslateChatToResponses {
 			bufWriter := &responsesToChatCompletionsBufferingWriter{debug: h.cfg.debug.Load(), reqID: reqID}
 			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
@@ -5974,18 +5976,18 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	if passthroughTranslateDir != TranslateNone && resp.StatusCode < 400 && !isSSE {
+	if passthroughTranslateDir != wire.TranslateNone && resp.StatusCode < 400 && !isSSE {
 		respBody, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			http.Error(w, readErr.Error(), http.StatusBadGateway)
 			return
 		}
 		translated := respBody
-		if passthroughTranslateDir == TranslateCompletionsToResponses {
+		if passthroughTranslateDir == wire.TranslateCompletionsToResponses {
 			if b, err := translateResponsesToCompletions(respBody); err == nil {
 				translated = b
 			}
-		} else if passthroughTranslateDir == TranslateChatToResponses {
+		} else if passthroughTranslateDir == wire.TranslateChatToResponses {
 			if b, err := translateResponsesToChatCompletions(respBody); err == nil {
 				translated = b
 			}
@@ -6002,7 +6004,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	removeHopByHopHeaders(w.Header())
 	h.logRateLimitResponseHeaders(reqID, providerType, resp.Header)
 	h.replaceUsageHeaders(w.Header())
-	if isSSE && passthroughTranslateDir != TranslateNone {
+	if isSSE && passthroughTranslateDir != wire.TranslateNone {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Del("Content-Length")
 	}
@@ -6017,9 +6019,9 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		writer = fw
 		defer fw.stop()
 	}
-	if isSSE && passthroughTranslateDir == TranslateCompletionsToResponses {
+	if isSSE && passthroughTranslateDir == wire.TranslateCompletionsToResponses {
 		writer = &responsesToCompletionsWriter{w: writer, debug: h.cfg.debug.Load(), reqID: reqID}
-	} else if isSSE && passthroughTranslateDir == TranslateChatToResponses {
+	} else if isSSE && passthroughTranslateDir == wire.TranslateChatToResponses {
 		writer = &responsesToChatCompletionsWriter{w: writer, debug: h.cfg.debug.Load(), reqID: reqID}
 	}
 	if isSSE && providerType == AccountTypeCodex {
@@ -6126,7 +6128,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 			if reqSample != nil {
 				reqBody = reqSample.Bytes()
 			}
-			h.writeClaudeTrace(reqID, "passthrough_streamed", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, reqBody, outReq, reqBody, nil, TranslateNone, nil, err.Error())
+			h.writeClaudeTrace(reqID, "passthrough_streamed", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, reqBody, outReq, reqBody, nil, wire.TranslateNone, nil, err.Error())
 		}
 		h.recent.add(err.Error())
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -6142,7 +6144,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 		if h.cfg.logBodies && h.cfg.bodyLogLimit > 0 {
 			sampleLimit = h.claudeTraceSampleLimit(h.cfg.bodyLogLimit)
 		}
-		h.attachClaudeTrace(reqID, "passthrough_streamed", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, reqBody, outReq, reqBody, resp, TranslateNone, &bytes.Buffer{}, sampleLimit)
+		h.attachClaudeTrace(reqID, "passthrough_streamed", "", hashRequestOrigin(r, h.originHashSalt()), nil, r, reqBody, outReq, reqBody, resp, wire.TranslateNone, &bytes.Buffer{}, sampleLimit)
 	}
 
 	if h.cfg.logBodies && reqSample != nil && reqSample.Len() > 0 {
@@ -6204,7 +6206,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (h *proxyHandler) tryOnce(ctx context.Context, in *http.Request, bodyBytes []byte, targetBase *url.URL, provider Provider, acc *Account, reqID string, translateDir TranslateDirection, requestedModel, userID, originID, conversationID string) (*http.Response, *bytes.Buffer, bool, error) {
+func (h *proxyHandler) tryOnce(ctx context.Context, in *http.Request, bodyBytes []byte, targetBase *url.URL, provider Provider, acc *Account, reqID string, translateDir wire.TranslateDirection, requestedModel, userID, originID, conversationID string) (*http.Response, *bytes.Buffer, bool, error) {
 	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil {
 		return nil, nil, false, err
 	}
@@ -6249,7 +6251,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	provider Provider,
 	acc *Account,
 	reqID string,
-	translateDir TranslateDirection,
+	translateDir wire.TranslateDirection,
 	requestedModel string,
 	userID string,
 	originID string,
@@ -6378,13 +6380,13 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			}
 		}
 
-		if provider.Type() == AccountTypeClaude && translateDir == TranslateNone && strings.HasPrefix(access, "sk-ant-oat") {
+		if provider.Type() == AccountTypeClaude && translateDir == wire.TranslateNone && strings.HasPrefix(access, "sk-ant-oat") {
 			outReq.Header.Set("anthropic-beta", appendAnthropicBeta(outReq.Header.Get("anthropic-beta"), betaOAuth))
 		}
 
 		// When translating, body size changes — remove the client's Content-Length
 		// so Go's HTTP client recalculates it from the actual body.
-		if translateDir != TranslateNone {
+		if translateDir != wire.TranslateNone {
 			outReq.Header.Del("Content-Length")
 			outReq.ContentLength = int64(len(bodyBytes))
 		}
@@ -6403,7 +6405,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		// Adjust headers when doing format translation
-		if translateDir == TranslateClaudeToOAI || translateDir == TranslateClaudeToResponses {
+		if translateDir == wire.TranslateClaudeToOAI || translateDir == wire.TranslateClaudeToResponses {
 			// Client sent Claude headers but upstream is OpenAI/Codex — remove Claude-specific headers
 			outReq.Header.Del("anthropic-version")
 			outReq.Header.Del("anthropic-beta")
@@ -6418,13 +6420,13 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 			}
 			// For Codex Responses API, force SSE accept since Codex always streams
-			if translateDir == TranslateClaudeToResponses {
+			if translateDir == wire.TranslateClaudeToResponses {
 				outReq.Header.Set("Accept", "text/event-stream")
 			}
-		} else if translateDir == TranslateChatToResponses || translateDir == TranslateCompletionsToResponses || translateDir == TranslateImagesToResponses {
+		} else if translateDir == wire.TranslateChatToResponses || translateDir == wire.TranslateCompletionsToResponses || translateDir == wire.TranslateImagesToResponses {
 			outReq.Header.Set("Accept", "text/event-stream")
 			outReq.Header.Set("Content-Type", "application/json")
-		} else if translateDir == TranslateOAIToClaude || translateDir == TranslateResponsesToClaude {
+		} else if translateDir == wire.TranslateOAIToClaude || translateDir == wire.TranslateResponsesToClaude {
 			// All Anthropic-compatible providers need the wire translation, but only
 			// native Claude OAuth traffic should impersonate Claude Code.
 			acceptHeader := "application/json"
@@ -6455,7 +6457,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedMarshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
 					bodyBytes = reordered
 				}
 
@@ -6504,7 +6506,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		if provider.Type() == AccountTypeClaude &&
-			translateDir == TranslateNone &&
+			translateDir == wire.TranslateNone &&
 			strings.HasPrefix(access, "sk-ant-oat") {
 			var bodyObj map[string]any
 			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !ccIsGenuineClaudeCodeRequest(in, bodyObj) {
@@ -6523,7 +6525,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedMarshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
 					bodyBytes = reordered
 				}
 
@@ -6734,11 +6736,11 @@ func applyStreamingResponseHeaders(header http.Header) {
 	}
 }
 
-func shouldSampleResponseBodyForRequest(provider Provider, acc *Account, path string, resp *http.Response, translateDir TranslateDirection, conversationID string, logBodies bool) bool {
+func shouldSampleResponseBodyForRequest(provider Provider, acc *Account, path string, resp *http.Response, translateDir wire.TranslateDirection, conversationID string, logBodies bool) bool {
 	if provider == nil || resp == nil {
 		return true
 	}
-	if logBodies || translateDir != TranslateNone || conversationID != "" {
+	if logBodies || translateDir != wire.TranslateNone || conversationID != "" {
 		return true
 	}
 	if !provider.DetectsSSE(path, resp.Header.Get("Content-Type")) {

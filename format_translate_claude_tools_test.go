@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 func claudeStreamEvents(t *testing.T, body string) []map[string]any {
 	t.Helper()
 	var events []map[string]any
 	for _, frame := range strings.Split(body, "\n\n") {
-		kind, data := parseSSEEvent([]byte(frame))
+		kind, data := sse.ParseEvent([]byte(frame))
 		if len(data) == 0 {
 			continue
 		}
@@ -27,7 +30,7 @@ func claudeStreamEvents(t *testing.T, body string) []map[string]any {
 
 func TestOpenAIStreamToClaudeReportsPromptUsage(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: TranslateOAIToClaude}
+	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
 	for _, chunk := range []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`,
 		`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":30}}}`,
@@ -44,7 +47,7 @@ func TestOpenAIStreamToClaudeReportsPromptUsage(t *testing.T) {
 
 func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: TranslateOAIToClaude}
+	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
 	chunks := []string{
 		// No role chunk: the first delta must still open the message.
 		`{"id":"chat-1","model":"qwen3.8-max","choices":[{"index":0,"delta":{"content":"Checking."}}]}`,
@@ -109,7 +112,7 @@ func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 
 func TestOpenAIStreamToClaudeTextAfterToolStartsNewBlock(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: TranslateOAIToClaude}
+	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
 	for _, chunk := range []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"Before"}}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"Bash","arguments":"{}"}}]}}]}`,

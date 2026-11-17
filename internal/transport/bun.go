@@ -1,4 +1,8 @@
-package main
+// Package transport provides upstream HTTP round trippers whose TLS
+// ClientHello mimics specific coding-agent clients (Node.js/Bun and rustls),
+// plus the host-routing wrapper that sends only Anthropic traffic through a
+// proxy.
+package transport
 
 import (
 	"bufio"
@@ -236,12 +240,12 @@ func (d *bunDialer) DialTLSContext(ctx context.Context, network, addr string) (n
 	return &bunConn{UConn: uConn}, nil
 }
 
-// createBunTransport creates an http.Transport with Bun-like TLS fingerprint.
-func createBunTransport() *http.Transport {
-	return createBunTransportWithProxy(getCodexProxyURL())
+// NewBun creates an http.Transport with Bun-like TLS fingerprint.
+func NewBun() *http.Transport {
+	return NewBunWithProxy(getCodexProxyURL())
 }
 
-func createBunTransportWithProxy(proxyURL *url.URL) *http.Transport {
+func NewBunWithProxy(proxyURL *url.URL) *http.Transport {
 	dialer := newBunDialer(proxyURL)
 
 	tr := &http.Transport{
@@ -260,21 +264,21 @@ func createBunTransportWithProxy(proxyURL *url.URL) *http.Transport {
 	return tr
 }
 
-// bunHybridTransport uses Bun fingerprint for api.anthropic.com, standard for others.
-type bunHybridTransport struct {
+// BunHybrid uses Bun fingerprint for api.anthropic.com, standard for others.
+type BunHybrid struct {
 	bun      *http.Transport
 	standard http.RoundTripper
 	mu       sync.Mutex
 }
 
-func newBunHybridTransport(standard http.RoundTripper) *bunHybridTransport {
-	return &bunHybridTransport{
-		bun:      createBunTransport(),
+func NewBunHybrid(standard http.RoundTripper) *BunHybrid {
+	return &BunHybrid{
+		bun:      NewBun(),
 		standard: standard,
 	}
 }
 
-func (h *bunHybridTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (h *BunHybrid) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := strings.ToLower(req.URL.Hostname())
 	if host == "" {
 		host = strings.ToLower(req.URL.Host)
@@ -286,16 +290,21 @@ func (h *bunHybridTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return h.standard.RoundTrip(req)
 }
 
-var _ http.RoundTripper = (*bunHybridTransport)(nil)
+var _ http.RoundTripper = (*BunHybrid)(nil)
 
-// anthropicHostProxyTransport routes api.anthropic.com traffic through a proxy
+// AnthropicHostProxy routes api.anthropic.com traffic through a proxy
 // so it appears to originate from a different IP. All other traffic goes direct.
-type anthropicHostProxyTransport struct {
+type AnthropicHostProxy struct {
 	anthropic http.RoundTripper
 	direct    http.RoundTripper
 }
 
-func (h *anthropicHostProxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+// NewAnthropicHostProxy routes Anthropic API hosts through anthropic and all
+// other hosts through direct.
+func NewAnthropicHostProxy(anthropic, direct http.RoundTripper) *AnthropicHostProxy {
+	return &AnthropicHostProxy{anthropic: anthropic, direct: direct}
+}
+func (h *AnthropicHostProxy) RoundTrip(req *http.Request) (*http.Response, error) {
 	host := strings.ToLower(req.URL.Hostname())
 	if host == "" {
 		host = strings.ToLower(req.URL.Host)
@@ -306,4 +315,4 @@ func (h *anthropicHostProxyTransport) RoundTrip(req *http.Request) (*http.Respon
 	return h.direct.RoundTrip(req)
 }
 
-var _ http.RoundTripper = (*anthropicHostProxyTransport)(nil)
+var _ http.RoundTripper = (*AnthropicHostProxy)(nil)

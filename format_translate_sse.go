@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"io"
 	"log"
+
+	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 // sseTranslateWriter intercepts upstream SSE events, translates them to the
 // target format, and writes the translated events to the client. It also
 // forwards original event data to a usage callback for usage tracking.
 type sseTranslateWriter struct {
-	framer    sseFramer
+	framer    sse.Framer
 	err       error
-	w         io.Writer          // underlying writer (flushWriter)
-	direction TranslateDirection // which way to translate
+	w         io.Writer               // underlying writer (flushWriter)
+	direction wire.TranslateDirection // which way to translate
 	state     streamTranslationState
 	buf       []byte
 	callback  func([]byte) // called with original event data for usage parsing
@@ -69,7 +72,7 @@ func (sw *sseTranslateWriter) scanAndTranslate() {
 			sw.buf = nil
 			return
 		}
-		event, advance, ok := sw.framer.next(sw.buf)
+		event, advance, ok := sw.framer.Next(sw.buf)
 		if !ok {
 			return
 		}
@@ -79,7 +82,7 @@ func (sw *sseTranslateWriter) scanAndTranslate() {
 }
 
 func (sw *sseTranslateWriter) processEvent(event []byte) {
-	eventType, data := parseSSEEvent(event)
+	eventType, data := sse.ParseEvent(event)
 
 	// Forward original data to usage callback
 	if len(data) > 0 && sw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -87,9 +90,9 @@ func (sw *sseTranslateWriter) processEvent(event []byte) {
 	}
 
 	switch sw.direction {
-	case TranslateOAIToClaude:
+	case wire.TranslateOAIToClaude:
 		sw.translateOAIEventToClaude(eventType, data)
-	case TranslateClaudeToOAI:
+	case wire.TranslateClaudeToOAI:
 		sw.translateClaudeEventToOAI(eventType, data)
 	}
 }
@@ -505,7 +508,7 @@ func (sw *sseTranslateWriter) emitOAIChunkWithFinish(delta map[string]any, finis
 }
 
 func (sw *sseTranslateWriter) writeOAI(s string) {
-	writeSSE(sw.w, []byte(s), &sw.err)
+	sse.Write(sw.w, []byte(s), &sw.err)
 	if sw.err != nil && sw.debug {
 		log.Printf("[%s] translate write error: %v", sw.reqID, sw.err)
 	}

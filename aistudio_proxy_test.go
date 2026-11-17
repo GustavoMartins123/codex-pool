@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 // aistudioTestSignature looks like a native Gemini signature, which the
@@ -151,7 +153,7 @@ func TestAIStudioResponsesToolRoundTripReplaysSignature(t *testing.T) {
 	}
 	var output []any
 	for _, frame := range strings.Split(first.Body.String(), "\n\n") {
-		kind, data := parseSSEEvent([]byte(frame))
+		kind, data := sse.ParseEvent([]byte(frame))
 		var event map[string]any
 		if kind == "response.completed" && json.Unmarshal(data, &event) == nil {
 			output = anySlice(mapValue(event["response"])["output"])

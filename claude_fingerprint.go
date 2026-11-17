@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"codex-pool-proxy/internal/orderedjson"
 	"github.com/OneOfOne/xxhash"
 	"github.com/google/uuid"
 )
@@ -483,7 +484,7 @@ func ccInjectSystemBlocks(bodyObj map[string]any, bodyBytes []byte) []byte {
 	}
 
 	bodyObj["system"] = blocks
-	out, err := orderedMarshal(bodyObj, claudeBodyKeyOrder)
+	out, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder)
 	if err != nil {
 		return bodyBytes // fallback to original on marshal error
 	}

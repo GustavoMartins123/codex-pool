@@ -7,6 +7,8 @@ import (
 	"io"
 	"sort"
 	"unicode/utf8"
+
+	"codex-pool-proxy/internal/sse"
 )
 
 const compactResponseLimit = 16 << 20
@@ -29,15 +31,15 @@ func readCompactResponse(r io.Reader) ([]byte, error) {
 		index uint64
 		item  json.RawMessage
 	}
-	var framer sseFramer
+	var framer sse.Framer
 	for len(data) > 0 {
-		event, advance, ok := framer.next(data)
+		event, advance, ok := framer.Next(data)
 		if !ok {
 			// EOF can terminate the last SSE event without a blank line.
 			event, advance = data, len(data)
 		}
 		data = data[advance:]
-		_, payload := parseSSEEvent(event)
+		_, payload := sse.ParseEvent(event)
 		payload = bytes.TrimSpace(payload)
 		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
 			continue

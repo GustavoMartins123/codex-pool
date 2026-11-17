@@ -7,44 +7,6 @@ import (
 	"time"
 )
 
-func TestRedactSecrets(t *testing.T) {
-	cases := []struct{ name, in, wantSub string }{
-		{"bearer header", `Authorization: Bearer eyJhbGciOi.eyJzdWIi.sigpart`, "Bearer <redacted>"},
-		{"basic header", `proxy-authorization: Basic dXNlcjpwYXNzd29yZA==`, "Basic <redacted>"},
-		{"openai key", `key=sk-proj-AbCdEf1234567890123456`, "sk-<redacted>"},
-		{"jwt", `token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4`, "<redacted-jwt>"},
-		{"json access token", `{"access_token":"ya29.a0AfH6SMBx1234567890"}`, `{"access_token":"<redacted>"}`},
-		{"json refresh token", `{"refresh_token":"1//0abcDEF1234567890"}`, `{"refresh_token":"<redacted>"}`},
-		{"kv password", `password=SuperSecretValue12345`, "password=<redacted>"},
-		{"query api key", `url?api_key=AIzaSyABCDEF1234567890`, "api_key=<redacted>"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := redactSecrets(tc.in)
-			if !strings.Contains(got, tc.wantSub) {
-				t.Fatalf("redactSecrets(%q) = %q, want substring %q", tc.in, got, tc.wantSub)
-			}
-			if strings.Contains(got, "SuperSecretValue12345") || strings.Contains(got, "AbCdEf1234567890123456") {
-				t.Fatalf("secret survived redaction: %q", got)
-			}
-		})
-	}
-}
-
-func TestRedactSecretsKeepsBenignText(t *testing.T) {
-	benign := []string{
-		`{"error":{"code":"token_expired","message":"upstream token expired"}}`,
-		`data: {"type":"response.completed","sequence_number":42}`,
-		`claude usage fetch codex-1: 5hr=42.0% 7day=12.3%`,
-		`route selected account=codex-2 score=1.37 reason=conversation_pin`,
-	}
-	for _, s := range benign {
-		if got := redactSecrets(s); got != s {
-			t.Errorf("redactSecrets changed benign text:\n in: %s\ngot: %s", s, got)
-		}
-	}
-}
-
 func TestSafeTextRedactsSecrets(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","api_key":"sk-abcdef1234567890abcdef"}`)
 	got := safeText(body)

@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 const (
@@ -323,7 +325,7 @@ func parseGrokBillingUsage(monthlyBody, weeklyBody []byte, now time.Time) (Usage
 	var monthly grokBillingResponse
 	if json.Unmarshal(monthlyBody, &monthly) == nil && monthly.Config != nil && monthly.Config.MonthlyLimit != nil && monthly.Config.MonthlyLimit.Value > 0 && monthly.Config.Used != nil {
 		used := monthly.Config.Used.Value / monthly.Config.MonthlyLimit.Value
-		snap.PrimaryUsed = clampRateLimitPercent(used)
+		snap.PrimaryUsed = ratelimit.ClampPercent(used)
 		snap.PrimaryUsedPercent = snap.PrimaryUsed
 		snap.primarySet = true
 		applyGrokBillingPeriod(&snap.PrimaryResetAt, &snap.PrimaryWindowMinutes, monthly.Config.BillingPeriodStart, monthly.Config.BillingPeriodEnd, now)
@@ -340,7 +342,7 @@ func parseGrokBillingUsage(monthlyBody, weeklyBody []byte, now time.Time) (Usage
 		if weekly.Config.CreditUsagePercent != nil {
 			used = *weekly.Config.CreditUsagePercent / 100
 		}
-		snap.SecondaryUsed = clampRateLimitPercent(used)
+		snap.SecondaryUsed = ratelimit.ClampPercent(used)
 		snap.SecondaryUsedPercent = snap.SecondaryUsed
 		snap.secondarySet = true
 		if weekly.Config.CurrentPeriod != nil {

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 type TransitionMode string
@@ -52,11 +54,11 @@ func CanTransition(state ConversationState, from, to AccountType) TransitionComp
 		calls := 0
 		for _, part := range message.Content {
 			switch part.Type {
-			case IRImage:
+			case wire.ContentImage:
 				hasImage = true
-			case IRToolCall, IRToolResult:
+			case wire.ContentToolCall, wire.ContentToolResult:
 				hasTool = true
-				if part.Type == IRToolCall {
+				if part.Type == wire.ContentToolCall {
 					calls++
 				}
 			}
@@ -73,11 +75,11 @@ func CanTransition(state ConversationState, from, to AccountType) TransitionComp
 	if len(state.IR.Messages) > 0 {
 		last := state.IR.Messages[len(state.IR.Messages)-1]
 		for _, part := range last.Content {
-			if part.Type == IRImage && !caps.SupportsImages {
+			if part.Type == wire.ContentImage && !caps.SupportsImages {
 				result.Allowed = false
 				result.Warnings = append(result.Warnings, "current_image_unsupported")
 			}
-			if part.Type == IRToolResult && !caps.SupportsToolHistory {
+			if part.Type == wire.ContentToolResult && !caps.SupportsToolHistory {
 				result.Allowed = false
 				result.Warnings = append(result.Warnings, "current_tool_result_unsupported")
 			}
@@ -108,44 +110,44 @@ func transitionMode(from, to AccountType) TransitionMode {
 	return TransitionSummary
 }
 
-func translateFallbackPayload(body []byte, path string, target AccountType) ([]byte, string, TranslateDirection, error) {
+func translateFallbackPayload(body []byte, path string, target AccountType) ([]byte, string, wire.TranslateDirection, error) {
 	if target == AccountTypeAntigravity {
-		return body, path, TranslateNone, nil
+		return body, path, wire.TranslateNone, nil
 	}
 	if strings.HasPrefix(path, "/v1/responses") || strings.HasPrefix(path, "/responses") {
 		switch capabilitiesFor(target).WireFormat {
 		case WireResponses:
-			return body, "/v1/responses", TranslateNone, nil
+			return body, "/v1/responses", wire.TranslateNone, nil
 		case WireAnthropic:
 			translated, err := translateResponsesToClaudeRequest(body)
-			return translated, "/v1/messages", TranslateResponsesToClaude, err
+			return translated, "/v1/messages", wire.TranslateResponsesToClaude, err
 		}
 	}
 	if strings.HasPrefix(path, "/v1/messages") {
 		switch capabilitiesFor(target).WireFormat {
 		case WireAnthropic:
-			return body, path, TranslateNone, nil
+			return body, path, wire.TranslateNone, nil
 		case WireResponses:
 			translated, err := translateClaudeToResponsesRequest(body)
-			return translated, "/v1/responses", TranslateClaudeToResponses, err
+			return translated, "/v1/responses", wire.TranslateClaudeToResponses, err
 		case WireOpenAI:
-			translated, err := translateRequestBody(body, FormatClaude, FormatOpenAI)
-			return translated, "/v1/chat/completions", TranslateClaudeToOAI, err
+			translated, err := translateRequestBody(body, wire.FormatClaude, wire.FormatOpenAI)
+			return translated, "/v1/chat/completions", wire.TranslateClaudeToOAI, err
 		}
 	}
 	if strings.HasPrefix(path, "/v1/chat/completions") {
 		switch capabilitiesFor(target).WireFormat {
 		case WireOpenAI:
-			return body, path, TranslateNone, nil
+			return body, path, wire.TranslateNone, nil
 		case WireResponses:
 			translated, err := translateChatCompletionsToResponses(body)
-			return translated, "/v1/responses", TranslateChatToResponses, err
+			return translated, "/v1/responses", wire.TranslateChatToResponses, err
 		case WireAnthropic:
-			translated, err := translateRequestBody(body, FormatOpenAI, FormatClaude)
-			return translated, "/v1/messages", TranslateOAIToClaude, err
+			translated, err := translateRequestBody(body, wire.FormatOpenAI, wire.FormatClaude)
+			return translated, "/v1/messages", wire.TranslateOAIToClaude, err
 		}
 	}
-	return nil, "", TranslateNone, fmt.Errorf("unsupported fallback translation from %s to %s", path, target)
+	return nil, "", wire.TranslateNone, fmt.Errorf("unsupported fallback translation from %s to %s", path, target)
 }
 
 // summaryHandoffMessages uses only visible text and the current request.

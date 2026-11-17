@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 // ClaudeProvider handles Anthropic Claude accounts.
@@ -210,7 +212,7 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"anthropic-ratelimit-tokens-utilization",
 	}
 	for _, key := range primaryKeyChecks {
-		if pct, ok := parseRateLimitPercent(headers.Get(key)); ok {
+		if pct, ok := ratelimit.ParsePercent(headers.Get(key)); ok {
 			snap.PrimaryUsedPercent = pct
 			snap.PrimaryUsed = pct
 			usedPrimary = true
@@ -218,14 +220,14 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		}
 	}
 	if !usedPrimary {
-		if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-limit"); ok {
+		if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-limit"); ok {
 			snap.PrimaryUsedPercent = pct
 			snap.PrimaryUsed = pct
 			usedPrimary = true
 		}
 	}
 	if !usedPrimary {
-		if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining", "x-ratelimit-limit"); ok {
+		if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining", "x-ratelimit-limit"); ok {
 			snap.PrimaryUsedPercent = pct
 			snap.PrimaryUsed = pct
 			usedPrimary = true
@@ -239,7 +241,7 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		"anthropic-ratelimit-requests-utilization",
 	}
 	for _, key := range secondaryKeyChecks {
-		if pct, ok := parseRateLimitPercent(headers.Get(key)); ok {
+		if pct, ok := ratelimit.ParsePercent(headers.Get(key)); ok {
 			snap.SecondaryUsedPercent = pct
 			snap.SecondaryUsed = pct
 			usedSecondary = true
@@ -247,21 +249,21 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 		}
 	}
 	if !usedSecondary {
-		if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "anthropic-ratelimit-tokens-remaining", "anthropic-ratelimit-tokens-limit"); ok {
+		if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "anthropic-ratelimit-tokens-remaining", "anthropic-ratelimit-tokens-limit"); ok {
 			snap.SecondaryUsedPercent = pct
 			snap.SecondaryUsed = pct
 			usedSecondary = true
 		}
 	}
 	if !usedSecondary {
-		if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining-requests", "x-ratelimit-limit-requests"); ok {
+		if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining-requests", "x-ratelimit-limit-requests"); ok {
 			snap.SecondaryUsedPercent = pct
 			snap.SecondaryUsed = pct
 			usedSecondary = true
 		}
 	}
 	if !usedSecondary {
-		if pct, ok := parseRateLimitUsageFromRemainingLimit(headers, "x-ratelimit-remaining-tokens", "x-ratelimit-limit-tokens"); ok {
+		if pct, ok := ratelimit.UsageFromRemainingLimit(headers, "x-ratelimit-remaining-tokens", "x-ratelimit-limit-tokens"); ok {
 			snap.SecondaryUsedPercent = pct
 			snap.SecondaryUsed = pct
 			usedSecondary = true
@@ -273,57 +275,57 @@ func parseClaudeResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 	}
 
 	if resetStr := headers.Get("anthropic-ratelimit-unified-primary-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-5h-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-tokens-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-tokens-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-requests-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("x-ratelimit-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.PrimaryResetAt = resetAt
 		}
 	}
 
 	if resetStr := headers.Get("anthropic-ratelimit-unified-secondary-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-requests-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-7d-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-unified-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("anthropic-ratelimit-requests-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	} else if resetStr := headers.Get("x-ratelimit-reset"); resetStr != "" {
-		if resetAt, ok := parseRateLimitReset(resetStr); ok {
+		if resetAt, ok := ratelimit.ParseReset(resetStr); ok {
 			snap.SecondaryResetAt = resetAt
 		}
 	}

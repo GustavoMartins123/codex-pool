@@ -1,4 +1,9 @@
-package main
+// Package logredact masks credentials in text that leaves the process: log
+// samples, trace files and error strings built from upstream bodies. New log
+// or error paths must keep funneling through Redact (or the main package
+// safeText wrapper) so credentials never reach logs, metrics, or admin
+// responses.
+package logredact
 
 import (
 	"io"
@@ -9,13 +14,7 @@ import (
 	"sync"
 )
 
-// Centralized secret redaction. Everything that leaves the process in
-// textual form — log samples, trace files, error strings built from upstream
-// bodies — funnels through safeText, which applies redactSecrets. New log or
-// error paths must keep using safeText (or call redactSecrets directly) so
-// credentials never reach logs, metrics, or admin responses.
-
-var logSecretRules = []struct {
+var rules = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
@@ -47,27 +46,33 @@ var logSecretRules = []struct {
 	{regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/\s:@]+:[^/\s@]+@`), "${1}<redacted>@"},
 }
 
-// redactSecrets masks common credential shapes in a string. Benign text is
+// Redact masks common credential shapes in a string. Benign text is
 // left untouched; only the secret value is replaced.
-func redactSecrets(s string) string {
-	for _, rule := range logSecretRules {
+func Redact(s string) string {
+	for _, rule := range rules {
 		s = rule.re.ReplaceAllString(s, rule.repl)
 	}
 	return s
 }
 
-// redactingWriter is the last line of defense for credentials. The stdlib
+// Writer is the last line of defense for credentials. The stdlib
 // logger has no per-call hook, and the pool has hundreds of log.Printf call
 // sites, so wrapping the output stream is the only way to guarantee that a
 // future call site cannot print an upstream token. It also neutralizes
 // newlines the caller embedded, which would otherwise let client-controlled
 // text forge extra log lines.
-type redactingWriter struct {
+type Writer struct {
 	mu sync.Mutex
 	w  io.Writer
 }
 
-func (rw *redactingWriter) Write(p []byte) (int, error) {
+// NewWriter wraps w so everything written through it is redacted and any
+// embedded newlines are escaped.
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{w: w}
+}
+
+func (rw *Writer) Write(p []byte) (int, error) {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 
@@ -82,7 +87,7 @@ func (rw *redactingWriter) Write(p []byte) (int, error) {
 		body = body[:len(body)-1]
 	}
 	cleaned := strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\r").Replace(string(body))
-	cleaned = redactSecrets(cleaned)
+	cleaned = Redact(cleaned)
 
 	if _, err := io.WriteString(rw.w, cleaned); err != nil {
 		return 0, err
@@ -95,15 +100,15 @@ func (rw *redactingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// installRedactingLog routes the standard logger through redactSecrets,
-// preserving whatever destination was configured before. Idempotent.
-func installRedactingLog() {
+// Install routes the standard logger through Redact, preserving whatever
+// destination was configured before. Idempotent.
+func Install() {
 	existing := log.Writer()
-	if _, already := existing.(*redactingWriter); already {
+	if _, already := existing.(*Writer); already {
 		return
 	}
 	if existing == nil {
 		existing = os.Stderr
 	}
-	log.SetOutput(&redactingWriter{w: existing})
+	log.SetOutput(NewWriter(existing))
 }

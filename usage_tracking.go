@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/ratelimit"
 )
 
 const resetCreditPollInterval = 5 * time.Minute
@@ -1166,17 +1168,17 @@ func (h *proxyHandler) replaceUsageHeaders(hdr http.Header) {
 			kimiSnap = h.pool.timeWeightedUsage()
 		}
 
-		reqUsed := clampRateLimitPercent(kimiSnap.PrimaryUsedPercent)
-		tokenUsed := clampRateLimitPercent(kimiSnap.SecondaryUsedPercent)
+		reqUsed := ratelimit.ClampPercent(kimiSnap.PrimaryUsedPercent)
+		tokenUsed := ratelimit.ClampPercent(kimiSnap.SecondaryUsedPercent)
 
 		// Requests window
-		if reqLimit, ok := parseRateLimitFloat(hdr.Get("x-ratelimit-limit-requests")); ok && reqLimit > 0 {
+		if reqLimit, ok := ratelimit.ParseFloat(hdr.Get("x-ratelimit-limit-requests")); ok && reqLimit > 0 {
 			reqRemaining := int64(math.Round(reqLimit * (1.0 - reqUsed)))
 			hdr.Set("x-ratelimit-remaining-requests", strconv.FormatInt(reqRemaining, 10))
 			if !kimiSnap.PrimaryResetAt.IsZero() {
 				hdr.Set("x-ratelimit-reset-requests", strconv.FormatInt(kimiSnap.PrimaryResetAt.Unix(), 10))
 			}
-		} else if reqLimit, ok := parseRateLimitFloat(hdr.Get("x-ratelimit-requests-limit")); ok && reqLimit > 0 {
+		} else if reqLimit, ok := ratelimit.ParseFloat(hdr.Get("x-ratelimit-requests-limit")); ok && reqLimit > 0 {
 			reqRemaining := int64(math.Round(reqLimit * (1.0 - reqUsed)))
 			hdr.Set("x-ratelimit-requests-remaining", strconv.FormatInt(reqRemaining, 10))
 			if !kimiSnap.PrimaryResetAt.IsZero() {
@@ -1185,13 +1187,13 @@ func (h *proxyHandler) replaceUsageHeaders(hdr http.Header) {
 		}
 
 		// Token window
-		if tokenLimit, ok := parseRateLimitFloat(hdr.Get("x-ratelimit-limit-tokens")); ok && tokenLimit > 0 {
+		if tokenLimit, ok := ratelimit.ParseFloat(hdr.Get("x-ratelimit-limit-tokens")); ok && tokenLimit > 0 {
 			tokenRemaining := int64(math.Round(tokenLimit * (1.0 - tokenUsed)))
 			hdr.Set("x-ratelimit-remaining-tokens", strconv.FormatInt(tokenRemaining, 10))
 			if !kimiSnap.SecondaryResetAt.IsZero() {
 				hdr.Set("x-ratelimit-reset-tokens", strconv.FormatInt(kimiSnap.SecondaryResetAt.Unix(), 10))
 			}
-		} else if tokenLimit, ok := parseRateLimitFloat(hdr.Get("x-ratelimit-tokens-limit")); ok && tokenLimit > 0 {
+		} else if tokenLimit, ok := ratelimit.ParseFloat(hdr.Get("x-ratelimit-tokens-limit")); ok && tokenLimit > 0 {
 			tokenRemaining := int64(math.Round(tokenLimit * (1.0 - tokenUsed)))
 			hdr.Set("x-ratelimit-tokens-remaining", strconv.FormatInt(tokenRemaining, 10))
 			if !kimiSnap.SecondaryResetAt.IsZero() {
@@ -1265,11 +1267,11 @@ func (h *proxyHandler) fetchKimiUsage(now time.Time, a *Account) error {
 		if used, ok := readFloat(payload.Usage.Used); ok {
 			snap.PrimaryUsedPercent = used / limit
 		} else if remaining, ok := readFloat(payload.Usage.Remaining); ok {
-			snap.PrimaryUsedPercent = clampRateLimitPercent((limit - remaining) / limit)
+			snap.PrimaryUsedPercent = ratelimit.ClampPercent((limit - remaining) / limit)
 		}
 		snap.PrimaryUsed = snap.PrimaryUsedPercent
-		snap.PrimaryUsedPercent = clampRateLimitPercent(snap.PrimaryUsedPercent)
-		snap.PrimaryUsed = clampRateLimitPercent(snap.PrimaryUsed)
+		snap.PrimaryUsedPercent = ratelimit.ClampPercent(snap.PrimaryUsedPercent)
+		snap.PrimaryUsed = ratelimit.ClampPercent(snap.PrimaryUsed)
 	}
 
 	// Parse reset time

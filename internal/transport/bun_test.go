@@ -1,4 +1,4 @@
-package main
+package transport
 
 import (
 	"net/http"
@@ -53,7 +53,7 @@ func TestCreateBunTransportWithProxyUsesConnectDialer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport := createBunTransportWithProxy(proxyURL)
+	transport := NewBunWithProxy(proxyURL)
 	if transport.Proxy != nil {
 		t.Fatal("fingerprinted proxy transport must establish CONNECT itself")
 	}
@@ -76,7 +76,7 @@ func TestBunDialerKeepsHTTPSProxyScheme(t *testing.T) {
 func TestAnthropicHostProxyTransportSelectsAnthropicOnly(t *testing.T) {
 	anthropic := &recordingRoundTripper{name: "anthropic"}
 	direct := &recordingRoundTripper{name: "direct"}
-	transport := &anthropicHostProxyTransport{anthropic: anthropic, direct: direct}
+	transport := &AnthropicHostProxy{anthropic: anthropic, direct: direct}
 
 	for rawURL, want := range map[string]string{
 		"https://api.anthropic.com/v1/messages":          "anthropic",

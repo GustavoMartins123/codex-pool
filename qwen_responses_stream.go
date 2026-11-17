@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/sse"
 	"github.com/google/uuid"
 )
 
@@ -23,7 +24,7 @@ type qwenStreamTool struct {
 type qwenResponsesStream struct {
 	prepared               *qwenResponsesRequest
 	w                      io.Writer
-	framer                 sseFramer
+	framer                 sse.Framer
 	buffer                 []byte
 	err                    error
 	writeErr               error
@@ -75,7 +76,7 @@ func (s *qwenResponsesStream) emit(kind string, data map[string]any) {
 		s.err = err
 		return
 	}
-	writeSSE(s.w, []byte("event: "+kind+"\ndata: "+string(encoded)+"\n\n"), &s.err)
+	sse.Write(s.w, []byte("event: "+kind+"\ndata: "+string(encoded)+"\n\n"), &s.err)
 	if s.err != nil {
 		s.writeErr = s.err
 	}
@@ -335,12 +336,12 @@ func (s *qwenResponsesStream) Write(data []byte) (int, error) {
 		return 0, s.err
 	}
 	for {
-		event, consumed, ok := s.framer.next(s.buffer)
+		event, consumed, ok := s.framer.Next(s.buffer)
 		if !ok {
 			break
 		}
 		s.buffer = s.buffer[consumed:]
-		_, payload := parseSSEEvent(event)
+		_, payload := sse.ParseEvent(event)
 		if len(payload) == 0 || s.terminal {
 			continue
 		}

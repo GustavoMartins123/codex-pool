@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -504,13 +505,13 @@ func TestGrokPassThroughSSESkipsResponseSampling(t *testing.T) {
 	provider := NewGrokProvider(base)
 	resp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
 
-	if shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateNone, "", false) {
+	if shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, wire.TranslateNone, "", false) {
 		t.Fatal("grok SSE without a conversation can skip response sampling")
 	}
-	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateChatToResponses, "conv", false) {
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, wire.TranslateChatToResponses, "conv", false) {
 		t.Fatal("translated SSE should still sample/inspect response body")
 	}
-	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, TranslateNone, "conv", true) {
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeGrok}, "/v1/responses", resp, wire.TranslateNone, "conv", true) {
 		t.Fatal("body logging should keep response sampling enabled")
 	}
 }
@@ -520,10 +521,10 @@ func TestCodexSSEStillSamplesWhenCyberPolicyMayInspect(t *testing.T) {
 	provider := NewCodexProvider(base, base, nil)
 	resp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}}
 
-	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex}, "/v1/responses", resp, TranslateNone, "conv", false) {
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex}, "/v1/responses", resp, wire.TranslateNone, "conv", false) {
 		t.Fatal("codex non-cyber SSE should keep sampling for cyber policy inspection")
 	}
-	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, CyberAccess: true}, "/v1/responses", resp, TranslateNone, "conv", false) {
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, CyberAccess: true}, "/v1/responses", resp, wire.TranslateNone, "conv", false) {
 		t.Fatal("codex cyber-access SSE needs response sampling to preserve conversation history")
 	}
 }
