@@ -211,3 +211,79 @@ func TestCodexModelsEndpointListsQwenModels(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "codex-catalog-discovery-secret")
+	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-upstream", PlanType: "pro"}
+	discovered := &Account{
+		ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", AccountID: "acct-discovered", PlanType: "pro",
+		Models: map[string]DiscoveredModel{
+			"gpt-6.2-sol": {
+				ID: "gpt-6.2-sol", DisplayName: "GPT-6.2 Sol", ContextWindow: 500000,
+				ReasoningEfforts: []string{"low", "medium", "high", "xhigh"}, DefaultReasoningEffort: "high",
+			},
+			"gpt-6.2-astra": {
+				ID: "gpt-6.2-astra", DisplayName: "GPT-6.2 Astra", ContextWindow: 272000,
+				ReasoningEfforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultReasoningEffort: "xhigh",
+			},
+		},
+	}
+	grok := &Account{ID: "grok", Type: AccountTypeGrok, AccessToken: "grok-access", Models: map[string]DiscoveredModel{
+		"grok-chat-only": {ID: "grok-chat-only", Protocol: "openai"},
+	}}
+	h := qwenTestHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, "/codex/models") {
+			t.Fatalf("unexpected upstream request %s", req.URL)
+		}
+		return qwenJSONResponse(200, `{"models":[{"slug":"gpt-6.1-sol","display_name":"Upstream GPT","context_window":500000,"max_context_window":872000}]}`), nil
+	}), upstream, discovered, grok)
+	req := httptest.NewRequest("GET", "/backend-api/codex/models?client_version=0.164.0", nil)
+	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("codex-catalog-discovery-secret", "codex-client"))
+	rr := httptest.NewRecorder()
+	testPoolProxyRequest(t, h, rr, req, "codex-catalog")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d catalog=%.400s", rr.Code, rr.Body.String())
+	}
+	var catalog struct {
+		Models []struct {
+			Slug            string `json:"slug"`
+			Name            string `json:"display_name"`
+			ContextWindow   int    `json:"context_window"`
+			MaxContext      int    `json:"max_context_window"`
+			Visibility      string `json:"visibility"`
+			DefaultEffort   string `json:"default_reasoning_level"`
+			ReasoningLevels []struct {
+				Effort string `json:"effort"`
+			} `json:"supported_reasoning_levels"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, model := range catalog.Models {
+		counts[model.Slug]++
+		if expected, ok := discovered.Models[model.Slug]; ok {
+			if model.Name != expected.DisplayName || model.ContextWindow != expected.ContextWindow || model.MaxContext != expected.ContextWindow ||
+				model.Visibility != "list" || model.DefaultEffort != expected.DefaultReasoningEffort || len(model.ReasoningLevels) != len(expected.ReasoningEfforts) {
+				t.Fatalf("discovered model metadata = %+v", model)
+			}
+			for i, level := range model.ReasoningLevels {
+				if level.Effort != expected.ReasoningEfforts[i] {
+					t.Fatalf("discovered reasoning level = %q, want %q", level.Effort, expected.ReasoningEfforts[i])
+				}
+			}
+		}
+		if model.Slug == "gpt-6.1-sol" && (model.Name != "Upstream GPT" || model.ContextWindow != 500000 || model.MaxContext != 872000) {
+			t.Fatalf("upstream model metadata was rewritten: %+v", model)
+		}
+	}
+	for _, id := range []string{"gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra"} {
+		if counts[id] != 1 {
+			t.Fatalf("catalog has %d entries for %s", counts[id], id)
+		}
+	}
+	if counts["grok-chat-only"] != 0 {
+		t.Fatal("chat-only model included in the Codex catalog")
+	}
+}

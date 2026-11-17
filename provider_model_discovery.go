@@ -453,7 +453,9 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 		}
 		capabilities := map[string]bool{"reasoning": entry.model.Reasoning, "tools": true}
 		protocols := []string{protocol}
-		if entry.provider == AccountTypeQwen || entry.provider == AccountTypeAIStudio {
+		if entry.provider == AccountTypeCodex {
+			protocols = []string{"openai", "responses"}
+		} else if entry.provider == AccountTypeQwen || entry.provider == AccountTypeAIStudio {
 			protocols = []string{"openai", "responses", "anthropic"}
 		}
 		if entry.model.WebSearch {
