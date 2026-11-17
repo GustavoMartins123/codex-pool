@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------- state dir
 
@@ -28,6 +29,23 @@ export function writeJSON(file, value, { secret = true } = {}) {
 
 export function readSecret(file) {
   return fs.readFileSync(file, 'utf8').trim();
+}
+
+// stackContext resolves the repo root from this file, so the drivers work
+// from any working directory and never hardcode a checkout path.
+export function stackContext() {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const dir = process.env.MOCK_STACK_DIR ?? path.join(root, 'tmp', 'mock-stack');
+  const origin = process.env.MOCK_STACK_ORIGIN ?? readJSON(path.join(dir, 'stack.json'), {})?.origin ?? 'http://127.0.0.1:8989';
+  const certFile = path.join(dir, 'tls', 'cert.pem');
+  const ca = origin.startsWith('https:') && fs.existsSync(certFile) ? fs.readFileSync(certFile) : undefined;
+  const env = fs.readFileSync(path.join(root, '.env'), 'utf8');
+  return {
+    root, dir, origin, ca, env,
+    adminToken: envValue(env, 'ADMIN_TOKEN'),
+    credentials: readJSON(path.join(dir, 'credentials.json'), {}),
+    file: (...parts) => path.join(dir, ...parts),
+  };
 }
 
 // ------------------------------------------------------------------- timing
