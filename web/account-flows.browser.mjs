@@ -63,6 +63,31 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
     policyView = { ...policyView, principal_policy: previous, sources: [{ source: `principal:${principal.id}`, policy: previous }], effective: previous };
     sharing = { ...sharing, provider: 'claude', id: 'private-claude', grants: [{ id: 'saved-grant', recipient_id: principal.id, models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], budget: { daily_requests: 100 }, expires_at: '2099-01-01T00:00:00Z', revision: 1, reason: 'Shared models' }] };
   }
+  const runnerFixture = (id, name, online) => ({ id, name, online, agents: ['codex'], os: 'linux', arch: 'amd64', revoked: false, created_at: '2026-11-01T12:00:00Z' });
+  let runnerItems = mode === 'my-runners' ? [runnerFixture('r1', 'desk', true), runnerFixture('r2', 'laptop', false)] : mode === 'my-conversations' ? [runnerFixture('r1', 'desk', true)] : [];
+  let pairingItems = mode === 'my-runners' ? [{ id: 'p1', name: 'smoke-box', os: 'linux', arch: 'amd64', expires_at: new Date(Date.now() + 300000).toISOString() }] : [];
+  const conversationFixture = (id, sessionID, title, state, extra = {}) => ({ id, principal_id: principal.id, session_id: sessionID, agent: 'codex', model: 'gpt-5.5', title, storage: 'active', session_state: state, created_at: '2026-11-17T12:00:00Z', last_interaction_at: '2026-11-17T12:00:00Z', order_at: '2026-11-17T12:00:00Z', archive_after: '2026-12-17T12:00:00Z', event_cursor: 1, generation: 1, history_complete: true, resume_available: false, archived_through: 0, deleting: false, ...extra });
+  const sessionFixture = (id, conversationID, state, extra = {}) => ({ id, conversation_id: conversationID, principal_id: principal.id, client_id: 'laptop', agent: 'codex', model: 'gpt-5.5', reasoning_effort: 'medium', workspace: { mode: 'ephemeral' }, permission_mode: 'gated', state, runner_id: 'r1', lease_expires_at: '2026-11-17T13:00:00Z', created_at: '2026-11-17T12:00:00Z', updated_at: '2026-11-17T12:00:00Z', turns: 1, approvals: [], turn_summaries: [], resume_requested: false, ...extra });
+  let conversationItems = mode === 'my-conversations' ? [conversationFixture('c1', 's1', 'Fix login', 'running'), conversationFixture('c2', 's2', 'Refactor pool', 'closed')] : mode === 'my-conversations-fallback' ? [conversationFixture('c3', 's3', 'Legacy import', 'closed', { history_complete: false, preview: [{ turn_id: 't9', role: 'user', text: 'saved question' }, { turn_id: 't9', role: 'assistant', text: 'saved answer' }] })] : [];
+  const conversationPageTwo = mode === 'my-conversations' ? [conversationFixture('c5', 's5', 'Audit export', 'closed')] : [];
+  const agentSessions = {
+    s1: sessionFixture('s1', 'c1', 'running', { turn_id: 't1', approvals: [{ approval_id: 'a1', command: 'rm -rf build', context: 'cleanup', turn_id: 't1', expires_at: new Date(Date.now() + 300000).toISOString() }] }),
+    s2: sessionFixture('s2', 'c2', 'closed', { closed_at: '2026-11-17T12:00:00Z', closed_reason: 'user' }),
+    s3: sessionFixture('s3', 'c3', 'closed', { turn_summaries: [{ turn_id: 't9', tokens: 12, duration_ms: 100, exit_code: 0 }] }),
+    s5: sessionFixture('s5', 'c5', 'closed'),
+  };
+  const agentHistory = { c1: [{ id: 1, type: 'turn.input', data: { turn_id: 't1', input: 'hello' } }], c2: [], c3: [], c5: [] };
+  const deletedConversations = new Set();
+  const eventsRequests = [];
+  const historyRequests = [];
+  const agentMutations = [];
+  // Each stream ends with a named terminal error so the page must close it and
+  // never reconnect; a plain completed stream would loop forever instead.
+  const conversationEventStream = (id) => {
+    if (id === 'c1' && agentSessions.s1.state !== 'closed') return 'event: state\ndata: {"state":"running"}\n\nid: 2\nevent: turn.delta\ndata: {"turn_id":"t1","kind":"text","content":"Hi"}\n\nid: 3\nevent: turn.delta\ndata: {"turn_id":"t1","kind":"text","content":" there"}\n\nid: 4\nevent: error\ndata: {"message":"authentication expired"}\n\n';
+    if (id === 'c3') return 'event: state\ndata: {"state":"closed"}\n\nid: 1\nevent: turn.delta\ndata: {"turn_id":"t9","kind":"text","content":"live goes on"}\n\nid: 2\nevent: error\ndata: {"message":"authentication expired"}\n\n';
+    return 'event: state\ndata: {"state":"closed"}\n\nid: 1\nevent: error\ndata: {"message":"authentication expired"}\n\n';
+  };
   await page.browserContext().setCookie({ name: 'pool_csrf', value: 'browser-fixture', domain: '127.0.0.1', path: '/' });
   page.on('pageerror', e => errors.push(e.message));
   await page.setRequestInterception(true);
@@ -203,6 +228,93 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
       });
       return;
     }
+    else if (url.pathname === '/api/me/runners') body = { runners: runnerItems };
+    else if (url.pathname.startsWith('/api/me/runners/')) {
+      assert.equal(request.method(), 'DELETE');
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      const id = decodeURIComponent(url.pathname.split('/')[4]);
+      runnerItems = runnerItems.map(item => item.id === id ? { ...item, revoked: true, online: false } : item);
+      agentMutations.push({ path: url.pathname, method: 'DELETE', body: null });
+      await request.respond({ status: 204 }); return;
+    }
+    else if (url.pathname === '/api/me/runner-pairings') body = { pairings: pairingItems };
+    else if (url.pathname.startsWith('/api/me/runner-pairings/')) {
+      assert.equal(request.method(), 'POST');
+      assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+      const id = decodeURIComponent(url.pathname.split('/')[4]);
+      const value = JSON.parse(request.postData());
+      agentMutations.push({ path: url.pathname, method: 'POST', body: value });
+      if (value.decision === 'approve' && value.user_code !== '123456') { status = 403; body = { error: 'machine code does not match' }; }
+      else {
+        pairingItems = pairingItems.filter(item => item.id !== id);
+        if (value.decision === 'approve') runnerItems = [...runnerItems, runnerFixture('r3', 'smoke-box', false)];
+        await request.respond({ status: 204 }); return;
+      }
+    }
+    else if (url.pathname === '/api/conversations') {
+      assert.equal(url.searchParams.get('limit'), '50');
+      const cursor = url.searchParams.get('cursor');
+      if (url.searchParams.get('storage') === 'archived') body = { conversations: [] };
+      else if (cursor) { assert.equal(cursor, 'n1'); body = { conversations: conversationPageTwo }; }
+      else body = { conversations: conversationItems, ...(mode === 'my-conversations' ? { next_cursor: 'n1' } : {}) };
+    }
+    else if (url.pathname.startsWith('/api/conversations/')) {
+      const parts = url.pathname.split('/');
+      const id = decodeURIComponent(parts[3]);
+      if (parts[4] === 'events') {
+        assert.equal(request.method(), 'GET');
+        eventsRequests.push(id);
+        await request.respond({ status: 200, contentType: 'text/event-stream', headers: { 'Cache-Control': 'no-cache' }, body: conversationEventStream(id) });
+        return;
+      }
+      if (parts[4] === 'history') {
+        assert.equal(url.searchParams.get('limit'), '100');
+        historyRequests.push(id);
+        if (id === 'c3') { status = 409; body = { error: 'history was not recorded for this conversation' }; }
+        else {
+          const record = [...conversationItems, ...conversationPageTwo].find(item => item.id === id);
+          const events = agentHistory[id];
+          body = { conversation: record, session: agentSessions[record.session_id], events, before: events.length ? events[0].id : 0, through: events.length ? events[events.length - 1].id : 0, has_older: false };
+        }
+      } else if (request.method() === 'DELETE') {
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        agentMutations.push({ path: url.pathname, method: 'DELETE', body: null });
+        deletedConversations.add(id);
+        await request.respond({ status: 202 }); return;
+      } else if (deletedConversations.has(id)) { status = 404; body = { error: 'conversation not found' }; }
+      else body = [...conversationItems, ...conversationPageTwo].find(item => item.id === id);
+    }
+    else if (url.pathname.startsWith('/api/sessions/')) {
+      const parts = url.pathname.split('/');
+      const id = decodeURIComponent(parts[3]);
+      const rest = parts.slice(4).join('/');
+      if (rest === 'turns:cancel') {
+        assert.equal(request.method(), 'POST');
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        assert.ok(!request.postData());
+        assert.equal(request.headers()['content-type'], undefined);
+        agentMutations.push({ path: url.pathname, method: 'POST', body: null });
+        await request.respond({ status: 204 }); return;
+      }
+      if (rest.startsWith('approvals/')) {
+        assert.equal(request.method(), 'POST');
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        const value = JSON.parse(request.postData());
+        assert.deepEqual(value, { decision: 'deny' });
+        const approvalID = decodeURIComponent(rest.split('/')[1]);
+        agentSessions[id] = { ...agentSessions[id], approvals: agentSessions[id].approvals.filter(item => item.approval_id !== approvalID) };
+        agentMutations.push({ path: url.pathname, method: 'POST', body: value });
+        await request.respond({ status: 204 }); return;
+      }
+      if (request.method() === 'DELETE') {
+        assert.equal(request.headers()['x-csrf-token'], 'browser-fixture');
+        agentSessions[id] = { ...agentSessions[id], state: 'closed', closed_reason: 'user', closed_at: new Date().toISOString(), turn_id: undefined };
+        if (id === 's1') agentHistory.c1 = [...agentHistory.c1, { id: 5, type: 'session.closed', data: { reason: 'user' } }];
+        agentMutations.push({ path: url.pathname, method: 'DELETE', body: null });
+        await request.respond({ status: 204 }); return;
+      }
+      body = agentSessions[id];
+    }
     else if (url.pathname === '/api/pool/stats') body = poolStats;
     else if (url.pathname === '/api/pool/signal') body = { hourly: [], economics: [], origin_weekly: [], model_daily: [], quota_capacity: [], model_efficiency: [], reset_observations: [] };
     else if (url.pathname === '/api/pool/recent-errors') body = { errors: [{ at: '2026-11-16T12:00:00Z', message: 'codex upstream returned 502' }] };
@@ -212,11 +324,18 @@ const open = async (path = '/?view=mine', mode = 'signed-in', viewport = { width
   });
   await page.goto(origin + path);
   await page.waitForSelector('h1');
-  return { page, errors, qwenRequests, exportRequests };
+  return { page, errors, qwenRequests, exportRequests, eventsRequests, historyRequests, agentMutations };
 };
 const clickText = async (page, selector, text) => {
   await page.waitForFunction((selector, text) => [...document.querySelectorAll(selector)].some(el => el.textContent.trim() === text), {}, selector, text);
   await page.evaluate((selector, text) => [...document.querySelectorAll(selector)].find(el => el.textContent.trim() === text).click(), selector, text);
+};
+const waitFor = async (predicate, timeout = 10000) => {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeout) throw new Error('Timed out waiting for fixture state');
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
 };
 const check = async (name, test) => {
   try { await test(); console.log(`PASS ${name}`); }
@@ -501,7 +620,7 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   });
-  for (const view of ['pulse', 'mine', 'setup', 'passes', 'console']) {
+  for (const view of ['pulse', 'mine', 'setup', 'passes', 'console', 'runners', 'conversations']) {
     await check(`${view} renders at desktop and mobile widths`, async () => {
       const { page, errors } = await open(`/?view=${view}`);
       await page.waitForNetworkIdle();
@@ -517,6 +636,111 @@ try {
       await page.close();
     });
   }
+  await check('members approve pairings with the machine code and revoke runners', async () => {
+    const { page, errors, agentMutations } = await open('/?view=runners', 'my-runners');
+    await page.waitForSelector('.pairing-card');
+    assert.ok(await page.$eval('.pairing-card', el => el.textContent.includes('smoke-box')));
+    assert.equal(await page.$eval('.pairing-card .gold-button', el => el.disabled), true);
+    await page.type('.pairing-code input', '000000');
+    await clickText(page, '.pairing-card button', 'Approve');
+    await page.waitForSelector('.pairing-card [role="alert"]');
+    assert.ok(await page.$eval('.pairing-card [role="alert"]', el => el.textContent.includes('machine code does not match')));
+    assert.equal(await page.$eval('.pairing-code input', el => el.value), '000000');
+    await page.evaluate(() => { const input = document.querySelector('.pairing-code input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '123456'); input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await clickText(page, '.pairing-card button', 'Approve');
+    await page.waitForFunction(() => document.body.textContent.includes('Approved smoke-box'));
+    await page.waitForFunction(() => document.body.textContent.includes('No pending pairings.'));
+    await page.waitForFunction(() => [...document.querySelectorAll('.runner-row')].some(row => row.textContent.includes('smoke-box')));
+    await clickText(page, '.runner-row button', 'Revoke');
+    await page.waitForSelector('.runner-warning');
+    await clickText(page, '.runner-row button', 'Confirm revoke');
+    await page.waitForFunction(() => document.body.textContent.includes('Revoked desk'));
+    await page.waitForFunction(() => [...document.querySelectorAll('.runner-row')].some(row => row.textContent.includes('desk') && row.textContent.includes('revoked')));
+    assert.deepEqual(agentMutations.filter(mutation => mutation.path.startsWith('/api/me/runner-pairings/')).map(mutation => mutation.body), [{ decision: 'approve', user_code: '000000' }, { decision: 'approve', user_code: '123456' }]);
+    assert.ok(agentMutations.some(mutation => mutation.method === 'DELETE' && mutation.path === '/api/me/runners/r1'));
+    for (const width of [1365, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Runners overflows at ${width}px`);
+    }
+    await page.select('.mobile-nav select', 'conversations');
+    await page.waitForFunction(() => document.activeElement?.id === 'main-content');
+    await page.waitForFunction(() => document.querySelector('h1')?.textContent === 'Conversations');
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('conversations merge history with live deltas and stop on terminal errors', async () => {
+    const { page, errors, eventsRequests, historyRequests } = await open('/?view=conversations', 'my-conversations');
+    await page.waitForSelector('.conversation-row');
+    await page.waitForFunction(() => [...document.querySelectorAll('.transcript .turn-block p')].some(p => p.textContent === 'Hi there'));
+    assert.equal(await page.$eval('.transcript .turn-block.user p', el => el.textContent), 'hello');
+    assert.ok(await page.$eval('.transcript', el => el.textContent.includes('State: running')));
+    assert.ok(await page.$eval('.transcript', el => el.textContent.includes('authentication expired')));
+    assert.ok(await page.$eval('.detail-facts', el => el.textContent.includes('desk')));
+    assert.equal(await page.$eval('.live-status', el => el.textContent), 'disconnected');
+    assert.deepEqual(eventsRequests, ['c1']);
+    assert.deepEqual(historyRequests, ['c1']);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    assert.deepEqual(eventsRequests, ['c1']);
+    await clickText(page, '.live-status-row button', 'Disconnected — Reload');
+    await waitFor(() => eventsRequests.length === 2 && historyRequests.length === 2);
+    await page.waitForFunction(() => [...document.querySelectorAll('.transcript .turn-block p')].some(p => p.textContent === 'Hi there'));
+    assert.deepEqual(eventsRequests, ['c1', 'c1']);
+    for (const width of [1365, 390]) {
+      await page.setViewport({ width, height: 1000 });
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Conversations overflows at ${width}px`);
+    }
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('conversation actions cancel turns, deny approvals, and close sessions', async () => {
+    const { page, errors, agentMutations } = await open('/?view=conversations&conversation=c1', 'my-conversations');
+    await page.waitForSelector('.approval-card');
+    assert.ok(await page.$eval('.approval-card', el => el.textContent.includes('rm -rf build') && el.textContent.includes('Approve in the mobile app.')));
+    await clickText(page, '.detail-actions button', 'Cancel turn');
+    await waitFor(() => agentMutations.some(mutation => mutation.path === '/api/sessions/s1/turns:cancel'));
+    await clickText(page, '.approval-card button', 'Deny');
+    await page.waitForFunction(() => !document.querySelector('.approval-card'));
+    await clickText(page, '.detail-actions button', 'Close session');
+    await clickText(page, '.detail-actions button', 'Confirm close');
+    await waitFor(() => agentMutations.some(mutation => mutation.method === 'DELETE' && mutation.path === '/api/sessions/s1'));
+    await clickText(page, '.live-status-row button', 'Disconnected — Reload');
+    await page.waitForFunction(() => [...document.querySelectorAll('.transcript-banner')].some(el => el.textContent === 'Session closed — user'));
+    await page.waitForFunction(() => [...document.querySelectorAll('.detail-actions button')].some(button => button.textContent === 'Delete conversation'));
+    assert.equal(await page.$$eval('.detail-actions button', nodes => nodes.some(button => button.textContent === 'Close session')), false);
+    assert.deepEqual(agentMutations.find(mutation => mutation.path === '/api/sessions/s1/approvals/a1').body, { decision: 'deny' });
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('conversations delete polls until the record disappears', async () => {
+    const { page, errors, agentMutations } = await open('/?view=conversations&conversation=c2', 'my-conversations');
+    await page.waitForFunction(() => document.querySelector('.detail-facts')?.textContent.includes('closed'));
+    await clickText(page, '.detail-actions button', 'Delete conversation');
+    await clickText(page, '.detail-actions button', 'Confirm delete');
+    await page.waitForFunction(() => document.querySelector('.deleting-badge')?.textContent === 'Deleting…');
+    await page.waitForFunction(() => ![...document.querySelectorAll('.conversation-row')].some(row => row.textContent.includes('Refactor pool')), { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector('.conversation-detail')?.textContent.includes('Select a conversation to view its transcript.'));
+    assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get('conversation')), null);
+    assert.ok(agentMutations.some(mutation => mutation.method === 'DELETE' && mutation.path === '/api/conversations/c2'));
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('conversations paginate and switch storage', async () => {
+    const { page, errors } = await open('/?view=conversations', 'my-conversations');
+    await page.waitForSelector('.conversation-row');
+    await clickText(page, '.conversation-roster button', 'Load more');
+    await page.waitForFunction(() => [...document.querySelectorAll('.conversation-row')].some(row => row.textContent.includes('Audit export')));
+    assert.equal(await page.$('.load-more'), null);
+    await clickText(page, '.storage-toggle button', 'Archived');
+    await page.waitForFunction(() => document.querySelector('.conversation-roster')?.textContent.includes('No archived conversations.'));
+    assert.deepEqual(errors, []); await page.close();
+  });
+  await check('unrecorded conversation history falls back to the saved preview', async () => {
+    const { page, errors } = await open('/?view=conversations', 'my-conversations-fallback');
+    await page.waitForSelector('.conversation-row');
+    await page.waitForFunction(() => document.querySelector('.conversation-detail .account-message')?.textContent.includes('history was not recorded for this conversation'));
+    assert.ok(await page.$eval('.conversation-detail .account-message', el => el.textContent.includes('Showing the saved preview instead.')));
+    assert.ok(await page.$eval('.transcript', el => el.textContent.includes('saved question') && el.textContent.includes('saved answer')));
+    assert.ok(await page.$eval('.transcript', el => el.textContent.includes('Turn t9 · exit 0 · 12 tokens')));
+    await page.waitForFunction(() => [...document.querySelectorAll('.transcript .turn-block p')].some(p => p.textContent === 'live goes on'));
+    assert.equal(await page.$eval('.live-status', el => el.textContent), 'disconnected');
+    assert.deepEqual(errors, []); await page.close();
+  });
   await check('private account contribution and withdrawal work for members', async () => {
     const { page, errors } = await open('/?view=mine', 'my-create');
     await page.waitForSelector('.mine-accounts');
