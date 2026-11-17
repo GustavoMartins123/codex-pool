@@ -236,10 +236,15 @@ async function exportRows(target, options) {
 }
 
 async function check({ operator, member, minRows = 1 }) {
+  const admin = await api(ctx.origin, 'GET', '/admin/accounts', { jar: operator, ca: ctx.ca });
+  const adminRoster = Array.isArray(admin.json) ? admin.json : (admin.json?.accounts ?? []);
+  const configured = adminRoster.find((account) => account.id === CONFIGURED_ACCOUNT);
+  if (!configured) throw new Error(`${CONFIGURED_ACCOUNT} missing from the admin roster`);
   const stats = await api(ctx.origin, 'GET', '/api/pool/stats', { jar: operator, ca: ctx.ca });
   const roster = stats.json?.accounts ?? [];
-  const mock = roster.find((account) => account.id === CONFIGURED_ACCOUNT);
-  if (!mock) throw new Error(`${CONFIGURED_ACCOUNT} missing from the roster`);
+  // The operator roster masks ids; the admin roster carries the public_id map.
+  const mock = roster.find((account) => account.id === configured.public_id);
+  if (!mock) throw new Error(`${CONFIGURED_ACCOUNT} missing from the pool roster`);
   console.log(`mock account: type=${mock.type} status=${mock.status}`);
   if (mock.status !== 'healthy') throw new Error(`mock account is ${mock.status}, expected healthy`);
 
