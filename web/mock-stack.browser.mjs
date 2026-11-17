@@ -410,7 +410,11 @@ async function runners(page) {
     const target = after.runners.find((row) => row.name === flags.revoke);
     assert.ok(target, 'revoked runner disappeared from the roster');
     assert.ok(target.inactive || /revoked/i.test(target.text), 'revoked runner is not marked inactive');
-    assert.ok(after.runners.some((row) => row.name !== flags.revoke && /online/.test(row.text)), 'no online runner left after the revoke');
+    // A principal may own only the disposable runner, so check the blast radius
+    // instead of demanding a survivor.
+    if (before.runners.some((row) => row.name !== flags.revoke && /online/.test(row.text))) {
+      assert.ok(after.runners.some((row) => row.name !== flags.revoke && /online/.test(row.text)), 'the revoke took down an unrelated runner');
+    }
     assert.deepEqual(after.errors, [], `revoke surfaced errors: ${after.errors.join('; ')}`);
   }
   console.log('PASS runners', flags.revoke || '(no revoke)');
