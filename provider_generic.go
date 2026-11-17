@@ -333,15 +333,17 @@ func (h *proxyHandler) startGenericProviderHealthPoller(ctx ...context.Context) 
 						}
 					}
 				}
-				account.mu.Lock()
 				if err != nil {
+					account.mu.Lock()
 					account.HealthError = err.Error()
 					account.Dead = true
+					account.mu.Unlock()
 				} else {
+					account.mu.Lock()
 					account.HealthError = ""
-					account.Dead = false
+					account.mu.Unlock()
+					restoreValidatedAccount(account, "generic health")
 				}
-				account.mu.Unlock()
 			}
 			check()
 			ticker := time.NewTicker(interval)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testGenericProvider(t *testing.T) (*GenericOpenAIProvider, *Account) {
@@ -133,5 +135,71 @@ func TestGenericProviderUsesSmartRouter(t *testing.T) {
 	)
 	if selected == nil || selected.ID != second.ID || profile != string(RoutingQuotaSaver) {
 		t.Fatalf("selected=%v profile=%q", selected, profile)
+	}
+}
+
+func TestGenericProviderUsagePollerLeavesAccountAlive(t *testing.T) {
+	provider, account := testGenericProvider(t)
+	h := &proxyHandler{
+		cfg:      &config{usageRefresh: time.Minute},
+		pool:     newPoolState([]*Account{account}, false),
+		registry: NewProviderRegistry(nil, nil, nil, provider),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatalf("generic usage poller called %s", req.URL)
+			return nil, nil
+		}),
+	}
+	h.pollUpstreamUsage()
+	if account.Dead || account.Penalty != 0 {
+		t.Fatalf("generic account was penalized by the usage poller: dead=%v penalty=%v", account.Dead, account.Penalty)
+	}
+}
+
+func TestGenericProviderHealthRestoresRetiredAccount(t *testing.T) {
+	provider, account := testGenericProvider(t)
+	account.Dead = true
+	account.Penalty = 100
+	account.HealthError = "usage endpoint returned 401"
+	probed := make(chan string, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h := &proxyHandler{
+		cfg:      &config{},
+		pool:     newPoolState([]*Account{account}, false),
+		registry: NewProviderRegistry(nil, nil, nil, provider),
+		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			select {
+			case probed <- req.URL.String():
+			default:
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"data":[]}`)),
+			}, nil
+		}),
+	}
+	h.startGenericProviderHealthPoller(ctx)
+	select {
+	case got := <-probed:
+		if got != "https://vllm.example/v1/models" {
+			t.Fatalf("health probe url = %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("generic health poller never probed the provider")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		account.mu.Lock()
+		dead, penalty, healthError := account.Dead, account.Penalty, account.HealthError
+		account.mu.Unlock()
+		if !dead && penalty == 0 && healthError == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("health success kept retirement state: dead=%v penalty=%v health=%q", dead, penalty, healthError)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

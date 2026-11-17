@@ -194,6 +194,11 @@ func restoreValidatedAccount(a *Account, validation string) {
 		return
 	}
 	log.Printf("restored account %s after successful %s validation", accountID, validation)
+	// Config-defined providers have no credential file; their state is rebuilt
+	// from config on every start.
+	if strings.TrimSpace(a.File) == "" {
+		return
+	}
 	if err := saveAccount(a); err != nil {
 		log.Printf("warning: failed to persist restored account %s: %v", accountID, err)
 	}

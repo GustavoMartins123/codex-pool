@@ -124,6 +124,13 @@ func (h *proxyHandler) pollUpstreamUsage() {
 			continue
 		}
 
+		// Configured generic providers have no quota endpoint; their own health
+		// poller validates the key. Falling through would probe the Codex usage
+		// API with a foreign key and retire the account on the resulting 401.
+		if isGenericProviderType(accType) {
+			continue
+		}
+
 		if accType == AccountTypeQwen {
 			if retrievedAt.IsZero() || now.Sub(retrievedAt) >= qwenCreditPollInterval {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
