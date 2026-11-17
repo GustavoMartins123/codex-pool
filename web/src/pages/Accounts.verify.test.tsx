@@ -156,3 +156,13 @@ it("posts both verify mutations with the operator CSRF token", async () => {
   expect(batchInit.method).toBe("POST");
   expect((batchInit.headers as Record<string, string>)["X-CSRF-Token"]).toBe("operator-csrf");
 });
+
+it("titles the inspector with the same account id the roster row shows", () => {
+  const { container } = render(<Accounts stats={stats} adminAccounts={[admin(true)]} onAccountsChanged={vi.fn().mockResolvedValue(undefined)} />);
+
+  const row = container.querySelector("button.account-row:not(.account-head)") as HTMLButtonElement;
+  expect(row.textContent).toContain("pool-ag");
+  fireEvent.click(row);
+
+  expect(container.querySelector("#account-inspector-title")?.textContent).toBe("pool-ag");
+});

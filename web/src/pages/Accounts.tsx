@@ -312,13 +312,13 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
             className="account-inspector"
             role={mobileInspector ? "dialog" : "complementary"}
             aria-modal={mobileInspector ? true : undefined}
-            aria-label={selectedAccount ? `Account details for ${selectedAccount.id}` : "Account details"}
+            aria-label={selectedAccount ? `Account details for ${selectedAdmin?.id ?? selectedAccount.id}` : "Account details"}
           >
             <button ref={closeRef} className="inspector-close" onClick={closeInspector} aria-label="Close account details">Close</button>
             {selectedAccount ? (
               <>
                 <span className="inspector-code">Account details</span>
-                <h2 id="account-inspector-title">{selectedAccount.id}</h2>
+                <h2 id="account-inspector-title">{selectedAdmin?.id ?? selectedAccount.id}</h2>
                 <div className="inspector-provider" style={{ color: providerDisplay(selectedAccount.type).color }}>{providerDisplay(selectedAccount.type).label} · {selectedAccount.plan_type}</div>
                 {(selectedAdmin?.needs_login || selectedAccount.status === "needs_login") && (
                   <div className="inspector-alert" role="alert">
