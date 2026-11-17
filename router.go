@@ -380,6 +380,10 @@ func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleRunnerPairing(w, r)
 		return
 	}
+	if r.URL.Path == "/api/me/runner-pairings" {
+		h.handleMyRunnerPairings(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/me/runner-pairings/") {
 		h.handleAppRunnerPairing(w, r)
 		return

@@ -996,6 +996,7 @@ type proxyHandler struct {
 	runnerBrokerOnce     sync.Once
 	runnerBroker         *sessionBroker
 	runnerBrokerErr      error
+	eventHeartbeat       time.Duration // SSE re-auth interval override for tests; zero uses 15s
 	// Large JSON rewrites temporarily hold several copies of a request. This
 	// deliberately serializes only those requests on a small production host.
 	largeReplayBodies chan struct{}

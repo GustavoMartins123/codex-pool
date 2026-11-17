@@ -134,9 +134,13 @@ func sessionReasoningEffort(agent, effort string, model poolModelDescriptor, lim
 
 func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	principal, client := h.authenticateAppRequest(r)
+	principal, session, _ := h.authenticateMemberRequest(r)
 	if principal == nil {
-		respondJSONError(w, 401, "app authentication required")
+		respondJSONError(w, 401, "authentication required")
+		return
+	}
+	if r.Method != http.MethodGet && session != nil && !h.passportCSRF(r, session) {
+		respondJSONError(w, 403, "csrf validation failed")
 		return
 	}
 	b, err := h.sessionBroker()
@@ -161,6 +165,11 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := validateSessionRequest(q); err != nil {
 				sessionHTTPError(w, err)
+				return
+			}
+			_, client := h.authenticateAppRequest(r)
+			if client == nil {
+				respondJSONError(w, 403, "creating sessions requires the mobile app")
 				return
 			}
 			if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, &q); err != nil {
@@ -229,6 +238,11 @@ func (h *proxyHandler) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(q.Signatures) == 0 || !runnerproto.ValidCommandSignatures(q.IssuedAt, q.Signatures) {
 			respondJSONError(w, 400, "turn must be signed by the device paired with the runner")
+			return
+		}
+		_, client := h.authenticateAppRequest(r)
+		if client == nil {
+			respondJSONError(w, 403, "sending turns requires the mobile app")
 			return
 		}
 		turn, err := b.startTurn(principal.ID, id, q, func(settings *runnerproto.CreateSession) error {
@@ -367,7 +381,11 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	heartbeat := time.NewTicker(15 * time.Second)
+	interval := h.eventHeartbeat
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	heartbeat := time.NewTicker(interval)
 	defer heartbeat.Stop()
 	for {
 		select {
@@ -383,7 +401,7 @@ func (h *proxyHandler) serveSessionEvents(w http.ResponseWriter, r *http.Request
 				return
 			}
 		case <-heartbeat.C:
-			if p, _ := h.authenticateAppRequest(r); p == nil {
+			if p, _, _ := h.authenticateMemberRequest(r); p == nil || p.ID != principal {
 				_ = write(sessionEvent{Type: "error", Data: json.RawMessage(`{"message":"authentication expired"}`)})
 				return
 			}

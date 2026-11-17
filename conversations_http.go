@@ -97,9 +97,13 @@ func (b *sessionBroker) recentHistory(principal, id string, before, through *uin
 
 func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	principal, client := h.authenticateAppRequest(r)
+	principal, session, _ := h.authenticateMemberRequest(r)
 	if principal == nil {
-		respondJSONError(w, 401, "app authentication required")
+		respondJSONError(w, 401, "authentication required")
+		return
+	}
+	if r.Method != http.MethodGet && session != nil && !h.passportCSRF(r, session) {
+		respondJSONError(w, 403, "csrf validation failed")
 		return
 	}
 	b, err := h.sessionBroker()
@@ -170,6 +174,11 @@ func (h *proxyHandler) handleConversations(w http.ResponseWriter, r *http.Reques
 		s, err := b.session(principal.ID, c.SessionID)
 		if err != nil {
 			sessionHTTPError(w, err)
+			return
+		}
+		_, client := h.authenticateAppRequest(r)
+		if client == nil {
+			respondJSONError(w, 403, "resuming conversations requires the mobile app")
 			return
 		}
 		if err := h.authorizeSessionModel(principal.ID+"-c-"+client.ID, &runnerproto.CreateSession{Agent: s.Agent, Model: s.Model, ReasoningEffort: s.ReasoningEffort, Workspace: s.Workspace, PermissionMode: s.PermissionMode}); err != nil {

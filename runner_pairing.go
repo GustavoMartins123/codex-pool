@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -137,6 +138,39 @@ func (b *sessionBroker) reviewPairing(principal, id string) (*runnerproto.Pairin
 		return nil
 	})
 	return &review, err
+}
+
+// pendingPairings mirrors reviewPairing visibility: unclaimed pairings are
+// discoverable by any authenticated principal because the user_code is the gate.
+func (b *sessionBroker) pendingPairings(principal string) ([]runnerproto.PairingReview, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	reviews := []runnerproto.PairingReview{}
+	err := b.store.db.Update(func(tx *bbolt.Tx) error {
+		c := tx.Bucket([]byte(bucketRunnerPairings)).Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var p runnerPairing
+			if err := json.Unmarshal(v, &p); err != nil {
+				return err
+			}
+			if !p.ExpiresAt.After(b.now()) {
+				if err := c.Delete(); err != nil {
+					return err
+				}
+				continue
+			}
+			if p.Decision != "" || (p.PrincipalID != "" && p.PrincipalID != principal) {
+				continue
+			}
+			reviews = append(reviews, p.PairingReview)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(reviews, func(a, b runnerproto.PairingReview) int { return a.ExpiresAt.Compare(b.ExpiresAt) })
+	return reviews, nil
 }
 
 func (b *sessionBroker) decidePairing(principal, id string, q runnerproto.PairingDecision) error {
@@ -437,11 +471,42 @@ func (h *proxyHandler) handleRunnerPairing(w http.ResponseWriter, r *http.Reques
 	respondJSON(w, result)
 }
 
+func (h *proxyHandler) handleMyRunnerPairings(w http.ResponseWriter, r *http.Request) {
+	noStore(w)
+	principal, _, _ := h.authenticateMemberRequest(r)
+	if principal == nil {
+		respondJSONError(w, 401, "authentication required")
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		respondJSONError(w, 405, "method not allowed")
+		return
+	}
+	b, err := h.sessionBroker()
+	if err != nil {
+		sessionHTTPError(w, err)
+		return
+	}
+	items, err := b.pendingPairings(principal.ID)
+	if err != nil {
+		sessionHTTPError(w, err)
+		return
+	}
+	respondJSON(w, struct {
+		Pairings []runnerproto.PairingReview `json:"pairings"`
+	}{Pairings: items})
+}
+
 func (h *proxyHandler) handleAppRunnerPairing(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
-	principal, _ := h.authenticateAppRequest(r)
+	principal, session, _ := h.authenticateMemberRequest(r)
 	if principal == nil {
-		respondJSONError(w, 401, "app authentication required")
+		respondJSONError(w, 401, "authentication required")
+		return
+	}
+	if r.Method != http.MethodGet && session != nil && !h.passportCSRF(r, session) {
+		respondJSONError(w, 403, "csrf validation failed")
 		return
 	}
 	b, err := h.sessionBroker()
