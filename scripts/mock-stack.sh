@@ -93,10 +93,12 @@ start_bg() { # name command...
   local name=$1
   shift
   mkdir -p "$pids" "$logs"
+  # Daemons must not inherit fd 9, or they keep the stack lock held after the
+  # orchestrator exits and every later run reports a concurrent invocation.
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$@" >"$logs/$name.log" 2>&1 &
+    setsid "$@" >"$logs/$name.log" 2>&1 9>&- &
   else
-    "$@" >"$logs/$name.log" 2>&1 &
+    "$@" >"$logs/$name.log" 2>&1 9>&- &
   fi
   printf '%s\n' "$!" >"$pids/$name.pid"
   wait_until "$name to stay up" 5 alive "$name" || die "$name exited immediately; see $logs/$name.log"
