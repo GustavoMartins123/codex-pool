@@ -14,6 +14,7 @@ import (
 	"codex-pool-proxy/internal/runnerproto"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"go.etcd.io/bbolt"
 )
 
 func brokerFixture(t *testing.T) (*proxyHandler, *sessionBroker, *appLoginResponse, string) {
@@ -458,5 +459,55 @@ func TestRunnerRefusalReasonClosesTheSession(t *testing.T) {
 	state, _ := b.session(principal, s.ID)
 	if state.State != "closed" || state.ClosedReason != runnerproto.ExitAutoPermissionsDisabled {
 		t.Fatalf("close=%s/%s, want the runner's refusal reason", state.State, state.ClosedReason)
+	}
+}
+
+func TestTurnFinishAndCloseResolveStoredApprovals(t *testing.T) {
+	_, b, login, principal := brokerFixture(t)
+	r := brokerRunner(t, b, principal)
+	s := brokerSession(t, b, principal, login.ClientID)
+	if err := b.claim(r, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "workspace.status", func(m *runnerproto.Message) { m.Status = "ready" })
+	brokerEvent(t, b, r, s.ID, "turn.started", nil)
+	brokerEvent(t, b, r, s.ID, "approval.request", func(m *runnerproto.Message) { m.ApprovalID = "finished-approval"; m.Command = "synthetic" })
+	if err := b.cancelTurn(principal, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "turn.finished", func(m *runnerproto.Message) { m.ExitCode = 130 })
+	state, _ := b.session(principal, s.ID)
+	if len(state.Approvals) != 0 {
+		t.Fatalf("finished turn kept %d pending approvals", len(state.Approvals))
+	}
+	if err := b.resolveApproval(principal, s.ID, "finished-approval", "deny"); err != nil {
+		t.Fatalf("late deny was not idempotent: %v", err)
+	}
+	err := b.resolveApproval(principal, s.ID, "finished-approval", "approve")
+	if err == nil || !strings.Contains(err.Error(), "already resolved") {
+		t.Fatalf("late approve on a finished turn = %v", err)
+	}
+
+	if _, err := b.startTurn(principal, s.ID, runnerproto.TurnInput{Input: "next input"}, authorizeSyntheticSession); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "turn.started", nil)
+	brokerEvent(t, b, r, s.ID, "approval.request", func(m *runnerproto.Message) { m.ApprovalID = "closed-approval"; m.Command = "synthetic" })
+	if err := b.requestClose(principal, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	brokerEvent(t, b, r, s.ID, "process.exit", nil)
+	state, _ = b.session(principal, s.ID)
+	if state.State != "closed" || len(state.Approvals) != 0 {
+		t.Fatalf("state=%s pending=%d", state.State, len(state.Approvals))
+	}
+	var closed approvalRecord
+	if err := b.store.db.View(func(tx *bbolt.Tx) error {
+		return json.Unmarshal(tx.Bucket([]byte(bucketSessionApprovals)).Get([]byte("closed-approval")), &closed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if closed.Decision != "deny" {
+		t.Fatalf("approval dropped by session close stayed undecided: %q", closed.Decision)
 	}
 }

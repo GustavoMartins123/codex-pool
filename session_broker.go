@@ -220,8 +220,47 @@ func copySession(s *sessionRecord) *sessionRecord {
 	return &copy
 }
 
+// retireDroppedApprovalsTx resolves stored approvals that the next session state
+// no longer lists. turn.finished and session.close drop pending approvals without
+// an approval.resolved event, so without this the records stay undecided forever
+// and a late decision fails on the turn check instead of being idempotent.
+func (b *sessionBroker) retireDroppedApprovalsTx(tx *bbolt.Tx, previous, next *sessionRecord) error {
+	if previous == nil || previous == next || len(previous.Approvals) == 0 {
+		return nil
+	}
+	kept := make(map[string]struct{}, len(next.Approvals))
+	for _, a := range next.Approvals {
+		kept[a.ID] = struct{}{}
+	}
+	bucket := tx.Bucket([]byte(bucketSessionApprovals))
+	for _, a := range previous.Approvals {
+		if _, ok := kept[a.ID]; ok {
+			continue
+		}
+		raw := bucket.Get([]byte(a.ID))
+		if raw == nil {
+			continue
+		}
+		var record approvalRecord
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return err
+		}
+		if record.Decision != "" {
+			continue
+		}
+		record.Decision = "deny"
+		if err := putJSON(bucket, a.ID, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (b *sessionBroker) saveLocked(s *sessionRecord, action, actor string, events ...sessionEvent) error {
 	if err := b.store.db.Update(func(tx *bbolt.Tx) error {
+		if err := b.retireDroppedApprovalsTx(tx, b.sessions[s.ID], s); err != nil {
+			return err
+		}
 		if err := b.recordEventsTx(tx, s, events); err != nil {
 			return err
 		}
