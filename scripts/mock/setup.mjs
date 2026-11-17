@@ -3,7 +3,7 @@
 //
 //   node scripts/mock/setup.mjs --configure --upstream-url http://GATEWAY:PORT/v1
 //       Render pool/config.toml, merge .env (CONFIG_PATH + MOCK_TOKEN) and,
-//       only when ./data is absent, write the fake account roster.
+//       only when ./data holds no state, write the fake account roster.
 //   node scripts/mock/setup.mjs
 //       Bootstrap operator + member, mint client keys, share the mock account
 //       with the member, then send success and failure traffic.
@@ -103,9 +103,11 @@ function configure() {
   console.log('config.toml rendered; .env merged (CONFIG_PATH active, MOCK_TOKEN reused or created)');
 
   // Only seed a fresh instance: overwriting credentials of a pool that already
-  // has data would silently replace real accounts.
-  if (fs.existsSync(path.join(ctx.root, 'data'))) {
-    console.log('data/ present: keeping the existing account roster');
+  // has data would silently replace real accounts. An empty data/ is fresh —
+  // the orchestrator pre-creates it so docker does not own it as root.
+  const dataDir = path.join(ctx.root, 'data');
+  if (fs.existsSync(dataDir) && fs.readdirSync(dataDir).length > 0) {
+    console.log('data/ holds state: keeping the existing account roster');
     return;
   }
   const files = fakeAccounts();

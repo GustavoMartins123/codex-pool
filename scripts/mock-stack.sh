@@ -244,6 +244,7 @@ resolve_gateway() {
     if [[ $had_data == false ]]; then
       docker compose stop codex-pool >/dev/null
       rm -rf "$root/data"
+      mkdir -p "$root/data"
     fi
   fi
   [[ -n $gateway ]] || die "could not discover the docker gateway IP for codex-pool"
@@ -405,7 +406,11 @@ reset_stack() {
   local name
   for name in operator-runner member-runner operator-pair member-pair bridge upstream; do stop_bg "$name"; done
   if container_exists; then docker compose stop codex-pool >/dev/null; fi
-  rm -rf "$root/data" "$root/pool" "$state"
+  rm -rf "$root/data" "$root/pool" "$state" \
+    || die "could not wipe ./data, ./pool or $state; remove them and re-run"
+  # Docker creates a missing bind source as root, and the pool runs as an
+  # unprivileged user that could not write into it.
+  mkdir -p "$root/data"
   mkdir -p "$state/bin" "$pids" "$logs" "$state/tls" "$state/workspaces"
 }
 
@@ -449,7 +454,7 @@ case $command in
       flock -n 9 || die "another mock-stack.sh run holds $state/lock"
     fi
     had_data=false
-    if [[ -d $root/data ]]; then had_data=true; fi
+    if [[ -d $root/data && -n "$(ls -A "$root/data" 2>/dev/null)" ]]; then had_data=true; fi
     build_binaries
     resolve_gateway
     resolve_ports
