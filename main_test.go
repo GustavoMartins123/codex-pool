@@ -1320,6 +1320,44 @@ func TestParseRequestUsageFromSSE(t *testing.T) {
 	}
 }
 
+func TestParseRequestUsageFromChatCompletions(t *testing.T) {
+	line := []byte(`{"model":"mock-model","usage":{"prompt_tokens":140,"completion_tokens":60,"total_tokens":200,"prompt_tokens_details":{"cached_tokens":40}}}`)
+	var obj map[string]any
+	if err := json.Unmarshal(line, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ru := parseRequestUsage(obj)
+	if ru == nil {
+		t.Fatalf("expected usage parsed from chat completion aliases")
+	}
+	if ru.InputTokens != 140 || ru.OutputTokens != 60 || ru.CachedInputTokens != 40 {
+		t.Fatalf("unexpected values: %+v", ru)
+	}
+	if ru.BillableTokens != 160 {
+		t.Fatalf("billable=%d, want 160", ru.BillableTokens)
+	}
+	if ru.Model != "mock-model" {
+		t.Fatalf("model=%q", ru.Model)
+	}
+}
+
+func TestUpdateUsageFromBodyRecordsChatCompletions(t *testing.T) {
+	account := &Account{ID: "configured-mock", Type: AccountType("mock"), PlanType: "configured"}
+	h := &proxyHandler{cfg: &config{}, pool: newPoolState([]*Account{account}, false)}
+	body := []byte(`{"id":"chatcmpl-mock","object":"chat.completion","model":"mock-model","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":120,"completion_tokens":60,"total_tokens":180}}`)
+
+	h.updateUsageFromBody(account, body, "principal-1", "origin-1")
+
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	if account.Totals.RequestCount != 1 {
+		t.Fatalf("request count=%d, want 1", account.Totals.RequestCount)
+	}
+	if account.Totals.TotalInputTokens != 120 || account.Totals.TotalOutputTokens != 60 || account.Totals.TotalBillableTokens != 180 {
+		t.Fatalf("unexpected totals: %+v", account.Totals)
+	}
+}
+
 func TestExtractRequestedModelFromJSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.3-codex-spark","input":"hi"}`)
 	got := extractRequestedModelFromJSON(body)

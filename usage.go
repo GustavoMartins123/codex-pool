@@ -372,12 +372,30 @@ func parseRequestUsage(obj map[string]any) *RequestUsage {
 		return nil
 	}
 	ru := &RequestUsage{Timestamp: time.Now(), InputTokenMode: "inclusive"}
+	// Non-streaming chat completions report the OpenAI chat aliases instead of
+	// the Responses names; without them the request records no usage at all.
 	ru.InputTokens = readInt64(usageMap, "input_tokens")
+	if ru.InputTokens == 0 {
+		ru.InputTokens = readInt64(usageMap, "prompt_tokens")
+	}
 	ru.CachedInputTokens = readInt64(usageMap, "cached_input_tokens")
 	if ru.CachedInputTokens == 0 {
 		ru.CachedInputTokens = readInt64(usageMap, "cache_read_input_tokens")
 	}
+	if ru.CachedInputTokens == 0 {
+		for _, key := range []string{"prompt_tokens_details", "input_tokens_details"} {
+			if details, _ := usageMap[key].(map[string]any); details != nil {
+				ru.CachedInputTokens = readInt64(details, "cached_tokens")
+				if ru.CachedInputTokens != 0 {
+					break
+				}
+			}
+		}
+	}
 	ru.OutputTokens = readInt64(usageMap, "output_tokens")
+	if ru.OutputTokens == 0 {
+		ru.OutputTokens = readInt64(usageMap, "completion_tokens")
+	}
 	ru.ReasoningTokens = readInt64(usageMap, "reasoning_output_tokens")
 	ru.BillableTokens = readInt64(usageMap, "billable_tokens")
 	if ru.BillableTokens == 0 {
