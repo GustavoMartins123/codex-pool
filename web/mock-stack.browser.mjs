@@ -32,7 +32,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
-import { readJSON, readSecret, stackContext } from '../scripts/mock/lib.mjs';
+import { api, readJSON, readSecret, stackContext } from '../scripts/mock/lib.mjs';
 
 const ctx = stackContext();
 const known = ['items', 'conversations', 'runners', 'approve'];
@@ -111,14 +111,19 @@ async function login(page, who) {
 }
 
 async function withPage(who, run) {
-  const page = await browser.newPage();
+  // Pages in the default context share cookies, so a second principal would
+  // reuse the operator session and never see the login form.
+  const context = await browser.createBrowserContext();
+  const page = await context.newPage();
   await page.setViewport({ width: 1500, height: 1150 });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const downloads = ctx.file(`downloads-${who}`);
   fs.mkdirSync(downloads, { recursive: true });
   const cdp = await page.createCDPSession();
-  await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
+  await cdp.send('Browser.setDownloadBehavior', {
+    behavior: 'allow', downloadPath: downloads, eventsEnabled: true, browserContextId: context.id,
+  });
   try {
     await login(page, who);
     await run(page, downloads);
@@ -128,6 +133,7 @@ async function withPage(who, run) {
     throw error;
   } finally {
     await page.close();
+    await context.close();
   }
 }
 
@@ -135,8 +141,27 @@ async function withPage(who, run) {
 // never settles there.
 const gotoView = (page, view, extra = '') => page.goto(`${ctx.origin}/?view=${view}${extra}`, { waitUntil: 'domcontentloaded' });
 
+// The recent-errors panel is fed from memory, so a pool restart empties it.
+// Provoke one upstream failure instead of relying on earlier provisioning traffic.
+async function provokeUpstreamError() {
+  const bearer = readSecret(ctx.file('operator-key.txt'));
+  const roster = await api(ctx.origin, 'GET', '/admin/accounts', { adminToken: ctx.adminToken, ca: ctx.ca });
+  const accounts = Array.isArray(roster.json) ? roster.json : (roster.json?.accounts ?? []);
+  const generic = accounts.find((account) => String(account.id).startsWith('configured-'));
+  assert.ok(generic, 'no generic provider account in the roster');
+  const models = await api(ctx.origin, 'GET', '/v1/models', { bearer, ca: ctx.ca });
+  const model = models.json?.data?.find((entry) => entry.owned_by === generic.type)?.id;
+  assert.ok(model, `no model served by ${generic.type}`);
+  const res = await api(ctx.origin, 'POST', '/v1/chat/completions', {
+    body: { model, messages: [{ role: 'user', content: 'mock smoke error' }] },
+    bearer, headers: { 'x-mock-fail': '500' }, ca: ctx.ca, expect: [429, 500, 502, 503],
+  });
+  assert.notEqual(res.status, 200, 'the failing mock request unexpectedly succeeded');
+}
+
 async function items(page, who, downloads) {
   if (who === 'operator' && only('errors')) {
+    await provokeUpstreamError();
     await gotoView(page, 'pulse');
     await page.waitForSelector('.error-list', { timeout: 30000 });
     const rows = await page.evaluate(() => [...document.querySelectorAll('.error-list > div')].map((row) => ({
