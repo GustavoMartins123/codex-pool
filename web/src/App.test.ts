@@ -137,13 +137,16 @@ describe("providerDisplay", () => {
     });
   });
 
-  it("falls back safely when the API returns a provider newer than the frontend", () => {
+  it("humanizes providers configured outside the built-in map", () => {
     expect(providerDisplay("future-provider")).toEqual({
-      label: "Unknown",
+      label: "Future Provider",
       color: "#9c967f",
       dither: "grey",
       glyph: "·",
     });
+    expect(providerDisplay("mock").label).toBe("Mock");
+    expect(providerDisplay("local_vllm").label).toBe("Local Vllm");
+    expect(providerDisplay("").label).toBe("Unknown");
   });
 });
 
@@ -275,7 +278,7 @@ describe("Models component", () => {
     const markup = renderToStaticMarkup(createElement(Models, { models }));
     expect(markup).toContain("Pool");
     expect(markup).toContain("pool/auto");
-    expect(markup).toContain("Unknown");
+    expect(markup).toContain("Unknown Future Provider");
     expect(markup).toContain("custom/future-model");
   });
 });

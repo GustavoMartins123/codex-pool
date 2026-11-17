@@ -237,9 +237,10 @@ export function SignalPanel({ title, className, children }: { title: string; cla
 
 
 export function providerDisplay(provider: string) {
-  return provider in PROVIDERS
-    ? PROVIDERS[provider as Provider]
-    : { label: "Unknown", color: "#9c967f", dither: "grey" as DitherColor, glyph: "·" };
+  if (provider in PROVIDERS) return PROVIDERS[provider as Provider];
+  const label = provider.split(/[-_\s]+/).filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  return { label: label || "Unknown", color: "#9c967f", dither: "grey" as DitherColor, glyph: "·" };
 }
 
 
