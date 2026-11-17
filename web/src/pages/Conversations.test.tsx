@@ -282,7 +282,21 @@ describe("Conversations page", () => {
     vi.mocked(listConversations).mockResolvedValue({ conversations: [] });
     fireEvent.click(button("Archived"));
     await waitFor(() => expect(listConversations).toHaveBeenLastCalledWith("archived", 50, undefined));
-    expect(await screen.findByText("No archived conversations.")).toBeTruthy();
+    expect(await screen.findByText("No archived conversations. A closed conversation is archived after 7 days without interaction.")).toBeTruthy();
+  });
+
+  it("shows the archive date only for active conversations", async () => {
+    await renderLoaded();
+    const facts = document.querySelector(".detail-facts")!;
+    const archiveDate = new Date(conversationFixture.archive_after).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+    expect(facts.textContent).toContain(`Archives ${archiveDate}`);
+    const archived = { ...conversationFixture, storage: "archived" as const };
+    vi.mocked(listConversations).mockResolvedValue({ conversations: [archived] });
+    vi.mocked(conversationHistory).mockResolvedValue({ ...historyFixture, conversation: archived });
+    vi.mocked(getConversation).mockResolvedValue(archived);
+    fireEvent.click(button("Archived"));
+    await screen.findByRole("button", { name: "Open Fix login" });
+    await waitFor(() => expect(document.querySelector(".detail-facts")!.textContent).not.toContain("Archives"));
   });
 
   it("cancels a running turn with one click and closes the session with two", async () => {
@@ -305,6 +319,7 @@ describe("Conversations page", () => {
     act(() => source.emit("approval.requested", { approval_id: "a1", command: "rm -rf /tmp/x", context: "cleanup", turn_id: "t1", expires_at: new Date(Date.now() + 120000).toISOString() }, 3));
     expect(await screen.findByText("rm -rf /tmp/x")).toBeTruthy();
     expect(screen.getByText("Approve in the mobile app.")).toBeTruthy();
+    expect(screen.getByText("Denied automatically when it expires.")).toBeTruthy();
     fireEvent.click(button("Deny"));
     await waitFor(() => expect(denyApproval).toHaveBeenCalledWith("s1", "a1"));
     await waitFor(() => expect(screen.queryByText("rm -rf /tmp/x")).toBeNull());

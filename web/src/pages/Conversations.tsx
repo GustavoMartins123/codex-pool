@@ -1,7 +1,7 @@
 import { AgentsApiError, cancelTurn, closeSession, conversationHistory, deleteConversation, denyApproval, getConversation, getSession, listConversations, listRunners, openConversationEvents, type Approval, type ConversationRecord, type LiveStatus, type Session, type SessionEvent } from "../agents-api";
 import { queryValue, updateURL } from "../navigation";
 import { ResponseVersion } from "../response-version";
-import { classNames } from "../ui";
+import { classNames, formatAdmission } from "../ui";
 import { pairingCountdown } from "./Runners";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -375,7 +375,7 @@ export function Conversations() {
     </div>
     <div className="console-layout">
       <div className="principal-roster conversation-roster" role="list" aria-label="Conversations">
-        {conversations.length === 0 && <div className="empty-state">{listBusy ? "Loading conversations…" : storage === "active" ? "No conversations yet." : "No archived conversations."}</div>}
+        {conversations.length === 0 && <div className="empty-state">{listBusy ? "Loading conversations…" : storage === "active" ? "No conversations yet." : "No archived conversations. A closed conversation is archived after 7 days without interaction."}</div>}
         {conversations.map((item) => <button className={classNames("principal-row conversation-row", selected?.id === item.id && "selected")} key={item.id} onClick={() => { updateURL({ conversation: item.id }, "push"); setSelected(item); }} aria-label={`Open ${item.title || item.id}`}>
           <span className="principal-copy">
             <strong>{item.title || "Untitled conversation"}</strong>
@@ -404,6 +404,7 @@ export function Conversations() {
             <span>Workspace <b>{session?.workspace.mode ?? "…"}</b></span>
             <span>Runner <b>{session?.runner_id ? runnerNames[session.runner_id] || session.runner_id : "—"}</b></span>
             <span>Turns <b>{session?.turns ?? 0}</b></span>
+            {selected.storage === "active" && selected.archive_after && <span>Archives <b>{formatAdmission(selected.archive_after)}</b></span>}
           </div>
           {selected.delete_error && <div className="signal-error" role="alert">{selected.delete_error}</div>}
           <div className="live-status-row">
@@ -419,6 +420,7 @@ export function Conversations() {
               <div className="row-actions">
                 <button className="danger-action" disabled={busy === `deny:${approval.approval_id}`} onClick={() => denyPendingApproval(approval.approval_id)}>{busy === `deny:${approval.approval_id}` ? "Denying…" : "Deny"}</button>
                 <small>Approve in the mobile app.</small>
+                <small>Denied automatically when it expires.</small>
               </div>
             </div>)}
           </div>}
