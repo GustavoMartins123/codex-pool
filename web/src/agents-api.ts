@@ -125,3 +125,54 @@ export async function cancelTurn(sessionId: string): Promise<void> {
 export async function denyApproval(sessionId: string, approvalId: string): Promise<void> {
   await request(`/api/sessions/${encodeURIComponent(sessionId)}/approvals/${encodeURIComponent(approvalId)}`, "POST", { decision: "deny" });
 }
+
+export type LiveStatus = "connecting" | "live" | "reconnecting" | "disconnected";
+
+export const SESSION_EVENT_TYPES = [
+  "state", "session.settings", "session.capabilities", "turn.input", "turn.started", "turn.delta",
+  "turn.finished", "approval.requested", "approval.resolved", "runner.status", "session.closed", "error",
+] as const;
+
+// The server also emits a named "error" event for terminal failures (expired
+// auth, slow consumer). It arrives as a MessageEvent with data, unlike native
+// connection errors, and must close the stream instead of letting the browser
+// reconnect forever against a 4xx.
+export function openConversationEvents(conversationId: string, handlers: {
+  onEvent: (event: SessionEvent) => void;
+  onStatus: (status: LiveStatus) => void;
+}): () => void {
+  const source = new EventSource(`/api/conversations/${encodeURIComponent(conversationId)}/events`);
+  let closed = false;
+  const close = () => { if (!closed) { closed = true; source.close(); } };
+  const parse = (raw: string): unknown => { try { return JSON.parse(raw); } catch { return null; } };
+  const eventId = (message: MessageEvent): number => {
+    const id = Number(message.lastEventId || 0);
+    return Number.isSafeInteger(id) ? id : 0;
+  };
+  source.onopen = () => { if (!closed) handlers.onStatus("live"); };
+  for (const type of SESSION_EVENT_TYPES) {
+    if (type === "error") continue;
+    source.addEventListener(type, (raw) => {
+      if (closed) return;
+      const message = raw as MessageEvent;
+      handlers.onEvent({ id: eventId(message), type, data: parse(String(message.data)) });
+    });
+  }
+  source.addEventListener("error", (raw) => {
+    if (closed) return;
+    const message = raw as MessageEvent;
+    if (typeof message.data === "string" && message.data !== "") {
+      close();
+      handlers.onEvent({ id: eventId(message), type: "error", data: parse(message.data) });
+      handlers.onStatus("disconnected");
+      return;
+    }
+    if (source.readyState === EventSource.CLOSED) {
+      close();
+      handlers.onStatus("disconnected");
+    } else {
+      handlers.onStatus("reconnecting");
+    }
+  });
+  return close;
+}

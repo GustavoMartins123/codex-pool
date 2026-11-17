@@ -95,14 +95,17 @@ describe("viewFromSearch", () => {
   it("restores a valid workspace and rejects unknown values", () => {
     expect(viewFromSearch("?view=accounts")).toBe("accounts");
     expect(viewFromSearch("?view=runners")).toBe("runners");
+    expect(viewFromSearch("?view=conversations")).toBe("conversations");
     expect(viewFromSearch("?view=unknown")).toBe("pulse");
     expect(viewFromSearch("")).toBe("pulse");
   });
 
-  it("offers runners to operators and members but never to guests", () => {
-    expect(allowedViews({ kind: "operator" } as never)).toContain("runners");
-    expect(allowedViews({ kind: "member" } as never)).toContain("runners");
-    expect(allowedViews({ kind: "guest" } as never)).not.toContain("runners");
+  it("offers runners and conversations to operators and members but never to guests", () => {
+    for (const view of ["runners", "conversations"] as const) {
+      expect(allowedViews({ kind: "operator" } as never)).toContain(view);
+      expect(allowedViews({ kind: "member" } as never)).toContain(view);
+      expect(allowedViews({ kind: "guest" } as never)).not.toContain(view);
+    }
   });
 });
 

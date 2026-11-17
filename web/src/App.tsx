@@ -17,6 +17,7 @@ const Accounts = lazy(() => import("./pages/Accounts").then(module => ({ default
 const MemberAccounts = lazy(() => import("./pages/MemberAccounts").then(module => ({ default: module.MemberAccounts })));
 const Models = lazy(() => import("./pages/Models").then(module => ({ default: module.Models })));
 const Runners = lazy(() => import("./pages/Runners").then(module => ({ default: module.Runners })));
+const Conversations = lazy(() => import("./pages/Conversations").then(module => ({ default: module.Conversations })));
 
 export function App() {
   const [passport, setPassport] = useState<PassportPrincipal | null>(null);
@@ -34,7 +35,7 @@ export function App() {
   const recentErrors = data && "recentErrors" in data ? data.recentErrors : [];
 
   const goToView = useCallback((nextView: View, params: Record<string, string | null> = {}) => {
-    const cleanup: Record<string, string | null> = { account: null, member: null };
+    const cleanup: Record<string, string | null> = { account: null, member: null, conversation: null };
     if (nextView !== "insights") cleanup.insight = null;
     if (nextView !== "accounts") cleanup.accounts = null;
     updateURL({ ...cleanup, view: nextView, ...params }, "push");
@@ -104,7 +105,7 @@ export function App() {
     if (permitted.includes(view)) return;
     const home = passport.kind === "operator" ? "pulse" : "mine";
     setView(home);
-    updateURL({ view: home, insight: null, account: null, accounts: null, member: null }, "replace");
+    updateURL({ view: home, insight: null, account: null, accounts: null, member: null, conversation: null }, "replace");
   }, [passport, view]);
 
   if (booting) return <BootScreen />;
@@ -135,7 +136,7 @@ export function App() {
   const signOut = async () => {
     if (passport) await passportLogout().catch(() => undefined);
     setPassport(null);
-    updateURL({ view: null, insight: null, account: null, accounts: null, member: null }, "replace");
+    updateURL({ view: null, insight: null, account: null, accounts: null, member: null, conversation: null }, "replace");
   };
 
   return (
@@ -170,6 +171,7 @@ export function App() {
               {view === "models" && data?.view === "models" && <Models models={data.models} onVerified={refresh} />}
               {(view === "accounts" || view === "models") && passport.kind === "operator" && !data && <p role="status">Loading page data…</p>}
               {view === "runners" && passport && passport.kind !== "guest" && <Runners />}
+              {view === "conversations" && passport && passport.kind !== "guest" && <Conversations />}
               {view === "setup" && <SetupPage />}
             </Suspense>
           </PageBoundary>}
@@ -226,10 +228,10 @@ export function Navigation({ view, principal, onChange, onSignOut }: { view: Vie
     ? [
         { label: "Operate", items: [["pulse", "Pool status"], ["insights", "Insights"], ["models", "Models"]] },
         { label: "Manage", items: [["accounts", "Accounts"], ["passes", "Guest passes"], ["console", "Members"]] },
-        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["setup", "Setup"]] },
+        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["conversations", "Conversations"], ["setup", "Setup"]] },
       ]
     : [
-        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["setup", "Setup"]] },
+        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["conversations", "Conversations"], ["setup", "Setup"]] },
         { label: "Sharing", items: [["accounts", "Accounts"], ["passes", "Guest passes"]] },
       ];
   return (

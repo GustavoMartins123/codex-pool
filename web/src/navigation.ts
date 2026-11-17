@@ -1,13 +1,13 @@
 import { type PassportPrincipal } from "./types";
 
-export type View = "pulse" | "insights" | "mine" | "runners" | "passes" | "console" | "accounts" | "models" | "setup";
+export type View = "pulse" | "insights" | "mine" | "runners" | "conversations" | "passes" | "console" | "accounts" | "models" | "setup";
 
 export type InsightMode = "overview" | "capacity" | "flow" | "demand";
 
 type HistoryMode = "push" | "replace";
 
 
-const VIEWS: View[] = ["pulse", "insights", "mine", "runners", "passes", "console", "accounts", "models", "setup"];
+const VIEWS: View[] = ["pulse", "insights", "mine", "runners", "conversations", "passes", "console", "accounts", "models", "setup"];
 
 export const INSIGHT_MODES: InsightMode[] = ["overview", "capacity", "flow", "demand"];
 
@@ -36,5 +36,5 @@ export function updateURL(changes: Record<string, string | null>, mode: HistoryM
 export function allowedViews(principal: PassportPrincipal): View[] {
   if (principal.kind === "operator") return VIEWS;
   if (principal.kind === "guest") return ["mine", "setup"];
-  return ["mine", "runners", "setup", "passes", "accounts"];
+  return ["mine", "runners", "conversations", "setup", "passes", "accounts"];
 }
