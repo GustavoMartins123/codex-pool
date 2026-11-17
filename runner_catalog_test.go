@@ -126,7 +126,7 @@ func TestSessionUsesOnlyTheRunnerThatConfirmedItsModel(t *testing.T) {
 	}
 }
 
-func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
+func TestFinalizeCodexModelCatalogAddsDiscoveredQwenModels(t *testing.T) {
 	qwenModels := map[string]DiscoveredModel{
 		"qwen3.6-flash":     {ID: "qwen3.6-flash", Protocol: "openai"},
 		"qwen3.7-max":       {ID: "qwen3.7-max", Protocol: "openai"},
@@ -148,7 +148,14 @@ func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
 		}
 	}
 	upstream := []byte(`{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT","context_window":500000,"max_context_window":872000}],"etag":"keep"}`)
-	out := injectResponsesPoolModels(injectResponsesPoolModels(upstream, models), models)
+	merged, err := finalizeCodexModelCatalog(upstream, models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := finalizeCodexModelCatalog(merged, models)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var catalog struct {
 		Models []map[string]any `json:"models"`
 		ETag   string           `json:"etag"`
@@ -177,8 +184,8 @@ func TestInjectResponsesPoolModelsAddsDiscoveredQwenModels(t *testing.T) {
 			t.Fatalf("upstream GPT context was rewritten: %v", model)
 		}
 	}
-	if string(injectResponsesPoolModels([]byte("not json"), discoveredModelsForPool(pool))) != "not json" {
-		t.Fatal("invalid upstream catalog was rewritten")
+	if _, err := finalizeCodexModelCatalog([]byte("not json"), models); err == nil {
+		t.Fatal("invalid upstream catalog was accepted")
 	}
 }
 
@@ -235,7 +242,15 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 		if !strings.HasSuffix(req.URL.Path, "/codex/models") {
 			t.Fatalf("unexpected upstream request %s", req.URL)
 		}
-		return qwenJSONResponse(200, `{"models":[{"slug":"gpt-6.1-sol","display_name":"Upstream GPT","context_window":500000,"max_context_window":872000}]}`), nil
+		return qwenJSONResponse(200, `{"models":[
+			{"slug":"upstream-other-a","priority":1},
+			{"slug":"gpt-6.2-sol[1m]","priority":2},
+			{"slug":"gpt-6.2-luna","priority":3},
+			{"slug":"gpt-6.1-sol","display_name":"Upstream GPT","context_window":500000,"max_context_window":872000,"priority":4},
+			{"slug":"gpt-6.10-luna","priority":5},
+			{"slug":"gpt-6.2-terra","priority":6},
+			{"slug":"upstream-other-b","priority":7}
+		]}`), nil
 	}), upstream, discovered, grok)
 	req := httptest.NewRequest("GET", "/backend-api/codex/models?client_version=0.164.0", nil)
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("codex-catalog-discovery-secret", "codex-client"))
@@ -251,6 +266,7 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 			ContextWindow   int    `json:"context_window"`
 			MaxContext      int    `json:"max_context_window"`
 			Visibility      string `json:"visibility"`
+			Priority        int    `json:"priority"`
 			DefaultEffort   string `json:"default_reasoning_level"`
 			ReasoningLevels []struct {
 				Effort string `json:"effort"`
@@ -260,8 +276,26 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &catalog); err != nil {
 		t.Fatal(err)
 	}
+	wantFirst := []string{"gpt-6.10-luna", "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.2-sol[1m]", "gpt-6.2-terra", "gpt-6.2-luna", "gpt-6.1-sol"}
+	if len(catalog.Models) < len(wantFirst) {
+		t.Fatalf("catalog has %d models, want at least %d", len(catalog.Models), len(wantFirst))
+	}
+	for i, slug := range wantFirst {
+		if catalog.Models[i].Slug != slug {
+			t.Fatalf("catalog position %d = %q, want %q", i, catalog.Models[i].Slug, slug)
+		}
+	}
 	counts := make(map[string]int)
-	for _, model := range catalog.Models {
+	var otherModels []string
+	for i, model := range catalog.Models {
+		if model.Priority != i+1 {
+			t.Fatalf("catalog priority for %s = %d, want %d", model.Slug, model.Priority, i+1)
+		}
+		if !strings.HasPrefix(model.Slug, "gpt-") {
+			otherModels = append(otherModels, model.Slug)
+		} else if len(otherModels) > 0 {
+			t.Fatalf("GPT model %s appears after %s", model.Slug, otherModels[0])
+		}
 		counts[model.Slug]++
 		if expected, ok := discovered.Models[model.Slug]; ok {
 			if model.Name != expected.DisplayName || model.ContextWindow != expected.ContextWindow || model.MaxContext != expected.ContextWindow ||
@@ -285,5 +319,8 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 	}
 	if counts["grok-chat-only"] != 0 {
 		t.Fatal("chat-only model included in the Codex catalog")
+	}
+	if len(otherModels) < 2 || otherModels[0] != "upstream-other-a" || otherModels[1] != "upstream-other-b" {
+		t.Fatalf("other models did not retain their order: %v", otherModels)
 	}
 }

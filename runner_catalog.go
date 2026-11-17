@@ -1,8 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"codex-pool-proxy/internal/runnerproto"
@@ -136,49 +141,121 @@ func runnerCatalog(models []poolModelDescriptor) runnerproto.RunnerCatalog {
 	return result
 }
 
-// injectResponsesPoolModels adds discovered pool models that the proxy serves
-// over the Responses API (such as Qwen) to a Codex model catalog response, so
-// Codex clients list them next to the upstream and static pool models.
-func injectResponsesPoolModels(body []byte, models []poolModelDescriptor) []byte {
+// finalizeCodexModelCatalog adds discovered Responses models and orders the
+// combined catalog for the Codex model picker.
+func finalizeCodexModelCatalog(body []byte, models []poolModelDescriptor) ([]byte, error) {
+	var catalog map[string]any
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return nil, fmt.Errorf("decode Codex model catalog: %w", err)
+	}
+	existing, ok := catalog["models"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("Codex model catalog has no models array")
+	}
+
 	var responses []poolModelDescriptor
 	for _, model := range models {
 		if supportsAgent(model.Protocols, "responses") {
 			responses = append(responses, model)
 		}
 	}
-	if len(responses) == 0 {
-		return body
-	}
-	var catalog map[string]any
-	if err := json.Unmarshal(body, &catalog); err != nil {
-		return body
-	}
-	existing, ok := catalog["models"].([]any)
-	if !ok {
-		return body
-	}
-	var generated struct {
-		Models []map[string]any `json:"models"`
-	}
-	if err := json.Unmarshal([]byte(runnerCatalog(responses).CodexCatalog), &generated); err != nil {
-		return body
-	}
-	seen := make(map[string]bool, len(existing))
-	for _, raw := range existing {
-		if model, ok := raw.(map[string]any); ok {
-			seen[stringValue(model["slug"])] = true
+	if len(responses) > 0 {
+		var generated struct {
+			Models []map[string]any `json:"models"`
+		}
+		if err := json.Unmarshal([]byte(runnerCatalog(responses).CodexCatalog), &generated); err != nil {
+			return nil, fmt.Errorf("decode discovered Codex models: %w", err)
+		}
+		seen := make(map[string]bool, len(existing))
+		for _, raw := range existing {
+			if model, ok := raw.(map[string]any); ok {
+				seen[stringValue(model["slug"])] = true
+			}
+		}
+		for _, model := range generated.Models {
+			if slug := stringValue(model["slug"]); !seen[slug] {
+				seen[slug] = true
+				existing = append(existing, model)
+			}
 		}
 	}
-	for _, model := range generated.Models {
-		if slug := stringValue(model["slug"]); slug != "" && !seen[slug] {
-			seen[slug] = true
-			existing = append(existing, model)
-		}
+
+	if err := orderCodexCatalogModels(existing); err != nil {
+		return nil, err
 	}
 	catalog["models"] = existing
-	out, err := json.Marshal(catalog)
-	if err != nil {
-		return body
+	return json.Marshal(catalog)
+}
+
+type codexModelRank struct {
+	gpt     bool
+	version []int
+	tier    int
+	base    string
+	context string
+}
+
+func rankCodexCatalogModel(slug string) codexModelRank {
+	name, gpt := strings.CutPrefix(strings.ToLower(slug), "gpt-")
+	if !gpt {
+		return codexModelRank{}
 	}
-	return out
+	base, context, _ := strings.Cut(name, "[")
+	release, suffix, _ := strings.Cut(base, "-")
+	var version []int
+	for part := range strings.SplitSeq(release, ".") {
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return codexModelRank{gpt: true}
+		}
+		version = append(version, number)
+	}
+	variant, _, _ := strings.Cut(suffix, "-")
+	tiers := [...]string{"astra", "sol", "terra", "luna", "pro", "", "mini", "nano"}
+	tier := slices.Index(tiers[:], variant)
+	if tier < 0 {
+		tier = len(tiers)
+	}
+	return codexModelRank{gpt: true, version: version, tier: tier, base: base, context: context}
+}
+
+func orderCodexCatalogModels(models []any) error {
+	type rankedModel struct {
+		entry map[string]any
+		rank  codexModelRank
+	}
+	ranked := make([]rankedModel, len(models))
+	for i, raw := range models {
+		entry, _ := raw.(map[string]any)
+		slug := stringValue(entry["slug"])
+		if strings.TrimSpace(slug) == "" {
+			return fmt.Errorf("Codex model catalog entry %d has no model slug", i+1)
+		}
+		ranked[i] = rankedModel{entry: entry, rank: rankCodexCatalogModel(slug)}
+	}
+	slices.SortStableFunc(ranked, func(left, right rankedModel) int {
+		a, b := left.rank, right.rank
+		if a.gpt != b.gpt {
+			if a.gpt {
+				return -1
+			}
+			return 1
+		}
+		if order := slices.Compare(b.version, a.version); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.tier, b.tier); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.base, b.base); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.context, b.context)
+	})
+	for i, model := range ranked {
+		// Codex orders its picker by ascending priority.
+		model.entry["priority"] = i + 1
+		models[i] = model.entry
+	}
+	return nil
 }

@@ -3592,14 +3592,19 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		removeHopByHopHeaders(w.Header())
 		h.replaceUsageHeaders(w.Header())
 
-		// Inject Claude models into model catalog response
+		// Complete the catalog and set the order used by the Codex picker.
 		if strings.Contains(r.URL.Path, "codex/models") && resp.StatusCode == 200 {
 			w.Header().Del("Content-Length")
 			w.Header().Del("Content-Encoding") // We'll return uncompressed JSON
 			respBody, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if readErr == nil {
-				modified := injectResponsesPoolModels(injectClaudeModels(respBody), discoveredModelsForPool(h.pool))
+				modified, err := finalizeCodexModelCatalog(injectClaudeModels(respBody), discoveredModelsForPool(h.pool))
+				if err != nil {
+					log.Printf("[%s] %v", reqID, err)
+					respondJSONError(w, http.StatusBadGateway, "invalid Codex model catalog")
+					return
+				}
 				w.WriteHeader(resp.StatusCode)
 				w.Write(modified)
 			} else {
