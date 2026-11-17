@@ -99,7 +99,7 @@ export interface PassportUsagePoint {
 
 export interface AccountStats {
   id: string;
-  type: Provider;
+  type: Provider | string;
   plan_type: string;
   reset_windows: ResetWindowPolicy;
   status: "healthy" | "degraded" | "cooldown" | "verification_required" | "needs_login" | "dead";
@@ -248,7 +248,7 @@ export interface SignalEconomicsPoint {
 
 export interface HourlyUsage {
   hour: string;
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   input_tokens: number;
   cached_tokens: number;
   output_tokens: number;
@@ -261,7 +261,7 @@ export interface OriginWeeklyUsage {
   week_start: string;
   origin_id: string;
   account_id: string;
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   input_tokens: number;
   cached_tokens: number;
   output_tokens: number;
@@ -272,7 +272,7 @@ export interface OriginWeeklyUsage {
 
 export interface ModelDailyUsage {
   date: string;
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   model: string;
   input_tokens: number;
   cached_tokens: number;
@@ -284,7 +284,7 @@ export interface ModelDailyUsage {
 
 export interface QuotaCapacityPoint {
   week_start: string;
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   plan_type: string;
   window_minutes: number;
   estimated_window_tokens: number;
@@ -298,7 +298,7 @@ export interface QuotaCapacityPoint {
 }
 
 export interface ModelQuotaEfficiency {
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   model: string;
   tokens: number;
   request_count: number;
@@ -312,7 +312,7 @@ export interface ModelQuotaEfficiency {
 
 export interface ResetObservation {
   account_id: string;
-  account_type: Provider | "unknown";
+  account_type: Provider | string;
   observed_at: string;
   expected_at?: string;
   deviation_minutes?: number;
@@ -345,7 +345,7 @@ export interface AdminAccount {
   can_verify: boolean;
   id: string;
   public_id: string;
-  type: Provider;
+  type: Provider | string;
   plan_type: string;
   email?: string;
   disabled: boolean;

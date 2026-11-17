@@ -2,7 +2,7 @@ import { Area, AreaChart, Bar, BarChart, Grid, Legend, Line, LineChart, Sparklin
 import { accountFlow, capacityForecasts, dailyDemandSeries, demandSummary, modelMix, originConcentration, peakHeatmap, type AccountFlow, type CapacityForecast } from "../insights";
 import { type AccountStats, type HourlyUsage, type ModelDailyUsage, type ModelQuotaEfficiency, type OriginWeeklyUsage, type PoolStats, type Provider, type QuotaCapacityPoint, type RecentError, type ResetObservation, type SignalAnalytics } from "../types";
 import { INSIGHT_MODES, queryValue, type InsightMode, updateURL } from "../navigation";
-import { EmptyChart, Instrument, PROVIDERS, SignalPanel, SignalSkeleton, accountThroughput, classNames, compact, formatReset, formatTokens, money, originHandle, poolSurplus, preciseMoney, providerDisplay, tokenThroughput } from "../ui";
+import { EmptyChart, Instrument, SignalPanel, SignalSkeleton, accountThroughput, classNames, compact, formatReset, formatTokens, money, originHandle, poolSurplus, preciseMoney, providerDisplay, tokenThroughput } from "../ui";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 export function Pulse({ stats, signal, recentErrors, onAccounts }: { stats: PoolStats | null; signal: SignalAnalytics | null; recentErrors: RecentError[]; onAccounts: () => void }) {
@@ -131,9 +131,9 @@ function aggregateHourly(hourly: HourlyUsage[]) {
 
 function BurnChart({ hourly }: { hourly: HourlyUsage[] }) {
   const data = aggregateHourly(hourly);
-  const providers = Object.keys(PROVIDERS).filter((provider) => data.some((row) => Number(row[provider]) > 0)) as Provider[];
+  const providers = [...new Set(hourly.map((item) => item.account_type))].filter((provider) => data.some((row) => Number(row[provider]) > 0));
   if (data.length < 2 || providers.length === 0) return <EmptyChart label="Waiting for enough provider usage history." />;
-  const config = Object.fromEntries(providers.map((provider) => [provider, { label: PROVIDERS[provider].label, color: PROVIDERS[provider].dither }])) as ChartConfig;
+  const config = Object.fromEntries(providers.map((provider) => [provider, { label: providerDisplay(provider).label, color: providerDisplay(provider).dither }])) as ChartConfig;
   return (
     <div className="chart-stage large">
       <LineChart data={data} config={config} margins={{ left: 48, bottom: 28 }} bloom="low" bloomOnHover>
@@ -151,7 +151,8 @@ function BurnChart({ hourly }: { hourly: HourlyUsage[] }) {
 
 function burnSummary(hourly: HourlyUsage[]) {
   const data = aggregateHourly(hourly);
-  const totals = data.map((row) => Object.keys(PROVIDERS).reduce((sum, provider) => sum + Number(row[provider] ?? 0), 0));
+  const providers = [...new Set(hourly.map((item) => item.account_type))];
+  const totals = data.map((row) => providers.reduce((sum, provider) => sum + Number(row[provider] ?? 0), 0));
   const current = totals.slice(-24).reduce((sum, value) => sum + value, 0);
   const previous = totals.slice(-48, -24).reduce((sum, value) => sum + value, 0);
   return {
@@ -164,16 +165,16 @@ function burnSummary(hourly: HourlyUsage[]) {
 
 
 function ProviderLanes({ accounts }: { accounts: AccountStats[] }) {
-  const groups = Object.keys(PROVIDERS).map((provider) => {
+  const groups = [...new Set(accounts.map((account) => account.type))].map((provider) => {
     const rows = accounts.filter((account) => account.type === provider);
-    return { provider: provider as Provider, rows };
-  }).filter((group) => group.rows.length);
+    return { provider, rows, display: providerDisplay(provider) };
+  });
   return (
     <div className="provider-lanes">
       <div className="provider-head" aria-hidden="true">
         <span>Provider</span><span>Weekly capacity</span><span>API value</span><span>Spend</span><span>Return</span><span>Trend</span><span>State</span>
       </div>
-      {groups.map(({ provider, rows }) => {
+      {groups.map(({ provider, rows, display }) => {
         const used = rows.filter((row) => row.secondary_window_available).reduce((sum, row) => sum + row.secondary_window_used_pct, 0) / Math.max(1, rows.filter((row) => row.secondary_window_available).length);
         const value = rows.reduce((sum, row) => sum + row.api_cost_estimate, 0);
         const spend = rows.reduce((sum, row) => sum + row.subscription_spend, 0);
@@ -181,13 +182,13 @@ function ProviderLanes({ accounts }: { accounts: AccountStats[] }) {
         const spark = rows.map(accountThroughput);
         const status = rows.some((row) => row.status === "dead") ? "cooked" : rows.some((row) => row.status === "verification_required" || row.health_blocked) ? "revalidation" : used > 80 ? "leaning hard" : roi > 2 ? "carrying" : roi < 0.5 && spend ? "paid for" : "live";
         return (
-          <div className="provider-lane" key={provider} style={{ "--provider": PROVIDERS[provider].color } as CSSProperties}>
-            <div className="provider-name"><span className="provider-mark" aria-hidden="true" /><b>{PROVIDERS[provider].label}</b><small>{rows.length} account{rows.length === 1 ? "" : "s"}</small></div>
+          <div className="provider-lane" key={provider} style={{ "--provider": display.color } as CSSProperties}>
+            <div className="provider-name"><span className="provider-mark" aria-hidden="true" /><b>{display.label}</b><small>{rows.length} account{rows.length === 1 ? "" : "s"}</small></div>
             <div className="quota-field"><i style={{ width: `${Math.min(100, used)}%` }} /><span>{used ? `${used.toFixed(0)}% week` : "window n/a"}</span></div>
             <div className="lane-stat"><span>API VALUE</span><b>{money.format(value)}</b></div>
             <div className="lane-stat"><span>SPEND</span><b>{money.format(spend)}</b></div>
             <div className="lane-stat"><span>ROI</span><b>{roi ? `${roi.toFixed(2)}×` : "—"}</b></div>
-            <div className="lane-spark"><Sparkline data={spark.length > 1 ? spark : [0, ...spark]} color={PROVIDERS[provider].dither} /></div>
+            <div className="lane-spark"><Sparkline data={spark.length > 1 ? spark : [0, ...spark]} color={display.dither} /></div>
             <div className="lane-status">{status}</div>
           </div>
         );
@@ -226,16 +227,13 @@ function TokenComposition({ hourly }: { hourly: HourlyUsage[] }) {
 
 function OriginDrain({ rows }: { rows: OriginWeeklyUsage[] }) {
   const latestWeek = rows.reduce((latest, row) => row.week_start > latest ? row.week_start : latest, "");
-  const originMap = new Map<string, { id: string; total: number; requests: number; providers: Partial<Record<Provider, number>> }>();
+  const originMap = new Map<string, { id: string; total: number; requests: number; providers: Record<string, number> }>();
   for (const row of rows.filter((item) => item.week_start === latestWeek)) {
     const aggregate = originMap.get(row.origin_id) ?? { id: row.origin_id, total: 0, requests: 0, providers: {} };
     const throughput = tokenThroughput(row);
     aggregate.total += throughput;
     aggregate.requests += row.request_count;
-    if (row.account_type in PROVIDERS) {
-      const provider = row.account_type as Provider;
-      aggregate.providers[provider] = (aggregate.providers[provider] ?? 0) + throughput;
-    }
+    aggregate.providers[row.account_type] = (aggregate.providers[row.account_type] ?? 0) + throughput;
     originMap.set(row.origin_id, aggregate);
   }
   const origins = [...originMap.values()].sort((a, b) => b.total - a.total).slice(0, 10);
@@ -264,7 +262,7 @@ function OriginDrain({ rows }: { rows: OriginWeeklyUsage[] }) {
 
 
 function ProviderCapitalChart({ accounts }: { accounts: AccountStats[] }) {
-  const data = Object.keys(PROVIDERS).map((provider) => {
+  const data = [...new Set(accounts.map((account) => account.type))].map((provider) => {
     const rows = accounts.filter((account) => account.type === provider);
     return {
       provider,
@@ -449,7 +447,7 @@ export function Insights({ stats, signal, onAccounts }: { stats: PoolStats | nul
 
 
 function CapacityHistoryChart({ rows }: { rows: QuotaCapacityPoint[] }) {
-  const eligible = rows.filter((row) => row.estimated_weekly_tokens > 0 && row.account_type in PROVIDERS);
+  const eligible = rows.filter((row) => row.estimated_weekly_tokens > 0);
   const series = [...new Set(eligible.map((row) => `${row.account_type}|${row.plan_type}`))];
   const weeks = [...new Set(eligible.map((row) => row.week_start))].sort();
   const data = weeks.map((week) => {
@@ -503,7 +501,7 @@ function CapacityEvidenceTable({ rows }: { rows: QuotaCapacityPoint[] }) {
 }
 
 
-type CalendarEvent = { id: string; at: Date; provider: Provider | "unknown"; kind: string; detail: string; tone: "future" | "credit" | "risk" };
+type CalendarEvent = { id: string; at: Date; provider: Provider | string; kind: string; detail: string; tone: "future" | "credit" | "risk" };
 
 
 function ResetCalendar({ stats, forecasts, observations }: { stats: PoolStats; forecasts: CapacityForecast[]; observations: ResetObservation[] }) {

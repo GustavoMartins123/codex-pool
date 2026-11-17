@@ -1,7 +1,7 @@
 import type { AccountStats, HourlyUsage, ModelDailyUsage, OriginWeeklyUsage, Provider } from "./types";
 
 export interface CapacityForecast {
-  provider: Provider;
+  provider: Provider | string;
   activeAccounts: number;
   measuredAccounts: number;
   loadEquivalents: number;
@@ -32,7 +32,7 @@ export interface DailyDemandPoint {
 
 export interface AccountFlow {
   id: string;
-  provider: Provider;
+  provider: Provider | string;
   usedPct: number;
   projectedFinalPct: number;
   strandedPct: number;
@@ -98,7 +98,7 @@ export interface OriginConcentration {
 
 export interface ModelMixRow {
   model: string;
-  provider: Provider | "unknown";
+  provider: Provider | string;
   tokens: number;
   requests: number;
   apiValue: number;
