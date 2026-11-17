@@ -152,8 +152,14 @@ tls_ok() { node -e '
 container_exists() { docker inspect codex-pool >/dev/null 2>&1; }
 container_health() { [[ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' codex-pool 2>/dev/null)" == healthy ]]; }
 
+# A stopped container has no endpoint gateway and docker renders that as the
+# literal "invalid IP"; the network's IPAM gateway is stable in every state.
 gateway_ip() {
-  docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{"\n"}}{{end}}' codex-pool 2>/dev/null | awk 'NF { print; exit }'
+  local network
+  network="$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' codex-pool 2>/dev/null | awk 'NF { print; exit }')"
+  [[ -n $network ]] || return 0
+  docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{"\n"}}{{end}}' "$network" 2>/dev/null \
+    | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { print; exit }'
 }
 
 pool_target() { node -e 'const u = new URL(process.argv[1]); console.log(`${u.hostname}:${u.port || (u.protocol === "https:" ? 443 : 80)}`);' "$origin"; }
