@@ -15,7 +15,9 @@
 #
 # Requires .env from scripts/setup.sh (ADMIN_TOKEN). Pairing is approved by a
 # human at /?view=runners; the pair link carries the command key and is never
-# printed. Runtime state, secrets, certs and logs live in tmp/mock-stack/
+# printed. A revoked runner keeps its rejected state file, so delete
+# tmp/mock-stack/runner-state.json (or runner-member-state.json) before pairing
+# it again. Runtime state, secrets, certs and logs live in tmp/mock-stack/
 # (0600, gitignored). Container deploys go through scripts/deploy.sh only, and
 # `down` leaves the container running.
 set -euo pipefail
