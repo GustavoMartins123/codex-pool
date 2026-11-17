@@ -16,6 +16,7 @@ const PassportConsole = lazy(() => import("./pages/Console").then(module => ({ d
 const Accounts = lazy(() => import("./pages/Accounts").then(module => ({ default: module.Accounts })));
 const MemberAccounts = lazy(() => import("./pages/MemberAccounts").then(module => ({ default: module.MemberAccounts })));
 const Models = lazy(() => import("./pages/Models").then(module => ({ default: module.Models })));
+const Runners = lazy(() => import("./pages/Runners").then(module => ({ default: module.Runners })));
 
 export function App() {
   const [passport, setPassport] = useState<PassportPrincipal | null>(null);
@@ -168,6 +169,7 @@ export function App() {
               )}
               {view === "models" && data?.view === "models" && <Models models={data.models} onVerified={refresh} />}
               {(view === "accounts" || view === "models") && passport.kind === "operator" && !data && <p role="status">Loading page data…</p>}
+              {view === "runners" && passport && passport.kind !== "guest" && <Runners />}
               {view === "setup" && <SetupPage />}
             </Suspense>
           </PageBoundary>}
@@ -224,10 +226,10 @@ export function Navigation({ view, principal, onChange, onSignOut }: { view: Vie
     ? [
         { label: "Operate", items: [["pulse", "Pool status"], ["insights", "Insights"], ["models", "Models"]] },
         { label: "Manage", items: [["accounts", "Accounts"], ["passes", "Guest passes"], ["console", "Members"]] },
-        { label: "Personal", items: [["mine", "Your usage"], ["setup", "Setup"]] },
+        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["setup", "Setup"]] },
       ]
     : [
-        { label: "Personal", items: [["mine", "Your usage"], ["setup", "Setup"]] },
+        { label: "Personal", items: [["mine", "Your usage"], ["runners", "Runners"], ["setup", "Setup"]] },
         { label: "Sharing", items: [["accounts", "Accounts"], ["passes", "Guest passes"]] },
       ];
   return (

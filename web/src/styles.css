@@ -1351,3 +1351,26 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .member-quota-window strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
 .member-quota-window small { display: block; font-size: .75rem; font-weight: normal; line-height: 1.5; }
 .member-quota-window meter { width: 100%; height: .8rem; accent-color: var(--gold); }
+
+.pairing-list, .runner-list { border-top: 1px solid var(--rule); }
+.pairing-card { display: grid; grid-template-columns: minmax(0,1fr) minmax(180px,260px) auto; gap: 12px 18px; align-items: center; min-height: 70px; padding: 12px; border-bottom: 1px solid var(--rule); }
+.pairing-card .signal-error { grid-column: 1 / -1; }
+.pairing-card .row-actions { justify-content: flex-end; }
+.pairing-identity, .runner-identity { min-width: 0; }
+.pairing-identity strong, .pairing-identity small, .runner-identity strong, .runner-identity small { display: block; overflow-wrap: anywhere; }
+.pairing-identity strong, .runner-identity strong { color: var(--ink); font: 500 .85rem "IBM Plex Sans Condensed", sans-serif; }
+.pairing-identity small, .runner-identity small { margin-top: 3px; color: var(--muted); font: .6875rem "IBM Plex Mono", monospace; }
+.pairing-code { display: grid; gap: 5px; min-width: 0; color: var(--muted); font: .6875rem "IBM Plex Mono", monospace; }
+.pairing-code input { min-height: 40px; padding: 6px 10px; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); font: .8rem "IBM Plex Mono", monospace; }
+.runner-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 10px 14px; align-items: center; min-height: 70px; padding: 12px; border-bottom: 1px solid var(--rule); }
+.runner-row.inactive .runner-identity { opacity: .62; }
+.runner-row .state.online { color: var(--success); }
+.runner-row .state.offline { color: var(--faint); }
+.runner-warning { grid-column: 1 / -1; color: #ffb23f; font: .6875rem "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .pairing-card, .runner-row { grid-template-columns: minmax(0,1fr); gap: 9px; padding: 11px 8px; }
+  .pairing-card .row-actions { justify-content: flex-start; }
+  .pairing-card .row-actions button, .runner-row .row-actions button { min-height: 44px; }
+  .pairing-code input { min-height: 44px; }
+  .runner-row .state { justify-self: start; }
+}

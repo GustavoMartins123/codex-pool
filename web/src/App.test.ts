@@ -7,7 +7,7 @@ import { isArmedAccountAction } from "./pages/Accounts";
 import { MemberRecovery, RecoveryUnavailable } from "./access";
 import { Models } from "./pages/Models";
 import { shouldShowPassFormOnLoad } from "./pages/Passes";
-import { viewFromSearch } from "./navigation";
+import { allowedViews, viewFromSearch } from "./navigation";
 import { recoveryReducer } from "./recovery";
 import type { AccountStats, ResetWindowPolicy } from "./types";
 
@@ -94,8 +94,15 @@ describe("guest pass form", () => {
 describe("viewFromSearch", () => {
   it("restores a valid workspace and rejects unknown values", () => {
     expect(viewFromSearch("?view=accounts")).toBe("accounts");
+    expect(viewFromSearch("?view=runners")).toBe("runners");
     expect(viewFromSearch("?view=unknown")).toBe("pulse");
     expect(viewFromSearch("")).toBe("pulse");
+  });
+
+  it("offers runners to operators and members but never to guests", () => {
+    expect(allowedViews({ kind: "operator" } as never)).toContain("runners");
+    expect(allowedViews({ kind: "member" } as never)).toContain("runners");
+    expect(allowedViews({ kind: "guest" } as never)).not.toContain("runners");
   });
 });
 
