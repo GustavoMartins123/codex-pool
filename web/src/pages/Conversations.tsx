@@ -163,11 +163,13 @@ export function Conversations() {
             permission_mode: text(data.permission_mode) || current.permission_mode,
           };
         case "session.closed":
-          return { ...current, state: "closed", closed_reason: text(data.reason) || current.closed_reason, turn_id: undefined };
+          return { ...current, state: "closed", closed_reason: text(data.reason) || current.closed_reason, turn_id: undefined, approvals: [] };
         case "turn.started":
           return { ...current, turn_id: text(data.turn_id) || current.turn_id };
+        // Both events drop every pending approval server-side without an
+        // approval.resolved event, so the cards have to go with the turn.
         case "turn.finished":
-          return current.turn_id === text(data.turn_id) ? { ...current, turn_id: undefined } : current;
+          return current.turn_id === text(data.turn_id) ? { ...current, turn_id: undefined, approvals: [] } : current;
         case "approval.requested": {
           const approvalID = text(data.approval_id);
           if (!approvalID || current.approvals.some((approval) => approval.approval_id === approvalID)) return current;

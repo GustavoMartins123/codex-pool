@@ -314,6 +314,19 @@ describe("Conversations page", () => {
     await waitFor(() => expect(screen.queryByText("ls")).toBeNull());
   });
 
+  it("drops approval cards when the turn finishes or the session closes", async () => {
+    const source = await renderLoaded();
+    const request = { command: "rm -rf /tmp/x", context: "cleanup", turn_id: "t1", expires_at: new Date(Date.now() + 120000).toISOString() };
+    act(() => source.emit("approval.requested", { ...request, approval_id: "a1" }, 3));
+    expect(await screen.findByText("rm -rf /tmp/x")).toBeTruthy();
+    act(() => source.emit("turn.finished", { turn_id: "t1", tokens: 12, duration_ms: 40, exit_code: 130 }, 4));
+    await waitFor(() => expect(screen.queryByText("rm -rf /tmp/x")).toBeNull());
+    act(() => source.emit("approval.requested", { ...request, approval_id: "a2" }, 5));
+    expect(await screen.findByText("rm -rf /tmp/x")).toBeTruthy();
+    act(() => source.emit("session.closed", { reason: "user closed" }, 6));
+    await waitFor(() => expect(screen.queryByText("rm -rf /tmp/x")).toBeNull());
+  });
+
   it("deletes a closed conversation and polls until it disappears", async () => {
     const closedRecord = { ...conversationFixture, session_state: "closed" };
     vi.mocked(listConversations).mockResolvedValue({ conversations: [closedRecord] });
