@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func TestServeGrokModelsReturnsGrokClientCatalog(t *testing.T) {
@@ -671,9 +673,9 @@ func TestSanitizeSpooledGrokRequestStripsExternalWebAccess(t *testing.T) {
 
 func TestGrokSanitizesTranslatedRequestBody(t *testing.T) {
 	chatBody := []byte(`{"model":"grok-4.5","messages":[{"role":"user","content":"hello"}],"external_web_access":true,"reasoningEffort":"high","tools":[{"type":"web_search","external_web_access":true}]}`)
-	translated, err := translateChatCompletionsToResponses(chatBody)
+	translated, err := wire.OpenAIChatRequestToResponses(chatBody)
 	if err != nil {
-		t.Fatalf("translateChatCompletionsToResponses: %v", err)
+		t.Fatalf("wire.OpenAIChatRequestToResponses: %v", err)
 	}
 	sanitized := rewriteAndSanitizeGrokRequestBody(translated, "grok-4.5")
 	text := string(sanitized)
@@ -718,7 +720,7 @@ func writeTestFile(t *testing.T, path, body string) {
 
 func TestNormalizeResponsesSchemaBodyAcrossProviders(t *testing.T) {
 	body := []byte(`{"model":"muse-spark-1.3-contributor","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"nested":{"type":"object","required":null}},"required":null}}],"required":null}`)
-	rewritten := normalizeResponsesSchemaBody(body)
+	rewritten := wire.NormalizeResponsesSchemaBody(body)
 	if strings.Count(string(rewritten), `"required":[]`) != 2 {
 		t.Fatalf("tool schemas were not normalized: %s", rewritten)
 	}

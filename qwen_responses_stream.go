@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"codex-pool-proxy/internal/sse"
 	"github.com/google/uuid"
+
+	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 type qwenStreamTool struct {
@@ -204,20 +206,20 @@ func (s *qwenResponsesStream) consume(data []byte, streaming bool) error {
 		if id := stringValue(chunk["id"]); id != "" {
 			s.id = "resp_" + id
 		}
-		if created := toInt64(chunk["created"]); created > 0 {
+		if created := wire.JSONInt64(chunk["created"]); created > 0 {
 			s.createdAt = created
 		}
 		s.start()
 	}
 	if usage := mapValue(chunk["usage"]); usage != nil {
-		input, output := toInt64(usage["prompt_tokens"]), toInt64(usage["completion_tokens"])
+		input, output := wire.JSONInt64(usage["prompt_tokens"]), wire.JSONInt64(usage["completion_tokens"])
 		s.usage = map[string]any{"input_tokens": input, "output_tokens": output, "total_tokens": input + output,
-			"input_tokens_details":  map[string]any{"cached_tokens": toInt64(mapValue(usage["prompt_tokens_details"])["cached_tokens"])},
-			"output_tokens_details": map[string]any{"reasoning_tokens": toInt64(mapValue(usage["completion_tokens_details"])["reasoning_tokens"])}}
+			"input_tokens_details":  map[string]any{"cached_tokens": wire.JSONInt64(mapValue(usage["prompt_tokens_details"])["cached_tokens"])},
+			"output_tokens_details": map[string]any{"reasoning_tokens": wire.JSONInt64(mapValue(usage["completion_tokens_details"])["reasoning_tokens"])}}
 	}
 	for _, raw := range anySlice(chunk["choices"]) {
 		choice := mapValue(raw)
-		if index, exists := choice["index"]; exists && toInt64(index) != 0 {
+		if index, exists := choice["index"]; exists && wire.JSONInt64(index) != 0 {
 			return fmt.Errorf("Qwen Responses conversion expects one completion choice")
 		}
 		message := mapValue(choice["message"])

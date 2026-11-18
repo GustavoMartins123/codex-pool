@@ -136,24 +136,6 @@ func isClaudeModel(model string) bool {
 	return false
 }
 
-func toInt64(v any) int64 {
-	if v == nil {
-		return 0
-	}
-	switch n := v.(type) {
-	case float64:
-		return int64(n)
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return i
-	}
-	return 0
-}
-
 // logTranslation logs format translation at debug level.
 func logTranslation(reqID string, direction wire.TranslateDirection, debug bool) {
 	if !debug {

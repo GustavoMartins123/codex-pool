@@ -148,3 +148,46 @@ func TestClaudeResponsesHTTPToolRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func assertClaudeMessageText(t *testing.T, raw any, role, text string) {
+	t.Helper()
+	message := raw.(map[string]any)
+	if message["role"] != role {
+		t.Fatalf("role = %#v, want %q", message["role"], role)
+	}
+	if content, ok := message["content"].(string); ok {
+		if content != text {
+			t.Fatalf("content = %q, want %q", content, text)
+		}
+		return
+	}
+	blocks, ok := message["content"].([]any)
+	if !ok || len(blocks) != 1 || blocks[0].(map[string]any)["text"] != text {
+		t.Fatalf("content = %#v, want text %q", message["content"], text)
+	}
+}
+
+func assertClaudeToolBlocks(t *testing.T, raw any, role, blockType string, ids []string) {
+	t.Helper()
+	message := raw.(map[string]any)
+	if message["role"] != role {
+		t.Fatalf("role = %#v, want %q", message["role"], role)
+	}
+	blocks := message["content"].([]any)
+	if len(blocks) < len(ids) {
+		t.Fatalf("blocks = %#v, want at least %d", blocks, len(ids))
+	}
+	for i := range ids {
+		block := blocks[i].(map[string]any)
+		if block["type"] != blockType {
+			t.Fatalf("block %d type = %#v, want %q", i, block["type"], blockType)
+		}
+		idKey := "id"
+		if blockType == "tool_result" {
+			idKey = "tool_use_id"
+		}
+		if block[idKey] != ids[i] {
+			t.Fatalf("block %d %s = %#v, want %q", i, idKey, block[idKey], ids[i])
+		}
+	}
+}

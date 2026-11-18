@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func unwrapAntigravityResponse(body []byte) ([]byte, error) {
@@ -120,11 +122,11 @@ func parseAntigravityGeminiResponse(response map[string]any) antigravityResult {
 		}
 	}
 	usage, _ := response["usageMetadata"].(map[string]any)
-	result.PromptTokens = toInt64(usage["promptTokenCount"])
-	result.OutputTokens = toInt64(usage["candidatesTokenCount"])
-	result.ReasoningTokens = toInt64(usage["thoughtsTokenCount"])
-	result.CachedTokens = toInt64(usage["cachedContentTokenCount"])
-	result.TotalTokens = toInt64(usage["totalTokenCount"])
+	result.PromptTokens = wire.JSONInt64(usage["promptTokenCount"])
+	result.OutputTokens = wire.JSONInt64(usage["candidatesTokenCount"])
+	result.ReasoningTokens = wire.JSONInt64(usage["thoughtsTokenCount"])
+	result.CachedTokens = wire.JSONInt64(usage["cachedContentTokenCount"])
+	result.TotalTokens = wire.JSONInt64(usage["totalTokenCount"])
 	if result.TotalTokens == 0 {
 		result.TotalTokens = result.PromptTokens + result.OutputTokens
 	}

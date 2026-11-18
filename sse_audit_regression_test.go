@@ -19,7 +19,7 @@ func TestStreamingMixedEndings(t *testing.T) {
 			stream := first + second
 			for split := 0; split <= len(stream); split++ {
 				var out bytes.Buffer
-				w := &responsesToChatCompletionsWriter{w: &out}
+				w := wire.NewResponsesToOpenAIChatStream(&out, wire.StreamOptions{})
 				for _, p := range []string{stream[:split], stream[split:]} {
 					if _, err := io.WriteString(w, p); err != nil {
 						t.Fatal(err)
@@ -89,10 +89,12 @@ func TestStreamingDownstreamErrors(t *testing.T) {
 			return &sseInterceptWriter{w: w, onEvent: func([]byte) (bool, bool) { return false, false }}
 		}},
 		{"hosted-filter", response, func(w io.Writer) io.Writer { return &hostedMCPResponseFilterWriter{w: w} }},
-		{"responses-chat", response, func(w io.Writer) io.Writer { return &responsesToChatCompletionsWriter{w: w} }},
-		{"responses-completions", response, func(w io.Writer) io.Writer { return &responsesToCompletionsWriter{w: w} }},
-		{"responses-claude", response, func(w io.Writer) io.Writer { return &responsesToClaudeWriter{w: w} }},
-		{"claude-responses", claude, func(w io.Writer) io.Writer { return &claudeToResponsesWriter{w: w} }},
+		{"responses-chat", response, func(w io.Writer) io.Writer { return wire.NewResponsesToOpenAIChatStream(w, wire.StreamOptions{}) }},
+		{"responses-completions", response, func(w io.Writer) io.Writer {
+			return wire.NewResponsesToOpenAICompletionsStream(w, wire.StreamOptions{})
+		}},
+		{"responses-claude", response, func(w io.Writer) io.Writer { return wire.NewResponsesToAnthropicStream(w, wire.StreamOptions{}) }},
+		{"claude-responses", claude, func(w io.Writer) io.Writer { return wire.NewAnthropicToResponsesStream(w, wire.StreamOptions{}) }},
 		{"claude-chat", claude, wire.NewAnthropicToChatStream},
 		{"chat-claude", chat, wire.NewChatToAnthropicStream},
 	}
@@ -123,7 +125,7 @@ func TestStreamingLargeFragmentedEvent(t *testing.T) {
 	event := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"" + text + "\"}\n\n"
 	for _, size := range []int{len(event), 32 * 1024} {
 		var out bytes.Buffer
-		w := &responsesToChatCompletionsWriter{w: &out}
+		w := wire.NewResponsesToOpenAIChatStream(&out, wire.StreamOptions{})
 		for pos := 0; pos < len(event); pos += size {
 			if _, err := io.WriteString(w, event[pos:min(pos+size, len(event))]); err != nil {
 				t.Fatal(err)
@@ -182,9 +184,15 @@ func TestStreamingSiblingFraming(t *testing.T) {
 		name, data string
 		new        func(*bytes.Buffer) io.Writer
 	}{
-		{"responses-completions", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer { return &responsesToCompletionsWriter{w: out} }},
-		{"responses-claude", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer { return &responsesToClaudeWriter{w: out} }},
-		{"claude-responses", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer { return &claudeToResponsesWriter{w: out} }},
+		{"responses-completions", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer {
+			return wire.NewResponsesToOpenAICompletionsStream(out, wire.StreamOptions{})
+		}},
+		{"responses-claude", `{"type":"response.output_text.delta","delta":"TOKEN"}`, func(out *bytes.Buffer) io.Writer {
+			return wire.NewResponsesToAnthropicStream(out, wire.StreamOptions{})
+		}},
+		{"claude-responses", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer {
+			return wire.NewAnthropicToResponsesStream(out, wire.StreamOptions{})
+		}},
 		{"claude-chat", `{"type":"content_block_delta","delta":{"type":"text_delta","text":"TOKEN"}}`, func(out *bytes.Buffer) io.Writer {
 			return wire.NewAnthropicToChatStream(out)
 		}},
@@ -218,29 +226,6 @@ func TestStreamingSiblingFraming(t *testing.T) {
 	}
 }
 
-func TestStreamingBufferingFraming(t *testing.T) {
-	stream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"FIRST\"}\r\n\r\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"SECOND\"}\r\r"
-	for split := 0; split <= len(stream); split++ {
-		response := &responsesBufferingWriter{}
-		completion := &responsesToCompletionsBufferingWriter{}
-		chat := &responsesToChatCompletionsBufferingWriter{}
-		claude := &responsesToClaudeBufferingWriter{}
-		for _, w := range []io.Writer{response, completion, chat, claude} {
-			_, err := io.WriteString(w, stream[:split])
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = io.WriteString(w, stream[split:])
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		if string(response.contentText) != "FIRSTSECOND" || string(completion.contentText) != "FIRSTSECOND" || string(chat.contentText) != "FIRSTSECOND" || string(claude.contentText) != "FIRSTSECOND" {
-			t.Fatalf("buffered content missing at split %d", split)
-		}
-	}
-}
-
 func TestStreamingLargeInspection(t *testing.T) {
 	text := strings.Repeat("x", 1200000)
 	stream := "data: " + text + "\n\n"
@@ -256,47 +241,12 @@ func TestStreamingLargeInspection(t *testing.T) {
 	}
 }
 
-func TestStreamingIncompleteSiblings(t *testing.T) {
-	terminal := "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":7,\"output_tokens\":3}}}\r\r"
-	stream := terminal + terminal + "data: [DONE]\n\n"
-	var completionOut, claudeOut bytes.Buffer
-	completion := &responsesToCompletionsWriter{w: &completionOut}
-	claude := &responsesToClaudeWriter{w: &claudeOut}
-	for _, w := range []io.Writer{completion, claude} {
-		if _, err := io.WriteString(w, stream); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if strings.Count(completionOut.String(), "data: [DONE]") != 1 || !strings.Contains(completionOut.String(), `"finish_reason":"length"`) || !strings.Contains(completionOut.String(), `"prompt_tokens":7`) {
-		t.Fatal(completionOut.String())
-	}
-	if strings.Count(claudeOut.String(), "event: message_stop") != 1 || !strings.Contains(claudeOut.String(), `"stop_reason":"max_tokens"`) || !strings.Contains(claudeOut.String(), `"input_tokens":7`) || !strings.Contains(claudeOut.String(), `"output_tokens":3`) {
-		t.Fatal(claudeOut.String())
-	}
-
-	response := &responsesBufferingWriter{}
-	completionBuffer := &responsesToCompletionsBufferingWriter{}
-	chatBuffer := &responsesToChatCompletionsBufferingWriter{}
-	claudeBuffer := &responsesToClaudeBufferingWriter{}
-	for _, w := range []io.Writer{response, completionBuffer, chatBuffer, claudeBuffer} {
-		if _, err := io.WriteString(w, stream); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if response.status != "incomplete" || completionBuffer.finishReason != "length" || chatBuffer.finishReason != "length" || claudeBuffer.stopReason != "max_tokens" {
-		t.Fatal("incomplete terminal not mapped by buffering writer")
-	}
-	if response.inputTokens != 7 || response.outputTokens != 3 || completionBuffer.inputTokens != 7 || completionBuffer.outputTokens != 3 || chatBuffer.inputTokens != 7 || chatBuffer.outputTokens != 3 || claudeBuffer.inputTokens != 7 || claudeBuffer.outputTokens != 3 {
-		t.Fatal("incomplete usage lost by buffering writer")
-	}
-}
-
 func TestStreamingIncompleteTerminal(t *testing.T) {
 	for _, reason := range []string{"max_output_tokens", "content_filter"} {
 		terminal := `data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"` + reason + `"},"usage":{"input_tokens":7,"output_tokens":3}}}` + "\n\n"
 		stream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n" + terminal + terminal + "data: [DONE]\n\n"
 		var out bytes.Buffer
-		w := &responsesToChatCompletionsWriter{w: &out}
+		w := wire.NewResponsesToOpenAIChatStream(&out, wire.StreamOptions{})
 		if _, err := io.WriteString(w, stream); err != nil {
 			t.Fatal(err)
 		}

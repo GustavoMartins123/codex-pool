@@ -1,16 +1,14 @@
-package main
+package wire
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"codex-pool-proxy/internal/wire"
 )
 
-// translateChatCompletionsToResponses converts an OpenAI Chat Completions request
+// OpenAIChatRequestToResponses converts an OpenAI Chat Completions request
 // body to the Responses API format used by the Codex backend.
-func translateChatCompletionsToResponses(body []byte) ([]byte, error) {
+func OpenAIChatRequestToResponses(body []byte) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
@@ -133,7 +131,7 @@ func translateChatCompletionsToResponses(body []byte) ([]byte, error) {
 	// NOTE: max_tokens / max_completion_tokens and sampling params like
 	// temperature/top_p are intentionally not forwarded. The ChatGPT Codex
 	// backend rejects those OpenAI API fields instead of ignoring them.
-	sanitizeCodexResponsesParams(out)
+	SanitizeCodexResponsesParams(out)
 
 	// tools/functions -> Responses tools
 	if responsesTools := convertOpenAIToolsToResponses(req); len(responsesTools) > 0 {
@@ -214,7 +212,7 @@ func convertOpenAIFunctionTool(fn map[string]any) map[string]any {
 		rt["description"] = desc
 	}
 	if params, _ := fn["parameters"].(map[string]any); params != nil {
-		rt["parameters"] = prepareCodexJSONSchema(params)
+		rt["parameters"] = PrepareCodexJSONSchema(params)
 	}
 	if strict, ok := fn["strict"].(bool); ok {
 		rt["strict"] = strict
@@ -243,7 +241,7 @@ func convertOpenAIResponseFormatToResponses(raw any) map[string]any {
 			}
 		}
 		if schema, _ := jsonSchema["schema"].(map[string]any); schema != nil {
-			out["schema"] = prepareCodexJSONSchema(schema)
+			out["schema"] = PrepareCodexJSONSchema(schema)
 		}
 		return out
 	default:
@@ -252,15 +250,15 @@ func convertOpenAIResponseFormatToResponses(raw any) map[string]any {
 }
 
 func normalizeOpenAIToolSchema(schema map[string]any) map[string]any {
-	return prepareCodexJSONSchema(schema)
+	return PrepareCodexJSONSchema(schema)
 }
 
-// normalizeResponsesSchemaBody rewrites a Responses request body so no
+// NormalizeResponsesSchemaBody rewrites a Responses request body so no
 // schema carries a null "required". Clients built on MCP tool registries and
 // TypeScript JSON-schema helpers emit "required": null for a schema with no
 // mandatory fields, which Codex and Grok reject. Applied after translation so
 // it also covers bodies rebuilt from Claude or Chat Completions input.
-func normalizeResponsesSchemaBody(body []byte) []byte {
+func NormalizeResponsesSchemaBody(body []byte) []byte {
 	var obj map[string]any
 	if len(body) == 0 || json.Unmarshal(body, &obj) != nil {
 		return body
@@ -329,7 +327,7 @@ func normalizeRequiredArrays(value any) bool {
 	}
 }
 
-func prepareCodexJSONSchema(schema map[string]any) map[string]any {
+func PrepareCodexJSONSchema(schema map[string]any) map[string]any {
 	return prepareCodexJSONSchemaValue(schema).(map[string]any)
 }
 
@@ -442,7 +440,7 @@ func convertOAIContentToResponsesContent(content any) []any {
 	}
 }
 
-func translateCompletionsToResponses(body []byte) ([]byte, error) {
+func OpenAICompletionsRequestToResponses(body []byte) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("parse completions request: %w", err)
@@ -502,7 +500,7 @@ func completionsPromptToInput(prompt any) []any {
 	return []any{toItem("")}
 }
 
-func translateResponsesToCompletions(body []byte) ([]byte, error) {
+func ResponsesResponseToOpenAICompletions(body []byte) ([]byte, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse responses api response: %w", err)
@@ -513,7 +511,7 @@ func translateResponsesToCompletions(body []byte) ([]byte, error) {
 	out := map[string]any{
 		"id":      stringField(resp, "id", "cmpl-translated"),
 		"object":  "text_completion",
-		"created": toInt64(resp["created_at"]),
+		"created": JSONInt64(resp["created_at"]),
 		"model":   stringField(resp, "model", "unknown"),
 		"choices": []any{
 			map[string]any{
@@ -574,9 +572,9 @@ func completionsUsageFromResponses(resp map[string]any) map[string]any {
 }
 
 func openAIUsageFromResponsesUsage(u map[string]any) map[string]any {
-	promptTokens := toInt64(u["input_tokens"])
-	completionTokens := toInt64(u["output_tokens"])
-	totalTokens := toInt64(u["total_tokens"])
+	promptTokens := JSONInt64(u["input_tokens"])
+	completionTokens := JSONInt64(u["output_tokens"])
+	totalTokens := JSONInt64(u["total_tokens"])
 	if totalTokens == 0 {
 		totalTokens = promptTokens + completionTokens
 	}
@@ -586,13 +584,13 @@ func openAIUsageFromResponsesUsage(u map[string]any) map[string]any {
 		"total_tokens":      totalTokens,
 	}
 	if details, ok := u["input_tokens_details"].(map[string]any); ok {
-		if cached := toInt64(details["cached_tokens"]); cached > 0 {
+		if cached := JSONInt64(details["cached_tokens"]); cached > 0 {
 			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": cached}
 		}
 	}
 	if details, ok := u["output_tokens_details"].(map[string]any); ok {
 		outDetails := map[string]any{}
-		if reasoning := toInt64(details["reasoning_tokens"]); reasoning > 0 {
+		if reasoning := JSONInt64(details["reasoning_tokens"]); reasoning > 0 {
 			outDetails["reasoning_tokens"] = reasoning
 		}
 		if len(outDetails) > 0 {
@@ -609,9 +607,9 @@ func stringField(m map[string]any, key, fallback string) string {
 	return fallback
 }
 
-// translateResponsesToChatCompletions converts a non-streaming Responses API response
+// ResponsesResponseToOpenAIChat converts a non-streaming Responses API response
 // to an OpenAI Chat Completions response.
-func translateResponsesToChatCompletions(body []byte) ([]byte, error) {
+func ResponsesResponseToOpenAIChat(body []byte) ([]byte, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse responses api response: %w", err)
@@ -700,7 +698,7 @@ func translateResponsesToChatCompletions(body []byte) ([]byte, error) {
 	out := map[string]any{
 		"id":      id,
 		"object":  "chat.completion",
-		"created": toInt64(resp["created_at"]),
+		"created": JSONInt64(resp["created_at"]),
 		"model":   model,
 		"choices": []any{
 			map[string]any{
@@ -717,10 +715,10 @@ func translateResponsesToChatCompletions(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// translateResponsesToClaudeRequest converts a Responses API request body
+// ResponsesRequestToAnthropic converts a Responses API request body
 // to Claude Messages API format. Used when Codex CLI sends to /responses
 // but the model is routed to a Claude account.
-func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
+func ResponsesRequestToAnthropic(body []byte, resolveModel func(string) string) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("parse responses request: %w", err)
@@ -730,7 +728,7 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 
 	// model
 	if m, ok := req["model"].(string); ok {
-		claude["model"] = claudeCanonicalModel(m)
+		claude["model"] = resolveModel(m)
 	}
 
 	// instructions -> system
@@ -861,9 +859,9 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 	if err := validateResponsesClaudeToolPairing(claudeMsgs); err != nil {
 		return nil, err
 	}
-	claudeMsgs = mergeConsecutiveClaudeMessages(claudeMsgs)
-	claudeMsgs = normalizeClaudeToolPairing(claudeMsgs)
-	claudeMsgs = mergeConsecutiveClaudeMessages(claudeMsgs)
+	claudeMsgs = MergeConsecutiveAnthropicMessages(claudeMsgs)
+	claudeMsgs = NormalizeAnthropicToolPairing(claudeMsgs)
+	claudeMsgs = MergeConsecutiveAnthropicMessages(claudeMsgs)
 	claude["messages"] = claudeMsgs
 
 	if sysPrompt, ok := claude["system"].(string); ok && sysPrompt != "" {
@@ -929,7 +927,7 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return wire.MarshalAnthropicRequest(claude)
+	return MarshalAnthropicRequest(claude)
 }
 
 func translateResponsesClaudeToolChoice(req, claude map[string]any, toolNames map[string]bool) error {
@@ -1001,9 +999,9 @@ func validateResponsesClaudeToolPairing(messages []map[string]any) error {
 	return nil
 }
 
-// normalizeClaudeToolPairing makes every tool_result immediately follow its
+// NormalizeAnthropicToolPairing makes every tool_result immediately follow its
 // matching tool_use. Dangling tool calls and orphan results are discarded.
-func normalizeClaudeToolPairing(messages []map[string]any) []map[string]any {
+func NormalizeAnthropicToolPairing(messages []map[string]any) []map[string]any {
 	results := make(map[string]map[string]any)
 	for _, message := range messages {
 		if role, _ := message["role"].(string); role != "user" {
@@ -1086,7 +1084,7 @@ func normalizeClaudeToolPairing(messages []map[string]any) []map[string]any {
 	return normalized
 }
 
-func mergeConsecutiveClaudeMessages(messages []map[string]any) []map[string]any {
+func MergeConsecutiveAnthropicMessages(messages []map[string]any) []map[string]any {
 	if len(messages) <= 1 {
 		return messages
 	}
@@ -1161,9 +1159,9 @@ func convertResponsesContentToClaude(content []any) ([]any, error) {
 	return blocks, nil
 }
 
-// translateClaudeRespToResponses converts a non-streaming Claude Messages API response
+// AnthropicResponseToResponses converts a non-streaming Claude Messages API response
 // to Responses API format.
-func translateClaudeRespToResponses(body []byte) ([]byte, error) {
+func AnthropicResponseToResponses(body []byte) ([]byte, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse claude response: %w", err)
@@ -1228,19 +1226,19 @@ func translateClaudeRespToResponses(body []byte) ([]byte, error) {
 
 	if usage, ok := resp["usage"].(map[string]any); ok {
 		result["usage"] = map[string]any{
-			"input_tokens":  toInt64(usage["input_tokens"]),
-			"output_tokens": toInt64(usage["output_tokens"]),
-			"total_tokens":  toInt64(usage["input_tokens"]) + toInt64(usage["output_tokens"]),
+			"input_tokens":  JSONInt64(usage["input_tokens"]),
+			"output_tokens": JSONInt64(usage["output_tokens"]),
+			"total_tokens":  JSONInt64(usage["input_tokens"]) + JSONInt64(usage["output_tokens"]),
 		}
 	}
 
 	return json.Marshal(result)
 }
 
-// translateClaudeToResponsesRequest converts a Claude Messages API request body
+// AnthropicRequestToResponses converts a Claude Messages API request body
 // to the Responses API format used by the Codex backend. Used when Claude Code
 // sends /v1/messages with a Codex model (e.g. gpt-5.3-codex).
-func translateClaudeToResponsesRequest(body []byte) ([]byte, error) {
+func AnthropicRequestToResponses(body []byte) ([]byte, error) {
 	var claude map[string]any
 	if err := json.Unmarshal(body, &claude); err != nil {
 		return nil, fmt.Errorf("parse claude request: %w", err)
@@ -1371,7 +1369,7 @@ func translateClaudeToResponsesRequest(body []byte) ([]byte, error) {
 							switch blockType {
 							case "tool_result":
 								callID, _ := block["tool_use_id"].(string)
-								resultContent := wire.AnthropicToolResultText(block["content"])
+								resultContent := AnthropicToolResultText(block["content"])
 								input = append(input, map[string]any{
 									"type":    "function_call_output",
 									"call_id": callID,
@@ -1643,4 +1641,41 @@ func extractTextContent(msg map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func SanitizeCodexResponsesParams(obj map[string]any) {
+	for _, key := range []string{
+		"temperature",
+		"top_p",
+		"presence_penalty",
+		"frequency_penalty",
+		"max_tokens",
+		"max_completion_tokens",
+		"max_output_tokens",
+		"seed",
+		"logprobs",
+		"top_logprobs",
+		"metadata",
+		"prompt_cache_scope",
+	} {
+		delete(obj, key)
+	}
+}
+
+func JSONInt64(v any) int64 {
+	if v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	}
+	return 0
 }

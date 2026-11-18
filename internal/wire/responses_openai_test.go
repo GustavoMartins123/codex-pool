@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -16,7 +16,7 @@ func TestTranslateCompletionsToResponses(t *testing.T) {
 		"stop":["END"]
 	}`)
 
-	out, err := translateCompletionsToResponses(body)
+	out, err := OpenAICompletionsRequestToResponses(body)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestTranslateResponsesToCompletions(t *testing.T) {
 		"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}
 	}`)
 
-	out, err := translateResponsesToCompletions(body)
+	out, err := ResponsesResponseToOpenAICompletions(body)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResponsesToCompletionsWriters(t *testing.T) {
 		t.Fatalf("bad streamed completions output: %s", gotStream)
 	}
 
-	bw := &responsesToCompletionsBufferingWriter{}
+	bw := &ResponsesToOpenAICompletionsBuffer{}
 	_, _ = bw.Write([]byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.4-mini\"}}\n\n"))
 	_, _ = bw.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n"))
 	_, _ = bw.Write([]byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n"))
@@ -121,7 +121,7 @@ func TestTranslateChatCompletionsToResponsesHandlesLegacyFunctionsAndHostedSearc
 		"tool_choice":{"type":"function","function":{"name":"lookup"}}
 	}`)
 
-	out, err := translateChatCompletionsToResponses(body)
+	out, err := OpenAIChatRequestToResponses(body)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestResponsesUsageComputesTotalWhenMissing(t *testing.T) {
 }
 
 func TestResponsesBufferingWriterPreservesFunctionCalls(t *testing.T) {
-	bw := &responsesBufferingWriter{}
+	bw := &ResponsesBuffer{}
 	_, _ = bw.Write([]byte("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.5\"}}\n\n"))
 	_, _ = bw.Write([]byte("event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"lookup\"}}\n\n"))
 	_, _ = bw.Write([]byte("event: response.function_call_arguments.done\ndata: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"q\\\":\\\"x\\\"}\"}\n\n"))

@@ -1788,7 +1788,7 @@ func TestEnsureCodexResponsesInstructionsStripsUnsupportedParams(t *testing.T) {
 
 func TestTranslateImagesGenerationToResponses(t *testing.T) {
 	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat","size":"1024x1024","output_format":"webp","response_format":"b64_json"}`)
-	out, responseFormat, err := translateImagesGenerationToResponses(body)
+	out, responseFormat, err := wire.ImagesGenerationRequestToResponses(body)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -1830,7 +1830,7 @@ func TestTranslateImagesEditToResponses(t *testing.T) {
 	part.Write([]byte("pngbytes"))
 	mw.Close()
 
-	out, responseFormat, err := translateImagesEditToResponses(buf.Bytes(), mw.FormDataContentType())
+	out, responseFormat, err := wire.ImagesEditRequestToResponses(buf.Bytes(), mw.FormDataContentType())
 	if err != nil {
 		t.Fatalf("translate edit: %v", err)
 	}
@@ -1856,7 +1856,7 @@ func TestTranslateImagesEditToResponses(t *testing.T) {
 
 func TestTranslateResponsesToImagesGeneration(t *testing.T) {
 	body := []byte(`{"id":"resp_1","created_at":123,"output":[{"type":"image_generation_call","result":"AAAA","revised_prompt":"better cat"}]}`)
-	out, err := translateResponsesToImagesGeneration(body, "b64_json")
+	out, err := wire.ResponsesResponseToImagesGeneration(body, "b64_json")
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
@@ -1886,7 +1886,7 @@ func TestRequestHasImageGenerationTool(t *testing.T) {
 func TestResponsesBufferingWriterUsesLatestPartialImageAtStreamEnd(t *testing.T) {
 	t.Parallel()
 
-	writer := &responsesBufferingWriter{model: "gpt-5.6-luna"}
+	writer := wire.NewResponsesBuffer("gpt-5.6-luna")
 	events := []string{
 		"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_img\",\"status\":\"in_progress\",\"model\":\"gpt-5.6-luna\"}}\n\n",
 		"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ig_1\",\"type\":\"image_generation_call\",\"status\":\"in_progress\"}}\n\n",
@@ -1899,7 +1899,7 @@ func TestResponsesBufferingWriterUsesLatestPartialImageAtStreamEnd(t *testing.T)
 		}
 	}
 
-	translated, err := translateResponsesToImagesGeneration(writer.Result(), "b64_json")
+	translated, err := wire.ResponsesResponseToImagesGeneration(writer.Result(), "b64_json")
 	if err != nil {
 		t.Fatal(err)
 	}

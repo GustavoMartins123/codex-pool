@@ -119,7 +119,7 @@ func translateFallbackPayload(body []byte, path string, target AccountType) ([]b
 		case WireResponses:
 			return body, "/v1/responses", wire.TranslateNone, nil
 		case WireAnthropic:
-			translated, err := translateResponsesToClaudeRequest(body)
+			translated, err := wire.ResponsesRequestToAnthropic(body, claudeCanonicalModel)
 			return translated, "/v1/messages", wire.TranslateResponsesToClaude, err
 		}
 	}
@@ -128,7 +128,7 @@ func translateFallbackPayload(body []byte, path string, target AccountType) ([]b
 		case WireAnthropic:
 			return body, path, wire.TranslateNone, nil
 		case WireResponses:
-			translated, err := translateClaudeToResponsesRequest(body)
+			translated, err := wire.AnthropicRequestToResponses(body)
 			return translated, "/v1/responses", wire.TranslateClaudeToResponses, err
 		case WireOpenAI:
 			translated, err := wire.AnthropicRequestToOpenAIChat(body)
@@ -140,7 +140,7 @@ func translateFallbackPayload(body []byte, path string, target AccountType) ([]b
 		case WireOpenAI:
 			return body, path, wire.TranslateNone, nil
 		case WireResponses:
-			translated, err := translateChatCompletionsToResponses(body)
+			translated, err := wire.OpenAIChatRequestToResponses(body)
 			return translated, "/v1/responses", wire.TranslateChatToResponses, err
 		case WireAnthropic:
 			translated, err := wire.OpenAIChatRequestToAnthropic(body, claudeCanonicalModel)

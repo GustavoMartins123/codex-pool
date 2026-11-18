@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -55,16 +55,16 @@ func TestTranslateResponsesToClaudeRejectsInvalidToolHistory(t *testing.T) {
 		]
 	}`)
 
-	if _, err := translateResponsesToClaudeRequest(body); err == nil {
+	if _, err := ResponsesRequestToAnthropic(body, identityModel); err == nil {
 		t.Fatal("invalid history must fail explicitly instead of dropping tool calls or outputs")
 	}
 }
 
 func translateResponsesToClaudeForToolPairingTest(t *testing.T, body []byte) map[string]any {
 	t.Helper()
-	out, err := translateResponsesToClaudeRequest(body)
+	out, err := ResponsesRequestToAnthropic(body, identityModel)
 	if err != nil {
-		t.Fatalf("translateResponsesToClaudeRequest: %v", err)
+		t.Fatalf("ResponsesRequestToAnthropic: %v", err)
 	}
 	var got map[string]any
 	if err := json.Unmarshal(out, &got); err != nil {
@@ -115,3 +115,5 @@ func assertClaudeToolBlocks(t *testing.T, raw any, role, blockType string, ids [
 		}
 	}
 }
+
+func identityModel(model string) string { return model }

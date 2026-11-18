@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -11,8 +11,8 @@ import (
 func TestClaudeResponsesStreamPreservesItemsAndTermination(t *testing.T) {
 	for _, stop := range []string{"end_turn", "max_tokens"} {
 		t.Run(stop, func(t *testing.T) {
-			var wire strings.Builder
-			add := func(event map[string]any) { data, _ := json.Marshal(event); fmt.Fprintf(&wire, "data: %s\n\n", data) }
+			var stream strings.Builder
+			add := func(event map[string]any) { data, _ := json.Marshal(event); fmt.Fprintf(&stream, "data: %s\n\n", data) }
 			add(map[string]any{"type": "message_start", "message": map[string]any{"id": "synthetic", "model": "claude-sonnet-5-5"}})
 			text := func(index int, value string) {
 				add(map[string]any{"type": "content_block_start", "index": index, "content_block": map[string]any{"type": "text", "text": ""}})
@@ -30,7 +30,7 @@ func TestClaudeResponsesStreamPreservesItemsAndTermination(t *testing.T) {
 			add(map[string]any{"type": "message_stop"}) // A duplicate terminal must not duplicate output.
 			var out bytes.Buffer
 			writer := &claudeToResponsesWriter{w: &out}
-			data := []byte(wire.String())
+			data := []byte(stream.String())
 			for len(data) > 0 {
 				n := min(len(data), 7)
 				if _, err := writer.Write(data[:n]); err != nil {
@@ -107,10 +107,10 @@ func TestClaudeResponsesStreamDoesNotConvertProviderErrorToSuccess(t *testing.T)
 	}
 }
 
-func decodeClaudeResponsesEvents(t *testing.T, wire string) []map[string]any {
+func decodeClaudeResponsesEvents(t *testing.T, stream string) []map[string]any {
 	t.Helper()
 	var result []map[string]any
-	for _, line := range strings.Split(wire, "\n") {
+	for _, line := range strings.Split(stream, "\n") {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
