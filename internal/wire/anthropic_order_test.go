@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ func TestClaudeOrderedBody(t *testing.T) {
 		"system":   "hello",
 	}
 
-	out, err := claudeOrderedBody(m)
+	out, err := MarshalAnthropicRequest(m)
 	if err != nil {
 		t.Fatal(err)
 	}

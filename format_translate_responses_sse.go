@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 func responseFinishReason(response map[string]any) string {
@@ -1399,7 +1400,7 @@ func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
 				bw.outputTokens = toInt64(usage["output_tokens"])
 			}
 		}
-		bw.stopReason = oaiFinishReasonToClaude(responseFinishReason(resp))
+		bw.stopReason = wire.ChatFinishReasonToAnthropic(responseFinishReason(resp))
 		if len(bw.toolUses) > 0 && responseFinishReason(resp) == "stop" {
 			bw.stopReason = "tool_use"
 		}
@@ -1964,7 +1965,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 			}
 			rw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 				`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%s}}`,
-				rw.contentBlockIndex, mustMarshalString(delta)))
+				rw.contentBlockIndex, sse.JSONString(delta)))
 		}
 
 	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
@@ -1982,7 +1983,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 			}
 			rw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 				`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%s}}`,
-				rw.contentBlockIndex, mustMarshalString(delta)))
+				rw.contentBlockIndex, sse.JSONString(delta)))
 		}
 
 	case "response.output_item.added":
@@ -2008,7 +2009,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 			name, _ := item["name"].(string)
 			rw.emitClaudeEvent("content_block_start", fmt.Sprintf(
 				`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":%s,"name":%s,"input":{}}}`,
-				rw.contentBlockIndex, mustMarshalString(callID), mustMarshalString(name)))
+				rw.contentBlockIndex, sse.JSONString(callID), sse.JSONString(name)))
 			rw.toolCallIndex++
 		}
 
@@ -2017,7 +2018,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 		if delta != "" {
 			rw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 				`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`,
-				rw.contentBlockIndex, mustMarshalString(delta)))
+				rw.contentBlockIndex, sse.JSONString(delta)))
 		}
 
 	case "response.output_item.done":
@@ -2044,7 +2045,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 				`{"type":"content_block_stop","index":%d}`, rw.contentBlockIndex))
 		}
 		rw.terminal = true
-		stopReason := oaiFinishReasonToClaude(responseFinishReason(resp))
+		stopReason := wire.ChatFinishReasonToAnthropic(responseFinishReason(resp))
 		if rw.toolCallIndex > 0 && responseFinishReason(resp) == "stop" {
 			stopReason = "tool_use"
 		}
@@ -2056,7 +2057,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 		// Emit message_delta and message_stop
 		rw.emitClaudeEvent("message_delta", fmt.Sprintf(
 			`{"type":"message_delta","delta":{"stop_reason":%s,"stop_sequence":null},"usage":{"input_tokens":%d,"output_tokens":%d}}`,
-			mustMarshalString(stopReason), rw.inputTokens, rw.outputTokens))
+			sse.JSONString(stopReason), rw.inputTokens, rw.outputTokens))
 		rw.emitClaudeEvent("message_stop", `{"type":"message_stop"}`)
 
 	case "response.failed":
@@ -2079,7 +2080,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 		}
 		rw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%s}}`,
-			rw.contentBlockIndex, mustMarshalString("[Error: "+errMsg+"]")))
+			rw.contentBlockIndex, sse.JSONString("[Error: "+errMsg+"]")))
 		rw.emitClaudeEvent("content_block_stop", fmt.Sprintf(
 			`{"type":"content_block_stop","index":%d}`, rw.contentBlockIndex))
 		rw.emitClaudeEvent("message_delta", fmt.Sprintf(
@@ -2109,7 +2110,7 @@ func (rw *responsesToClaudeWriter) emitClaudeMessageStart() {
 		id = "msg_translated"
 	}
 	msg := fmt.Sprintf(`{"type":"message_start","message":{"id":%s,"type":"message","role":"assistant","model":%s,"content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":0}}}`,
-		mustMarshalString(id), mustMarshalString(model), rw.inputTokens)
+		sse.JSONString(id), sse.JSONString(model), rw.inputTokens)
 	rw.emitClaudeEvent("message_start", msg)
 }
 

@@ -30,7 +30,7 @@ func claudeStreamEvents(t *testing.T, body string) []map[string]any {
 
 func TestOpenAIStreamToClaudeReportsPromptUsage(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
+	w := wire.NewChatToAnthropicStream(&out)
 	for _, chunk := range []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}`,
 		`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":30}}}`,
@@ -47,7 +47,7 @@ func TestOpenAIStreamToClaudeReportsPromptUsage(t *testing.T) {
 
 func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
+	w := wire.NewChatToAnthropicStream(&out)
 	chunks := []string{
 		// No role chunk: the first delta must still open the message.
 		`{"id":"chat-1","model":"qwen3.8-max","choices":[{"index":0,"delta":{"content":"Checking."}}]}`,
@@ -112,7 +112,7 @@ func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 
 func TestOpenAIStreamToClaudeTextAfterToolStartsNewBlock(t *testing.T) {
 	var out bytes.Buffer
-	w := &sseTranslateWriter{w: &out, direction: wire.TranslateOAIToClaude}
+	w := wire.NewChatToAnthropicStream(&out)
 	for _, chunk := range []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"Before"}}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-a","function":{"name":"Bash","arguments":"{}"}}]}}]}`,
@@ -140,7 +140,7 @@ func TestClaudeToolResultKeepsAttachedText(t *testing.T) {
 			{"type":"tool_result","tool_use_id":"call-a","content":"a.txt"},
 			{"type":"text","text":"<system-reminder>file changed</system-reminder>"}
 		]}]}`
-	translated, err := translateClaudeReqToOpenAI([]byte(body))
+	translated, err := wire.AnthropicRequestToOpenAIChat([]byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestClaudeToolResultKeepsAttachedText(t *testing.T) {
 }
 
 func TestOpenAIResponseToClaudeSplitsCachedInput(t *testing.T) {
-	translated, err := translateOpenAIRespToClaude([]byte(`{"id":"chat-1","model":"qwen3.8-max","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":30}}}`), "qwen3.8-max")
+	translated, err := wire.OpenAIChatResponseToAnthropic([]byte(`{"id":"chat-1","model":"qwen3.8-max","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":30}}}`), "qwen3.8-max")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 // translateChatCompletionsToResponses converts an OpenAI Chat Completions request
@@ -927,7 +929,7 @@ func translateResponsesToClaudeRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return claudeOrderedBody(claude)
+	return wire.MarshalAnthropicRequest(claude)
 }
 
 func translateResponsesClaudeToolChoice(req, claude map[string]any, toolNames map[string]bool) error {
@@ -1202,7 +1204,7 @@ func translateClaudeRespToResponses(body []byte) ([]byte, error) {
 				"type": "message",
 				"role": "assistant",
 				"content": []any{
-					map[string]any{"type": "output_text", "text": joinStrings(textParts)},
+					map[string]any{"type": "output_text", "text": strings.Join(textParts, "\n\n")},
 				},
 			}
 			// Insert message item before function_calls
@@ -1320,7 +1322,7 @@ func translateClaudeToResponsesRequest(body []byte) ([]byte, error) {
 						"type": "message",
 						"role": "assistant",
 						"content": []any{
-							map[string]any{"type": "output_text", "text": joinStrings(textParts)},
+							map[string]any{"type": "output_text", "text": strings.Join(textParts, "\n\n")},
 						},
 					}
 					input = append(input, item)
@@ -1369,7 +1371,7 @@ func translateClaudeToResponsesRequest(body []byte) ([]byte, error) {
 							switch blockType {
 							case "tool_result":
 								callID, _ := block["tool_use_id"].(string)
-								resultContent := extractToolResultContent(block["content"])
+								resultContent := wire.AnthropicToolResultText(block["content"])
 								input = append(input, map[string]any{
 									"type":    "function_call_output",
 									"call_id": callID,
