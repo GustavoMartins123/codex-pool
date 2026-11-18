@@ -1134,6 +1134,11 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 			if err := syncAntigravityModels(checkCtx, h.transport, account, provider.DailyURL(), provider.ProductionURL()); err != nil {
 				log.Printf("antigravity sync %s failed: %v", account.ID, err)
 			}
+			if accountPlanCheckDue(account, time.Now()) {
+				if err := h.checkAntigravityPlan(checkCtx, account); err != nil {
+					log.Printf("antigravity plan check %s failed: %v", account.ID, err)
+				}
+			}
 			cancel()
 		}
 	}

@@ -79,6 +79,9 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 		acc.AccountID = acc.IDTokenChatGPTAccountID
 	}
 	acc.PlanType = claims.PlanType
+	if aj.PlanType != "" {
+		acc.PlanType = normalizeCodexPlanType(aj.PlanType)
+	}
 	acc.ExpiresAt = parseCodexClaims(aj.Tokens.AccessToken).ExpiresAt
 	if acc.ExpiresAt.IsZero() {
 		acc.ExpiresAt = claims.ExpiresAt

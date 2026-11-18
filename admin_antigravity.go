@@ -803,7 +803,23 @@ func findAntigravityTierID(root map[string]any) string {
 			}
 		}
 	}
-	return "antigravity"
+	return ""
+}
+
+func (h *proxyHandler) checkAntigravityPlan(ctx context.Context, account *Account) error {
+	account.mu.Lock()
+	accessToken := account.AccessToken
+	account.mu.Unlock()
+	root, err := h.callAntigravityInternal(ctx, accessToken, h.cfg.antigravityProdBase, "/v1internal:loadCodeAssist", map[string]any{"metadata": map[string]any{"ideType": "ANTIGRAVITY"}})
+	if err != nil {
+		return err
+	}
+	plan := findAntigravityTierID(root)
+	if plan == "" {
+		return errors.New("loadCodeAssist returned no tier")
+	}
+	updateAccountPlan(account, plan)
+	return nil
 }
 
 var antigravityAccountIDPattern = regexp.MustCompile(`[^a-z0-9._-]+`)

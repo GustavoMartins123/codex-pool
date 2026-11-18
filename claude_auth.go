@@ -513,15 +513,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 
 	// Fetch updated plan info from the profile API
 	if profile, err := FetchClaudeProfileWithContext(ctx, accessToken, transport); err == nil && profile != nil {
-		acc.mu.Lock()
-		if profile.SubscriptionType != "" {
-			acc.PlanType = profile.SubscriptionType
-		}
-		if profile.RateLimitTier != "" {
-			acc.RateLimitTier = profile.RateLimitTier
-		}
-		acc.mu.Unlock()
-		log.Printf("claude account %s: refreshed plan=%s tier=%s", acc.ID, profile.SubscriptionType, profile.RateLimitTier)
+		applyClaudeProfile(acc, profile)
 	} else if err != nil {
 		log.Printf("claude account %s: failed to fetch profile on refresh: %v", acc.ID, err)
 	}
@@ -537,6 +529,41 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 	}
 
 	return saveClaudeAccount(acc)
+}
+
+func applyClaudeProfile(acc *Account, profile *ClaudeProfileInfo) bool {
+	acc.mu.Lock()
+	previousPlan, previousTier := acc.PlanType, acc.RateLimitTier
+	if profile.SubscriptionType != "" {
+		acc.PlanType = profile.SubscriptionType
+	}
+	if profile.RateLimitTier != "" {
+		acc.RateLimitTier = profile.RateLimitTier
+	}
+	plan, tier := acc.PlanType, acc.RateLimitTier
+	acc.mu.Unlock()
+	if plan == previousPlan && tier == previousTier {
+		return false
+	}
+	log.Printf("claude account %s plan changed: %s/%s -> %s/%s", acc.ID, previousPlan, previousTier, plan, tier)
+	return true
+}
+
+func (h *proxyHandler) checkClaudePlan(ctx context.Context, acc *Account) error {
+	acc.mu.Lock()
+	accessToken := acc.AccessToken
+	acc.mu.Unlock()
+	if !strings.HasPrefix(accessToken, "sk-ant-oat") {
+		return nil
+	}
+	profile, err := FetchClaudeProfileWithContext(ctx, accessToken, h.transport)
+	if err != nil {
+		return err
+	}
+	if applyClaudeProfile(acc, profile) {
+		return saveClaudeAccount(acc)
+	}
+	return nil
 }
 
 func indexOf(s string, c rune) int {
