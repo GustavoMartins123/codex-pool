@@ -162,3 +162,18 @@ func TestClientRequestToGeminiRejectsUnknownFormat(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestCleanAntigravitySchemaOrdersHintsStably(t *testing.T) {
+	const want = "No extra properties allowed (format: date) (minLength: 2) (Accepts: string | number) ((nullable))"
+	for range 50 {
+		got := cleanAntigravitySchema(map[string]any{
+			"type":                 []any{"string", "number", "null"},
+			"minLength":            2,
+			"format":               "date",
+			"additionalProperties": false,
+		})
+		if got["description"] != want {
+			t.Fatalf("description = %q, want %q", got["description"], want)
+		}
+	}
+}

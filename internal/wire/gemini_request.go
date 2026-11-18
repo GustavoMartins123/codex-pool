@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1174,7 +1176,9 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 
 	result := make(map[string]any, len(working))
 	description := jsonvalue.String(working["description"])
-	for key, value := range working {
+	// Sorted keys keep the hint order, and the declaration bytes, stable.
+	for _, key := range slices.Sorted(maps.Keys(working)) {
+		value := working[key]
 		// Gemini rejects a null "required" outright, so drop the key instead of
 		// replacing it with an empty list as the OpenAI-family paths do.
 		if key == "required" && value == nil {
