@@ -93,3 +93,39 @@ func TestAccountPlanCheckRunsOncePerInterval(t *testing.T) {
 		t.Fatal("plan check not due after the interval")
 	}
 }
+
+func TestAntigravityPlanCheckPersistsUpgradedTier(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "antigravity.json")
+	data := []byte(`{"type":"antigravity","access_token":"ya29.test","refresh_token":"refresh","project_id":"project-1","plan_type":"g1-pro-tier","email":"owner@example.test"}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider := NewAntigravityProvider(nil, nil)
+	account, err := provider.LoadAccount("antigravity.json", path, data)
+	if err != nil || account.PlanType != "g1-pro-tier" {
+		t.Fatalf("loaded plan = %v, %v", account, err)
+	}
+	body := `{"currentTier":{"id":"standard-tier"},"paidTier":{"id":"g1-ultra-tier"}}`
+	h := &proxyHandler{cfg: &config{antigravityProdBase: mustParse("https://cloudcode.test")}, transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://cloudcode.test/v1internal:loadCodeAssist" || req.Header.Get("Authorization") != "Bearer ya29.test" {
+			t.Fatalf("unexpected tier request %s", req.URL)
+		}
+		return jsonResponse(body), nil
+	})}
+	if err := h.checkAntigravityPlan(context.Background(), account); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := provider.LoadAccount("antigravity.json", path, saved)
+	if err != nil || reloaded.PlanType != "g1-ultra-tier" {
+		t.Fatalf("reloaded plan = %v, %v", reloaded, err)
+	}
+
+	body = `{"allowedTiers":[]}`
+	if err := h.checkAntigravityPlan(context.Background(), account); err == nil || account.PlanType != "g1-ultra-tier" {
+		t.Fatalf("tierless response changed the plan: %q, %v", account.PlanType, err)
+	}
+}
