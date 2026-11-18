@@ -19,17 +19,18 @@ const (
 )
 
 type DiscoveredModel struct {
-	ID                     string   `json:"id"`
-	DisplayName            string   `json:"display_name,omitempty"`
-	Description            string   `json:"description,omitempty"`
-	ContextWindow          int      `json:"context_window,omitempty"`
-	MaxOutputTokens        int      `json:"max_output_tokens,omitempty"`
-	Reasoning              bool     `json:"reasoning,omitempty"`
-	WebSearch              bool     `json:"web_search,omitempty"`
-	Modalities             []string `json:"modalities,omitempty"`
-	Protocol               string   `json:"protocol,omitempty"`
-	ReasoningEfforts       []string `json:"reasoning_efforts,omitempty"`
-	DefaultReasoningEffort string   `json:"default_reasoning_effort,omitempty"`
+	ID                     string          `json:"id"`
+	DisplayName            string          `json:"display_name,omitempty"`
+	Description            string          `json:"description,omitempty"`
+	ContextWindow          int             `json:"context_window,omitempty"`
+	MaxOutputTokens        int             `json:"max_output_tokens,omitempty"`
+	Reasoning              bool            `json:"reasoning,omitempty"`
+	WebSearch              bool            `json:"web_search,omitempty"`
+	Modalities             []string        `json:"modalities,omitempty"`
+	Protocol               string          `json:"protocol,omitempty"`
+	ReasoningEfforts       []string        `json:"reasoning_efforts,omitempty"`
+	DefaultReasoningEffort string          `json:"default_reasoning_effort,omitempty"`
+	CatalogEntry           json.RawMessage `json:"catalog_entry,omitempty"`
 }
 
 type providerModelSnapshot struct {
@@ -304,7 +305,39 @@ func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provi
 			return providerModelSnapshot{}, err
 		}
 	}
+	if provider.Type() == AccountTypeCodex {
+		if err := attachCodexCatalogEntries(body, models); err != nil {
+			return providerModelSnapshot{}, err
+		}
+	}
 	return providerModelSnapshot{FetchedAt: time.Now().UTC(), Models: models}, nil
+}
+
+func attachCodexCatalogEntries(body []byte, models map[string]DiscoveredModel) error {
+	var catalog struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return fmt.Errorf("decode Codex model catalog: %w", err)
+	}
+	for _, raw := range catalog.Models {
+		var entry struct {
+			Slug string `json:"slug"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			return fmt.Errorf("decode Codex model catalog entry: %w", err)
+		}
+		if model, ok := models[strings.TrimSpace(entry.Slug)]; ok {
+			model.CatalogEntry = raw
+			models[model.ID] = model
+		}
+	}
+	for id, model := range models {
+		if len(model.CatalogEntry) == 0 {
+			return fmt.Errorf("Codex model %s has no catalog entry slug", id)
+		}
+	}
+	return nil
 }
 
 func syncProviderModels(ctx context.Context, transport http.RoundTripper, registry *ProviderRegistry, account *Account) error {

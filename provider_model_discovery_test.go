@@ -126,6 +126,29 @@ func TestFetchProviderModelsUsesProviderModelEndpoint(t *testing.T) {
 	}
 }
 
+func TestFetchCodexModelsKeepsUpstreamCatalogEntries(t *testing.T) {
+	wham, _ := url.Parse("https://chatgpt.com/backend-api")
+	provider := NewCodexProvider(wham, wham, nil)
+	account := &Account{ID: "codex", Type: AccountTypeCodex, AccessToken: "a"}
+	entry := `{"slug":"gpt-6.2-sol","display_name":"GPT-6.2 Sol","base_instructions":"You are Codex.","model_messages":{"instructions_template":"t"}}`
+	body := `{"models":[` + entry + `]}`
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	snapshot, err := fetchProviderModels(context.Background(), transport, provider, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(snapshot.Models["gpt-6.2-sol"].CatalogEntry); got != entry {
+		t.Fatalf("catalog entry = %s", got)
+	}
+
+	body = `{"models":[{"id":"gpt-6.2-sol"}]}`
+	if _, err := fetchProviderModels(context.Background(), transport, provider, account); err == nil {
+		t.Fatal("Codex model without a catalog slug was accepted")
+	}
+}
+
 func TestPoolCandidateForModelHonorsPerAccountEntitlement(t *testing.T) {
 	eligible := &Account{ID: "eligible", Type: AccountTypeCodex, PlanType: "pro", Models: map[string]DiscoveredModel{
 		"gpt-daybreak-blue-latest": {ID: "gpt-daybreak-blue-latest"},
