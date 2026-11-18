@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/wire"
 )
 
 func decodeMap(t *testing.T, raw []byte) map[string]any {
@@ -189,7 +190,7 @@ func TestBuildAntigravityResponsesAndClaudeRequests(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.Format != antigravityFormatResponses {
+		if req.Format != wire.FormatResponses {
 			t.Fatalf("%s format = %s", path, req.Format)
 		}
 		inner = decodeMap(t, req.Body)["request"].(map[string]any)
@@ -427,7 +428,7 @@ func antigravityFixture() []byte {
 }
 
 func TestTranslateAntigravityResponses(t *testing.T) {
-	for _, format := range []antigravityClientFormat{antigravityFormatGemini, antigravityFormatChat, antigravityFormatResponses, antigravityFormatAnthropic} {
+	for _, format := range []wire.RequestFormat{wire.FormatGemini, wire.FormatOpenAI, wire.FormatResponses, wire.FormatClaude} {
 		t.Run(format.String(), func(t *testing.T) {
 			out, err := translateAntigravityResponse(antigravityFixture(), format, "gemini-3-flash")
 			if err != nil {
@@ -435,20 +436,20 @@ func TestTranslateAntigravityResponses(t *testing.T) {
 			}
 			obj := decodeMap(t, out)
 			switch format {
-			case antigravityFormatGemini:
+			case wire.FormatGemini:
 				if _, ok := obj["candidates"]; !ok {
 					t.Fatalf("wrapper was not removed: %#v", obj)
 				}
-			case antigravityFormatChat:
+			case wire.FormatOpenAI:
 				message := obj["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
 				if message["reasoning_signature"] != "signed" || len(message["tool_calls"].([]any)) != 1 || len(message["images"].([]any)) != 1 {
 					t.Fatalf("OpenAI response lost content: %#v", message)
 				}
-			case antigravityFormatResponses:
+			case wire.FormatResponses:
 				if obj["object"] != "response" || len(obj["output"].([]any)) != 4 {
 					t.Fatalf("bad Responses response: %#v", obj)
 				}
-			case antigravityFormatAnthropic:
+			case wire.FormatClaude:
 				if obj["stop_reason"] != "tool_use" || len(obj["content"].([]any)) != 4 {
 					t.Fatalf("bad Claude response: %#v", obj)
 				}
@@ -471,7 +472,7 @@ func TestPrepareAntigravityDropsMaxOutputTokensForGemini(t *testing.T) {
 }
 
 func TestAntigravityStreamingTranslations(t *testing.T) {
-	for _, format := range []antigravityClientFormat{antigravityFormatGemini, antigravityFormatChat, antigravityFormatResponses, antigravityFormatAnthropic} {
+	for _, format := range []wire.RequestFormat{wire.FormatGemini, wire.FormatOpenAI, wire.FormatResponses, wire.FormatClaude} {
 		t.Run(format.String(), func(t *testing.T) {
 			var out bytes.Buffer
 			writer := newAntigravityStreamWriter(&out, format, "gemini-3-flash")
@@ -486,20 +487,20 @@ func TestAntigravityStreamingTranslations(t *testing.T) {
 			}
 			got := out.String()
 			switch format {
-			case antigravityFormatGemini:
+			case wire.FormatGemini:
 				if strings.Contains(got, `"response"`) || !strings.Contains(got, `"candidates"`) {
 					t.Fatalf("bad Gemini stream: %s", got)
 				}
-			case antigravityFormatChat:
+			case wire.FormatOpenAI:
 				if !strings.Contains(got, `chat.completion.chunk`) || !strings.Contains(got, `data: [DONE]`) {
 					t.Fatalf("bad OpenAI stream: %s", got)
 				}
-			case antigravityFormatResponses:
+			case wire.FormatResponses:
 				completedIndex := strings.LastIndex(got, `event: response.completed`)
 				if !strings.Contains(got, `event: response.created`) || completedIndex < 0 || !strings.Contains(got, `response.function_call_arguments.delta`) || !strings.Contains(got, `event: response.content_part.added`) || !strings.Contains(got, `event: response.content_part.done`) || !strings.Contains(got[completedIndex:], `"output":[{`) {
 					t.Fatalf("bad Responses stream: %s", got)
 				}
-			case antigravityFormatAnthropic:
+			case wire.FormatClaude:
 				if !strings.Contains(got, `event: message_start`) || !strings.Contains(got, `thinking_delta`) || !strings.Contains(got, `event: message_stop`) {
 					t.Fatalf("bad Claude stream: %s", got)
 				}
@@ -510,11 +511,11 @@ func TestAntigravityStreamingTranslations(t *testing.T) {
 
 func TestTranslateAntigravityErrorShapes(t *testing.T) {
 	body := []byte(`{"error":{"code":429,"message":"quota exhausted","status":"RESOURCE_EXHAUSTED"}}`)
-	claude := decodeMap(t, translateAntigravityError(body, antigravityFormatAnthropic, 429))
+	claude := decodeMap(t, translateAntigravityError(body, wire.FormatClaude, 429))
 	if claude["error"].(map[string]any)["type"] != "rate_limit_error" {
 		t.Fatalf("bad Claude error: %#v", claude)
 	}
-	openAI := decodeMap(t, translateAntigravityError(body, antigravityFormatChat, 429))
+	openAI := decodeMap(t, translateAntigravityError(body, wire.FormatOpenAI, 429))
 	if openAI["error"].(map[string]any)["type"] != "rate_limit_error" {
 		t.Fatalf("bad OpenAI error: %#v", openAI)
 	}
@@ -522,7 +523,7 @@ func TestTranslateAntigravityErrorShapes(t *testing.T) {
 
 func TestTranslateAntigravityErrorPreservesUpstreamCodeAndType(t *testing.T) {
 	body := []byte(`{"error":{"code":"INVALID_ARGUMENT","type":"invalid_request_error","message":"Request contains an invalid argument."}}`)
-	got := decodeMap(t, translateAntigravityError(body, antigravityFormatChat, http.StatusBadRequest))
+	got := decodeMap(t, translateAntigravityError(body, wire.FormatOpenAI, http.StatusBadRequest))
 	errObj := got["error"].(map[string]any)
 	if errObj["code"] != "invalid_argument" || errObj["type"] != "invalid_request_error" {
 		t.Fatalf("upstream error fields were not preserved: %#v", errObj)

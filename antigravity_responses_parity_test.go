@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 type responsesParityEvent struct {
@@ -15,7 +17,7 @@ type responsesParityEvent struct {
 func writeAntigravityResponsesChunks(t *testing.T, chunks ...string) []responsesParityEvent {
 	t.Helper()
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
+	writer := newAntigravityStreamWriter(&out, wire.FormatResponses, "gemini-3.5-flash")
 	for _, chunk := range chunks {
 		if _, err := writer.Write([]byte("data: " + chunk + "\n\n")); err != nil {
 			t.Fatal(err)
@@ -146,7 +148,7 @@ func TestAntigravityResponsesNonStreamUsesProviderMetadataAndScaffold(t *testing
 
 func TestAntigravityResponsesStreamEchoesRequestFieldsInCompletedResponse(t *testing.T) {
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
+	writer := newAntigravityStreamWriter(&out, wire.FormatResponses, "gemini-3.5-flash")
 	writer.setResponsesRequest(map[string]any{
 		"instructions":        "be exact",
 		"parallel_tool_calls": false,
@@ -190,7 +192,7 @@ func TestAntigravityResponsesRestoresMappedFunctionNames(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
+	writer := newAntigravityStreamWriter(&out, wire.FormatResponses, "gemini-3.5-flash")
 	writer.setResponsesFunctionNames(reverseNames)
 	chunk, err := json.Marshal(map[string]any{"response": response})
 	if err != nil {

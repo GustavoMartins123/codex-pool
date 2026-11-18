@@ -24,41 +24,18 @@ import (
 	"github.com/google/uuid"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/wire"
 )
 
 // The Antigravity wire contract and translation behavior are adapted from
 // router-for-me/CLIProxyAPI at c8803713c972af0076f55933fdeed4db81d72d24.
 // CLIProxyAPI is MIT licensed; see THIRD_PARTY_NOTICES.md.
 
-type antigravityClientFormat int
-
-const (
-	antigravityFormatGemini antigravityClientFormat = iota
-	antigravityFormatChat
-	antigravityFormatResponses
-	antigravityFormatAnthropic
-)
-
 const antigravityFunctionThoughtSignature = "skip_thought_signature_validator"
-
-func (format antigravityClientFormat) String() string {
-	switch format {
-	case antigravityFormatGemini:
-		return "gemini"
-	case antigravityFormatChat:
-		return "openai_chat"
-	case antigravityFormatResponses:
-		return "openai_responses"
-	case antigravityFormatAnthropic:
-		return "anthropic_messages"
-	default:
-		return "unknown"
-	}
-}
 
 type antigravityPreparedRequest struct {
 	Body                     []byte
-	Format                   antigravityClientFormat
+	Format                   wire.RequestFormat
 	ClientStream             bool
 	PublicModel              string
 	UpstreamModel            string
@@ -159,21 +136,21 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 // wrapped body keeps "model" and "request" so the signature replay cache can
 // scope it.
 func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamModel, conversationID string, envelope func(map[string]any) map[string]any) (antigravityPreparedRequest, error) {
-	format := antigravityFormatGemini
+	format := wire.FormatGemini
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
-		format = antigravityFormatAnthropic
+		format = wire.FormatClaude
 	case isAntigravityResponsesPath(path):
-		format = antigravityFormatResponses
+		format = wire.FormatResponses
 	case strings.HasPrefix(path, "/v1/chat/completions"):
-		format = antigravityFormatChat
+		format = wire.FormatOpenAI
 	}
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return antigravityPreparedRequest{}, fmt.Errorf("invalid JSON request: %w", err)
 	}
 	var namespacedTools, customTools map[string]bool
-	if format == antigravityFormatResponses {
+	if format == wire.FormatResponses {
 		namespacedTools, customTools = antigravityInlineAdditionalTools(root)
 	}
 	clientStream, _ := root["stream"].(bool)
@@ -185,17 +162,17 @@ func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamM
 	var gemini map[string]any
 	var err error
 	switch format {
-	case antigravityFormatGemini:
+	case wire.FormatGemini:
 		// Gemini CLI / Code Assist sends {model, request:{contents...}}.
 		// A v1beta body already has contents at the top level.
 		gemini = unwrapGeminiClientRequest(root)
 		delete(gemini, "model")
 		clientStream = strings.Contains(path, "streamGenerateContent") || strings.HasPrefix(path, "/v1internal:") || clientStream
-	case antigravityFormatChat:
+	case wire.FormatOpenAI:
 		gemini, err = antigravityChatToGemini(root)
-	case antigravityFormatAnthropic:
+	case wire.FormatClaude:
 		gemini, err = antigravityAnthropicToGemini(root)
-	case antigravityFormatResponses:
+	case wire.FormatResponses:
 		gemini, err = antigravityResponsesToGemini(root, upstreamModel)
 	}
 	if err != nil {
@@ -214,7 +191,7 @@ func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamM
 	encoded, err := json.Marshal(envelope(gemini))
 	var responsesRequest map[string]any
 	var responsesFunctionNames map[string]string
-	if format == antigravityFormatResponses {
+	if format == wire.FormatResponses {
 		responsesRequest = cloneAnyMap(root)
 		responsesFunctionNames = reverseAntigravityFunctionNameMap(antigravityResponsesFunctionNameMap(root))
 	}
@@ -2062,20 +2039,20 @@ func classifyAntigravityForbidden(body []byte) (needsVerification, banned bool, 
 	return needsVerification, banned, verificationURL
 }
 
-func antigravityFormatForPath(path string) antigravityClientFormat {
+func antigravityFormatForPath(path string) wire.RequestFormat {
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
-		return antigravityFormatAnthropic
+		return wire.FormatClaude
 	case isAntigravityResponsesPath(path):
-		return antigravityFormatResponses
+		return wire.FormatResponses
 	case strings.HasPrefix(path, "/v1/chat/completions"):
-		return antigravityFormatChat
+		return wire.FormatOpenAI
 	default:
-		return antigravityFormatGemini
+		return wire.FormatGemini
 	}
 }
 
-func logAntigravityUpstreamError(reqID, path string, format antigravityClientFormat, model string, status int, body []byte, providerErr ProviderError) {
+func logAntigravityUpstreamError(reqID, path string, format wire.RequestFormat, model string, status int, body []byte, providerErr ProviderError) {
 	log.Printf("[%s] provider=antigravity path=%s format=%s model=%s status=%d error_class=%s retryable=%t quota_affected=%t summary=%s", reqID, path, format, model, status, providerErr.Class, providerErr.Retryable, providerErr.Class == ProviderErrorQuota, antigravityErrorSummary(body))
 }
 
@@ -2427,7 +2404,7 @@ func antigravityUsage(response map[string]any) *RequestUsage {
 	return provider.ParseUsage(response)
 }
 
-func antigravityWriteError(w http.ResponseWriter, format antigravityClientFormat, status int, body []byte) {
+func antigravityWriteError(w http.ResponseWriter, format wire.RequestFormat, status int, body []byte) {
 	payload := translateAntigravityError(body, format, status)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -15,11 +15,12 @@ import (
 
 	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
+	"codex-pool-proxy/internal/wire"
 )
 
 type antigravityStreamWriter struct {
 	w                        io.Writer
-	format                   antigravityClientFormat
+	format                   wire.RequestFormat
 	model                    string
 	buf                      []byte
 	started                  bool
@@ -47,7 +48,7 @@ type antigravityStreamWriter struct {
 	responsesCustomTools     map[string]bool
 }
 
-func newAntigravityStreamWriter(w io.Writer, format antigravityClientFormat, model string) *antigravityStreamWriter {
+func newAntigravityStreamWriter(w io.Writer, format wire.RequestFormat, model string) *antigravityStreamWriter {
 	return &antigravityStreamWriter{w: w, format: format, model: model, responseID: "resp_" + uuid.NewString(), messageID: "msg_" + uuid.NewString(), responsesOutput: make(map[int]any)}
 }
 
@@ -96,7 +97,7 @@ func (sw *antigravityStreamWriter) translate(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if sw.format == antigravityFormatGemini {
+	if sw.format == wire.FormatGemini {
 		return sw.emitData(gemini)
 	}
 	var obj map[string]any
@@ -106,11 +107,11 @@ func (sw *antigravityStreamWriter) translate(data []byte) error {
 	r := parseAntigravityGeminiResponse(obj)
 	sw.usage = r
 	switch sw.format {
-	case antigravityFormatChat:
+	case wire.FormatOpenAI:
 		return sw.emitOpenAI(r)
-	case antigravityFormatResponses:
+	case wire.FormatResponses:
 		return sw.emitResponses(r)
-	case antigravityFormatAnthropic:
+	case wire.FormatClaude:
 		return sw.emitClaude(r)
 	default:
 		return fmt.Errorf("unsupported antigravity stream format %q", sw.format)

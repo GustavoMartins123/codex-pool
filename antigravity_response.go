@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/wire"
 )
 
 func unwrapAntigravityResponse(body []byte) ([]byte, error) {
@@ -26,16 +27,16 @@ func unwrapAntigravityResponse(body []byte) ([]byte, error) {
 	return body, nil
 }
 
-func translateAntigravityResponse(body []byte, format antigravityClientFormat, requestModel string) ([]byte, error) {
+func translateAntigravityResponse(body []byte, format wire.RequestFormat, requestModel string) ([]byte, error) {
 	return translateAntigravityResponseWithRequest(body, format, requestModel, nil, nil, nil, nil)
 }
 
-func translateAntigravityResponseWithRequest(body []byte, format antigravityClientFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string, responsesNamespacedTools, responsesCustomTools map[string]bool) ([]byte, error) {
+func translateAntigravityResponseWithRequest(body []byte, format wire.RequestFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string, responsesNamespacedTools, responsesCustomTools map[string]bool) ([]byte, error) {
 	gemini, err := unwrapAntigravityResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap antigravity response: %w", err)
 	}
-	if format == antigravityFormatGemini {
+	if format == wire.FormatGemini {
 		return gemini, nil
 	}
 	var response map[string]any
@@ -43,11 +44,11 @@ func translateAntigravityResponseWithRequest(body []byte, format antigravityClie
 		return nil, err
 	}
 	switch format {
-	case antigravityFormatChat:
+	case wire.FormatOpenAI:
 		return json.Marshal(antigravityGeminiToOpenAI(response, requestModel))
-	case antigravityFormatResponses:
+	case wire.FormatResponses:
 		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, responsesRequest, responsesFunctionNames, responsesNamespacedTools, responsesCustomTools))
-	case antigravityFormatAnthropic:
+	case wire.FormatClaude:
 		return json.Marshal(antigravityGeminiToClaude(response, requestModel))
 	default:
 		return nil, fmt.Errorf("unsupported antigravity client format %q", format)
@@ -343,7 +344,7 @@ func antigravityImageDataURL(image map[string]any) string {
 	return "data:" + jsonvalue.String(image["mimeType"]) + ";base64," + jsonvalue.String(image["data"])
 }
 
-func translateAntigravityError(body []byte, format antigravityClientFormat, status int) []byte {
+func translateAntigravityError(body []byte, format wire.RequestFormat, status int) []byte {
 	message := strings.TrimSpace(string(body))
 	code := "api_error"
 	errorType := ""
@@ -366,10 +367,10 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 		message = fmt.Sprintf("Antigravity upstream returned HTTP %d", status)
 	}
 	switch format {
-	case antigravityFormatAnthropic:
+	case wire.FormatClaude:
 		out, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": antigravityClaudeErrorType(status), "message": message}})
 		return out
-	case antigravityFormatGemini:
+	case wire.FormatGemini:
 		return body
 	default:
 		if errorType == "" {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 // Codex 0.155+ sends tools through `additional_tools` input items with nested
@@ -83,7 +85,7 @@ func TestAntigravityAdditionalToolsFlattenNamespaces(t *testing.T) {
 		"finishReason": "STOP",
 	}}}
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "antigravity/gemini-3.8-flash-high")
+	writer := newAntigravityStreamWriter(&out, wire.FormatResponses, "antigravity/gemini-3.8-flash-high")
 	writer.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
 	writer.setResponsesToolMetadata(prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
 	chunk, err := json.Marshal(map[string]any{"response": response})

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 type geminiParityFunc struct {
@@ -70,17 +72,17 @@ func normalizeGeminiParityOutput(output string, start, end int64) string {
 	})
 }
 
-func geminiParityFormat(t *testing.T, name string) antigravityClientFormat {
+func geminiParityFormat(t *testing.T, name string) wire.RequestFormat {
 	t.Helper()
 	switch name {
 	case "gemini":
-		return antigravityFormatGemini
+		return wire.FormatGemini
 	case "openai_chat":
-		return antigravityFormatChat
+		return wire.FormatOpenAI
 	case "openai_responses":
-		return antigravityFormatResponses
+		return wire.FormatResponses
 	case "anthropic_messages":
-		return antigravityFormatAnthropic
+		return wire.FormatClaude
 	}
 	t.Fatalf("unknown format %q", name)
 	return 0
