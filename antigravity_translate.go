@@ -436,9 +436,9 @@ func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 			geminiRole = "model"
 		}
 		parts := antigravityContentParts(message["content"])
-		if reasoning := firstAntigravityString(message, "reasoning_content", "reasoning"); reasoning != "" {
+		if reasoning := jsonvalue.FirstString(message, "reasoning_content", "reasoning"); reasoning != "" {
 			thought := map[string]any{"text": reasoning, "thought": true}
-			if signature := firstAntigravityString(message, "reasoning_signature", "thought_signature"); signature != "" {
+			if signature := jsonvalue.FirstString(message, "reasoning_signature", "thought_signature"); signature != "" {
 				thought["thoughtSignature"] = signature
 			}
 			parts = append([]any{thought}, parts...)
@@ -489,7 +489,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 			item, _ := items[index].(map[string]any)
 			switch jsonvalue.String(item["type"]) {
 			case "function_call", "custom_tool_call":
-				callNames[firstAntigravityString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"])))
+				callNames[jsonvalue.FirstString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"])))
 			}
 		}
 		for index := 0; index < len(items); index++ {
@@ -504,10 +504,10 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 				} else if item["arguments"] != nil {
 					arguments = item["arguments"]
 				}
-				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": arguments}
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": jsonvalue.FirstString(item, "call_id", "id"), "args": arguments}
 				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
 			case "custom_tool_call":
-				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": map[string]any{"input": jsonvalue.String(item["input"])}}
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": jsonvalue.FirstString(item, "call_id", "id"), "args": map[string]any{"input": jsonvalue.String(item["input"])}}
 				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
 			case "function_call_output", "custom_tool_call_output":
 				response := map[string]any{"result": antigravityJSONValue(item["output"])}
@@ -646,7 +646,7 @@ func antigravityResponsesReasoningParts(item map[string]any, model, visible stri
 	if thoughtText == "" {
 		thoughtText = "[reasoning unavailable]"
 	}
-	signature := normalizeAntigravityGeminiSignature(firstAntigravityString(item, "encrypted_content", "signature"))
+	signature := normalizeAntigravityGeminiSignature(jsonvalue.FirstString(item, "encrypted_content", "signature"))
 	if strings.Contains(strings.ToLower(model), "gemini") {
 		return []any{
 			map[string]any{"text": thoughtText, "thought": true},
@@ -760,15 +760,6 @@ func antigravityNormalizeResponsesItems(items []any) []any {
 	return normalized
 }
 
-func firstAntigravityString(input map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, _ := input[key].(string); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func antigravityJSONValue(value any) any {
 	text, ok := value.(string)
 	if !ok {
@@ -859,7 +850,7 @@ func antigravityContentParts(value any) []any {
 					parts = append(parts, map[string]any{"fileData": map[string]any{"fileUri": urlText}})
 				}
 			case "input_image":
-				urlText := firstAntigravityString(block, "image_url", "url")
+				urlText := jsonvalue.FirstString(block, "image_url", "url")
 				if strings.HasPrefix(urlText, "data:") {
 					if inline := antigravityDataURL(urlText); inline != nil {
 						parts = append(parts, inline)

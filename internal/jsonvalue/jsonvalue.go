@@ -21,6 +21,16 @@ func Slice(v any) []any {
 	return s
 }
 
+// FirstString returns the first non-empty string stored under keys, or "".
+func FirstString(m map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if s := String(m[key]); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // Int64 converts a JSON number to an int64, or returns 0.
 func Int64(v any) int64 {
 	switch n := v.(type) {
