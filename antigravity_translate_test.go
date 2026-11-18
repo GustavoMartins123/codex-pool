@@ -430,7 +430,7 @@ func antigravityFixture() []byte {
 func TestTranslateAntigravityResponses(t *testing.T) {
 	for _, format := range []wire.RequestFormat{wire.FormatGemini, wire.FormatOpenAI, wire.FormatResponses, wire.FormatClaude} {
 		t.Run(format.String(), func(t *testing.T) {
-			out, err := translateAntigravityResponse(antigravityFixture(), format, "gemini-3-flash")
+			out, err := wire.GeminiResponseToClient(antigravityFixture(), format, "gemini-3-flash", wire.ResponsesToolContext{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -475,7 +475,7 @@ func TestAntigravityStreamingTranslations(t *testing.T) {
 	for _, format := range []wire.RequestFormat{wire.FormatGemini, wire.FormatOpenAI, wire.FormatResponses, wire.FormatClaude} {
 		t.Run(format.String(), func(t *testing.T) {
 			var out bytes.Buffer
-			writer := newAntigravityStreamWriter(&out, format, "gemini-3-flash")
+			writer := wire.NewGeminiToClientStream(&out, format, "gemini-3-flash", wire.ResponsesToolContext{})
 			fixture := append([]byte("data: "), antigravityFixture()...)
 			fixture = append(fixture, []byte("\n\n")...)
 			mid := len(fixture) / 2
@@ -511,11 +511,11 @@ func TestAntigravityStreamingTranslations(t *testing.T) {
 
 func TestTranslateAntigravityErrorShapes(t *testing.T) {
 	body := []byte(`{"error":{"code":429,"message":"quota exhausted","status":"RESOURCE_EXHAUSTED"}}`)
-	claude := decodeMap(t, translateAntigravityError(body, wire.FormatClaude, 429))
+	claude := decodeMap(t, wire.GeminiErrorToClient(body, wire.FormatClaude, 429))
 	if claude["error"].(map[string]any)["type"] != "rate_limit_error" {
 		t.Fatalf("bad Claude error: %#v", claude)
 	}
-	openAI := decodeMap(t, translateAntigravityError(body, wire.FormatOpenAI, 429))
+	openAI := decodeMap(t, wire.GeminiErrorToClient(body, wire.FormatOpenAI, 429))
 	if openAI["error"].(map[string]any)["type"] != "rate_limit_error" {
 		t.Fatalf("bad OpenAI error: %#v", openAI)
 	}
@@ -523,7 +523,7 @@ func TestTranslateAntigravityErrorShapes(t *testing.T) {
 
 func TestTranslateAntigravityErrorPreservesUpstreamCodeAndType(t *testing.T) {
 	body := []byte(`{"error":{"code":"INVALID_ARGUMENT","type":"invalid_request_error","message":"Request contains an invalid argument."}}`)
-	got := decodeMap(t, translateAntigravityError(body, wire.FormatOpenAI, http.StatusBadRequest))
+	got := decodeMap(t, wire.GeminiErrorToClient(body, wire.FormatOpenAI, http.StatusBadRequest))
 	errObj := got["error"].(map[string]any)
 	if errObj["code"] != "invalid_argument" || errObj["type"] != "invalid_request_error" {
 		t.Fatalf("upstream error fields were not preserved: %#v", errObj)

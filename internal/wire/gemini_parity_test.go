@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"codex-pool-proxy/internal/wire"
 )
 
 type geminiParityFunc struct {
@@ -72,17 +70,17 @@ func normalizeGeminiParityOutput(output string, start, end int64) string {
 	})
 }
 
-func geminiParityFormat(t *testing.T, name string) wire.RequestFormat {
+func geminiParityFormat(t *testing.T, name string) RequestFormat {
 	t.Helper()
 	switch name {
 	case "gemini":
-		return wire.FormatGemini
+		return FormatGemini
 	case "openai_chat":
-		return wire.FormatOpenAI
+		return FormatOpenAI
 	case "openai_responses":
-		return wire.FormatResponses
+		return FormatResponses
 	case "anthropic_messages":
-		return wire.FormatClaude
+		return FormatClaude
 	}
 	t.Fatalf("unknown format %q", name)
 	return 0
@@ -111,11 +109,11 @@ func runGeminiParityFunc(t *testing.T, tc geminiParityFunc) geminiParityFunc {
 		decodeGeminiParityValue(t, tc.FunctionNames, &names)
 		decodeGeminiParityValue(t, tc.Namespaced, &namespaced)
 		decodeGeminiParityValue(t, tc.Custom, &custom)
-		out, err = translateAntigravityResponseWithRequest([]byte(tc.Input), geminiParityFormat(t, tc.Format), tc.Model, request, names, namespaced, custom)
+		out, err = GeminiResponseToClient([]byte(tc.Input), geminiParityFormat(t, tc.Format), tc.Model, ResponsesToolContext{Request: request, FunctionNames: names, NamespacedTools: namespaced, CustomTools: custom})
 	case "error":
-		out = translateAntigravityError([]byte(tc.Input), geminiParityFormat(t, tc.Format), tc.Status)
+		out = GeminiErrorToClient([]byte(tc.Input), geminiParityFormat(t, tc.Format), tc.Status)
 	case "unwrap":
-		out, err = unwrapAntigravityResponse([]byte(tc.Input))
+		out, err = UnwrapAntigravityResponse([]byte(tc.Input))
 	default:
 		t.Fatalf("unknown codec %q", tc.Codec)
 	}
@@ -132,7 +130,6 @@ func runGeminiParityStream(t *testing.T, tc geminiParityStream) geminiParityStre
 	got.Writes, got.Output = nil, ""
 	start := time.Now().Unix()
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, geminiParityFormat(t, tc.Format), tc.Model)
 	var request map[string]any
 	var names map[string]string
 	var namespaced, custom map[string]bool
@@ -140,15 +137,7 @@ func runGeminiParityStream(t *testing.T, tc geminiParityStream) geminiParityStre
 	decodeGeminiParityValue(t, tc.FunctionNames, &names)
 	decodeGeminiParityValue(t, tc.Namespaced, &namespaced)
 	decodeGeminiParityValue(t, tc.Custom, &custom)
-	if request != nil {
-		writer.setResponsesRequest(request)
-	}
-	if names != nil {
-		writer.setResponsesFunctionNames(names)
-	}
-	if namespaced != nil || custom != nil {
-		writer.setResponsesToolMetadata(namespaced, custom)
-	}
+	writer := NewGeminiToClientStream(&out, geminiParityFormat(t, tc.Format), tc.Model, ResponsesToolContext{Request: request, FunctionNames: names, NamespacedTools: namespaced, CustomTools: custom})
 	for _, chunk := range tc.Chunks {
 		n, err := writer.Write([]byte(chunk))
 		write := geminiParityWrite{N: n}

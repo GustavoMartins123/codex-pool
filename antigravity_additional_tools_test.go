@@ -85,9 +85,9 @@ func TestAntigravityAdditionalToolsFlattenNamespaces(t *testing.T) {
 		"finishReason": "STOP",
 	}}}
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, wire.FormatResponses, "antigravity/gemini-3.8-flash-high")
-	writer.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
-	writer.setResponsesToolMetadata(prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
+	writer := wire.NewGeminiToClientStream(&out, wire.FormatResponses, "antigravity/gemini-3.8-flash-high", wire.ResponsesToolContext{
+		FunctionNames: prepared.ResponsesFunctionNames, NamespacedTools: prepared.ResponsesNamespacedTools, CustomTools: prepared.ResponsesCustomTools,
+	})
 	chunk, err := json.Marshal(map[string]any{"response": response})
 	if err != nil {
 		t.Fatal(err)

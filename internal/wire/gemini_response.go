@@ -1,4 +1,4 @@
-package main
+package wire
 
 // Response conversion is derived in part from CLIProxyAPI's Antigravity
 // translators, distributed under the MIT License.
@@ -13,10 +13,10 @@ import (
 	"github.com/google/uuid"
 
 	"codex-pool-proxy/internal/jsonvalue"
-	"codex-pool-proxy/internal/wire"
 )
 
-func unwrapAntigravityResponse(body []byte) ([]byte, error) {
+// UnwrapAntigravityResponse returns the Gemini reply inside an Antigravity envelope.
+func UnwrapAntigravityResponse(body []byte) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, err
@@ -27,16 +27,22 @@ func unwrapAntigravityResponse(body []byte) ([]byte, error) {
 	return body, nil
 }
 
-func translateAntigravityResponse(body []byte, format wire.RequestFormat, requestModel string) ([]byte, error) {
-	return translateAntigravityResponseWithRequest(body, format, requestModel, nil, nil, nil, nil)
+// ResponsesToolContext carries the Responses request details that a Gemini
+// reply echoes and the tool names it restores.
+type ResponsesToolContext struct {
+	Request         map[string]any
+	FunctionNames   map[string]string
+	NamespacedTools map[string]bool
+	CustomTools     map[string]bool
 }
 
-func translateAntigravityResponseWithRequest(body []byte, format wire.RequestFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string, responsesNamespacedTools, responsesCustomTools map[string]bool) ([]byte, error) {
-	gemini, err := unwrapAntigravityResponse(body)
+// GeminiResponseToClient translates a completed Gemini reply to the client format.
+func GeminiResponseToClient(body []byte, format RequestFormat, requestModel string, tools ResponsesToolContext) ([]byte, error) {
+	gemini, err := UnwrapAntigravityResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap antigravity response: %w", err)
 	}
-	if format == wire.FormatGemini {
+	if format == FormatGemini {
 		return gemini, nil
 	}
 	var response map[string]any
@@ -44,11 +50,11 @@ func translateAntigravityResponseWithRequest(body []byte, format wire.RequestFor
 		return nil, err
 	}
 	switch format {
-	case wire.FormatOpenAI:
+	case FormatOpenAI:
 		return json.Marshal(antigravityGeminiToOpenAI(response, requestModel))
-	case wire.FormatResponses:
-		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, responsesRequest, responsesFunctionNames, responsesNamespacedTools, responsesCustomTools))
-	case wire.FormatClaude:
+	case FormatResponses:
+		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, tools.Request, tools.FunctionNames, tools.NamespacedTools, tools.CustomTools))
+	case FormatClaude:
 		return json.Marshal(antigravityGeminiToClaude(response, requestModel))
 	default:
 		return nil, fmt.Errorf("unsupported antigravity client format %q", format)
@@ -262,7 +268,7 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 			if original := functionNames[name]; original != "" {
 				name = original
 			}
-			bareName, namespace := antigravitySplitToolCallName(name, namespacedTools)
+			bareName, namespace := splitNamespacedToolName(name, namespacedTools)
 			if customTools[name] {
 				input := ""
 				if args := jsonvalue.Map(part.Tool["args"]); args != nil {
@@ -344,7 +350,8 @@ func antigravityImageDataURL(image map[string]any) string {
 	return "data:" + jsonvalue.String(image["mimeType"]) + ";base64," + jsonvalue.String(image["data"])
 }
 
-func translateAntigravityError(body []byte, format wire.RequestFormat, status int) []byte {
+// GeminiErrorToClient translates an upstream error body to the client format.
+func GeminiErrorToClient(body []byte, format RequestFormat, status int) []byte {
 	message := strings.TrimSpace(string(body))
 	code := "api_error"
 	errorType := ""
@@ -355,9 +362,9 @@ func translateAntigravityError(body []byte, format wire.RequestFormat, status in
 			if m := jsonvalue.String(errObj["message"]); m != "" {
 				message = m
 			}
-			if c := antigravityErrorValue(errObj["code"]); c != "" {
+			if c := GeminiErrorField(errObj["code"]); c != "" {
 				code = strings.ToLower(c)
-			} else if c := antigravityErrorValue(errObj["status"]); c != "" {
+			} else if c := GeminiErrorField(errObj["status"]); c != "" {
 				code = strings.ToLower(c)
 			}
 			errorType = jsonvalue.String(errObj["type"])
@@ -367,10 +374,10 @@ func translateAntigravityError(body []byte, format wire.RequestFormat, status in
 		message = fmt.Sprintf("Antigravity upstream returned HTTP %d", status)
 	}
 	switch format {
-	case wire.FormatClaude:
+	case FormatClaude:
 		out, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": antigravityClaudeErrorType(status), "message": message}})
 		return out
-	case wire.FormatGemini:
+	case FormatGemini:
 		return body
 	default:
 		if errorType == "" {
@@ -381,7 +388,8 @@ func translateAntigravityError(body []byte, format wire.RequestFormat, status in
 	}
 }
 
-func antigravityErrorValue(value any) string {
+// GeminiErrorField formats a Gemini error code or status value.
+func GeminiErrorField(value any) string {
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)
@@ -396,34 +404,6 @@ func antigravityErrorValue(value any) string {
 	}
 }
 
-func antigravityErrorSummary(body []byte) string {
-	var obj map[string]any
-	if json.Unmarshal(body, &obj) != nil {
-		text := strings.TrimSpace(string(body))
-		if len(text) > 256 {
-			text = text[:256]
-		}
-		return safeText([]byte(text))
-	}
-	errObj := jsonvalue.Map(obj["error"])
-	if errObj == nil {
-		return "unstructured_error"
-	}
-	parts := make([]string, 0, 5)
-	for _, key := range []string{"code", "status", "type", "message"} {
-		if value := antigravityErrorValue(errObj[key]); value != "" {
-			parts = append(parts, key+"="+value)
-		}
-	}
-	if len(parts) == 0 {
-		return "structured_error"
-	}
-	summary := strings.Join(parts, " ")
-	if len(summary) > 512 {
-		summary = summary[:512]
-	}
-	return safeText([]byte(summary))
-}
 func antigravityOpenAIErrorType(status int) string {
 	switch status {
 	case 400, 404:
@@ -455,4 +435,16 @@ func antigravityClaudeErrorType(status int) string {
 	default:
 		return "api_error"
 	}
+}
+
+// splitNamespacedToolName splits a resolved tool name that came from an
+// `additional_tools` namespace back into the bare tool name and namespace.
+func splitNamespacedToolName(name string, namespaced map[string]bool) (bare, namespace string) {
+	if len(namespaced) == 0 || !namespaced[name] {
+		return name, ""
+	}
+	if idx := strings.Index(name, "."); idx > 0 {
+		return name[idx+1:], name[:idx]
+	}
+	return name, ""
 }

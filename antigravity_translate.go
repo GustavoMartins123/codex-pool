@@ -48,6 +48,10 @@ type antigravityPreparedRequest struct {
 	Provider                 AccountType // upstream account type; empty means Antigravity
 }
 
+func (prepared antigravityPreparedRequest) responsesToolContext() wire.ResponsesToolContext {
+	return wire.ResponsesToolContext{Request: prepared.ResponsesRequest, FunctionNames: prepared.ResponsesFunctionNames, NamespacedTools: prepared.ResponsesNamespacedTools, CustomTools: prepared.ResponsesCustomTools}
+}
+
 func (prepared antigravityPreparedRequest) provider() AccountType {
 	if prepared.Provider == "" {
 		return AccountTypeAntigravity
@@ -1287,18 +1291,6 @@ func antigravityNamespacedToolName(namespace, name string) string {
 	return namespace + "." + name
 }
 
-// antigravitySplitToolCallName splits a resolved tool name that came from an
-// `additional_tools` namespace back into the bare tool name and namespace.
-func antigravitySplitToolCallName(name string, namespaced map[string]bool) (bare, namespace string) {
-	if len(namespaced) == 0 || !namespaced[name] {
-		return name, ""
-	}
-	if idx := strings.Index(name, "."); idx > 0 {
-		return name[idx+1:], name[:idx]
-	}
-	return name, ""
-}
-
 func sanitizeAntigravityNamespaceComponent(namespace string) string {
 	var builder strings.Builder
 	for _, char := range strings.TrimSpace(namespace) {
@@ -1903,7 +1895,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 				antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(readErr.Error()))
 				return true
 			}
-			unwrapped, unwrapErr := unwrapAntigravityResponse(responseBody)
+			unwrapped, unwrapErr := wire.UnwrapAntigravityResponse(responseBody)
 			if unwrapErr != nil {
 				antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(unwrapErr.Error()))
 				return true
@@ -2050,6 +2042,35 @@ func antigravityFormatForPath(path string) wire.RequestFormat {
 	default:
 		return wire.FormatGemini
 	}
+}
+
+func antigravityErrorSummary(body []byte) string {
+	var obj map[string]any
+	if json.Unmarshal(body, &obj) != nil {
+		text := strings.TrimSpace(string(body))
+		if len(text) > 256 {
+			text = text[:256]
+		}
+		return safeText([]byte(text))
+	}
+	errObj := jsonvalue.Map(obj["error"])
+	if errObj == nil {
+		return "unstructured_error"
+	}
+	parts := make([]string, 0, 5)
+	for _, key := range []string{"code", "status", "type", "message"} {
+		if value := wire.GeminiErrorField(errObj[key]); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	if len(parts) == 0 {
+		return "structured_error"
+	}
+	summary := strings.Join(parts, " ")
+	if len(summary) > 512 {
+		summary = summary[:512]
+	}
+	return safeText([]byte(summary))
 }
 
 func logAntigravityUpstreamError(reqID, path string, format wire.RequestFormat, model string, status int, body []byte, providerErr ProviderError) {
@@ -2245,7 +2266,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 			return
 		}
 		antigravityCaptureNativeReplay(replayScope, prepared.Body, wrapped)
-		body, err := translateAntigravityResponseWithRequest(wrapped, prepared.Format, prepared.PublicModel, prepared.ResponsesRequest, prepared.ResponsesFunctionNames, prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
+		body, err := wire.GeminiResponseToClient(wrapped, prepared.Format, prepared.PublicModel, prepared.responsesToolContext())
 		if err != nil {
 			antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(err.Error()))
 			return
@@ -2268,10 +2289,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 	flusher, _ := w.(http.Flusher)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 8<<20)
-	translator := newAntigravityStreamWriter(w, prepared.Format, prepared.PublicModel)
-	translator.setResponsesRequest(prepared.ResponsesRequest)
-	translator.setResponsesFunctionNames(prepared.ResponsesFunctionNames)
-	translator.setResponsesToolMetadata(prepared.ResponsesNamespacedTools, prepared.ResponsesCustomTools)
+	translator := wire.NewGeminiToClientStream(w, prepared.Format, prepared.PublicModel, prepared.responsesToolContext())
 	var usage *RequestUsage
 	var assistantText strings.Builder
 	validResponseSeen := false
@@ -2405,7 +2423,7 @@ func antigravityUsage(response map[string]any) *RequestUsage {
 }
 
 func antigravityWriteError(w http.ResponseWriter, format wire.RequestFormat, status int, body []byte) {
-	payload := translateAntigravityError(body, format, status)
+	payload := wire.GeminiErrorToClient(body, format, status)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_, _ = w.Write(payload)
