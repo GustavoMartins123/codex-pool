@@ -6,6 +6,38 @@ import (
 	"strings"
 )
 
+// TranslateChatMessagesError converts a native error once, from its upstream
+// protocol to the client's protocol. Unrecognized envelopes are rejected.
+func TranslateChatMessagesError(body []byte, direction TranslateDirection) ([]byte, error) {
+	source, err := decodeJSONObject(body, "Anthropic/OpenAI Chat error")
+	if err != nil {
+		return nil, err
+	}
+	details, _ := source["error"].(map[string]any)
+	message, ok := details["message"].(string)
+	if !ok {
+		return nil, fmt.Errorf("upstream error envelope has no message")
+	}
+	kind, _ := details["type"].(string)
+	switch direction {
+	case TranslateOAIToClaude:
+		return json.Marshal(anthropicErrorEnvelope(mapOAIErrorTypeToClaude(kind), message))
+	case TranslateClaudeToOAI:
+		if source["type"] != "error" {
+			return nil, fmt.Errorf("invalid Anthropic error envelope")
+		}
+		return json.Marshal(map[string]any{"error": map[string]any{
+			"type": mapClaudeErrorTypeToOAI(kind), "message": message, "code": nil,
+		}})
+	default:
+		return nil, fmt.Errorf("unsupported Anthropic/OpenAI Chat error translation direction: %d", direction)
+	}
+}
+
+func anthropicErrorEnvelope(kind, message string) map[string]any {
+	return map[string]any{"type": "error", "error": map[string]any{"type": kind, "message": message}}
+}
+
 // OpenAIErrorToClaude converts an OpenAI error response to Claude format.
 // OpenAI: {"error":{"message":"...","type":"...","code":"..."}}
 // Claude: {"type":"error","error":{"type":"...","message":"..."}}
@@ -21,13 +53,7 @@ func OpenAIErrorToClaude(parsed map[string]any, original []byte) []byte {
 	}
 	// Map OpenAI error types to Claude error types
 	claudeType := mapOAIErrorTypeToClaude(errType)
-	out, err := json.Marshal(map[string]any{
-		"type": "error",
-		"error": map[string]any{
-			"type":    claudeType,
-			"message": message,
-		},
-	})
+	out, err := json.Marshal(anthropicErrorEnvelope(claudeType, message))
 	if err != nil {
 		return original
 	}
@@ -81,37 +107,6 @@ func ErrorToClaudeFormat(body []byte, statusCode int) []byte {
 
 	// Unknown format, return as-is
 	return body
-}
-
-// ClaudeErrorToOpenAI converts a Claude error response to OpenAI format.
-// Claude: {"type":"error","error":{"type":"...","message":"..."}}
-// OpenAI: {"error":{"message":"...","type":"...","code":null}}
-
-func ClaudeErrorToOpenAI(parsed map[string]any, original []byte) []byte {
-	if t, _ := parsed["type"].(string); t != "error" {
-		return original
-	}
-	errObj, ok := parsed["error"].(map[string]any)
-	if !ok {
-		return original
-	}
-	message, _ := errObj["message"].(string)
-	errType, _ := errObj["type"].(string)
-	if errType == "" {
-		errType = "api_error"
-	}
-	oaiType := mapClaudeErrorTypeToOAI(errType)
-	out, err := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    oaiType,
-			"code":    nil,
-		},
-	})
-	if err != nil {
-		return original
-	}
-	return out
 }
 
 func mapOAIErrorTypeToClaude(oaiType string) string {

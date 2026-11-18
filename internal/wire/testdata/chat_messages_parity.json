@@ -1,0 +1,125 @@
+[
+  {
+    "name": "messages request keeps tool replies, reminders, images, and schema normalization",
+    "codec": "messages-request",
+    "input": {
+      "model": "qwen3.8-max",
+      "system": [{"type": "text", "text": "Rules"}, {"type": "text", "text": "Style"}],
+      "messages": [
+        {"role": "user", "content": [{"type": "text", "text": "Inspect this"}, {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aW1n"}}]},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "internal"}, {"type": "text", "text": "Checking"}, {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"query": "item"}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": [{"type": "text", "text": "A"}, {"type": "text", "text": "B"}]}, {"type": "text", "text": "Keep going"}]}
+      ],
+      "max_tokens": 128,
+      "stream": true,
+      "stop_sequences": ["end"],
+      "tools": [{"name": "lookup", "description": "Find an item", "input_schema": {"type": "object", "required": null, "properties": {"query": {"type": "string", "format": "uri"}}}}],
+      "tool_choice": {"type": "tool", "name": "lookup"}
+    },
+    "want": {
+      "model": "qwen3.8-max",
+      "messages": [
+        {"role": "system", "content": "Rules\n\nStyle"},
+        {"role": "user", "content": [{"type": "text", "text": "Inspect this"}, {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1n"}}]},
+        {"role": "assistant", "content": "Checking", "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{\"query\":\"item\"}"}}]},
+        {"role": "tool", "tool_call_id": "call-1", "content": "A\n\nB"},
+        {"role": "user", "content": "Keep going"}
+      ],
+      "max_tokens": 128,
+      "stream": true,
+      "stream_options": {"include_usage": true},
+      "stop": ["end"],
+      "tools": [{"type": "function", "function": {"name": "lookup", "description": "Find an item", "parameters": {"type": "object", "required": [], "properties": {"query": {"type": "string"}}}}}],
+      "tool_choice": {"type": "function", "function": {"name": "lookup"}}
+    }
+  },
+  {
+    "name": "chat request groups tool results and preserves ordered Anthropic envelope",
+    "codec": "chat-request",
+    "input": {
+      "model": "sonnet",
+      "messages": [
+        {"role": "system", "content": "Rules"},
+        {"role": "system", "content": "Style"},
+        {"role": "user", "content": [{"type": "text", "text": "Inspect this"}, {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}}]},
+        {"role": "assistant", "content": "Checking", "reasoning_content": "Planning", "tool_calls": [
+          {"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{\"query\":\"A\"}"}},
+          {"id": "call-2", "type": "function", "function": {"name": "lookup", "arguments": "{\"query\":\"B\"}"}}
+        ]},
+        {"role": "tool", "tool_call_id": "call-1", "content": [{"type": "text", "text": "A result"}]},
+        {"role": "tool", "tool_call_id": "call-2", "content": "B result"}
+      ],
+      "max_completion_tokens": 128,
+      "stop": "end",
+      "stream": true,
+      "tools": [{"type": "function", "function": {"name": "lookup", "description": "Find", "parameters": {"type": "object"}}}],
+      "tool_choice": "required"
+    },
+    "want": {
+      "model": "claude-sonnet-5-5",
+      "messages": [
+        {"role": "user", "content": [{"type": "text", "text": "Inspect this"}, {"type": "image", "source": {"type": "url", "url": "https://example.test/image.png"}}]},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "Planning"}, {"type": "text", "text": "Checking"}, {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"query": "A"}}, {"type": "tool_use", "id": "call-2", "name": "lookup", "input": {"query": "B"}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": [{"type": "text", "text": "A result"}]}, {"type": "tool_result", "tool_use_id": "call-2", "content": "B result"}]}
+      ],
+      "system": "Rules\n\nStyle",
+      "tools": [{"name": "lookup", "description": "Find", "input_schema": {"type": "object"}}],
+      "max_tokens": 128,
+      "stream": true,
+      "stop_sequences": ["end"],
+      "tool_choice": {"type": "any"}
+    }
+  },
+  {
+    "name": "chat response preserves visible reasoning, tools and cached input",
+    "codec": "chat-response",
+    "input": {
+      "id": "chat-1",
+      "model": "qwen3.8-max",
+      "choices": [{"finish_reason": "stop", "message": {
+        "role": "assistant",
+        "content": "Checking",
+        "reasoning_content": "Planning",
+        "reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque"}, {"type": "reasoning.summary", "summary": "Summary"}],
+        "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{\"query\":\"item\"}"}}]
+      }}],
+      "usage": {"prompt_tokens": 100, "completion_tokens": 20, "prompt_tokens_details": {"cached_tokens": 30}}
+    },
+    "want": {
+      "id": "chat-1", "model": "qwen3.8-max", "type": "message", "role": "assistant",
+      "content": [{"type": "thinking", "thinking": "Planning"}, {"type": "thinking", "thinking": "Summary"}, {"type": "text", "text": "Checking"}, {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"query": "item"}}],
+      "stop_reason": "tool_use",
+      "usage": {"input_tokens": 70, "cache_read_input_tokens": 30, "output_tokens": 20}
+    }
+  },
+  {
+    "name": "messages response preserves stop reason, reasoning, tools and usage",
+    "codec": "messages-response",
+    "input": {
+      "id": "msg-1",
+      "model": "claude-sonnet-5-5",
+      "type": "message",
+      "role": "assistant",
+      "content": [{"type": "thinking", "thinking": "Planning"}, {"type": "text", "text": "A"}, {"type": "tool_use", "id": "call-1", "name": "lookup", "input": {"query": "item"}}, {"type": "text", "text": "B"}],
+      "stop_reason": "tool_use",
+      "usage": {"input_tokens": 70, "cache_read_input_tokens": 30, "output_tokens": 20}
+    },
+    "want": {
+      "id": "msg-1", "model": "claude-sonnet-5-5", "object": "chat.completion",
+      "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": "A\n\nB", "reasoning_content": "Planning", "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{\"query\":\"item\"}"}}]}}],
+      "usage": {"prompt_tokens": 70, "completion_tokens": 20, "total_tokens": 90}
+    }
+  },
+  {
+    "name": "chat error preserves the rate limit classification",
+    "codec": "chat-error",
+    "input": {"error": {"type": "rate_limit_error", "message": "Slow down", "code": "rate_limit_exceeded"}},
+    "want": {"type": "error", "error": {"type": "rate_limit_error", "message": "Slow down"}}
+  },
+  {
+    "name": "messages error uses the chat error envelope",
+    "codec": "messages-error",
+    "input": {"type": "error", "error": {"type": "overloaded_error", "message": "Busy"}},
+    "want": {"error": {"type": "server_error", "message": "Busy", "code": null}}
+  }
+]

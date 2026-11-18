@@ -1,40 +1,38 @@
-package main
+package wire
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 
 	"codex-pool-proxy/internal/sse"
-	"codex-pool-proxy/internal/wire"
 )
 
-// sseTranslateWriter intercepts upstream SSE events, translates them to the
-// target format, and writes the translated events to the client. It also
-// forwards original event data to a usage callback for usage tracking.
+// NewAnthropicToChatStream converts Messages events to Chat Completions chunks.
+func NewAnthropicToChatStream(w io.Writer) io.Writer {
+	return &sseTranslateWriter{w: w, direction: TranslateClaudeToOAI}
+}
+
+// NewChatToAnthropicStream converts Chat Completions chunks to Messages events.
+func NewChatToAnthropicStream(w io.Writer) io.Writer {
+	return &sseTranslateWriter{w: w, direction: TranslateOAIToClaude}
+}
+
 type sseTranslateWriter struct {
 	framer    sse.Framer
 	err       error
-	w         io.Writer               // underlying writer (flushWriter)
-	direction wire.TranslateDirection // which way to translate
+	w         io.Writer
+	direction TranslateDirection
 	state     streamTranslationState
 	buf       []byte
-	callback  func([]byte) // called with original event data for usage parsing
-	debug     bool
-	reqID     string
 }
 
 type streamTranslationState struct {
 	messageStarted    bool
 	contentBlockIndex int
 	toolCallIndex     int
-	currentToolID     string
-	currentToolName   string
-	sentRole          bool
 	sentThinking      bool // whether we've emitted a thinking content_block_start
-	sentText          bool // whether we've emitted a text content_block_start
 	finishReason      string
 	model             string
 	id                string
@@ -84,15 +82,10 @@ func (sw *sseTranslateWriter) scanAndTranslate() {
 func (sw *sseTranslateWriter) processEvent(event []byte) {
 	eventType, data := sse.ParseEvent(event)
 
-	// Forward original data to usage callback
-	if len(data) > 0 && sw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
-		sw.callback(data)
-	}
-
 	switch sw.direction {
-	case wire.TranslateOAIToClaude:
+	case TranslateOAIToClaude:
 		sw.translateOAIEventToClaude(eventType, data)
-	case wire.TranslateClaudeToOAI:
+	case TranslateClaudeToOAI:
 		sw.translateClaudeEventToOAI(eventType, data)
 	}
 }
@@ -113,8 +106,13 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 		return
 	}
 
-	var chunk map[string]any
-	if err := json.Unmarshal(data, &chunk); err != nil {
+	chunk, err := decodeJSONObject(data, "OpenAI Chat stream event")
+	if err != nil {
+		sw.invalidEvent(err)
+		return
+	}
+	if eventType == "error" || chunk["error"] != nil {
+		sw.upstreamError(data)
 		return
 	}
 
@@ -128,10 +126,10 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 
 	// Handle usage in final chunk
 	if usage, ok := chunk["usage"].(map[string]any); ok {
-		sw.state.inputTokens = toInt64(usage["prompt_tokens"])
-		sw.state.outputTokens = toInt64(usage["completion_tokens"])
+		sw.state.inputTokens = tokenCount(usage["prompt_tokens"])
+		sw.state.outputTokens = tokenCount(usage["completion_tokens"])
 		if details, ok := usage["prompt_tokens_details"].(map[string]any); ok {
-			sw.state.cachedInputTokens = toInt64(details["cached_tokens"])
+			sw.state.cachedInputTokens = tokenCount(details["cached_tokens"])
 		}
 	}
 
@@ -146,7 +144,7 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 
 	// Check finish reason
 	if fr, ok := choice["finish_reason"].(string); ok && fr != "" {
-		sw.state.finishReason = oaiFinishReasonToClaude(fr)
+		sw.state.finishReason = ChatFinishReasonToAnthropic(fr)
 	}
 
 	delta, _ := choice["delta"].(map[string]any)
@@ -170,25 +168,21 @@ func (sw *sseTranslateWriter) translateOAIEventToClaude(eventType string, data [
 	}
 	if reasoningText != "" {
 		if !sw.state.blockOpen || sw.state.blockKind != "thinking" {
-			sw.state.sentThinking = true
-			sw.state.sentRole = true
 			sw.emitClaudeBlockStart("thinking", `{"type":"thinking","thinking":""}`)
 		}
 		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"thinking_delta","thinking":%s}}`,
-			sw.state.contentBlockIndex, mustMarshalString(reasoningText)))
+			sw.state.contentBlockIndex, sse.JSONString(reasoningText)))
 	}
 
 	// Text content
 	if content, ok := delta["content"].(string); ok && content != "" {
 		if !sw.state.blockOpen || sw.state.blockKind != "text" {
-			sw.state.sentText = true
-			sw.state.sentRole = true
 			sw.emitClaudeBlockStart("text", `{"type":"text","text":""}`)
 		}
 		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"text_delta","text":%s}}`,
-			sw.state.contentBlockIndex, mustMarshalString(content)))
+			sw.state.contentBlockIndex, sse.JSONString(content)))
 	}
 
 	// Tool calls
@@ -237,17 +231,15 @@ func (sw *sseTranslateWriter) translateOAIToolCallDelta(call map[string]any) {
 		}
 		tool.started = true
 		sw.state.sawToolUse = true
-		sw.state.sentRole = true
 		sw.state.toolCallIndex++
-		sw.state.currentToolID, sw.state.currentToolName = tool.id, tool.name
 		tool.block = sw.emitClaudeBlockStart("tool_use", fmt.Sprintf(`{"type":"tool_use","id":%s,"name":%s,"input":{}}`,
-			mustMarshalString(tool.id), mustMarshalString(tool.name)))
+			sse.JSONString(tool.id), sse.JSONString(tool.name)))
 		args, tool.pendingInput = tool.pendingInput, ""
 	}
 	if args != "" {
 		sw.emitClaudeEvent("content_block_delta", fmt.Sprintf(
 			`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`,
-			tool.block, mustMarshalString(args)))
+			tool.block, sse.JSONString(args)))
 	}
 }
 
@@ -274,7 +266,7 @@ func (sw *sseTranslateWriter) emitClaudeMessageStart() {
 		id = "msg_translated"
 	}
 	msg := fmt.Sprintf(`{"type":"message_start","message":{"id":%s,"type":"message","role":"assistant","model":%s,"content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}`,
-		mustMarshalString(id), mustMarshalString(model))
+		sse.JSONString(id), sse.JSONString(model))
 	sw.emitClaudeEvent("message_start", msg)
 }
 
@@ -300,7 +292,7 @@ func (sw *sseTranslateWriter) emitClaudeMessageDelta() {
 	}
 	input, cached := claudeInputUsage(sw.state.inputTokens, sw.state.cachedInputTokens)
 	msg := fmt.Sprintf(`{"type":"message_delta","delta":{"stop_reason":%s,"stop_sequence":null},"usage":{"input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":%d}}`,
-		mustMarshalString(stopReason), input, cached, sw.state.outputTokens)
+		sse.JSONString(stopReason), input, cached, sw.state.outputTokens)
 	sw.emitClaudeEvent("message_delta", msg)
 }
 
@@ -318,7 +310,7 @@ func claudeInputUsage(prompt, cached int64) (int64, int64) {
 
 func (sw *sseTranslateWriter) emitClaudeEvent(eventType, data string) {
 	out := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, data)
-	sw.writeOAI(out)
+	sw.writeEvent(out)
 }
 
 // --- Claude Stream -> OpenAI Stream ---
@@ -328,8 +320,9 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 		return
 	}
 
-	var obj map[string]any
-	if err := json.Unmarshal(data, &obj); err != nil {
+	obj, err := decodeJSONObject(data, "Anthropic stream event")
+	if err != nil {
+		sw.invalidEvent(err)
 		return
 	}
 
@@ -339,6 +332,9 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 	}
 
 	switch eventType {
+	case "error":
+		sw.upstreamError(data)
+
 	case "message_start":
 		msg, _ := obj["message"].(map[string]any)
 		if msg != nil {
@@ -349,7 +345,7 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 				sw.state.model = model
 			}
 			if usage, ok := msg["usage"].(map[string]any); ok {
-				sw.state.inputTokens = toInt64(usage["input_tokens"])
+				sw.state.inputTokens = tokenCount(usage["input_tokens"])
 			}
 		}
 		sw.state.messageStarted = true
@@ -370,8 +366,6 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 		if blockType == "tool_use" {
 			id, _ := block["id"].(string)
 			name, _ := block["name"].(string)
-			sw.state.currentToolID = id
-			sw.state.currentToolName = name
 			sw.state.toolCallIndex++
 			idx := sw.state.toolCallIndex - 1
 			sw.emitOAIChunk(map[string]any{
@@ -442,11 +436,11 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 		}
 		stopReason := ""
 		if sr, ok := delta["stop_reason"].(string); ok {
-			stopReason = claudeStopReasonToOAI(sr)
+			stopReason = anthropicStopReasonToChat(sr)
 		}
 		// Get output usage
 		if usage, ok := obj["usage"].(map[string]any); ok {
-			sw.state.outputTokens = toInt64(usage["output_tokens"])
+			sw.state.outputTokens = tokenCount(usage["output_tokens"])
 		}
 		// Emit final chunk with finish_reason and usage
 		usage := map[string]any{
@@ -457,7 +451,7 @@ func (sw *sseTranslateWriter) translateClaudeEventToOAI(eventType string, data [
 		sw.emitOAIChunkWithFinish(map[string]any{}, stopReason, usage)
 
 	case "message_stop":
-		sw.writeOAI("data: [DONE]\n\n")
+		sw.writeEvent("data: [DONE]\n\n")
 
 	case "ping":
 		// Ignore pings
@@ -502,19 +496,43 @@ func (sw *sseTranslateWriter) emitOAIChunkWithFinish(delta map[string]any, finis
 
 	b, err := json.Marshal(chunk)
 	if err != nil {
+		sw.invalidEvent(err)
 		return
 	}
-	sw.writeOAI(fmt.Sprintf("data: %s\n\n", string(b)))
+	sw.writeEvent(fmt.Sprintf("data: %s\n\n", string(b)))
 }
 
-func (sw *sseTranslateWriter) writeOAI(s string) {
+func (sw *sseTranslateWriter) writeEvent(s string) {
 	sse.Write(sw.w, []byte(s), &sw.err)
-	if sw.err != nil && sw.debug {
-		log.Printf("[%s] translate write error: %v", sw.reqID, sw.err)
-	}
 }
 
-func mustMarshalString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
+func (sw *sseTranslateWriter) upstreamError(data []byte) {
+	translated, err := TranslateChatMessagesError(data, sw.direction)
+	if err != nil {
+		sw.invalidEvent(err)
+		return
+	}
+	sw.writeErrorEvent(string(translated), fmt.Errorf("upstream rejected the stream"))
+}
+
+func (sw *sseTranslateWriter) invalidEvent(err error) {
+	message := `{"error":{"message":"invalid upstream stream event","type":"server_error","code":null}}`
+	if sw.direction == TranslateOAIToClaude {
+		message = `{"type":"error","error":{"type":"api_error","message":"invalid upstream stream event"}}`
+	}
+	sw.writeErrorEvent(message, err)
+}
+
+func (sw *sseTranslateWriter) writeErrorEvent(message string, err error) {
+	if sw.err != nil {
+		return
+	}
+	if sw.direction == TranslateOAIToClaude {
+		sw.emitClaudeEvent("error", message)
+	} else {
+		sw.writeEvent("data: " + message + "\n\n")
+	}
+	if sw.err == nil {
+		sw.err = err
+	}
 }

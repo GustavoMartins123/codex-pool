@@ -4,8 +4,15 @@ package sse
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 )
+
+// JSONString quotes a string for use in an SSE JSON payload.
+func JSONString(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
+}
 
 func ExtractEventData(event []byte) []byte {
 	_, data := ParseEvent(event)

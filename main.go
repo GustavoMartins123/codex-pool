@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/logredact"
-	"codex-pool-proxy/internal/orderedjson"
 	"codex-pool-proxy/internal/ratelimit"
 	"codex-pool-proxy/internal/transport"
 	"codex-pool-proxy/internal/wire"
@@ -2906,14 +2905,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		var err error
 		switch translateDir {
 		case wire.TranslateClaudeToOAI:
-			bodyBytes, err = translateRequestBody(bodyBytes, sourceFormat, targetFormat)
+			bodyBytes, err = wire.AnthropicRequestToOpenAIChat(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/chat/completions"
 		case wire.TranslateOAIToClaude:
-			bodyBytes, err = translateRequestBody(bodyBytes, sourceFormat, targetFormat)
+			bodyBytes, err = wire.OpenAIChatRequestToAnthropic(bodyBytes, claudeCanonicalModel)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
@@ -3557,11 +3556,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				continue
 			}
 
-			// Non-retryable error (400, unknown) — return to client.
-			// Translate error body if format translation is active.
+			// Chat/Messages errors are translated once, when writing the response.
 			if translateDir != wire.TranslateNone {
-				translated := translateErrorBody(errBody, targetFormat, sourceFormat)
-				resp.Body = io.NopCloser(bytes.NewReader(translated))
+				if translateDir == wire.TranslateClaudeToResponses && targetFormat == wire.FormatOpenAI && sourceFormat == wire.FormatClaude {
+					var parsed map[string]any
+					if json.Unmarshal(errBody, &parsed) == nil {
+						errBody = wire.OpenAIErrorToClaude(parsed, errBody)
+					}
+				}
+				resp.Body = io.NopCloser(bytes.NewReader(errBody))
 			} else {
 				resp.Body = io.NopCloser(strings.NewReader(errBodyStr))
 			}
@@ -3898,11 +3901,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
+			responseDir := chatMessagesResponseDirection(translateDir)
 			respBody, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if readErr != nil {
 				h.recent.add(readErr.Error())
 				h.metrics.inc("error", acc.ID)
+				if responseDir != wire.TranslateNone {
+					respondJSONError(w, http.StatusBadGateway, "could not read upstream response")
+				}
 				return
 			}
 			// Let the existing usage/sample logic see the raw body
@@ -3912,15 +3919,31 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			h.updateUsageFromBody(acc, respBody, userID, originID, admission)
 
 			var translated []byte
-			if resp.StatusCode >= 400 {
+			if responseDir != wire.TranslateNone {
+				var trErr error
+				switch {
+				case resp.StatusCode >= 400:
+					translated, trErr = wire.TranslateChatMessagesError(respBody, responseDir)
+				case responseDir == wire.TranslateOAIToClaude:
+					translated, trErr = wire.OpenAIChatResponseToAnthropic(respBody, requestedModel)
+				case responseDir == wire.TranslateClaudeToOAI:
+					translated, trErr = wire.AnthropicResponseToOpenAIChat(respBody)
+				}
+				if trErr != nil {
+					if h.cfg.debug.Load() {
+						log.Printf("[%s] Chat/Messages response translation error: %v", reqID, trErr)
+					}
+					h.metrics.inc("error", acc.ID)
+					respondJSONError(w, http.StatusBadGateway, "invalid upstream response for Chat/Messages translation")
+					return
+				}
+			} else if resp.StatusCode >= 400 {
 				// Error response - translate error format
 				if translateDir == wire.TranslateClaudeToResponses {
 					// Translate Codex error to Claude error format
 					translated = wire.ErrorToClaudeFormat(respBody, resp.StatusCode)
-				} else if translateDir == wire.TranslateChatToResponses || translateDir == wire.TranslateCompletionsToResponses || translateDir == wire.TranslateImagesToResponses || translateDir == wire.TranslateResponsesToClaude {
-					translated = respBody // Pass through error as-is
 				} else {
-					translated = translateErrorBody(respBody, targetFormat, sourceFormat)
+					translated = respBody
 				}
 			} else if translateDir == wire.TranslateResponsesToClaude {
 				var trErr error
@@ -3963,7 +3986,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			} else {
 				var trErr error
-				translated, trErr = translateResponseBody(respBody, targetFormat, sourceFormat, requestedModel)
+				translated, trErr = wire.OpenAIChatResponseToAnthropic(respBody, requestedModel)
 				if trErr != nil {
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] response translation error: %v", reqID, trErr)
@@ -4086,20 +4109,10 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 						debug: h.cfg.debug.Load(),
 						reqID: reqID,
 					}
-				} else if translateDir != wire.TranslateNone {
-					// Response direction is opposite of request direction:
-					// TranslateOAIToClaude request → response comes in Claude format → translate to OAI
-					// TranslateClaudeToOAI request → response comes in OAI format → translate to Claude
-					responseDir := wire.TranslateClaudeToOAI
-					if translateDir == wire.TranslateClaudeToOAI {
-						responseDir = wire.TranslateOAIToClaude
-					}
-					writer = &sseTranslateWriter{
-						w:         writer,
-						direction: responseDir,
-						debug:     h.cfg.debug.Load(),
-						reqID:     reqID,
-					}
+				} else if translateDir == wire.TranslateOAIToClaude {
+					writer = wire.NewAnthropicToChatStream(writer)
+				} else if translateDir == wire.TranslateClaudeToOAI {
+					writer = wire.NewChatToAnthropicStream(writer)
 				} else if accountType == AccountTypeCodex && !acc.CyberAccess {
 					suppressor := &cyberPolicyHTTPSuppressor{
 						h: h, reqID: reqID, conversationID: conversationID,
@@ -6457,7 +6470,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := wire.MarshalAnthropicRequest(bodyObj); err == nil {
 					bodyBytes = reordered
 				}
 
@@ -6525,7 +6538,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
-				if reordered, err := orderedjson.Marshal(bodyObj, claudeBodyKeyOrder); err == nil {
+				if reordered, err := wire.MarshalAnthropicRequest(bodyObj); err == nil {
 					bodyBytes = reordered
 				}
 

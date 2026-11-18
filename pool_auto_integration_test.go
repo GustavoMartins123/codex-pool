@@ -103,9 +103,6 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 	attempts := 0
 	upstreamHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
-		body, _ := io.ReadAll(r.Body)
-		var obj map[string]any
-		_ = json.Unmarshal(body, &obj)
 
 		if attempts == 1 {
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -114,7 +111,22 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"fallback success"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`))
+		switch r.URL.Path {
+		case "/v1/messages":
+			_, _ = io.WriteString(w, `{
+				"id":"msg_retry","type":"message","role":"assistant","model":"claude-haiku-4-5-20251001",
+				"content":[{"type":"text","text":"fallback success"}],"stop_reason":"end_turn",
+				"usage":{"input_tokens":10,"output_tokens":5}
+			}`)
+		case "/responses":
+			_, _ = io.WriteString(w, `{
+				"id":"resp_retry","object":"response","status":"completed","model":"gpt-5.4-mini",
+				"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fallback success"}]}],
+				"usage":{"input_tokens":10,"output_tokens":5}
+			}`)
+		default:
+			t.Fatalf("unexpected upstream path on retry: %s", r.URL.Path)
+		}
 	})
 
 	baseURL, _ := url.Parse("http://mock-upstream.local")
@@ -157,6 +169,24 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK after fallback, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if attempts != 2 {
+		t.Fatalf("expected two upstream attempts, got %d", attempts)
+	}
+	var completion struct {
+		Object  string `json:"object"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("decode Chat Completions response: %v", err)
+	}
+	if completion.Object != "chat.completion" || len(completion.Choices) != 1 ||
+		completion.Choices[0].Message.Content != "fallback success" {
+		t.Fatalf("expected translated Chat Completions reply, got %s", rec.Body.String())
 	}
 
 	// Verify route trace records decision
