@@ -508,6 +508,9 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 			NativeTools:        nativeWebSearchTools(entry.provider, entry.model.WebSearch),
 			SupportingAccounts: entry.supporting, AvailableAccounts: entry.available, AvailableNow: entry.available > 0,
 		})
+		if entry.provider == AccountTypeCodex {
+			descriptors[len(descriptors)-1].CodexCatalogEntry = codexCatalogEntry(pool, entry.model.ID)
+		}
 	}
 	return descriptors
 }

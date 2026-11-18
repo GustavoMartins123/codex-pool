@@ -32,7 +32,9 @@ func memberQuotaFixture(t *testing.T) (*proxyHandler, string, string, string, st
 		primarySet: true, secondarySet: true, RetrievedAt: now, PrimaryResetAt: now.Add(time.Hour), SecondaryResetAt: now.Add(24 * time.Hour)}
 	accounts := []*Account{
 		{ID: "private-claude-secret-id", Type: AccountTypeClaude, AccessToken: "never-expose-token", Email: "owner@example.test", Usage: u},
-		{ID: "private-codex-secret-id", Type: AccountTypeCodex, Usage: u},
+		{ID: "private-codex-secret-id", Type: AccountTypeCodex, Usage: u, Models: map[string]DiscoveredModel{
+			"gpt-5.6-sol": {ID: "gpt-5.6-sol", CatalogEntry: json.RawMessage(`{"slug":"gpt-5.6-sol","base_instructions":"You are Codex."}`)},
+		}},
 		{ID: "foreign-claude-secret-id", Type: AccountTypeClaude, Usage: UsageSnapshot{PrimaryUsedPercent: .99, PrimaryUsageReported: true, primarySet: true, RetrievedAt: now}},
 	}
 	if err := p.initializeAccountAuthority(accounts); err != nil {

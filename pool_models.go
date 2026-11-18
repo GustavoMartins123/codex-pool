@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ type poolModelDescriptor struct {
 	AvailableNow           bool                                `json:"available_now"`
 	NextResetAt            *time.Time                          `json:"next_reset_at,omitempty"`
 	Stale                  bool                                `json:"stale,omitempty"`
+	CodexCatalogEntry      json.RawMessage                     `json:"-"`
 }
 
 func nativeWebSearchTools(accountType AccountType, enabled bool) map[string]poolNativeToolDescriptor {
@@ -114,6 +116,9 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 			AvailableAccounts:  availableAccounts,
 			AvailableNow:       availableNow,
 		})
+		if model.AccountType == AccountTypeCodex {
+			models[len(models)-1].CodexCatalogEntry = codexCatalogEntry(pool, model.ID)
+		}
 	}
 	for _, model := range grokModelCatalog {
 		supportingAccounts, availableAccounts, availableNow := poolModelAvailability(pool, AccountTypeGrok, model.ID)
@@ -289,6 +294,25 @@ func poolModelAvailability(pool *poolState, accountType AccountType, modelIDs ..
 		account.mu.Unlock()
 	}
 	return supportingAccounts, availableAccounts, availableAccounts > 0
+}
+
+func codexCatalogEntry(pool *poolState, modelID string) json.RawMessage {
+	if pool == nil {
+		return nil
+	}
+	base := strings.TrimSuffix(modelID, "[1m]")
+	for _, account := range pool.allAccounts() {
+		if account.Type != AccountTypeCodex {
+			continue
+		}
+		account.mu.Lock()
+		discovered, ok := accountDiscoveredModel(account, base)
+		account.mu.Unlock()
+		if ok && len(discovered.CatalogEntry) > 0 {
+			return discovered.CatalogEntry
+		}
+	}
+	return nil
 }
 
 func poolModelIDExists(id string) bool {
