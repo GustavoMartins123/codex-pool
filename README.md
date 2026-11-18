@@ -235,7 +235,7 @@ Use `arm64` for a Linux ARM64 host. To build and install for the current Linux
 architecture, run `./scripts/install.sh` (default: `~/.local/bin`); pass a
 directory to change the install location.
 
-**Windows 10+ (PowerShell, Go 1.26.8+, Node.js 24+, and MSYS2 UCRT64 GCC):**
+**Windows 10+ (PowerShell, Go 1.26.11+, Node.js 24+, and MSYS2 UCRT64 GCC):**
 
 ```powershell
 .\scripts\windows\build.ps1

@@ -1,6 +1,6 @@
 # Verification
 
-Use Go 1.26.8 and Node 24.21.0, matching the pinned container build and CI.
+Use Go 1.26.11 and Node 24.21.0, matching the pinned container build and CI.
 Build embedded assets before running Go checks:
 
 ```sh
