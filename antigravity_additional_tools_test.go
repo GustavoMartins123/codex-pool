@@ -54,14 +54,14 @@ func TestAntigravityAdditionalToolsFlattenNamespaces(t *testing.T) {
 			t.Fatalf("missing upstream declaration %q in %#v", want, names)
 		}
 	}
-	if !prepared.ResponsesNamespacedTools["functions.exec_command"] || !prepared.ResponsesNamespacedTools["mcp__node_repl.js"] {
-		t.Fatalf("namespaced set = %#v", prepared.ResponsesNamespacedTools)
+	if !prepared.Tools.NamespacedTools["functions.exec_command"] || !prepared.Tools.NamespacedTools["mcp__node_repl.js"] {
+		t.Fatalf("namespaced set = %#v", prepared.Tools.NamespacedTools)
 	}
-	if prepared.ResponsesNamespacedTools["apply_patch"] {
+	if prepared.Tools.NamespacedTools["apply_patch"] {
 		t.Fatal("root-level custom tool must not be marked namespaced")
 	}
-	if !prepared.ResponsesCustomTools["apply_patch"] {
-		t.Fatalf("custom set = %#v", prepared.ResponsesCustomTools)
+	if !prepared.Tools.CustomTools["apply_patch"] {
+		t.Fatalf("custom set = %#v", prepared.Tools.CustomTools)
 	}
 	contents := inner["contents"].([]any)
 	for _, raw := range contents {
@@ -86,7 +86,7 @@ func TestAntigravityAdditionalToolsFlattenNamespaces(t *testing.T) {
 	}}}
 	var out bytes.Buffer
 	writer := wire.NewGeminiToClientStream(&out, wire.FormatResponses, "antigravity/gemini-3.8-flash-high", wire.ResponsesToolContext{
-		FunctionNames: prepared.ResponsesFunctionNames, NamespacedTools: prepared.ResponsesNamespacedTools, CustomTools: prepared.ResponsesCustomTools,
+		FunctionNames: prepared.Tools.FunctionNames, NamespacedTools: prepared.Tools.NamespacedTools, CustomTools: prepared.Tools.CustomTools,
 	})
 	chunk, err := json.Marshal(map[string]any{"response": response})
 	if err != nil {

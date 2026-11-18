@@ -244,7 +244,7 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 		case "reasoning":
 			flushMessage()
 			reasoning.WriteString(part.Text)
-			if part.Signature != "" && part.Signature != "skip_thought_signature_validator" {
+			if part.Signature != "" && part.Signature != GeminiSkipThoughtSignature {
 				reasoningSignature = part.Signature
 			}
 		case "text":

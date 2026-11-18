@@ -38,10 +38,10 @@ func runGeminiRequestParity(t *testing.T, tc geminiRequestParityCase) geminiRequ
 	got.Format = prepared.Format.String()
 	got.ClientStream = prepared.ClientStream
 	got.Operation = prepared.Operation
-	got.Request = geminiRequestParityJSON(t, prepared.ResponsesRequest)
-	got.FunctionNames = geminiRequestParityJSON(t, prepared.ResponsesFunctionNames)
-	got.NamespacedTools = geminiRequestParityJSON(t, prepared.ResponsesNamespacedTools)
-	got.CustomTools = geminiRequestParityJSON(t, prepared.ResponsesCustomTools)
+	got.Request = geminiRequestParityJSON(t, prepared.Tools.Request)
+	got.FunctionNames = geminiRequestParityJSON(t, prepared.Tools.FunctionNames)
+	got.NamespacedTools = geminiRequestParityJSON(t, prepared.Tools.NamespacedTools)
+	got.CustomTools = geminiRequestParityJSON(t, prepared.Tools.CustomTools)
 	got.Err = ""
 	if err != nil {
 		got.Err = err.Error()
