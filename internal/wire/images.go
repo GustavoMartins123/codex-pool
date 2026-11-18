@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -11,23 +11,23 @@ import (
 	"mime/multipart"
 	"strings"
 	"time"
-
-	"codex-pool-proxy/internal/wire"
 )
 
-func imagesGenerationCount(body []byte) int {
+// ImagesGenerationCount returns the requested image count, at least one.
+func ImagesGenerationCount(body []byte) int {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return 1
 	}
-	n := int(wire.JSONInt64(req["n"]))
+	n := int(JSONInt64(req["n"]))
 	if n < 1 {
 		return 1
 	}
 	return n
 }
 
-func setImagesGenerationCount(body []byte, n int) []byte {
+// SetImagesGenerationCount rewrites the requested image count.
+func SetImagesGenerationCount(body []byte, n int) []byte {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body
@@ -40,7 +40,9 @@ func setImagesGenerationCount(body []byte, n int) []byte {
 	return out
 }
 
-func translateImagesGenerationToResponses(body []byte) ([]byte, string, error) {
+// ImagesGenerationRequestToResponses translates an image generation request
+// and returns the requested response format.
+func ImagesGenerationRequestToResponses(body []byte) ([]byte, string, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, "", fmt.Errorf("parse image generation request: %w", err)
@@ -50,7 +52,7 @@ func translateImagesGenerationToResponses(body []byte) ([]byte, string, error) {
 	if prompt == "" {
 		return nil, "", errors.New("prompt is required")
 	}
-	if n := wire.JSONInt64(req["n"]); n > 1 {
+	if n := JSONInt64(req["n"]); n > 1 {
 		return nil, "", errors.New("internal fanout required for n > 1")
 	}
 	out, responseFormat, err := buildImagesResponsesRequest(req, []any{map[string]any{"type": "input_text", "text": prompt}})
@@ -113,7 +115,9 @@ func buildImagesResponsesRequest(req map[string]any, content []any) ([]byte, str
 	return rewritten, responseFormat, nil
 }
 
-func translateImagesEditToResponses(body []byte, contentType string) ([]byte, string, error) {
+// ImagesEditRequestToResponses translates a multipart image edit request and
+// returns the requested response format.
+func ImagesEditRequestToResponses(body []byte, contentType string) ([]byte, string, error) {
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
 		return nil, "", errors.New("image edits must use multipart/form-data")
@@ -138,7 +142,7 @@ func translateImagesEditToResponses(body []byte, contentType string) ([]byte, st
 	if prompt == "" {
 		return nil, "", errors.New("prompt is required")
 	}
-	if n := wire.JSONInt64(req["n"]); n > 1 {
+	if n := JSONInt64(req["n"]); n > 1 {
 		return nil, "", errors.New("internal fanout required for n > 1")
 	}
 	content := []any{map[string]any{"type": "input_text", "text": prompt}}
@@ -186,12 +190,13 @@ func multipartImageDataURL(fh *multipart.FileHeader) (string, error) {
 	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
-func appendImagesGenerationData(dst []any, body []byte, responseFormat string) ([]any, int64, error) {
+// AppendImagesGenerationData appends the images of one Images reply.
+func AppendImagesGenerationData(dst []any, body []byte, responseFormat string) ([]any, int64, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, 0, fmt.Errorf("parse images response: %w", err)
 	}
-	created := wire.JSONInt64(resp["created"])
+	created := JSONInt64(resp["created"])
 	data, _ := resp["data"].([]any)
 	for _, entry := range data {
 		if m, ok := entry.(map[string]any); ok {
@@ -201,7 +206,8 @@ func appendImagesGenerationData(dst []any, body []byte, responseFormat string) (
 	return dst, created, nil
 }
 
-func translateResponsesToImagesGeneration(body []byte, responseFormat string) ([]byte, error) {
+// ResponsesResponseToImagesGeneration translates a completed image generation reply.
+func ResponsesResponseToImagesGeneration(body []byte, responseFormat string) ([]byte, error) {
 	var resp map[string]any
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parse responses image response: %w", err)
@@ -236,7 +242,7 @@ func translateResponsesToImagesGeneration(body []byte, responseFormat string) ([
 	if revisedPrompt != "" {
 		entry["revised_prompt"] = revisedPrompt
 	}
-	created := wire.JSONInt64(resp["created_at"])
+	created := JSONInt64(resp["created_at"])
 	if created == 0 {
 		created = time.Now().Unix()
 	}

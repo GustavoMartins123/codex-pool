@@ -1132,7 +1132,7 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return true
 	}
-	oneBody := setImagesGenerationCount(body, 1)
+	oneBody := wire.SetImagesGenerationCount(body, 1)
 	ctx := r.Context()
 	client := &http.Client{Transport: h.transport, Timeout: clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, oneBody)}
 	type imageFanoutResult struct {
@@ -1195,7 +1195,7 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 						results[i].err = fmt.Errorf("image fanout request %d failed: %s: %s", i+1, resp.Status, safeText(respBody))
 					default:
 						var data []any
-						data, results[i].created, err = appendImagesGenerationData(nil, respBody, "b64_json")
+						data, results[i].created, err = wire.AppendImagesGenerationData(nil, respBody, "b64_json")
 						results[i].err = err
 						results[i].data = data
 					}
@@ -2562,7 +2562,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		r.ContentLength = int64(len(bodyBytes))
 	}
 	if strings.HasPrefix(r.URL.Path, "/v1/images/generations") {
-		if n := imagesGenerationCount(bodyBytes); n > 1 {
+		if n := wire.ImagesGenerationCount(bodyBytes); n > 1 {
 			if h.handleImagesGenerationFanout(w, r, bodyBytes, n, reqID) {
 				return
 			}
@@ -2915,9 +2915,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			r.URL.Path = "/v1/responses"
 		case wire.TranslateImagesToResponses:
 			if strings.HasPrefix(r.URL.Path, "/v1/images/edits") {
-				bodyBytes, imagesResponseFormat, err = translateImagesEditToResponses(bodyBytes, r.Header.Get("Content-Type"))
+				bodyBytes, imagesResponseFormat, err = wire.ImagesEditRequestToResponses(bodyBytes, r.Header.Get("Content-Type"))
 			} else {
-				bodyBytes, imagesResponseFormat, err = translateImagesGenerationToResponses(bodyBytes)
+				bodyBytes, imagesResponseFormat, err = wire.ImagesGenerationRequestToResponses(bodyBytes)
 			}
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
@@ -3750,7 +3750,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				continue
 			}
 			result := bufWriter.Result()
-			translated, err := translateResponsesToImagesGeneration(result, imagesResponseFormat)
+			translated, err := wire.ResponsesResponseToImagesGeneration(result, imagesResponseFormat)
 			if err != nil {
 				recordImageGenerationResult(acc, false)
 				h.writeImageGenerationTrace(reqID, acc, rawImageStream.Bytes(), result, err)
@@ -3942,7 +3942,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			} else if translateDir == wire.TranslateImagesToResponses {
 				var trErr error
-				translated, trErr = translateResponsesToImagesGeneration(respBody, imagesResponseFormat)
+				translated, trErr = wire.ResponsesResponseToImagesGeneration(respBody, imagesResponseFormat)
 				if trErr != nil {
 					recordImageGenerationResult(acc, false)
 					if h.cfg.debug.Load() {

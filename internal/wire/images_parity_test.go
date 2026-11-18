@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -28,23 +28,23 @@ func runImagesParityCase(t *testing.T, tc imagesParityCase) imagesParityCase {
 	var err error
 	switch tc.Codec {
 	case "images-count":
-		out = []byte(strconv.Itoa(imagesGenerationCount(input)))
+		out = []byte(strconv.Itoa(ImagesGenerationCount(input)))
 	case "images-set-count":
-		out = setImagesGenerationCount(input, tc.Count)
+		out = SetImagesGenerationCount(input, tc.Count)
 	case "images-generation-request":
-		out, got.Detail, err = translateImagesGenerationToResponses(input)
+		out, got.Detail, err = ImagesGenerationRequestToResponses(input)
 	case "images-edit-request":
-		out, got.Detail, err = translateImagesEditToResponses(input, tc.ContentType)
+		out, got.Detail, err = ImagesEditRequestToResponses(input, tc.ContentType)
 	case "images-append-data":
 		var data []any
 		var created int64
-		data, created, err = appendImagesGenerationData([]any{map[string]any{"b64_json": "prior"}}, input, tc.ResponseFormat)
+		data, created, err = AppendImagesGenerationData([]any{map[string]any{"b64_json": "prior"}}, input, tc.ResponseFormat)
 		if err == nil {
 			out, _ = json.Marshal(data)
 			got.Detail = strconv.FormatInt(created, 10)
 		}
 	case "responses-to-images":
-		out, err = translateResponsesToImagesGeneration(input, tc.ResponseFormat)
+		out, err = ResponsesResponseToImagesGeneration(input, tc.ResponseFormat)
 	default:
 		t.Fatalf("unknown codec %q", tc.Codec)
 	}
