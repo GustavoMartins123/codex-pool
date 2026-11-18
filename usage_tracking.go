@@ -251,6 +251,13 @@ func (h *proxyHandler) pollUpstreamUsage() {
 					}
 				}
 			}
+			if accountPlanCheckDue(a, now) {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				if err := h.checkClaudePlan(ctx, a); err != nil && h.cfg.debug.Load() {
+					log.Printf("claude plan check %s failed: %v", a.ID, err)
+				}
+				cancel()
+			}
 			// Fetch Claude usage if stale
 			if retrievedAt.IsZero() || now.Sub(retrievedAt) >= h.cfg.usageRefresh {
 				if err := h.fetchClaudeUsage(now, a); err != nil && h.cfg.debug.Load() {

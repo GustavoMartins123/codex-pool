@@ -60,6 +60,7 @@ type Account struct {
 	IDTokenChatGPTAccountID string
 	PlanType                string
 	RateLimitTier           string
+	PlanCheckedAt           time.Time
 	MonthlyCost             float64
 	DailyTokenLimit         int64
 	Disabled                bool
@@ -575,6 +576,18 @@ func accountTier(accType AccountType, planType string) int {
 // the same quota as Pro Lite, so they normalize to "prolite". Matching is
 // substring-based so future "business_prolite" variants work without a new
 // special case.
+const accountPlanCheckInterval = time.Hour
+
+func accountPlanCheckDue(a *Account, now time.Time) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.PlanCheckedAt.IsZero() && now.Sub(a.PlanCheckedAt) < accountPlanCheckInterval {
+		return false
+	}
+	a.PlanCheckedAt = now
+	return true
+}
+
 func updateAccountPlan(a *Account, plan string) {
 	a.mu.Lock()
 	previous := a.PlanType
