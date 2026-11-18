@@ -1,4 +1,4 @@
-package main
+package wire
 
 // Response conversion is derived in part from CLIProxyAPI's Antigravity
 // translators, distributed under the MIT License.
@@ -12,10 +12,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"codex-pool-proxy/internal/wire"
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
-func unwrapAntigravityResponse(body []byte) ([]byte, error) {
+// UnwrapAntigravityResponse returns the Gemini reply inside an Antigravity envelope.
+func UnwrapAntigravityResponse(body []byte) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, err
@@ -26,16 +27,22 @@ func unwrapAntigravityResponse(body []byte) ([]byte, error) {
 	return body, nil
 }
 
-func translateAntigravityResponse(body []byte, format antigravityClientFormat, requestModel string) ([]byte, error) {
-	return translateAntigravityResponseWithRequest(body, format, requestModel, nil, nil, nil, nil)
+// ResponsesToolContext carries the Responses request details that a Gemini
+// reply echoes and the tool names it restores.
+type ResponsesToolContext struct {
+	Request         map[string]any
+	FunctionNames   map[string]string
+	NamespacedTools map[string]bool
+	CustomTools     map[string]bool
 }
 
-func translateAntigravityResponseWithRequest(body []byte, format antigravityClientFormat, requestModel string, responsesRequest map[string]any, responsesFunctionNames map[string]string, responsesNamespacedTools, responsesCustomTools map[string]bool) ([]byte, error) {
-	gemini, err := unwrapAntigravityResponse(body)
+// GeminiResponseToClient translates a completed Gemini reply to the client format.
+func GeminiResponseToClient(body []byte, format RequestFormat, requestModel string, tools ResponsesToolContext) ([]byte, error) {
+	gemini, err := UnwrapAntigravityResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap antigravity response: %w", err)
 	}
-	if format == antigravityFormatGemini {
+	if format == FormatGemini {
 		return gemini, nil
 	}
 	var response map[string]any
@@ -43,11 +50,11 @@ func translateAntigravityResponseWithRequest(body []byte, format antigravityClie
 		return nil, err
 	}
 	switch format {
-	case antigravityFormatChat:
+	case FormatOpenAI:
 		return json.Marshal(antigravityGeminiToOpenAI(response, requestModel))
-	case antigravityFormatResponses:
-		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, responsesRequest, responsesFunctionNames, responsesNamespacedTools, responsesCustomTools))
-	case antigravityFormatAnthropic:
+	case FormatResponses:
+		return json.Marshal(antigravityGeminiToResponsesWithRequest(response, requestModel, tools.Request, tools.FunctionNames, tools.NamespacedTools, tools.CustomTools))
+	case FormatClaude:
 		return json.Marshal(antigravityGeminiToClaude(response, requestModel))
 	default:
 		return nil, fmt.Errorf("unsupported antigravity client format %q", format)
@@ -81,22 +88,22 @@ type antigravityResponsePart struct {
 
 func parseAntigravityGeminiResponse(response map[string]any) antigravityResult {
 	var result antigravityResult
-	result.ResponseID = stringValue(response["responseId"])
-	if raw := stringValue(response["createTime"]); raw != "" {
+	result.ResponseID = jsonvalue.String(response["responseId"])
+	if raw := jsonvalue.String(response["createTime"]); raw != "" {
 		result.CreateTime, _ = time.Parse(time.RFC3339Nano, raw)
 	}
-	candidates := anySlice(response["candidates"])
+	candidates := jsonvalue.Slice(response["candidates"])
 	if len(candidates) > 0 {
 		candidate, _ := candidates[0].(map[string]any)
-		result.FinishReason = stringValue(candidate["finishReason"])
+		result.FinishReason = jsonvalue.String(candidate["finishReason"])
 		content, _ := candidate["content"].(map[string]any)
-		for _, raw := range anySlice(content["parts"]) {
+		for _, raw := range jsonvalue.Slice(content["parts"]) {
 			part, _ := raw.(map[string]any)
 			text, _ := part["text"].(string)
 			if thought, _ := part["thought"].(bool); thought {
-				sig := stringValue(part["thoughtSignature"])
+				sig := jsonvalue.String(part["thoughtSignature"])
 				if sig == "" {
-					sig = stringValue(part["thought_signature"])
+					sig = jsonvalue.String(part["thought_signature"])
 				}
 				if text != "" || sig != "" {
 					result.Parts = append(result.Parts, antigravityResponsePart{Kind: "reasoning", Text: text, Signature: sig})
@@ -122,11 +129,11 @@ func parseAntigravityGeminiResponse(response map[string]any) antigravityResult {
 		}
 	}
 	usage, _ := response["usageMetadata"].(map[string]any)
-	result.PromptTokens = wire.JSONInt64(usage["promptTokenCount"])
-	result.OutputTokens = wire.JSONInt64(usage["candidatesTokenCount"])
-	result.ReasoningTokens = wire.JSONInt64(usage["thoughtsTokenCount"])
-	result.CachedTokens = wire.JSONInt64(usage["cachedContentTokenCount"])
-	result.TotalTokens = wire.JSONInt64(usage["totalTokenCount"])
+	result.PromptTokens = jsonvalue.Int64(usage["promptTokenCount"])
+	result.OutputTokens = jsonvalue.Int64(usage["candidatesTokenCount"])
+	result.ReasoningTokens = jsonvalue.Int64(usage["thoughtsTokenCount"])
+	result.CachedTokens = jsonvalue.Int64(usage["cachedContentTokenCount"])
+	result.TotalTokens = jsonvalue.Int64(usage["totalTokenCount"])
 	if result.TotalTokens == 0 {
 		result.TotalTokens = result.PromptTokens + result.OutputTokens
 	}
@@ -146,7 +153,7 @@ func antigravityGeminiToOpenAI(response map[string]any, model string) map[string
 	if len(r.Tools) > 0 {
 		calls := make([]any, 0, len(r.Tools))
 		for i, call := range r.Tools {
-			id := stringValue(call["id"])
+			id := jsonvalue.String(call["id"])
 			if id == "" {
 				id = fmt.Sprintf("call_%d_%s", i, uuid.NewString())
 			}
@@ -249,7 +256,7 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 		case "tool":
 			flushReasoning()
 			flushMessage()
-			callID := stringValue(part.Tool["id"])
+			callID := jsonvalue.String(part.Tool["id"])
 			if callID == "" {
 				callID = fmt.Sprintf("call_%d_%s", toolIndex, uuid.NewString())
 			}
@@ -257,15 +264,15 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 			if part.Tool["args"] != nil {
 				args, _ = json.Marshal(part.Tool["args"])
 			}
-			name := stringValue(part.Tool["name"])
+			name := jsonvalue.String(part.Tool["name"])
 			if original := functionNames[name]; original != "" {
 				name = original
 			}
-			bareName, namespace := antigravitySplitToolCallName(name, namespacedTools)
+			bareName, namespace := splitNamespacedToolName(name, namespacedTools)
 			if customTools[name] {
 				input := ""
-				if args := mapValue(part.Tool["args"]); args != nil {
-					input = stringValue(args["input"])
+				if args := jsonvalue.Map(part.Tool["args"]); args != nil {
+					input = jsonvalue.String(args["input"])
 				}
 				item := map[string]any{"id": "ctc_" + uuid.NewString(), "type": "custom_tool_call", "status": "completed", "call_id": callID, "name": bareName, "input": input}
 				if namespace != "" {
@@ -302,7 +309,7 @@ func antigravityGeminiToClaude(response map[string]any, model string) map[string
 		content = append(content, map[string]any{"type": "text", "text": r.Text})
 	}
 	for i, call := range r.Tools {
-		id := stringValue(call["id"])
+		id := jsonvalue.String(call["id"])
 		if id == "" {
 			id = fmt.Sprintf("toolu_%d_%s", i, uuid.NewString())
 		}
@@ -340,15 +347,11 @@ func antigravityClaudeFinishReason(reason string, hasTools bool) string {
 	return "end_turn"
 }
 func antigravityImageDataURL(image map[string]any) string {
-	return "data:" + stringValue(image["mimeType"]) + ";base64," + stringValue(image["data"])
+	return "data:" + jsonvalue.String(image["mimeType"]) + ";base64," + jsonvalue.String(image["data"])
 }
 
-func anySlice(value any) []any {
-	items, _ := value.([]any)
-	return items
-}
-
-func translateAntigravityError(body []byte, format antigravityClientFormat, status int) []byte {
+// GeminiErrorToClient translates an upstream error body to the client format.
+func GeminiErrorToClient(body []byte, format RequestFormat, status int) []byte {
 	message := strings.TrimSpace(string(body))
 	code := "api_error"
 	errorType := ""
@@ -356,25 +359,25 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 	if json.Unmarshal(body, &obj) == nil {
 		errObj, _ := obj["error"].(map[string]any)
 		if errObj != nil {
-			if m := stringValue(errObj["message"]); m != "" {
+			if m := jsonvalue.String(errObj["message"]); m != "" {
 				message = m
 			}
-			if c := antigravityErrorValue(errObj["code"]); c != "" {
+			if c := GeminiErrorField(errObj["code"]); c != "" {
 				code = strings.ToLower(c)
-			} else if c := antigravityErrorValue(errObj["status"]); c != "" {
+			} else if c := GeminiErrorField(errObj["status"]); c != "" {
 				code = strings.ToLower(c)
 			}
-			errorType = stringValue(errObj["type"])
+			errorType = jsonvalue.String(errObj["type"])
 		}
 	}
 	if message == "" {
 		message = fmt.Sprintf("Antigravity upstream returned HTTP %d", status)
 	}
 	switch format {
-	case antigravityFormatAnthropic:
+	case FormatClaude:
 		out, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": antigravityClaudeErrorType(status), "message": message}})
 		return out
-	case antigravityFormatGemini:
+	case FormatGemini:
 		return body
 	default:
 		if errorType == "" {
@@ -385,7 +388,8 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 	}
 }
 
-func antigravityErrorValue(value any) string {
+// GeminiErrorField formats a Gemini error code or status value.
+func GeminiErrorField(value any) string {
 	switch typed := value.(type) {
 	case string:
 		return strings.TrimSpace(typed)
@@ -400,34 +404,6 @@ func antigravityErrorValue(value any) string {
 	}
 }
 
-func antigravityErrorSummary(body []byte) string {
-	var obj map[string]any
-	if json.Unmarshal(body, &obj) != nil {
-		text := strings.TrimSpace(string(body))
-		if len(text) > 256 {
-			text = text[:256]
-		}
-		return safeText([]byte(text))
-	}
-	errObj := mapValue(obj["error"])
-	if errObj == nil {
-		return "unstructured_error"
-	}
-	parts := make([]string, 0, 5)
-	for _, key := range []string{"code", "status", "type", "message"} {
-		if value := antigravityErrorValue(errObj[key]); value != "" {
-			parts = append(parts, key+"="+value)
-		}
-	}
-	if len(parts) == 0 {
-		return "structured_error"
-	}
-	summary := strings.Join(parts, " ")
-	if len(summary) > 512 {
-		summary = summary[:512]
-	}
-	return safeText([]byte(summary))
-}
 func antigravityOpenAIErrorType(status int) string {
 	switch status {
 	case 400, 404:
@@ -459,4 +435,16 @@ func antigravityClaudeErrorType(status int) string {
 	default:
 		return "api_error"
 	}
+}
+
+// splitNamespacedToolName splits a resolved tool name that came from an
+// `additional_tools` namespace back into the bare tool name and namespace.
+func splitNamespacedToolName(name string, namespaced map[string]bool) (bare, namespace string) {
+	if len(namespaced) == 0 || !namespaced[name] {
+		return name, ""
+	}
+	if idx := strings.Index(name, "."); idx > 0 {
+		return name[idx+1:], name[:idx]
+	}
+	return name, ""
 }

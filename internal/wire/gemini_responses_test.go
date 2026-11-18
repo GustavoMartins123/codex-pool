@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ type responsesParityEvent struct {
 func writeAntigravityResponsesChunks(t *testing.T, chunks ...string) []responsesParityEvent {
 	t.Helper()
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
+	writer := NewGeminiToClientStream(&out, FormatResponses, "gemini-3.5-flash", ResponsesToolContext{})
 	for _, chunk := range chunks {
 		if _, err := writer.Write([]byte("data: " + chunk + "\n\n")); err != nil {
 			t.Fatal(err)
@@ -146,12 +146,11 @@ func TestAntigravityResponsesNonStreamUsesProviderMetadataAndScaffold(t *testing
 
 func TestAntigravityResponsesStreamEchoesRequestFieldsInCompletedResponse(t *testing.T) {
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
-	writer.setResponsesRequest(map[string]any{
+	writer := NewGeminiToClientStream(&out, FormatResponses, "gemini-3.5-flash", ResponsesToolContext{Request: map[string]any{
 		"instructions":        "be exact",
 		"parallel_tool_calls": false,
 		"metadata":            map[string]any{"trace": "abc"},
-	})
+	}})
 	if _, err := writer.Write([]byte("data: " + `{"response":{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}}` + "\n\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +189,7 @@ func TestAntigravityResponsesRestoresMappedFunctionNames(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	writer := newAntigravityStreamWriter(&out, antigravityFormatResponses, "gemini-3.5-flash")
-	writer.setResponsesFunctionNames(reverseNames)
+	writer := NewGeminiToClientStream(&out, FormatResponses, "gemini-3.5-flash", ResponsesToolContext{FunctionNames: reverseNames})
 	chunk, err := json.Marshal(map[string]any{"response": response})
 	if err != nil {
 		t.Fatal(err)

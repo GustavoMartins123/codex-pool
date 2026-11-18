@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // Real HTTP/WS sockets, Passport credentials and provider adapters exercise
@@ -86,7 +88,7 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 					return
 				}
 				request, _ := object["request"].(map[string]any)
-				session := stringValue(request["sessionId"])
+				session := jsonvalue.String(request["sessionId"])
 				recoveryMu.Lock()
 				previous, seen := recoverySessions[answer]
 				if !seen {

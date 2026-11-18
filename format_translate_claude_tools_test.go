@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
 	"codex-pool-proxy/internal/wire"
 )
@@ -39,7 +40,7 @@ func TestOpenAIStreamToClaudeReportsPromptUsage(t *testing.T) {
 		w.Write([]byte("data: " + chunk + "\n\n"))
 	}
 	events := claudeStreamEvents(t, out.String())
-	usage := mapValue(events[len(events)-2]["usage"])
+	usage := jsonvalue.Map(events[len(events)-2]["usage"])
 	if usage["input_tokens"] != float64(70) || usage["cache_read_input_tokens"] != float64(30) || usage["output_tokens"] != float64(20) {
 		t.Fatalf("message_delta usage = %v\n%s", usage, out.String())
 	}
@@ -81,15 +82,15 @@ func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 				t.Fatalf("block %v started while another block is open", index)
 			}
 			open[index] = true
-			blocks[index] = mapValue(event["content_block"])
+			blocks[index] = jsonvalue.Map(event["content_block"])
 		case "content_block_stop":
 			if !open[index] {
 				t.Fatalf("block %v stopped without being open", index)
 			}
 			delete(open, index)
 		case "content_block_delta":
-			if part := mapValue(event["delta"]); part["type"] == "input_json_delta" {
-				inputs[index] += stringValue(part["partial_json"])
+			if part := jsonvalue.Map(event["delta"]); part["type"] == "input_json_delta" {
+				inputs[index] += jsonvalue.String(part["partial_json"])
 			}
 		case "message_delta":
 			delta = event
@@ -104,8 +105,8 @@ func TestOpenAIStreamToClaudeParallelToolCalls(t *testing.T) {
 			t.Errorf("tool block %v = %v input %q, want %v", index, block, inputs[index], want)
 		}
 	}
-	usage := mapValue(delta["usage"])
-	if mapValue(delta["delta"])["stop_reason"] != "tool_use" || usage["input_tokens"] != float64(70) || usage["cache_read_input_tokens"] != float64(30) || usage["output_tokens"] != float64(20) {
+	usage := jsonvalue.Map(delta["usage"])
+	if jsonvalue.Map(delta["delta"])["stop_reason"] != "tool_use" || usage["input_tokens"] != float64(70) || usage["cache_read_input_tokens"] != float64(30) || usage["output_tokens"] != float64(20) {
 		t.Fatalf("final message_delta = %v", delta)
 	}
 }
@@ -123,7 +124,7 @@ func TestOpenAIStreamToClaudeTextAfterToolStartsNewBlock(t *testing.T) {
 	}
 	var texts []string
 	for _, event := range claudeStreamEvents(t, out.String()) {
-		if part := mapValue(event["delta"]); part["type"] == "text_delta" {
+		if part := jsonvalue.Map(event["delta"]); part["type"] == "text_delta" {
 			texts = append(texts, fmt.Sprintf("%s@%v", part["text"], event["index"]))
 		}
 	}
@@ -148,11 +149,11 @@ func TestClaudeToolResultKeepsAttachedText(t *testing.T) {
 	if err := json.Unmarshal(translated, &request); err != nil {
 		t.Fatal(err)
 	}
-	messages := anySlice(request["messages"])
+	messages := jsonvalue.Slice(request["messages"])
 	if len(messages) != 4 {
 		t.Fatalf("messages = %v", messages)
 	}
-	tool, reminder := mapValue(messages[2]), mapValue(messages[3])
+	tool, reminder := jsonvalue.Map(messages[2]), jsonvalue.Map(messages[3])
 	if tool["role"] != "tool" || tool["tool_call_id"] != "call-a" || tool["content"] != "a.txt" {
 		t.Fatalf("tool result = %v", tool)
 	}
@@ -170,7 +171,7 @@ func TestOpenAIResponseToClaudeSplitsCachedInput(t *testing.T) {
 	if err := json.Unmarshal(translated, &response); err != nil {
 		t.Fatal(err)
 	}
-	usage := mapValue(response["usage"])
+	usage := jsonvalue.Map(response["usage"])
 	if usage["input_tokens"] != float64(70) || usage["cache_read_input_tokens"] != float64(30) || usage["output_tokens"] != float64(20) {
 		t.Fatalf("usage = %v", usage)
 	}

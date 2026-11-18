@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 const aistudioModelsFixture = `{"models":[
@@ -178,7 +180,7 @@ func TestAIStudioMapsEffortToDocumentedThinking(t *testing.T) {
 		{"undocumented model", "/v1/responses", `{"model":"aistudio/gemma-4-31b-it","input":"hi","reasoning":{"effort":"high"}}`, ``},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			prepared, err := prepareAIStudioRequest(test.path, []byte(test.body), stringValue(func() map[string]any {
+			prepared, err := prepareAIStudioRequest(test.path, []byte(test.body), jsonvalue.String(func() map[string]any {
 				var root map[string]any
 				_ = json.Unmarshal([]byte(test.body), &root)
 				return root
@@ -195,7 +197,7 @@ func TestAIStudioMapsEffortToDocumentedThinking(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := ""
-			if config := mapValue(mapValue(request["generationConfig"])["thinkingConfig"]); config != nil {
+			if config := jsonvalue.Map(jsonvalue.Map(request["generationConfig"])["thinkingConfig"]); config != nil {
 				encoded, _ := json.Marshal(config)
 				got = string(encoded)
 			}

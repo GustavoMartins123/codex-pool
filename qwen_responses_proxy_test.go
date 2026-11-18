@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
 )
 
@@ -51,30 +52,30 @@ func TestQwenCodexResponsesHTTPToolRoundTrip(t *testing.T) {
 					if request["model"] != "qwen3.8-max" || request["input"] != nil || request["previous_response_id"] != nil || request["stream"] != stream {
 						t.Errorf("Responses envelope leaked to Qwen: %#v", request)
 					}
-					tools := anySlice(request["tools"])
+					tools := jsonvalue.Slice(request["tools"])
 					if len(tools) != 2 {
 						t.Error("Codex additional_tools declarations were lost")
 						w.WriteHeader(400)
 						return
 					}
-					execName := stringValue(mapValue(mapValue(tools[0])["function"])["name"])
-					patchName := stringValue(mapValue(mapValue(tools[1])["function"])["name"])
+					execName := jsonvalue.String(jsonvalue.Map(jsonvalue.Map(tools[0])["function"])["name"])
+					patchName := jsonvalue.String(jsonvalue.Map(jsonvalue.Map(tools[1])["function"])["name"])
 					if !qwenFunctionNamePattern.MatchString(execName) || patchName != "apply_patch" {
 						t.Error("upstream tool names do not match the Qwen contract")
 					}
-					messages := anySlice(request["messages"])
+					messages := jsonvalue.Slice(request["messages"])
 					if turn == 2 {
 						if len(messages) != 4 || request["tool_choice"] != "none" {
 							t.Errorf("continuation lost history: %#v", request)
 							w.WriteHeader(400)
 							return
 						}
-						assistant := mapValue(messages[1])
-						toolCalls := anySlice(assistant["tool_calls"])
-						if assistant["reasoning_content"] != "Need tools." || len(toolCalls) != 2 || mapValue(mapValue(toolCalls[0])["function"])["name"] != execName || mapValue(mapValue(toolCalls[1])["function"])["arguments"] != string(patchArgs) {
+						assistant := jsonvalue.Map(messages[1])
+						toolCalls := jsonvalue.Slice(assistant["tool_calls"])
+						if assistant["reasoning_content"] != "Need tools." || len(toolCalls) != 2 || jsonvalue.Map(jsonvalue.Map(toolCalls[0])["function"])["name"] != execName || jsonvalue.Map(jsonvalue.Map(toolCalls[1])["function"])["arguments"] != string(patchArgs) {
 							t.Error("reasoning, namespace or raw patch changed during replay")
 						}
-						if mapValue(messages[2])["tool_call_id"] != "call-patch" || mapValue(messages[2])["content"] != "File created." || mapValue(messages[3])["tool_call_id"] != "call-command" || mapValue(messages[3])["content"] != "/workspace" {
+						if jsonvalue.Map(messages[2])["tool_call_id"] != "call-patch" || jsonvalue.Map(messages[2])["content"] != "File created." || jsonvalue.Map(messages[3])["tool_call_id"] != "call-command" || jsonvalue.Map(messages[3])["content"] != "/workspace" {
 							t.Error("out-of-order tool results lost their original call IDs")
 						}
 					}
@@ -94,7 +95,7 @@ func TestQwenCodexResponsesHTTPToolRoundTrip(t *testing.T) {
 						json.NewEncoder(w).Encode(map[string]any{"id": "chat-qwen", "model": "qwen3.8-max", "choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": finish}}, "usage": usage})
 						return
 					}
-					if mapValue(request["stream_options"])["include_usage"] != true {
+					if jsonvalue.Map(request["stream_options"])["include_usage"] != true {
 						t.Error("streaming usage was not requested")
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
@@ -162,15 +163,15 @@ func TestQwenCodexResponsesHTTPToolRoundTrip(t *testing.T) {
 					if len(events) < 3 || events[0]["type"] != "response.created" || events[len(events)-1]["type"] != "response.completed" {
 						t.Fatalf("missing terminal Responses event: %s", data)
 					}
-					return mapValue(events[len(events)-1]["response"]), events
+					return jsonvalue.Map(events[len(events)-1]["response"]), events
 				}
 				first, events := send(false)
-				output := anySlice(first["output"])
-				if len(output) != 3 || mapValue(output[1])["type"] != "function_call" || mapValue(output[1])["namespace"] != "functions" || mapValue(output[1])["name"] != "exec_command" || mapValue(output[1])["arguments"] != `{"cmd":"pwd"}` || mapValue(output[2])["type"] != "custom_tool_call" || mapValue(output[2])["input"] != patch {
+				output := jsonvalue.Slice(first["output"])
+				if len(output) != 3 || jsonvalue.Map(output[1])["type"] != "function_call" || jsonvalue.Map(output[1])["namespace"] != "functions" || jsonvalue.Map(output[1])["name"] != "exec_command" || jsonvalue.Map(output[1])["arguments"] != `{"cmd":"pwd"}` || jsonvalue.Map(output[2])["type"] != "custom_tool_call" || jsonvalue.Map(output[2])["input"] != patch {
 					t.Fatalf("tool calls changed across the proxy: %#v", first)
 				}
-				usage := mapValue(first["usage"])
-				if usage["input_tokens"] != float64(100) || mapValue(usage["input_tokens_details"])["cached_tokens"] != float64(40) {
+				usage := jsonvalue.Map(first["usage"])
+				if usage["input_tokens"] != float64(100) || jsonvalue.Map(usage["input_tokens_details"])["cached_tokens"] != float64(40) {
 					t.Fatal("usage-only stream chunk was not included in the completed response")
 				}
 				if stream {
@@ -178,16 +179,16 @@ func TestQwenCodexResponsesHTTPToolRoundTrip(t *testing.T) {
 					items := map[string]bool{}
 					for _, event := range events {
 						if event["type"] == "response.output_item.added" {
-							items[stringValue(mapValue(event["item"])["id"])] = true
+							items[jsonvalue.String(jsonvalue.Map(event["item"])["id"])] = true
 						}
-						if id := stringValue(event["item_id"]); id != "" && !items[id] {
+						if id := jsonvalue.String(event["item_id"]); id != "" && !items[id] {
 							t.Fatal("tool delta references an output item that was never opened")
 						}
 						if event["type"] == "response.function_call_arguments.delta" {
-							arguments.WriteString(stringValue(event["delta"]))
+							arguments.WriteString(jsonvalue.String(event["delta"]))
 						}
 						if event["type"] == "response.custom_tool_call_input.delta" {
-							custom.WriteString(stringValue(event["delta"]))
+							custom.WriteString(jsonvalue.String(event["delta"]))
 						}
 					}
 					if arguments.String() != `{"cmd":"pwd"}` || custom.String() != patch {
@@ -197,7 +198,7 @@ func TestQwenCodexResponsesHTTPToolRoundTrip(t *testing.T) {
 				payload["input"] = append(input, append(output, map[string]any{"type": "custom_tool_call_output", "call_id": "call-patch", "output": "File created."}, map[string]any{"type": "function_call_output", "call_id": "call-command", "output": "/workspace"})...)
 				payload["tool_choice"], payload["previous_response_id"] = "none", first["id"]
 				second, _ := send(true)
-				if calls.Load() != 2 || mapValue(anySlice(mapValue(anySlice(second["output"])[0])["content"])[0])["text"] != "Arquivo criado." {
+				if calls.Load() != 2 || jsonvalue.Map(jsonvalue.Slice(jsonvalue.Map(jsonvalue.Slice(second["output"])[0])["content"])[0])["text"] != "Arquivo criado." {
 					t.Fatalf("tool continuation failed: %#v", second)
 				}
 			})

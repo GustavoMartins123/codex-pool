@@ -1,4 +1,4 @@
-package main
+package wire
 
 // Streaming conversion is derived in part from CLIProxyAPI's Antigravity
 // translators, distributed under the MIT License.
@@ -11,13 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"codex-pool-proxy/internal/sse"
 	"github.com/google/uuid"
+
+	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/sse"
 )
 
 type antigravityStreamWriter struct {
 	w                        io.Writer
-	format                   antigravityClientFormat
+	format                   RequestFormat
 	model                    string
 	buf                      []byte
 	started                  bool
@@ -45,23 +47,12 @@ type antigravityStreamWriter struct {
 	responsesCustomTools     map[string]bool
 }
 
-func newAntigravityStreamWriter(w io.Writer, format antigravityClientFormat, model string) *antigravityStreamWriter {
-	return &antigravityStreamWriter{w: w, format: format, model: model, responseID: "resp_" + uuid.NewString(), messageID: "msg_" + uuid.NewString(), responsesOutput: make(map[int]any)}
-}
-
-// setResponsesRequest supplies the original Responses request fields that the
-// completed event echoes. It is intentionally optional for non-Responses users.
-func (sw *antigravityStreamWriter) setResponsesRequest(request map[string]any) {
-	sw.responsesRequest = request
-}
-
-func (sw *antigravityStreamWriter) setResponsesFunctionNames(functionNames map[string]string) {
-	sw.responsesFunctionNames = functionNames
-}
-
-func (sw *antigravityStreamWriter) setResponsesToolMetadata(namespaced, custom map[string]bool) {
-	sw.responsesNamespacedTools = namespaced
-	sw.responsesCustomTools = custom
+// NewGeminiToClientStream converts Gemini stream events to the client format.
+func NewGeminiToClientStream(w io.Writer, format RequestFormat, model string, tools ResponsesToolContext) io.Writer {
+	return &antigravityStreamWriter{
+		w: w, format: format, model: model, responseID: "resp_" + uuid.NewString(), messageID: "msg_" + uuid.NewString(), responsesOutput: make(map[int]any),
+		responsesRequest: tools.Request, responsesFunctionNames: tools.FunctionNames, responsesNamespacedTools: tools.NamespacedTools, responsesCustomTools: tools.CustomTools,
+	}
 }
 
 func (sw *antigravityStreamWriter) Write(p []byte) (int, error) {
@@ -90,11 +81,11 @@ func (sw *antigravityStreamWriter) Write(p []byte) (int, error) {
 }
 
 func (sw *antigravityStreamWriter) translate(data []byte) error {
-	gemini, err := unwrapAntigravityResponse(data)
+	gemini, err := UnwrapAntigravityResponse(data)
 	if err != nil {
 		return err
 	}
-	if sw.format == antigravityFormatGemini {
+	if sw.format == FormatGemini {
 		return sw.emitData(gemini)
 	}
 	var obj map[string]any
@@ -104,11 +95,11 @@ func (sw *antigravityStreamWriter) translate(data []byte) error {
 	r := parseAntigravityGeminiResponse(obj)
 	sw.usage = r
 	switch sw.format {
-	case antigravityFormatChat:
+	case FormatOpenAI:
 		return sw.emitOpenAI(r)
-	case antigravityFormatResponses:
+	case FormatResponses:
 		return sw.emitResponses(r)
-	case antigravityFormatAnthropic:
+	case FormatClaude:
 		return sw.emitClaude(r)
 	default:
 		return fmt.Errorf("unsupported antigravity stream format %q", sw.format)
@@ -134,7 +125,7 @@ func (sw *antigravityStreamWriter) emitOpenAI(r antigravityResult) error {
 		var calls []any
 		for i, call := range r.Tools {
 			args, _ := json.Marshal(call["args"])
-			id := stringValue(call["id"])
+			id := jsonvalue.String(call["id"])
 			if id == "" {
 				id = fmt.Sprintf("call_%d_%s", i, uuid.NewString())
 			}
@@ -280,7 +271,7 @@ func (sw *antigravityStreamWriter) emitResponses(r antigravityResult) error {
 }
 
 func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error {
-	callID := stringValue(call["id"])
+	callID := jsonvalue.String(call["id"])
 	if callID == "" {
 		callID = "call_" + uuid.NewString()
 	}
@@ -289,11 +280,11 @@ func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error 
 	if call["args"] != nil {
 		args, _ = json.Marshal(call["args"])
 	}
-	name := stringValue(call["name"])
+	name := jsonvalue.String(call["name"])
 	if original := sw.responsesFunctionNames[name]; original != "" {
 		name = original
 	}
-	bareName, namespace := antigravitySplitToolCallName(name, sw.responsesNamespacedTools)
+	bareName, namespace := splitNamespacedToolName(name, sw.responsesNamespacedTools)
 	if sw.responsesCustomTools[name] {
 		return sw.emitResponsesCustomTool(callID, bareName, namespace, string(args))
 	}
@@ -324,7 +315,7 @@ func (sw *antigravityStreamWriter) emitResponsesCustomTool(callID, name, namespa
 	input := ""
 	var envelope map[string]any
 	if json.Unmarshal([]byte(args), &envelope) == nil {
-		input = stringValue(envelope["input"])
+		input = jsonvalue.String(envelope["input"])
 	}
 	itemID := "ctc_" + uuid.NewString()
 	item := map[string]any{"id": itemID, "type": "custom_tool_call", "status": "in_progress", "call_id": callID, "name": name, "input": ""}
@@ -484,7 +475,7 @@ func (sw *antigravityStreamWriter) emitClaude(r antigravityResult) error {
 	}
 	for _, call := range r.Tools {
 		idx := sw.contentIndex
-		id := stringValue(call["id"])
+		id := jsonvalue.String(call["id"])
 		if id == "" {
 			id = "toolu_" + uuid.NewString()
 		}
@@ -549,14 +540,4 @@ func (sw *antigravityStreamWriter) emitData(data []byte) error {
 func (sw *antigravityStreamWriter) emitRaw(s string) error {
 	_, err := io.WriteString(sw.w, s)
 	return err
-}
-
-func antigravityStreamContentType(format antigravityClientFormat) string {
-	if format == antigravityFormatGemini || format == antigravityFormatChat {
-		return "text/event-stream"
-	}
-	return "text/event-stream; charset=utf-8"
-}
-func isAntigravitySSEContentType(contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }

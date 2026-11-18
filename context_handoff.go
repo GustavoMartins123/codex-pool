@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -282,19 +283,19 @@ func normalizeResponsesContext(object map[string]any) []Message {
 				case []any:
 					for _, rawBlock := range content {
 						block, _ := rawBlock.(map[string]any)
-						switch stringValue(block["type"]) {
+						switch jsonvalue.String(block["type"]) {
 						case "input_text", "output_text", "text":
-							parts = appendTextPart(parts, stringValue(block["text"]))
+							parts = appendTextPart(parts, jsonvalue.String(block["text"]))
 						case "input_image", "output_image", "image_url":
-							url := stringValue(block["image_url"])
+							url := jsonvalue.String(block["image_url"])
 							if nested, ok := block["image_url"].(map[string]any); ok {
-								url = stringValue(nested["url"])
+								url = jsonvalue.String(nested["url"])
 							}
 							if url != "" {
 								parts = append(parts, imagePartFromURL(url))
 							}
 						case "reasoning_visible":
-							parts = append(parts, MessagePart{Type: "reasoning_visible", Text: stringValue(block["text"])})
+							parts = append(parts, MessagePart{Type: "reasoning_visible", Text: jsonvalue.String(block["text"])})
 						}
 					}
 				}
@@ -303,12 +304,12 @@ func normalizeResponsesContext(object map[string]any) []Message {
 				}
 			case "function_call":
 				messages = append(messages, Message{Role: "assistant", Parts: []MessagePart{{
-					Type: "tool_call", ToolID: stringValue(item["call_id"]),
-					ToolName: stringValue(item["name"]), Arguments: contextArguments(item["arguments"]),
+					Type: "tool_call", ToolID: jsonvalue.String(item["call_id"]),
+					ToolName: jsonvalue.String(item["name"]), Arguments: contextArguments(item["arguments"]),
 				}}})
 			case "function_call_output":
 				messages = append(messages, Message{Role: "tool", Parts: []MessagePart{{
-					Type: "tool_result", ToolID: stringValue(item["call_id"]), Text: contextText(item["output"]),
+					Type: "tool_result", ToolID: jsonvalue.String(item["call_id"]), Text: contextText(item["output"]),
 				}}})
 			}
 		}
@@ -343,26 +344,26 @@ func normalizeMessageList(object map[string]any, claude bool) []Message {
 				partType, _ := part["type"].(string)
 				switch partType {
 				case "text", "input_text", "output_text":
-					message.Parts = appendTextPart(message.Parts, stringValue(part["text"]))
+					message.Parts = appendTextPart(message.Parts, jsonvalue.String(part["text"]))
 				case "tool_use":
 					message.Parts = append(message.Parts, MessagePart{
-						Type: "tool_call", ToolID: stringValue(part["id"]),
-						ToolName: stringValue(part["name"]), Arguments: contextArguments(part["input"]),
+						Type: "tool_call", ToolID: jsonvalue.String(part["id"]),
+						ToolName: jsonvalue.String(part["name"]), Arguments: contextArguments(part["input"]),
 					})
 				case "tool_result":
 					message.Parts = append(message.Parts, MessagePart{
-						Type: "tool_result", ToolID: stringValue(part["tool_use_id"]), Text: contextText(part["content"]),
+						Type: "tool_result", ToolID: jsonvalue.String(part["tool_use_id"]), Text: contextText(part["content"]),
 					})
 				case "image", "input_image", "image_url":
 					if source, ok := part["source"].(map[string]any); ok {
-						if stringValue(source["type"]) == "base64" {
-							message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: stringValue(source["media_type"]), Data: stringValue(source["data"])})
-						} else if url := stringValue(source["url"]); url != "" {
+						if jsonvalue.String(source["type"]) == "base64" {
+							message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: jsonvalue.String(source["media_type"]), Data: jsonvalue.String(source["data"])})
+						} else if url := jsonvalue.String(source["url"]); url != "" {
 							message.Parts = append(message.Parts, imagePartFromURL(url))
 						}
 					} else if nested, ok := part["image_url"].(map[string]any); ok {
-						message.Parts = append(message.Parts, imagePartFromURL(stringValue(nested["url"])))
-					} else if url := stringValue(part["image_url"]); url != "" {
+						message.Parts = append(message.Parts, imagePartFromURL(jsonvalue.String(nested["url"])))
+					} else if url := jsonvalue.String(part["image_url"]); url != "" {
 						message.Parts = append(message.Parts, imagePartFromURL(url))
 					}
 				}
@@ -373,14 +374,14 @@ func normalizeMessageList(object map[string]any, claude bool) []Message {
 				call, _ := rawCall.(map[string]any)
 				function, _ := call["function"].(map[string]any)
 				message.Parts = append(message.Parts, MessagePart{
-					Type: "tool_call", ToolID: stringValue(call["id"]),
-					ToolName: stringValue(function["name"]), Arguments: contextArguments(function["arguments"]),
+					Type: "tool_call", ToolID: jsonvalue.String(call["id"]),
+					ToolName: jsonvalue.String(function["name"]), Arguments: contextArguments(function["arguments"]),
 				})
 			}
 		}
 		if role == "tool" {
 			message.Parts = append(message.Parts, MessagePart{
-				Type: "tool_result", ToolID: stringValue(item["tool_call_id"]), Text: contextText(item["content"]),
+				Type: "tool_result", ToolID: jsonvalue.String(item["tool_call_id"]), Text: contextText(item["content"]),
 			})
 		}
 		if role != "" && len(message.Parts) > 0 {
@@ -400,7 +401,7 @@ func normalizeGeminiContext(object map[string]any) []Message {
 	contents, _ := object["contents"].([]any)
 	for _, raw := range contents {
 		content, _ := raw.(map[string]any)
-		role := stringValue(content["role"])
+		role := jsonvalue.String(content["role"])
 		if role == "model" {
 			role = "assistant"
 		}
@@ -408,25 +409,25 @@ func normalizeGeminiContext(object map[string]any) []Message {
 		parts, _ := content["parts"].([]any)
 		for _, rawPart := range parts {
 			part, _ := rawPart.(map[string]any)
-			if text := stringValue(part["text"]); text != "" {
+			if text := jsonvalue.String(part["text"]); text != "" {
 				message.Parts = appendTextPart(message.Parts, text)
 			}
 			if inline, ok := part["inlineData"].(map[string]any); ok {
-				message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: stringValue(inline["mimeType"]), Data: stringValue(inline["data"])})
+				message.Parts = append(message.Parts, MessagePart{Type: "image", MimeType: jsonvalue.String(inline["mimeType"]), Data: jsonvalue.String(inline["data"])})
 			}
 			if file, ok := part["fileData"].(map[string]any); ok {
-				message.Parts = append(message.Parts, imagePartFromURL(stringValue(file["fileUri"])))
+				message.Parts = append(message.Parts, imagePartFromURL(jsonvalue.String(file["fileUri"])))
 			}
 			if call, ok := part["functionCall"].(map[string]any); ok {
 				message.Parts = append(message.Parts, MessagePart{
-					Type: "tool_call", ToolID: stringValue(call["id"]),
-					ToolName: stringValue(call["name"]), Arguments: contextArguments(call["args"]),
+					Type: "tool_call", ToolID: jsonvalue.String(call["id"]),
+					ToolName: jsonvalue.String(call["name"]), Arguments: contextArguments(call["args"]),
 				})
 			}
 			if response, ok := part["functionResponse"].(map[string]any); ok {
 				message.Parts = append(message.Parts, MessagePart{
-					Type: "tool_result", ToolID: stringValue(response["id"]),
-					ToolName: stringValue(response["name"]), Text: contextText(response["response"]),
+					Type: "tool_result", ToolID: jsonvalue.String(response["id"]),
+					ToolName: jsonvalue.String(response["name"]), Text: contextText(response["response"]),
 				})
 			}
 		}
@@ -992,11 +993,11 @@ func recordProviderSession(state *ConversationState, provider AccountType, local
 		session.Metadata[key] = value
 		switch key {
 		case "session_id", "sessionId":
-			session.NativeSessionID = stringValue(value)
+			session.NativeSessionID = jsonvalue.String(value)
 		case "previous_response_id", "response_id":
-			session.ResponseID = stringValue(value)
+			session.ResponseID = jsonvalue.String(value)
 		case "prompt_cache_key", "prompt_cache_id":
-			session.CacheKey = stringValue(value)
+			session.CacheKey = jsonvalue.String(value)
 		}
 	}
 }
@@ -1060,7 +1061,7 @@ func detectContextWarnings(object map[string]any, switched bool) []string {
 	if tools, ok := object["tools"].([]any); ok {
 		for _, raw := range tools {
 			tool, _ := raw.(map[string]any)
-			toolType := stringValue(tool["type"])
+			toolType := jsonvalue.String(tool["type"])
 			if toolType != "" && toolType != "function" {
 				warnings = appendUniqueString(warnings, "provider_specific_tool_requires_support")
 			}
@@ -1073,8 +1074,8 @@ func renderResponsesContext(object map[string]any, messages []Message) {
 	var input []any
 	// These client tool declarations are not conversation messages. Preserve them
 	// when rebuilding history so the next provider can still issue real tool calls.
-	for _, raw := range anySlice(object["input"]) {
-		if item := mapValue(raw); item["type"] == "additional_tools" {
+	for _, raw := range jsonvalue.Slice(object["input"]) {
+		if item := jsonvalue.Map(raw); item["type"] == "additional_tools" {
 			input = append(input, raw)
 		}
 	}
@@ -1838,7 +1839,7 @@ func extractAssistantTextFromResponseSample(sample []byte) string {
 		if text == "" {
 			continue
 		}
-		eventType := stringValue(event["type"])
+		eventType := jsonvalue.String(event["type"])
 		if strings.Contains(eventType, "delta") {
 			deltas.WriteString(text)
 		} else {

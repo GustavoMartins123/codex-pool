@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func contextTestBody(format contextWireFormat, text string, stream bool) []byte {
@@ -193,9 +195,9 @@ func TestUniversalContextHandoffRegeneratesToolCallIDs(t *testing.T) {
 		item, _ := raw.(map[string]any)
 		switch item["type"] {
 		case "function_call":
-			callID = stringValue(item["call_id"])
+			callID = jsonvalue.String(item["call_id"])
 		case "function_call_output":
-			resultID = stringValue(item["call_id"])
+			resultID = jsonvalue.String(item["call_id"])
 		}
 	}
 	if callID == "" || callID != resultID || !strings.HasPrefix(callID, "call_") {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
 )
 
@@ -209,14 +210,14 @@ func (bw *ResponsesBuffer) applyResponse(obj map[string]any) {
 	if status, _ := resp["status"].(string); status != "" {
 		bw.status = status
 	}
-	if created := JSONInt64(resp["created_at"]); created > 0 {
+	if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 		bw.createdAt = created
 	}
 	if usage, _ := resp["usage"].(map[string]any); usage != nil {
-		bw.inputTokens = JSONInt64(usage["input_tokens"])
-		bw.outputTokens = JSONInt64(usage["output_tokens"])
+		bw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+		bw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 		if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-			bw.cachedTokens = JSONInt64(details["cached_tokens"])
+			bw.cachedTokens = jsonvalue.Int64(details["cached_tokens"])
 		}
 	}
 }
@@ -472,7 +473,7 @@ func (rw *responsesToCompletionsWriter) processEvent(event []byte) {
 			if model, _ := resp["model"].(string); model != "" {
 				rw.model = model
 			}
-			if created := JSONInt64(resp["created_at"]); created > 0 {
+			if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 		}
@@ -586,7 +587,7 @@ func (bw *ResponsesToOpenAICompletionsBuffer) processEvent(event []byte) {
 			if model, _ := resp["model"].(string); model != "" {
 				bw.model = model
 			}
-			if created := JSONInt64(resp["created_at"]); created > 0 {
+			if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 				bw.createdAt = created
 			}
 		}
@@ -596,14 +597,14 @@ func (bw *ResponsesToOpenAICompletionsBuffer) processEvent(event []byte) {
 		}
 	case "response.completed", "response.incomplete":
 		if resp, _ := obj["response"].(map[string]any); resp != nil {
-			if created := JSONInt64(resp["created_at"]); created > 0 {
+			if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 				bw.createdAt = created
 			}
 			if usage, _ := resp["usage"].(map[string]any); usage != nil {
-				bw.inputTokens = JSONInt64(usage["input_tokens"])
-				bw.outputTokens = JSONInt64(usage["output_tokens"])
+				bw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+				bw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 				if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-					bw.cachedTokens = JSONInt64(details["cached_tokens"])
+					bw.cachedTokens = jsonvalue.Int64(details["cached_tokens"])
 				}
 			}
 			bw.finishReason = responseFinishReason(resp)
@@ -752,7 +753,7 @@ func (rw *responsesToChatCompletionsWriter) processEvent(event []byte) {
 			if m, ok := resp["model"].(string); ok {
 				rw.model = m
 			}
-			if created := JSONInt64(resp["created_at"]); created > 0 {
+			if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 		}
@@ -861,14 +862,14 @@ func (rw *responsesToChatCompletionsWriter) processEvent(event []byte) {
 	case "response.completed", "response.incomplete":
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
-			if created := JSONInt64(resp["created_at"]); created > 0 {
+			if created := jsonvalue.Int64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = JSONInt64(usage["input_tokens"])
-				rw.outputTokens = JSONInt64(usage["output_tokens"])
+				rw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+				rw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 				if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-					rw.cachedTokens = JSONInt64(details["cached_tokens"])
+					rw.cachedTokens = jsonvalue.Int64(details["cached_tokens"])
 				}
 			}
 		}
@@ -1174,8 +1175,8 @@ func (bw *ResponsesToOpenAIChatBuffer) processEvent(event []byte) {
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = JSONInt64(usage["input_tokens"])
-				bw.outputTokens = JSONInt64(usage["output_tokens"])
+				bw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+				bw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 			}
 		}
 		bw.finishReason = responseFinishReason(resp)
@@ -1389,7 +1390,7 @@ func (bw *ResponsesToAnthropicBuffer) processEvent(event []byte) {
 				bw.model = model
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = JSONInt64(usage["input_tokens"])
+				bw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
 			}
 		}
 	case "response.output_text.delta":
@@ -1442,8 +1443,8 @@ func (bw *ResponsesToAnthropicBuffer) processEvent(event []byte) {
 				bw.model = model
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = JSONInt64(usage["input_tokens"])
-				bw.outputTokens = JSONInt64(usage["output_tokens"])
+				bw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+				bw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 			}
 		}
 		bw.stopReason = ChatFinishReasonToAnthropic(responseFinishReason(resp))
@@ -1646,7 +1647,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 				cw.model = model
 			}
 			if usage, ok := msg["usage"].(map[string]any); ok {
-				cw.inputTokens = JSONInt64(usage["input_tokens"])
+				cw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
 			}
 		}
 		cw.started = true
@@ -1810,7 +1811,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 			}
 		}
 		if usage, ok := obj["usage"].(map[string]any); ok {
-			cw.outputTokens = JSONInt64(usage["output_tokens"])
+			cw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 		}
 
 	case "message_stop":
@@ -1982,7 +1983,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 				rw.model = m
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = JSONInt64(usage["input_tokens"])
+				rw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
 			}
 		}
 		rw.started = true
@@ -2081,8 +2082,8 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = JSONInt64(usage["input_tokens"])
-				rw.outputTokens = JSONInt64(usage["output_tokens"])
+				rw.inputTokens = jsonvalue.Int64(usage["input_tokens"])
+				rw.outputTokens = jsonvalue.Int64(usage["output_tokens"])
 			}
 		}
 		// Close any open content block

@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // TestQwenMessagesRealClaudeCodeCLI drives the real Claude Code CLI through the
@@ -54,14 +56,14 @@ func TestQwenMessagesRealClaudeCodeCLI(t *testing.T) {
 			return
 		}
 		tools := map[string]bool{}
-		for _, raw := range anySlice(request["tools"]) {
-			tools[stringValue(mapValue(mapValue(raw)["function"])["name"])] = true
+		for _, raw := range jsonvalue.Slice(request["tools"]) {
+			tools[jsonvalue.String(jsonvalue.Map(jsonvalue.Map(raw)["function"])["name"])] = true
 		}
 		results := map[string]string{}
-		for _, raw := range anySlice(request["messages"]) {
-			message := mapValue(raw)
+		for _, raw := range jsonvalue.Slice(request["messages"]) {
+			message := jsonvalue.Map(raw)
 			if message["role"] == "tool" {
-				results[stringValue(message["tool_call_id"])] = stringValue(message["content"])
+				results[jsonvalue.String(message["tool_call_id"])] = jsonvalue.String(message["content"])
 			}
 		}
 		delta := map[string]any{"role": "assistant"}
@@ -149,7 +151,7 @@ func TestQwenMessagesRealClaudeCodeCLI(t *testing.T) {
 	for _, line := range strings.Split(string(result), "\n") {
 		var event map[string]any
 		if json.Unmarshal([]byte(line), &event) == nil && event["type"] == "result" {
-			reported = mapValue(event["usage"])["input_tokens"] == float64(300)
+			reported = jsonvalue.Map(event["usage"])["input_tokens"] == float64(300)
 		}
 	}
 	if !reported {

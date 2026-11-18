@@ -4,17 +4,23 @@ package wire
 type RequestFormat int
 
 const (
-	FormatUnknown RequestFormat = iota
-	FormatOpenAI                // OpenAI Chat Completions API
-	FormatClaude                // Anthropic Messages API
+	FormatUnknown   RequestFormat = iota
+	FormatOpenAI                  // OpenAI Chat Completions API
+	FormatClaude                  // Anthropic Messages API
+	FormatResponses               // OpenAI Responses API
+	FormatGemini                  // Gemini generateContent API
 )
 
 func (f RequestFormat) String() string {
 	switch f {
 	case FormatOpenAI:
-		return "openai"
+		return "openai_chat"
 	case FormatClaude:
-		return "claude"
+		return "anthropic_messages"
+	case FormatResponses:
+		return "openai_responses"
+	case FormatGemini:
+		return "gemini"
 	default:
 		return "unknown"
 	}

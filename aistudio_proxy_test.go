@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
 )
 
@@ -67,7 +68,7 @@ func aistudioGeminiRequest(t *testing.T, r *http.Request, key string) map[string
 			t.Errorf("Code Assist field %q leaked to the Gemini API: %v", field, request)
 		}
 	}
-	if len(anySlice(request["contents"])) == 0 {
+	if len(jsonvalue.Slice(request["contents"])) == 0 {
 		t.Errorf("Gemini request has no contents: %v", request)
 	}
 	return request
@@ -75,11 +76,11 @@ func aistudioGeminiRequest(t *testing.T, r *http.Request, key string) map[string
 
 // aistudioSignedCall finds the model functionCall part and its signature.
 func aistudioSignedCall(request map[string]any) (map[string]any, string) {
-	for _, raw := range anySlice(request["contents"]) {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			part := mapValue(rawPart)
-			if call := mapValue(part["functionCall"]); call != nil {
-				return call, stringValue(part["thoughtSignature"])
+	for _, raw := range jsonvalue.Slice(request["contents"]) {
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			part := jsonvalue.Map(rawPart)
+			if call := jsonvalue.Map(part["functionCall"]); call != nil {
+				return call, jsonvalue.String(part["thoughtSignature"])
 			}
 		}
 	}
@@ -87,9 +88,9 @@ func aistudioSignedCall(request map[string]any) (map[string]any, string) {
 }
 
 func aistudioFunctionResponse(request map[string]any) map[string]any {
-	for _, raw := range anySlice(request["contents"]) {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
+	for _, raw := range jsonvalue.Slice(request["contents"]) {
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			if response := jsonvalue.Map(jsonvalue.Map(rawPart)["functionResponse"]); response != nil {
 				return response
 			}
 		}
@@ -113,9 +114,9 @@ func aistudioToolUpstream(t *testing.T, tool string, args map[string]any) (*http
 		switch calls.Add(1) {
 		case 1:
 			declared := false
-			for _, raw := range anySlice(request["tools"]) {
-				for _, declaration := range anySlice(mapValue(raw)["functionDeclarations"]) {
-					declared = declared || mapValue(declaration)["name"] == tool
+			for _, raw := range jsonvalue.Slice(request["tools"]) {
+				for _, declaration := range jsonvalue.Slice(jsonvalue.Map(raw)["functionDeclarations"]) {
+					declared = declared || jsonvalue.Map(declaration)["name"] == tool
 				}
 			}
 			if !declared {
@@ -156,13 +157,13 @@ func TestAIStudioResponsesToolRoundTripReplaysSignature(t *testing.T) {
 		kind, data := sse.ParseEvent([]byte(frame))
 		var event map[string]any
 		if kind == "response.completed" && json.Unmarshal(data, &event) == nil {
-			output = anySlice(mapValue(event["response"])["output"])
+			output = jsonvalue.Slice(jsonvalue.Map(event["response"])["output"])
 		}
 	}
 	var callID string
 	for _, raw := range output {
-		if item := mapValue(raw); item["type"] == "function_call" && item["name"] == "exec_command" {
-			callID = stringValue(item["call_id"])
+		if item := jsonvalue.Map(raw); item["type"] == "function_call" && item["name"] == "exec_command" {
+			callID = jsonvalue.String(item["call_id"])
 		}
 	}
 	if callID == "" {
@@ -195,9 +196,9 @@ func TestAIStudioMessagesToolRoundTripReplaysSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	var toolID string
-	for _, raw := range anySlice(message["content"]) {
-		if block := mapValue(raw); block["type"] == "tool_use" && block["name"] == "Bash" {
-			toolID = stringValue(block["id"])
+	for _, raw := range jsonvalue.Slice(message["content"]) {
+		if block := jsonvalue.Map(raw); block["type"] == "tool_use" && block["name"] == "Bash" {
+			toolID = jsonvalue.String(block["id"])
 		}
 	}
 	if toolID == "" || message["stop_reason"] != "tool_use" {

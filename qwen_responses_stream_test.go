@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func qwenChatSSE(delta map[string]any, finish any) string {
@@ -63,7 +65,7 @@ func TestQwenResponsesStreamReportsOutputLimitAndIgnoresRepeatedTerminals(t *tes
 	}
 	events := qwenResponsesEvents(t, rr.Body.Bytes())
 	terminal := events[len(events)-1]
-	if terminal["type"] != "response.incomplete" || mapValue(mapValue(terminal["response"])["incomplete_details"])["reason"] != "max_output_tokens" || strings.Count(rr.Body.String(), "event: response.incomplete") != 1 {
+	if terminal["type"] != "response.incomplete" || jsonvalue.Map(jsonvalue.Map(terminal["response"])["incomplete_details"])["reason"] != "max_output_tokens" || strings.Count(rr.Body.String(), "event: response.incomplete") != 1 {
 		t.Fatal("output limit or repeated terminal markers were handled incorrectly")
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func qwenTestHandler(t *testing.T, transport http.RoundTripper, accounts ...*Account) *proxyHandler {
@@ -130,7 +132,7 @@ func TestQwenReasoningEffortsOnlyForDocumentedModels(t *testing.T) {
 	}
 	levels := map[string]int{}
 	for _, model := range codex.Models {
-		levels[stringValue(model["slug"])] = len(anySlice(model["supported_reasoning_levels"]))
+		levels[jsonvalue.String(model["slug"])] = len(jsonvalue.Slice(model["supported_reasoning_levels"]))
 	}
 	if levels["qwen3.8-max"] != 4 || levels["qwen4-max-preview"] != 0 {
 		t.Fatalf("Codex catalog reasoning levels = %v", levels)
