@@ -296,6 +296,16 @@ func poolModelAvailability(pool *poolState, accountType AccountType, modelIDs ..
 	return supportingAccounts, availableAccounts, availableAccounts > 0
 }
 
+func codexCatalogDescriptors(pool *poolState) []poolModelDescriptor {
+	models := discoveredModelsForPool(pool)
+	for _, model := range poolModelDescriptors(pool) {
+		if model.Provider == string(AccountTypeCodex) && poolModelIDExists(model.ID) {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 func codexCatalogEntry(pool *poolState, modelID string) json.RawMessage {
 	if pool == nil {
 		return nil

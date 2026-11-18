@@ -1254,29 +1254,6 @@ func claudeModelEntry(slug, displayName string, contextWindow int) map[string]an
 	}
 }
 
-type codexCatalogModel struct {
-	slug                  string
-	displayName           string
-	description           string
-	contextWindow         int
-	defaultReasoningLevel string // optional; empty leaves template/default alone
-}
-
-var codexCatalogFallbackModels = codexFallbackModels()
-
-func codexFallbackModels() []codexCatalogModel {
-	var result []codexCatalogModel
-	for _, model := range modelsForProvider(AccountTypeCodex) {
-		result = append(result, codexCatalogModel{
-			slug:          model.ID,
-			displayName:   model.DisplayName,
-			description:   model.Description,
-			contextWindow: model.ContextWindow,
-		})
-	}
-	return result
-}
-
 // injectClaudeModels adds local pool model entries to the Codex model catalog response
 // so the Codex CLI can select models that the pool routes but upstream omits.
 func injectClaudeModels(body []byte) []byte {
@@ -1302,8 +1279,6 @@ func injectClaudeModels(body []byte) []byte {
 	if !ok {
 		return body
 	}
-
-	models = injectMissingCodexCatalogModels(models)
 
 	existing := make(map[string]bool, len(models))
 	for _, raw := range models {
@@ -1331,64 +1306,4 @@ func injectClaudeModels(body []byte) []byte {
 		return body
 	}
 	return out
-}
-
-func injectMissingCodexCatalogModels(models []any) []any {
-	existing := make(map[string]bool, len(models))
-	var template map[string]any
-	for _, model := range models {
-		m, ok := model.(map[string]any)
-		if !ok {
-			continue
-		}
-		slug, _ := m["slug"].(string)
-		if slug == "" {
-			continue
-		}
-		existing[slug] = true
-		if template == nil && strings.HasPrefix(slug, "gpt-") {
-			template = m
-		}
-	}
-
-	for _, fallback := range codexCatalogFallbackModels {
-		if existing[fallback.slug] {
-			continue
-		}
-		models = append(models, codexCatalogFallbackEntry(fallback, template))
-	}
-	return models
-}
-
-func codexCatalogFallbackEntry(model codexCatalogModel, template map[string]any) map[string]any {
-	entry := cloneCatalogEntry(template)
-	if entry == nil {
-		entry = map[string]any{}
-	}
-	entry["slug"] = model.slug
-	entry["display_name"] = model.displayName
-	entry["description"] = model.description
-	entry["context_window"] = model.contextWindow
-	entry["max_context_window"] = model.contextWindow
-	entry["visibility"] = "list"
-	entry["supported_in_api"] = true
-	if model.defaultReasoningLevel != "" {
-		entry["default_reasoning_level"] = model.defaultReasoningLevel
-	}
-	return entry
-}
-
-func cloneCatalogEntry(entry map[string]any) map[string]any {
-	if entry == nil {
-		return nil
-	}
-	b, err := json.Marshal(entry)
-	if err != nil {
-		return nil
-	}
-	var cloned map[string]any
-	if err := json.Unmarshal(b, &cloned); err != nil {
-		return nil
-	}
-	return cloned
 }

@@ -167,7 +167,7 @@ func finalizeCodexModelCatalog(body []byte, models []poolModelDescriptor) ([]byt
 
 	var responses []poolModelDescriptor
 	for _, model := range models {
-		if supportsAgent(model.Protocols, "responses") {
+		if supportsAgent(model.Protocols, "responses") || model.Provider == string(AccountTypeCodex) {
 			responses = append(responses, model)
 		}
 	}

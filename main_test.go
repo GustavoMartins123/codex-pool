@@ -1015,10 +1015,10 @@ func TestCyberPolicyErrorRetriesOnCyberAccessAccount(t *testing.T) {
 	}
 }
 
-func TestInjectClaudeModelsAddsMissingCodexFallbackModels(t *testing.T) {
+func TestInjectClaudeModelsAddsPoolModelsWithoutCloningGPTEntries(t *testing.T) {
 	t.Parallel()
 
-	body := []byte(`{"models":[{"slug":"gpt-5.4","display_name":"gpt-5.4","description":"template","context_window":272000,"max_context_window":1000000,"visibility":"list","supported_in_api":true,"supported_reasoning_levels":[{"effort":"high"}]}]}`)
+	body := []byte(`{"models":[{"slug":"gpt-5.4","display_name":"gpt-5.4","description":"template","base_instructions":"You are ChatGPT."}]}`)
 	out := injectClaudeModels(body)
 
 	var catalog map[string]any
@@ -1040,32 +1040,9 @@ func TestInjectClaudeModelsAddsMissingCodexFallbackModels(t *testing.T) {
 			found[slug] = m
 		}
 	}
-	if found["gpt-5.5"] == nil {
-		t.Fatalf("missing gpt-5.5 in injected catalog: %#v", models)
-	}
-	if got := int(found["gpt-5.5"]["context_window"].(float64)); got != 272000 {
-		t.Fatalf("gpt-5.5 context_window = %d", got)
-	}
-	if got := found["gpt-5.5"]["display_name"]; got != "GPT-5.5" {
-		t.Fatalf("gpt-5.5 display_name = %#v", got)
-	}
-	for _, slug := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
-		if found[slug] == nil {
-			t.Fatalf("missing %s in injected catalog: %#v", slug, models)
-		}
-		if got := int(found[slug]["context_window"].(float64)); got != 372000 {
-			t.Fatalf("%s context_window = %d, want 372000", slug, got)
-		}
-	}
-	for _, slug := range []string{"gpt-5.6-sol[1m]", "gpt-5.6-terra[1m]", "gpt-5.6-luna[1m]"} {
-		if found[slug] == nil {
-			t.Fatalf("missing %s in injected catalog: %#v", slug, models)
-		}
-		if got := int(found[slug]["context_window"].(float64)); got != 1000000 {
-			t.Fatalf("%s context_window = %d, want 1000000", slug, got)
-		}
-		if got := int(found[slug]["max_context_window"].(float64)); got != 1000000 {
-			t.Fatalf("%s max_context_window = %d, want 1000000", slug, got)
+	for slug, model := range found {
+		if strings.HasPrefix(slug, "gpt-") && slug != "gpt-5.4" {
+			t.Fatalf("injected GPT entry %s cloned from another model: %v", slug, model)
 		}
 	}
 	if found["claude-sonnet-5"] == nil {

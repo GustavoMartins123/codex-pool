@@ -3601,7 +3601,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			respBody, readErr := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if readErr == nil {
-				modified, err := finalizeCodexModelCatalog(injectClaudeModels(respBody), discoveredModelsForPool(h.pool))
+				modified, err := finalizeCodexModelCatalog(injectClaudeModels(respBody), codexCatalogDescriptors(h.pool))
 				if err != nil {
 					log.Printf("[%s] %v", reqID, err)
 					respondJSONError(w, http.StatusBadGateway, "invalid Codex model catalog")

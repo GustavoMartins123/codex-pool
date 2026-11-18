@@ -384,3 +384,47 @@ func TestRunnerCatalogServesUpstreamCodexEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexModelsEndpointServesStaticGPTModelsFromDiscovery(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "codex-catalog-static-secret")
+	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-upstream", PlanType: "plus"}
+	discovered := &Account{ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", AccountID: "acct-discovered", PlanType: "pro",
+		Models: map[string]DiscoveredModel{"gpt-5.6-sol": {ID: "gpt-5.6-sol", DisplayName: "GPT-5.6 Sol", ContextWindow: 372000}},
+	}
+	model := discovered.Models["gpt-5.6-sol"]
+	model.CatalogEntry = upstreamCodexEntry(t, model)
+	discovered.Models["gpt-5.6-sol"] = model
+	h := qwenTestHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return qwenJSONResponse(200, `{"models":[{"slug":"gpt-6.1-sol","display_name":"GPT","base_instructions":"You are Codex on gpt-6.1-sol."}]}`), nil
+	}), upstream, discovered)
+	req := httptest.NewRequest("GET", "/backend-api/codex/models?client_version=0.164.0", nil)
+	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("codex-catalog-static-secret", "codex-client"))
+	rr := httptest.NewRecorder()
+	testPoolProxyRequest(t, h, rr, req, "codex-catalog")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d catalog=%.400s", rr.Code, rr.Body.String())
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]map[string]any{}
+	for _, entry := range catalog.Models {
+		found[stringValue(entry["slug"])] = entry
+	}
+	for _, slug := range []string{"gpt-5.6-sol", "gpt-5.6-sol[1m]"} {
+		if found[slug] == nil || found[slug]["base_instructions"] != "You are Codex on gpt-5.6-sol." {
+			t.Fatalf("%s entry = %v", slug, found[slug])
+		}
+	}
+	if found["gpt-5.6-sol[1m]"]["context_window"] != float64(1000000) || found["gpt-5.6-sol"]["context_window"] != float64(372000) {
+		t.Fatalf("context windows = %v / %v", found["gpt-5.6-sol"]["context_window"], found["gpt-5.6-sol[1m]"]["context_window"])
+	}
+	for _, slug := range []string{"gpt-5.5", "gpt-6-astra[1m]"} {
+		if found[slug] != nil {
+			t.Fatalf("%s listed without an upstream catalog entry: %v", slug, found[slug])
+		}
+	}
+}
