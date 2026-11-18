@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/logredact"
 )
 
 const antigravityTOSBanFixture = `{"error":{"code":403,"status":"PERMISSION_DENIED","message":"This service has been disabled in this account for violation of Terms of Service.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"TOS_VIOLATION","metadata":{"appeal_url":"https://forms.gle/appeal?continue=AbCdEf0123456789_-x"}}]}}`
@@ -280,7 +282,7 @@ func TestSafeAntigravityAppealURLAllowlist(t *testing.T) {
 }
 
 func TestAntigravityAppealContinuationTokenRedacted(t *testing.T) {
-	logged := redactSecrets("appeal link: https://forms.gle/appeal?continue=AbCdEf0123456789_-x")
+	logged := logredact.Redact("appeal link: https://forms.gle/appeal?continue=AbCdEf0123456789_-x")
 	if strings.Contains(logged, "AbCdEf0123456789_-x") {
 		t.Fatalf("continuation token reached the log: %s", logged)
 	}
