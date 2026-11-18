@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -169,7 +170,9 @@ func (b *sessionBroker) pendingPairings(principal string) ([]runnerproto.Pairing
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(reviews, func(a, b runnerproto.PairingReview) int { return a.ExpiresAt.Compare(b.ExpiresAt) })
+	slices.SortFunc(reviews, func(a, b runnerproto.PairingReview) int {
+		return cmp.Or(a.ExpiresAt.Compare(b.ExpiresAt), strings.Compare(a.ID, b.ID))
+	})
 	return reviews, nil
 }
 

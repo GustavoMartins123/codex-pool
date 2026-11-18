@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -201,5 +202,24 @@ func TestRunnerPairingHTTPAuthAndLegacyEndpointsClosed(t *testing.T) {
 	}
 	if r := appAuthRequest(h, "POST", "/api/runner/enroll", "", `{}`); r.Code < 400 {
 		t.Fatal("legacy enrollment accepted")
+	}
+}
+
+func TestPendingPairingsSortByExpiryThenID(t *testing.T) {
+	_, b, _, principal := brokerFixture(t)
+	clock := b.now()
+	b.now = func() time.Time { return clock }
+	tied := []string{startTestPairing(t, b, nil).ID, startTestPairing(t, b, nil).ID}
+	slices.Sort(tied)
+	clock = clock.Add(time.Second)
+	later := startTestPairing(t, b, nil).ID
+	for range 20 {
+		reviews, err := b.pendingPairings(principal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reviews) != 3 || reviews[0].ID != tied[0] || reviews[1].ID != tied[1] || reviews[2].ID != later {
+			t.Fatalf("pending order = %+v, want %v then %s", reviews, tied, later)
+		}
 	}
 }
