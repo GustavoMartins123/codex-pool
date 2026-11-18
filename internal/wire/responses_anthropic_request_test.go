@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -20,7 +20,7 @@ func TestClaudeToResponsesUsesCodexCompatibleRequestShape(t *testing.T) {
 		"messages":[{"role":"user","content":"hello"}]
 	}`)
 
-	out, err := translateClaudeToResponsesRequest(body)
+	out, err := AnthropicRequestToResponses(body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestClaudeToResponsesMapsServerWebSearchTool(t *testing.T) {
 		"tools":[{"type":"web_search_20250305","name":"web_search"}],
 		"messages":[{"role":"user","content":"search"}]
 	}`)
-	out, err := translateClaudeToResponsesRequest(body)
+	out, err := AnthropicRequestToResponses(body)
 	if err != nil {
 		t.Fatal(err)
 	}

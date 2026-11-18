@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestResponsesToClaudeBufferingWriterTracksInterleavedToolCalls(t *testing.T) {
-	writer := &responsesToClaudeBufferingWriter{}
+	writer := &ResponsesToAnthropicBuffer{}
 	events := [][]byte{
 		[]byte(`event: response.output_item.added
 data: {"type":"response.output_item.added","item":{"id":"item-a","type":"function_call","call_id":"call-a","name":"first"}}`),

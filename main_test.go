@@ -1886,7 +1886,7 @@ func TestRequestHasImageGenerationTool(t *testing.T) {
 func TestResponsesBufferingWriterUsesLatestPartialImageAtStreamEnd(t *testing.T) {
 	t.Parallel()
 
-	writer := &responsesBufferingWriter{model: "gpt-5.6-luna"}
+	writer := wire.NewResponsesBuffer("gpt-5.6-luna")
 	events := []string{
 		"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_img\",\"status\":\"in_progress\",\"model\":\"gpt-5.6-luna\"}}\n\n",
 		"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ig_1\",\"type\":\"image_generation_call\",\"status\":\"in_progress\"}}\n\n",

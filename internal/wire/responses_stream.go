@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -9,8 +9,54 @@ import (
 	"strings"
 
 	"codex-pool-proxy/internal/sse"
-	"codex-pool-proxy/internal/wire"
 )
+
+// StreamOptions configures the Responses stream translators.
+type StreamOptions struct {
+	OnEvent   func([]byte)
+	Debug     bool
+	RequestID string
+}
+
+// NewResponsesBuffer assembles a Responses stream into one Responses reply.
+func NewResponsesBuffer(model string) *ResponsesBuffer {
+	return &ResponsesBuffer{model: model}
+}
+
+// NewResponsesToOpenAICompletionsStream converts Responses events to Completions chunks.
+func NewResponsesToOpenAICompletionsStream(w io.Writer, opts StreamOptions) io.Writer {
+	return &responsesToCompletionsWriter{w: w, callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewResponsesToOpenAICompletionsBuffer assembles a Responses stream into one Completions reply.
+func NewResponsesToOpenAICompletionsBuffer(opts StreamOptions) *ResponsesToOpenAICompletionsBuffer {
+	return &ResponsesToOpenAICompletionsBuffer{callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewResponsesToOpenAIChatStream converts Responses events to Chat Completions chunks.
+func NewResponsesToOpenAIChatStream(w io.Writer, opts StreamOptions) io.Writer {
+	return &responsesToChatCompletionsWriter{w: w, callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewResponsesToOpenAIChatBuffer assembles a Responses stream into one Chat Completions reply.
+func NewResponsesToOpenAIChatBuffer(opts StreamOptions) *ResponsesToOpenAIChatBuffer {
+	return &ResponsesToOpenAIChatBuffer{callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewResponsesToAnthropicBuffer assembles a Responses stream into one Messages reply.
+func NewResponsesToAnthropicBuffer(model string, opts StreamOptions) *ResponsesToAnthropicBuffer {
+	return &ResponsesToAnthropicBuffer{model: model, callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewAnthropicToResponsesStream converts Messages events to Responses events.
+func NewAnthropicToResponsesStream(w io.Writer, opts StreamOptions) io.Writer {
+	return &claudeToResponsesWriter{w: w, callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
+
+// NewResponsesToAnthropicStream converts Responses events to Messages events.
+func NewResponsesToAnthropicStream(w io.Writer, opts StreamOptions) io.Writer {
+	return &responsesToClaudeWriter{w: w, callback: opts.OnEvent, debug: opts.Debug, reqID: opts.RequestID}
+}
 
 func responseFinishReason(response map[string]any) string {
 	details, _ := response["incomplete_details"].(map[string]any)
@@ -24,7 +70,7 @@ func responseFinishReason(response map[string]any) string {
 	}
 }
 
-type responsesBufferingWriter struct {
+type ResponsesBuffer struct {
 	framer              sse.Framer
 	buf                 []byte
 	id                  string
@@ -43,14 +89,14 @@ type responsesBufferingWriter struct {
 	createdAt           int64
 }
 
-func (bw *responsesBufferingWriter) Write(p []byte) (int, error) {
+func (bw *ResponsesBuffer) Write(p []byte) (int, error) {
 	origLen := len(p)
 	bw.buf = append(bw.buf, p...)
 	bw.scanEvents()
 	return origLen, nil
 }
 
-func (bw *responsesBufferingWriter) scanEvents() {
+func (bw *ResponsesBuffer) scanEvents() {
 	for {
 		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
@@ -61,7 +107,7 @@ func (bw *responsesBufferingWriter) scanEvents() {
 	}
 }
 
-func (bw *responsesBufferingWriter) processEvent(event []byte) {
+func (bw *ResponsesBuffer) processEvent(event []byte) {
 	eventType, data := sse.ParseEvent(event)
 	if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 		return
@@ -132,7 +178,7 @@ func (bw *responsesBufferingWriter) processEvent(event []byte) {
 	}
 }
 
-func (bw *responsesBufferingWriter) addImageGenerationResult(event map[string]any, field string) {
+func (bw *ResponsesBuffer) addImageGenerationResult(event map[string]any, field string) {
 	result, _ := event[field].(string)
 	if result == "" {
 		return
@@ -149,7 +195,7 @@ func (bw *responsesBufferingWriter) addImageGenerationResult(event map[string]an
 	bw.imageGenerationCall["status"] = "completed"
 }
 
-func (bw *responsesBufferingWriter) applyResponse(obj map[string]any) {
+func (bw *ResponsesBuffer) applyResponse(obj map[string]any) {
 	resp, _ := obj["response"].(map[string]any)
 	if resp == nil {
 		return
@@ -163,19 +209,19 @@ func (bw *responsesBufferingWriter) applyResponse(obj map[string]any) {
 	if status, _ := resp["status"].(string); status != "" {
 		bw.status = status
 	}
-	if created := toInt64(resp["created_at"]); created > 0 {
+	if created := JSONInt64(resp["created_at"]); created > 0 {
 		bw.createdAt = created
 	}
 	if usage, _ := resp["usage"].(map[string]any); usage != nil {
-		bw.inputTokens = toInt64(usage["input_tokens"])
-		bw.outputTokens = toInt64(usage["output_tokens"])
+		bw.inputTokens = JSONInt64(usage["input_tokens"])
+		bw.outputTokens = JSONInt64(usage["output_tokens"])
 		if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-			bw.cachedTokens = toInt64(details["cached_tokens"])
+			bw.cachedTokens = JSONInt64(details["cached_tokens"])
 		}
 	}
 }
 
-func (bw *responsesBufferingWriter) addImageGenerationCall(item map[string]any) {
+func (bw *ResponsesBuffer) addImageGenerationCall(item map[string]any) {
 	if item == nil {
 		return
 	}
@@ -189,7 +235,7 @@ func (bw *responsesBufferingWriter) addImageGenerationCall(item map[string]any) 
 	bw.imageGenerationCall = copy
 }
 
-func (bw *responsesBufferingWriter) addFunctionCall(item map[string]any) {
+func (bw *ResponsesBuffer) addFunctionCall(item map[string]any) {
 	if item == nil {
 		return
 	}
@@ -213,7 +259,7 @@ func (bw *responsesBufferingWriter) addFunctionCall(item map[string]any) {
 	}
 }
 
-func (bw *responsesBufferingWriter) registerFunctionCall(itemID, callID string) int {
+func (bw *ResponsesBuffer) registerFunctionCall(itemID, callID string) int {
 	if bw.functionCallIDToIdx == nil {
 		bw.functionCallIDToIdx = map[string]int{}
 	}
@@ -239,7 +285,7 @@ func (bw *responsesBufferingWriter) registerFunctionCall(itemID, callID string) 
 	return idx
 }
 
-func (bw *responsesBufferingWriter) resolveFunctionCallID(obj map[string]any) string {
+func (bw *ResponsesBuffer) resolveFunctionCallID(obj map[string]any) string {
 	callID, _ := obj["call_id"].(string)
 	if callID == "" {
 		callID, _ = obj["item_id"].(string)
@@ -250,7 +296,7 @@ func (bw *responsesBufferingWriter) resolveFunctionCallID(obj map[string]any) st
 	return callID
 }
 
-func (bw *responsesBufferingWriter) resolveFunctionCallIDFromItem(item map[string]any) string {
+func (bw *ResponsesBuffer) resolveFunctionCallIDFromItem(item map[string]any) string {
 	if item == nil {
 		return ""
 	}
@@ -264,7 +310,7 @@ func (bw *responsesBufferingWriter) resolveFunctionCallIDFromItem(item map[strin
 	return callID
 }
 
-func (bw *responsesBufferingWriter) functionCallIndexForID(callID string) int {
+func (bw *ResponsesBuffer) functionCallIndexForID(callID string) int {
 	if idx, ok := bw.functionCallIDToIdx[callID]; ok {
 		return idx
 	}
@@ -278,7 +324,7 @@ func (bw *responsesBufferingWriter) functionCallIndexForID(callID string) int {
 	return idx
 }
 
-func (bw *responsesBufferingWriter) appendFunctionCallArguments(callID, delta string) {
+func (bw *ResponsesBuffer) appendFunctionCallArguments(callID, delta string) {
 	if len(bw.functionCalls) == 0 {
 		return
 	}
@@ -291,7 +337,7 @@ func (bw *responsesBufferingWriter) appendFunctionCallArguments(callID, delta st
 	call["arguments"] = args + delta
 }
 
-func (bw *responsesBufferingWriter) setFunctionCallArguments(callID, args string) {
+func (bw *ResponsesBuffer) setFunctionCallArguments(callID, args string) {
 	if len(bw.functionCalls) == 0 {
 		return
 	}
@@ -302,7 +348,7 @@ func (bw *responsesBufferingWriter) setFunctionCallArguments(callID, args string
 	}
 }
 
-func (bw *responsesBufferingWriter) Result() []byte {
+func (bw *ResponsesBuffer) Result() []byte {
 	id := bw.id
 	if id == "" {
 		id = "resp_translated"
@@ -426,7 +472,7 @@ func (rw *responsesToCompletionsWriter) processEvent(event []byte) {
 			if model, _ := resp["model"].(string); model != "" {
 				rw.model = model
 			}
-			if created := toInt64(resp["created_at"]); created > 0 {
+			if created := JSONInt64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 		}
@@ -481,7 +527,7 @@ func (rw *responsesToCompletionsWriter) writeRaw(s string) {
 	}
 }
 
-type responsesToCompletionsBufferingWriter struct {
+type ResponsesToOpenAICompletionsBuffer struct {
 	framer       sse.Framer
 	buf          []byte
 	callback     func([]byte)
@@ -498,14 +544,14 @@ type responsesToCompletionsBufferingWriter struct {
 	errMsg       string
 }
 
-func (bw *responsesToCompletionsBufferingWriter) Write(p []byte) (int, error) {
+func (bw *ResponsesToOpenAICompletionsBuffer) Write(p []byte) (int, error) {
 	origLen := len(p)
 	bw.buf = append(bw.buf, p...)
 	bw.scanEvents()
 	return origLen, nil
 }
 
-func (bw *responsesToCompletionsBufferingWriter) scanEvents() {
+func (bw *ResponsesToOpenAICompletionsBuffer) scanEvents() {
 	for {
 		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
@@ -516,7 +562,7 @@ func (bw *responsesToCompletionsBufferingWriter) scanEvents() {
 	}
 }
 
-func (bw *responsesToCompletionsBufferingWriter) processEvent(event []byte) {
+func (bw *ResponsesToOpenAICompletionsBuffer) processEvent(event []byte) {
 	eventType, data := sse.ParseEvent(event)
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
 		bw.callback(data)
@@ -540,7 +586,7 @@ func (bw *responsesToCompletionsBufferingWriter) processEvent(event []byte) {
 			if model, _ := resp["model"].(string); model != "" {
 				bw.model = model
 			}
-			if created := toInt64(resp["created_at"]); created > 0 {
+			if created := JSONInt64(resp["created_at"]); created > 0 {
 				bw.createdAt = created
 			}
 		}
@@ -550,14 +596,14 @@ func (bw *responsesToCompletionsBufferingWriter) processEvent(event []byte) {
 		}
 	case "response.completed", "response.incomplete":
 		if resp, _ := obj["response"].(map[string]any); resp != nil {
-			if created := toInt64(resp["created_at"]); created > 0 {
+			if created := JSONInt64(resp["created_at"]); created > 0 {
 				bw.createdAt = created
 			}
 			if usage, _ := resp["usage"].(map[string]any); usage != nil {
-				bw.inputTokens = toInt64(usage["input_tokens"])
-				bw.outputTokens = toInt64(usage["output_tokens"])
+				bw.inputTokens = JSONInt64(usage["input_tokens"])
+				bw.outputTokens = JSONInt64(usage["output_tokens"])
 				if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-					bw.cachedTokens = toInt64(details["cached_tokens"])
+					bw.cachedTokens = JSONInt64(details["cached_tokens"])
 				}
 			}
 			bw.finishReason = responseFinishReason(resp)
@@ -578,7 +624,7 @@ func (bw *responsesToCompletionsBufferingWriter) processEvent(event []byte) {
 	}
 }
 
-func (bw *responsesToCompletionsBufferingWriter) Result() []byte {
+func (bw *ResponsesToOpenAICompletionsBuffer) Result() []byte {
 	id := bw.id
 	if id == "" {
 		id = "cmpl-translated"
@@ -706,7 +752,7 @@ func (rw *responsesToChatCompletionsWriter) processEvent(event []byte) {
 			if m, ok := resp["model"].(string); ok {
 				rw.model = m
 			}
-			if created := toInt64(resp["created_at"]); created > 0 {
+			if created := JSONInt64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 		}
@@ -815,14 +861,14 @@ func (rw *responsesToChatCompletionsWriter) processEvent(event []byte) {
 	case "response.completed", "response.incomplete":
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
-			if created := toInt64(resp["created_at"]); created > 0 {
+			if created := JSONInt64(resp["created_at"]); created > 0 {
 				rw.createdAt = created
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = toInt64(usage["input_tokens"])
-				rw.outputTokens = toInt64(usage["output_tokens"])
+				rw.inputTokens = JSONInt64(usage["input_tokens"])
+				rw.outputTokens = JSONInt64(usage["output_tokens"])
 				if details, _ := usage["input_tokens_details"].(map[string]any); details != nil {
-					rw.cachedTokens = toInt64(details["cached_tokens"])
+					rw.cachedTokens = JSONInt64(details["cached_tokens"])
 				}
 			}
 		}
@@ -982,10 +1028,10 @@ func (rw *responsesToChatCompletionsWriter) writeRaw(s string) {
 	}
 }
 
-// responsesToChatCompletionsBufferingWriter is like responsesToChatCompletionsWriter
+// ResponsesToOpenAIChatBuffer is like responsesToChatCompletionsWriter
 // but buffers all SSE events and produces a single non-streaming JSON response.
 // Used when the client sends stream:false but Codex backend requires streaming.
-type responsesToChatCompletionsBufferingWriter struct {
+type ResponsesToOpenAIChatBuffer struct {
 	framer   sse.Framer
 	buf      []byte
 	callback func([]byte) // usage callback
@@ -1009,14 +1055,14 @@ type responsesToChatCompletionsBufferingWriter struct {
 	errMsg              string
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) Write(p []byte) (int, error) {
+func (bw *ResponsesToOpenAIChatBuffer) Write(p []byte) (int, error) {
 	origLen := len(p)
 	bw.buf = append(bw.buf, p...)
 	bw.scanEvents()
 	return origLen, nil
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) scanEvents() {
+func (bw *ResponsesToOpenAIChatBuffer) scanEvents() {
 	for {
 		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
@@ -1027,7 +1073,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) scanEvents() {
 	}
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) processEvent(event []byte) {
+func (bw *ResponsesToOpenAIChatBuffer) processEvent(event []byte) {
 	eventType, data := sse.ParseEvent(event)
 
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -1128,8 +1174,8 @@ func (bw *responsesToChatCompletionsBufferingWriter) processEvent(event []byte) 
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = toInt64(usage["input_tokens"])
-				bw.outputTokens = toInt64(usage["output_tokens"])
+				bw.inputTokens = JSONInt64(usage["input_tokens"])
+				bw.outputTokens = JSONInt64(usage["output_tokens"])
 			}
 		}
 		bw.finishReason = responseFinishReason(resp)
@@ -1151,7 +1197,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) processEvent(event []byte) 
 	}
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) registerToolCall(itemID, callID string) int {
+func (bw *ResponsesToOpenAIChatBuffer) registerToolCall(itemID, callID string) int {
 	if bw.toolCallIDToIndex == nil {
 		bw.toolCallIDToIndex = map[string]int{}
 	}
@@ -1177,7 +1223,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) registerToolCall(itemID, ca
 	return idx
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) resolveToolCallID(obj map[string]any) string {
+func (bw *ResponsesToOpenAIChatBuffer) resolveToolCallID(obj map[string]any) string {
 	callID, _ := obj["call_id"].(string)
 	if callID == "" {
 		callID, _ = obj["item_id"].(string)
@@ -1188,7 +1234,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) resolveToolCallID(obj map[s
 	return callID
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) resolveToolCallIDFromItem(item map[string]any) string {
+func (bw *ResponsesToOpenAIChatBuffer) resolveToolCallIDFromItem(item map[string]any) string {
 	if item == nil {
 		return ""
 	}
@@ -1202,7 +1248,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) resolveToolCallIDFromItem(i
 	return callID
 }
 
-func (bw *responsesToChatCompletionsBufferingWriter) toolCallIndexForID(callID string) int {
+func (bw *ResponsesToOpenAIChatBuffer) toolCallIndexForID(callID string) int {
 	if idx, ok := bw.toolCallIDToIndex[callID]; ok {
 		return idx
 	}
@@ -1217,7 +1263,7 @@ func (bw *responsesToChatCompletionsBufferingWriter) toolCallIndexForID(callID s
 }
 
 // Result returns the assembled non-streaming Chat Completions JSON response.
-func (bw *responsesToChatCompletionsBufferingWriter) Result() []byte {
+func (bw *ResponsesToOpenAIChatBuffer) Result() []byte {
 	id := bw.id
 	if id == "" {
 		id = "chatcmpl-translated"
@@ -1270,9 +1316,9 @@ func (bw *responsesToChatCompletionsBufferingWriter) Result() []byte {
 	return b
 }
 
-// responsesToClaudeBufferingWriter buffers Responses API SSE events into a
+// ResponsesToAnthropicBuffer buffers Responses API SSE events into a
 // non-streaming Claude Messages API response.
-type responsesToClaudeBufferingWriter struct {
+type ResponsesToAnthropicBuffer struct {
 	framer   sse.Framer
 	buf      []byte
 	callback func([]byte)
@@ -1291,14 +1337,14 @@ type responsesToClaudeBufferingWriter struct {
 	errMsg       string
 }
 
-func (bw *responsesToClaudeBufferingWriter) Write(p []byte) (int, error) {
+func (bw *ResponsesToAnthropicBuffer) Write(p []byte) (int, error) {
 	origLen := len(p)
 	bw.buf = append(bw.buf, p...)
 	bw.scanEvents()
 	return origLen, nil
 }
 
-func (bw *responsesToClaudeBufferingWriter) scanEvents() {
+func (bw *ResponsesToAnthropicBuffer) scanEvents() {
 	for {
 		event, advance, ok := bw.framer.Next(bw.buf)
 		if !ok {
@@ -1309,7 +1355,7 @@ func (bw *responsesToClaudeBufferingWriter) scanEvents() {
 	}
 }
 
-func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
+func (bw *ResponsesToAnthropicBuffer) processEvent(event []byte) {
 	eventType, data := sse.ParseEvent(event)
 
 	if len(data) > 0 && bw.callback != nil && !bytes.Equal(data, []byte("[DONE]")) {
@@ -1343,7 +1389,7 @@ func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
 				bw.model = model
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = toInt64(usage["input_tokens"])
+				bw.inputTokens = JSONInt64(usage["input_tokens"])
 			}
 		}
 	case "response.output_text.delta":
@@ -1396,11 +1442,11 @@ func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
 				bw.model = model
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				bw.inputTokens = toInt64(usage["input_tokens"])
-				bw.outputTokens = toInt64(usage["output_tokens"])
+				bw.inputTokens = JSONInt64(usage["input_tokens"])
+				bw.outputTokens = JSONInt64(usage["output_tokens"])
 			}
 		}
-		bw.stopReason = wire.ChatFinishReasonToAnthropic(responseFinishReason(resp))
+		bw.stopReason = ChatFinishReasonToAnthropic(responseFinishReason(resp))
 		if len(bw.toolUses) > 0 && responseFinishReason(resp) == "stop" {
 			bw.stopReason = "tool_use"
 		}
@@ -1418,7 +1464,7 @@ func (bw *responsesToClaudeBufferingWriter) processEvent(event []byte) {
 	}
 }
 
-func (bw *responsesToClaudeBufferingWriter) toolUseIndexForEvent(obj map[string]any) (int, bool) {
+func (bw *ResponsesToAnthropicBuffer) toolUseIndexForEvent(obj map[string]any) (int, bool) {
 	callID, _ := obj["call_id"].(string)
 	if callID == "" {
 		itemID, _ := obj["item_id"].(string)
@@ -1437,7 +1483,7 @@ func (bw *responsesToClaudeBufferingWriter) toolUseIndexForEvent(obj map[string]
 	return index, ok
 }
 
-func (bw *responsesToClaudeBufferingWriter) finishToolUse(index int) {
+func (bw *ResponsesToAnthropicBuffer) finishToolUse(index int) {
 	if index < 0 || index >= len(bw.toolUses) {
 		return
 	}
@@ -1453,7 +1499,7 @@ func (bw *responsesToClaudeBufferingWriter) finishToolUse(index int) {
 	}
 }
 
-func (bw *responsesToClaudeBufferingWriter) Result() []byte {
+func (bw *ResponsesToAnthropicBuffer) Result() []byte {
 	for i := range bw.toolUses {
 		args, _ := bw.toolUses[i]["_args"].(string)
 		if args != "" {
@@ -1600,7 +1646,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 				cw.model = model
 			}
 			if usage, ok := msg["usage"].(map[string]any); ok {
-				cw.inputTokens = toInt64(usage["input_tokens"])
+				cw.inputTokens = JSONInt64(usage["input_tokens"])
 			}
 		}
 		cw.started = true
@@ -1764,7 +1810,7 @@ func (cw *claudeToResponsesWriter) processEvent(event []byte) {
 			}
 		}
 		if usage, ok := obj["usage"].(map[string]any); ok {
-			cw.outputTokens = toInt64(usage["output_tokens"])
+			cw.outputTokens = JSONInt64(usage["output_tokens"])
 		}
 
 	case "message_stop":
@@ -1936,7 +1982,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 				rw.model = m
 			}
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = toInt64(usage["input_tokens"])
+				rw.inputTokens = JSONInt64(usage["input_tokens"])
 			}
 		}
 		rw.started = true
@@ -2035,8 +2081,8 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 		resp, _ := obj["response"].(map[string]any)
 		if resp != nil {
 			if usage, ok := resp["usage"].(map[string]any); ok {
-				rw.inputTokens = toInt64(usage["input_tokens"])
-				rw.outputTokens = toInt64(usage["output_tokens"])
+				rw.inputTokens = JSONInt64(usage["input_tokens"])
+				rw.outputTokens = JSONInt64(usage["output_tokens"])
 			}
 		}
 		// Close any open content block
@@ -2045,7 +2091,7 @@ func (rw *responsesToClaudeWriter) processEvent(event []byte) {
 				`{"type":"content_block_stop","index":%d}`, rw.contentBlockIndex))
 		}
 		rw.terminal = true
-		stopReason := wire.ChatFinishReasonToAnthropic(responseFinishReason(resp))
+		stopReason := ChatFinishReasonToAnthropic(responseFinishReason(resp))
 		if rw.toolCallIndex > 0 && responseFinishReason(resp) == "stop" {
 			stopReason = "tool_use"
 		}

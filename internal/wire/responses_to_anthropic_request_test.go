@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"encoding/json"
@@ -65,7 +65,7 @@ func TestResponsesClaudeRejectsUnsupportedOrInvalidToolContracts(t *testing.T) {
 		`"input":[{"type":"function_call","call_id":"call","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call","output":"one"},{"type":"function_call_output","call_id":"call","output":"two"}]`,
 	} {
 		t.Run(fields, func(t *testing.T) {
-			if _, err := translateResponsesToClaudeRequest([]byte(`{"model":"claude-sonnet-5-5",` + fields + `}`)); err == nil {
+			if _, err := ResponsesRequestToAnthropic([]byte(`{"model":"claude-sonnet-5-5",`+fields+`}`), identityModel); err == nil {
 				t.Fatal("unsupported or invalid contract was silently accepted")
 			}
 		})

@@ -11,6 +11,8 @@ import (
 	"mime/multipart"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func imagesGenerationCount(body []byte) int {
@@ -18,7 +20,7 @@ func imagesGenerationCount(body []byte) int {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return 1
 	}
-	n := int(toInt64(req["n"]))
+	n := int(wire.JSONInt64(req["n"]))
 	if n < 1 {
 		return 1
 	}
@@ -48,7 +50,7 @@ func translateImagesGenerationToResponses(body []byte) ([]byte, string, error) {
 	if prompt == "" {
 		return nil, "", errors.New("prompt is required")
 	}
-	if n := toInt64(req["n"]); n > 1 {
+	if n := wire.JSONInt64(req["n"]); n > 1 {
 		return nil, "", errors.New("internal fanout required for n > 1")
 	}
 	out, responseFormat, err := buildImagesResponsesRequest(req, []any{map[string]any{"type": "input_text", "text": prompt}})
@@ -136,7 +138,7 @@ func translateImagesEditToResponses(body []byte, contentType string) ([]byte, st
 	if prompt == "" {
 		return nil, "", errors.New("prompt is required")
 	}
-	if n := toInt64(req["n"]); n > 1 {
+	if n := wire.JSONInt64(req["n"]); n > 1 {
 		return nil, "", errors.New("internal fanout required for n > 1")
 	}
 	content := []any{map[string]any{"type": "input_text", "text": prompt}}
@@ -189,7 +191,7 @@ func appendImagesGenerationData(dst []any, body []byte, responseFormat string) (
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, 0, fmt.Errorf("parse images response: %w", err)
 	}
-	created := toInt64(resp["created"])
+	created := wire.JSONInt64(resp["created"])
 	data, _ := resp["data"].([]any)
 	for _, entry := range data {
 		if m, ok := entry.(map[string]any); ok {
@@ -234,7 +236,7 @@ func translateResponsesToImagesGeneration(body []byte, responseFormat string) ([
 	if revisedPrompt != "" {
 		entry["revised_prompt"] = revisedPrompt
 	}
-	created := toInt64(resp["created_at"])
+	created := wire.JSONInt64(resp["created_at"])
 	if created == 0 {
 		created = time.Now().Unix()
 	}

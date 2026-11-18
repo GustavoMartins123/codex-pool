@@ -1,4 +1,4 @@
-package main
+package wire
 
 import (
 	"bytes"
@@ -55,36 +55,41 @@ func runResponsesParityFunc(t *testing.T, tc responsesParityFunc) ([]byte, error
 	input := []byte(tc.Input)
 	switch tc.Codec {
 	case "chat-request":
-		return translateChatCompletionsToResponses(input)
+		return OpenAIChatRequestToResponses(input)
 	case "completions-request":
-		return translateCompletionsToResponses(input)
+		return OpenAICompletionsRequestToResponses(input)
 	case "responses-to-completions":
-		return translateResponsesToCompletions(input)
+		return ResponsesResponseToOpenAICompletions(input)
 	case "responses-to-chat":
-		return translateResponsesToChatCompletions(input)
+		return ResponsesResponseToOpenAIChat(input)
 	case "responses-request-to-messages":
-		return translateResponsesToClaudeRequest(input)
+		return ResponsesRequestToAnthropic(input, func(model string) string {
+			if tc.ResolvedModel == "" {
+				t.Fatalf("model %q has no resolved name in the fixture", model)
+			}
+			return tc.ResolvedModel
+		})
 	case "messages-response-to-responses":
-		return translateClaudeRespToResponses(input)
+		return AnthropicResponseToResponses(input)
 	case "messages-request-to-responses":
-		return translateClaudeToResponsesRequest(input)
+		return AnthropicRequestToResponses(input)
 	case "responses-schema":
-		return normalizeResponsesSchemaBody(input), nil
+		return NormalizeResponsesSchemaBody(input), nil
 	case "codex-json-schema":
 		var schema map[string]any
 		if err := json.Unmarshal(input, &schema); err != nil {
 			t.Fatal(err)
 		}
-		return json.Marshal(prepareCodexJSONSchema(schema))
+		return json.Marshal(PrepareCodexJSONSchema(schema))
 	case "merge-messages", "messages-tool-pairing":
 		var messages []map[string]any
 		if err := json.Unmarshal(input, &messages); err != nil {
 			t.Fatal(err)
 		}
 		if tc.Codec == "merge-messages" {
-			return json.Marshal(mergeConsecutiveClaudeMessages(messages))
+			return json.Marshal(MergeConsecutiveAnthropicMessages(messages))
 		}
-		return json.Marshal(normalizeClaudeToolPairing(messages))
+		return json.Marshal(NormalizeAnthropicToolPairing(messages))
 	}
 	t.Fatalf("unknown codec %q", tc.Codec)
 	return nil, nil
@@ -99,25 +104,25 @@ func runResponsesParityWriter(t *testing.T, tc responsesParityWriter) responsesP
 	var result func() []byte
 	switch tc.Codec {
 	case "responses-stream-buffer":
-		w := &responsesBufferingWriter{model: tc.Model}
+		w := NewResponsesBuffer(tc.Model)
 		writer, result = w, w.Result
 	case "responses-stream-to-completions":
-		writer = &responsesToCompletionsWriter{w: &out, callback: callback}
+		writer = NewResponsesToOpenAICompletionsStream(&out, StreamOptions{OnEvent: callback})
 	case "responses-stream-to-completions-buffer":
-		w := &responsesToCompletionsBufferingWriter{callback: callback}
+		w := NewResponsesToOpenAICompletionsBuffer(StreamOptions{OnEvent: callback})
 		writer, result = w, w.Result
 	case "responses-stream-to-chat":
-		writer = &responsesToChatCompletionsWriter{w: &out, callback: callback}
+		writer = NewResponsesToOpenAIChatStream(&out, StreamOptions{OnEvent: callback})
 	case "responses-stream-to-chat-buffer":
-		w := &responsesToChatCompletionsBufferingWriter{callback: callback}
+		w := NewResponsesToOpenAIChatBuffer(StreamOptions{OnEvent: callback})
 		writer, result = w, w.Result
 	case "responses-stream-to-messages-buffer":
-		w := &responsesToClaudeBufferingWriter{callback: callback, model: tc.Model}
+		w := NewResponsesToAnthropicBuffer(tc.Model, StreamOptions{OnEvent: callback})
 		writer, result = w, w.Result
 	case "messages-stream-to-responses":
-		writer = &claudeToResponsesWriter{w: &out, callback: callback}
+		writer = NewAnthropicToResponsesStream(&out, StreamOptions{OnEvent: callback})
 	case "responses-stream-to-messages":
-		writer = &responsesToClaudeWriter{w: &out, callback: callback}
+		writer = NewResponsesToAnthropicStream(&out, StreamOptions{OnEvent: callback})
 	default:
 		t.Fatalf("unknown codec %q", tc.Codec)
 	}
@@ -140,14 +145,6 @@ func TestResponsesCodecParity(t *testing.T) {
 	fixture := loadResponsesParityFixture(t)
 	for i, tc := range fixture.Funcs {
 		t.Run(fmt.Sprintf("%s/%d", tc.Codec, i), func(t *testing.T) {
-			if tc.ResolvedModel != "" {
-				var request struct {
-					Model string `json:"model"`
-				}
-				if err := json.Unmarshal([]byte(tc.Input), &request); err != nil || claudeCanonicalModel(request.Model) != tc.ResolvedModel {
-					t.Fatalf("resolved model for %q = %q, fixture has %q", request.Model, claudeCanonicalModel(request.Model), tc.ResolvedModel)
-				}
-			}
 			got, err := runResponsesParityFunc(t, tc)
 			gotErr := ""
 			if err != nil {

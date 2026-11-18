@@ -1223,9 +1223,9 @@ func renderClaudeContext(object map[string]any, messages []Message) {
 	if len(system) > 0 {
 		object["system"] = strings.Join(system, "\n\n")
 	}
-	output = mergeConsecutiveClaudeMessages(output)
-	output = normalizeClaudeToolPairing(output)
-	output = mergeConsecutiveClaudeMessages(output)
+	output = wire.MergeConsecutiveAnthropicMessages(output)
+	output = wire.NormalizeAnthropicToolPairing(output)
+	output = wire.MergeConsecutiveAnthropicMessages(output)
 	wire := make([]any, len(output))
 	for index, message := range output {
 		wire[index] = message

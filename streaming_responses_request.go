@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 var errResponsesSpoolTooLarge = errors.New("Responses request exceeds disk spool limit")
@@ -544,11 +546,11 @@ func (l *jsonLex) copyToolsArray(out io.Writer) error {
 			continue
 		}
 		if params, _ := tool["parameters"].(map[string]any); params != nil {
-			tool["parameters"] = prepareCodexJSONSchema(params)
+			tool["parameters"] = wire.PrepareCodexJSONSchema(params)
 		}
 		if fn, _ := tool["function"].(map[string]any); fn != nil {
 			if params, _ := fn["parameters"].(map[string]any); params != nil {
-				fn["parameters"] = prepareCodexJSONSchema(params)
+				fn["parameters"] = wire.PrepareCodexJSONSchema(params)
 			}
 		}
 		encoded, err := json.Marshal(tool)

@@ -1366,7 +1366,7 @@ func prepareResponsesObject(obj map[string]any) {
 	obj["store"] = false
 	obj["stream"] = true
 	prepareCodexSchemasInBody(obj)
-	sanitizeCodexResponsesParams(obj)
+	wire.SanitizeCodexResponsesParams(obj)
 	if input, ok := obj["input"].(string); ok {
 		obj["input"] = []any{
 			map[string]any{
@@ -1385,7 +1385,7 @@ func prepareCodexSchemasInBody(obj map[string]any) {
 	if text, _ := obj["text"].(map[string]any); text != nil {
 		if format, _ := text["format"].(map[string]any); format != nil {
 			if schema, _ := format["schema"].(map[string]any); schema != nil {
-				format["schema"] = prepareCodexJSONSchema(schema)
+				format["schema"] = wire.PrepareCodexJSONSchema(schema)
 			}
 		}
 	}
@@ -1396,33 +1396,14 @@ func prepareCodexSchemasInBody(obj map[string]any) {
 				continue
 			}
 			if params, _ := tool["parameters"].(map[string]any); params != nil {
-				tool["parameters"] = prepareCodexJSONSchema(params)
+				tool["parameters"] = wire.PrepareCodexJSONSchema(params)
 			}
 			if fn, _ := tool["function"].(map[string]any); fn != nil {
 				if params, _ := fn["parameters"].(map[string]any); params != nil {
-					fn["parameters"] = prepareCodexJSONSchema(params)
+					fn["parameters"] = wire.PrepareCodexJSONSchema(params)
 				}
 			}
 		}
-	}
-}
-
-func sanitizeCodexResponsesParams(obj map[string]any) {
-	for _, key := range []string{
-		"temperature",
-		"top_p",
-		"presence_penalty",
-		"frequency_penalty",
-		"max_tokens",
-		"max_completion_tokens",
-		"max_output_tokens",
-		"seed",
-		"logprobs",
-		"top_logprobs",
-		"metadata",
-		"prompt_cache_scope",
-	} {
-		delete(obj, key)
 	}
 }
 
@@ -1458,19 +1439,19 @@ func valueHasImageGenerationTool(v any) bool {
 func codexPassthroughRewrite(path string, body []byte) (rewrittenPath string, rewrittenBody []byte, err error) {
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
-		rewritten, err := translateClaudeToResponsesRequest(body)
+		rewritten, err := wire.AnthropicRequestToResponses(body)
 		if err != nil {
 			return path, nil, err
 		}
 		return "/v1/responses", rewritten, nil
 	case strings.HasPrefix(path, "/v1/chat/completions"):
-		rewritten, err := translateChatCompletionsToResponses(body)
+		rewritten, err := wire.OpenAIChatRequestToResponses(body)
 		if err != nil {
 			return path, nil, err
 		}
 		return "/v1/responses", rewritten, nil
 	case strings.HasPrefix(path, "/v1/completions"):
-		rewritten, err := translateCompletionsToResponses(body)
+		rewritten, err := wire.OpenAICompletionsRequestToResponses(body)
 		if err != nil {
 			return path, nil, err
 		}
@@ -2919,14 +2900,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 			r.URL.Path = "/v1/messages"
 		case wire.TranslateChatToResponses:
-			bodyBytes, err = translateChatCompletionsToResponses(bodyBytes)
+			bodyBytes, err = wire.OpenAIChatRequestToResponses(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/responses"
 		case wire.TranslateCompletionsToResponses:
-			bodyBytes, err = translateCompletionsToResponses(bodyBytes)
+			bodyBytes, err = wire.OpenAICompletionsRequestToResponses(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
@@ -2944,14 +2925,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 			r.URL.Path = "/v1/responses"
 		case wire.TranslateResponsesToClaude:
-			bodyBytes, err = translateResponsesToClaudeRequest(bodyBytes)
+			bodyBytes, err = wire.ResponsesRequestToAnthropic(bodyBytes, claudeCanonicalModel)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			r.URL.Path = "/v1/messages"
 		case wire.TranslateClaudeToResponses:
-			bodyBytes, err = translateClaudeToResponsesRequest(bodyBytes)
+			bodyBytes, err = wire.AnthropicRequestToResponses(bodyBytes)
 			if err != nil {
 				http.Error(w, "format translation error: "+err.Error(), http.StatusBadRequest)
 				return
@@ -3002,7 +2983,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		imageGenerationRequest = valueHasImageGenerationTool(upstreamObject)
 	}
 
-	bodyBytes = normalizeResponsesSchemaBody(bodyBytes)
+	bodyBytes = wire.NormalizeResponsesSchemaBody(bodyBytes)
 	if accountType == AccountTypeQwen && r.URL.Path == "/v1/chat/completions" {
 		bodyBytes, err = prepareQwenChatRequest(bodyBytes)
 		if err != nil {
@@ -3677,7 +3658,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
-			bufWriter := &responsesBufferingWriter{model: requestedModel}
+			bufWriter := wire.NewResponsesBuffer(requestedModel)
 			inspectWriter := h.wrapBufferedSSEWithCyberDetector(bufWriter, accountType, acc, conversationID, requiredPlan, originIP, reqID, &cyberPinned)
 			inspectWriter = &hostedMCPResponseFilterWriter{w: inspectWriter}
 			if _, err := io.Copy(inspectWriter, resp.Body); err != nil {
@@ -3725,12 +3706,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 
-			bufWriter := &responsesToClaudeBufferingWriter{
-				callback: usageCallback,
-				debug:    h.cfg.debug.Load(),
-				reqID:    reqID,
-				model:    requestedModel,
-			}
+			bufWriter := wire.NewResponsesToAnthropicBuffer(requestedModel, wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
 			if accountType == AccountTypeCodex {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
@@ -3755,7 +3731,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
-			bufWriter := &responsesBufferingWriter{model: requestedModel}
+			bufWriter := wire.NewResponsesBuffer(requestedModel)
 			inspectWriter := h.wrapBufferedSSEWithCyberDetector(bufWriter, accountType, acc, conversationID, requiredPlan, originIP, reqID, &cyberPinned)
 			var rawImageStream bytes.Buffer
 			if accountType == AccountTypeCodex {
@@ -3815,11 +3791,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 
-			bufWriter := &responsesToCompletionsBufferingWriter{
-				callback: usageCallback,
-				debug:    h.cfg.debug.Load(),
-				reqID:    reqID,
-			}
+			bufWriter := wire.NewResponsesToOpenAICompletionsBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
 			if accountType == AccountTypeCodex {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
@@ -3871,11 +3843,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 
-			bufWriter := &responsesToChatCompletionsBufferingWriter{
-				callback: usageCallback,
-				debug:    h.cfg.debug.Load(),
-				reqID:    reqID,
-			}
+			bufWriter := wire.NewResponsesToOpenAIChatBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
 			if accountType == AccountTypeCodex {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
@@ -3947,7 +3915,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			} else if translateDir == wire.TranslateResponsesToClaude {
 				var trErr error
-				translated, trErr = translateClaudeRespToResponses(respBody)
+				translated, trErr = wire.AnthropicResponseToResponses(respBody)
 				if trErr != nil {
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] claude->responses translation error: %v", reqID, trErr)
@@ -3956,7 +3924,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			} else if translateDir == wire.TranslateChatToResponses {
 				var trErr error
-				translated, trErr = translateResponsesToChatCompletions(respBody)
+				translated, trErr = wire.ResponsesResponseToOpenAIChat(respBody)
 				if trErr != nil {
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] responses->chat translation error: %v", reqID, trErr)
@@ -3965,7 +3933,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			} else if translateDir == wire.TranslateCompletionsToResponses {
 				var trErr error
-				translated, trErr = translateResponsesToCompletions(respBody)
+				translated, trErr = wire.ResponsesResponseToOpenAICompletions(respBody)
 				if trErr != nil {
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] responses->completions translation error: %v", reqID, trErr)
@@ -4084,31 +4052,15 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			if isSSE {
 				if translateDir == wire.TranslateCompletionsToResponses {
-					writer = &responsesToCompletionsWriter{
-						w:     writer,
-						debug: h.cfg.debug.Load(),
-						reqID: reqID,
-					}
+					writer = wire.NewResponsesToOpenAICompletionsStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 				} else if translateDir == wire.TranslateChatToResponses {
-					writer = &responsesToChatCompletionsWriter{
-						w:     writer,
-						debug: h.cfg.debug.Load(),
-						reqID: reqID,
-					}
+					writer = wire.NewResponsesToOpenAIChatStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 				} else if translateDir == wire.TranslateResponsesToClaude {
 					// Claude SSE response → Responses API SSE
-					writer = &claudeToResponsesWriter{
-						w:     writer,
-						debug: h.cfg.debug.Load(),
-						reqID: reqID,
-					}
+					writer = wire.NewAnthropicToResponsesStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 				} else if translateDir == wire.TranslateClaudeToResponses {
 					// Responses API SSE → Claude SSE
-					writer = &responsesToClaudeWriter{
-						w:     writer,
-						debug: h.cfg.debug.Load(),
-						reqID: reqID,
-					}
+					writer = wire.NewResponsesToAnthropicStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 				} else if translateDir == wire.TranslateOAIToClaude {
 					writer = wire.NewAnthropicToChatStream(writer)
 				} else if translateDir == wire.TranslateClaudeToOAI {
@@ -5975,14 +5927,14 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Del("Content-Length")
 		if passthroughTranslateDir == wire.TranslateCompletionsToResponses {
-			bufWriter := &responsesToCompletionsBufferingWriter{debug: h.cfg.debug.Load(), reqID: reqID}
+			bufWriter := wire.NewResponsesToOpenAICompletionsBuffer(wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
 			return
 		}
 		if passthroughTranslateDir == wire.TranslateChatToResponses {
-			bufWriter := &responsesToChatCompletionsBufferingWriter{debug: h.cfg.debug.Load(), reqID: reqID}
+			bufWriter := wire.NewResponsesToOpenAIChatBuffer(wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
@@ -5997,11 +5949,11 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		}
 		translated := respBody
 		if passthroughTranslateDir == wire.TranslateCompletionsToResponses {
-			if b, err := translateResponsesToCompletions(respBody); err == nil {
+			if b, err := wire.ResponsesResponseToOpenAICompletions(respBody); err == nil {
 				translated = b
 			}
 		} else if passthroughTranslateDir == wire.TranslateChatToResponses {
-			if b, err := translateResponsesToChatCompletions(respBody); err == nil {
+			if b, err := wire.ResponsesResponseToOpenAIChat(respBody); err == nil {
 				translated = b
 			}
 		}
@@ -6033,9 +5985,9 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		defer fw.stop()
 	}
 	if isSSE && passthroughTranslateDir == wire.TranslateCompletionsToResponses {
-		writer = &responsesToCompletionsWriter{w: writer, debug: h.cfg.debug.Load(), reqID: reqID}
+		writer = wire.NewResponsesToOpenAICompletionsStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 	} else if isSSE && passthroughTranslateDir == wire.TranslateChatToResponses {
-		writer = &responsesToChatCompletionsWriter{w: writer, debug: h.cfg.debug.Load(), reqID: reqID}
+		writer = wire.NewResponsesToOpenAIChatStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 	}
 	if isSSE && providerType == AccountTypeCodex {
 		writer = &hostedMCPResponseFilterWriter{w: writer}
