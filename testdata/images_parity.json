@@ -1,0 +1,181 @@
+[
+ {
+  "codec": "images-count",
+  "input": "{\"n\":3}",
+  "output": "3"
+ },
+ {
+  "codec": "images-count",
+  "input": "{\"n\":0}",
+  "output": "1"
+ },
+ {
+  "codec": "images-count",
+  "input": "{}",
+  "output": "1"
+ },
+ {
+  "codec": "images-count",
+  "input": "bad",
+  "output": "1"
+ },
+ {
+  "codec": "images-set-count",
+  "input": "{\"prompt\":\"p\",\"n\":4}",
+  "count": 1,
+  "output": "{\"n\":1,\"prompt\":\"p\"}"
+ },
+ {
+  "codec": "images-set-count",
+  "input": "bad",
+  "count": 1,
+  "output": "bad"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"  a cat  \",\"model\":\"gpt-image-2\",\"size\":\"1024x1024\",\"background\":\"transparent\",\"moderation\":\"low\",\"output_compression\":80,\"user\":\"u\"}",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"a cat\",\"type\":\"input_text\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-5.6-luna\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"background\":\"transparent\",\"moderation\":\"low\",\"output_compression\":80,\"output_format\":\"png\",\"partial_images\":0,\"size\":\"1024x1024\",\"type\":\"image_generation\"}]}",
+  "detail": "b64_json"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"a dog\",\"model\":\"gpt-6.1-sol\",\"output_format\":\"webp\",\"response_format\":\"url\",\"partial_images\":2,\"n\":1}",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"a dog\",\"type\":\"input_text\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-6.1-sol\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"output_format\":\"webp\",\"partial_images\":2,\"type\":\"image_generation\"}]}",
+  "detail": "url"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"x\",\"model\":\"dall-e-3\",\"output_format\":\"jpeg\"}",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"x\",\"type\":\"input_text\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-5.6-luna\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"output_format\":\"jpeg\",\"partial_images\":0,\"type\":\"image_generation\"}]}",
+  "detail": "b64_json"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"x\",\"output_format\":\"gif\"}",
+  "output": "",
+  "err": "output_format must be png, jpeg, or webp"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"x\",\"response_format\":\"base64\"}",
+  "output": "",
+  "err": "response_format must be b64_json or url"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"x\",\"n\":2}",
+  "output": "",
+  "err": "internal fanout required for n \u003e 1"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{\"prompt\":\"   \"}",
+  "output": "",
+  "err": "prompt is required"
+ },
+ {
+  "codec": "images-generation-request",
+  "input": "{",
+  "output": "",
+  "err": "parse image generation request: unexpected end of JSON input"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\ndraft\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nmake it blue\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngpt-image-1\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"size\"\r\n\r\n512x512\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x\"\r\nContent-Type: image/jpeg\r\n\r\nJPEGDATA\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x\"\r\n\r\nPNGDATA\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"mask\"; filename=\"x\"\r\nContent-Type: application/octet-stream\r\n\r\nMASK\r\n--parityboundary--\r\n",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"make it blue\",\"type\":\"input_text\"},{\"image_url\":\"data:image/jpeg;base64,SlBFR0RBVEE=\",\"type\":\"input_image\"},{\"image_url\":\"data:image/png;base64,UE5HREFUQQ==\",\"type\":\"input_image\"},{\"image_url\":\"data:image/png;base64,TUFTSw==\",\"type\":\"input_image\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-5.6-luna\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"output_format\":\"png\",\"partial_images\":0,\"size\":\"512x512\",\"type\":\"image_generation\"}]}",
+  "detail": "b64_json"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nedit\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\nurl\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"output_format\"\r\n\r\nwebp\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x\"\r\nContent-Type: image/webp\r\n\r\nW\r\n--parityboundary--\r\n",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"edit\",\"type\":\"input_text\"},{\"image_url\":\"data:image/webp;base64,Vw==\",\"type\":\"input_image\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-5.6-luna\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"output_format\":\"webp\",\"partial_images\":0,\"type\":\"image_generation\"}]}",
+  "detail": "url"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nedit\r\n--parityboundary--\r\n",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "",
+  "err": "image is required"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nedit\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"n\"\r\n\r\n3\r\n--parityboundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x\"\r\nContent-Type: image/png\r\n\r\nP\r\n--parityboundary--\r\n",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "{\"input\":[{\"content\":[{\"text\":\"edit\",\"type\":\"input_text\"},{\"image_url\":\"data:image/png;base64,UA==\",\"type\":\"input_image\"}],\"role\":\"user\",\"type\":\"message\"}],\"instructions\":\"Generate the requested image with the image_generation tool. Do not answer with text unless the image tool fails.\",\"model\":\"gpt-5.6-luna\",\"store\":false,\"stream\":true,\"tool_choice\":{\"type\":\"image_generation\"},\"tools\":[{\"output_format\":\"png\",\"partial_images\":0,\"type\":\"image_generation\"}]}",
+  "detail": "b64_json"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"x\"\r\nContent-Type: image/png\r\n\r\nP\r\n--parityboundary--\r\n",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "",
+  "err": "prompt is required"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "{}",
+  "content_type": "application/json",
+  "output": "",
+  "err": "image edits must use multipart/form-data"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "",
+  "content_type": "multipart/form-data",
+  "output": "",
+  "err": "multipart boundary is required"
+ },
+ {
+  "codec": "images-edit-request",
+  "input": "--parityboundary\r\nbroken",
+  "content_type": "multipart/form-data; boundary=parityboundary",
+  "output": "",
+  "err": "parse image edit form: malformed MIME header: missing colon: \"broken\""
+ },
+ {
+  "codec": "images-append-data",
+  "input": "{\"created\":123,\"data\":[{\"b64_json\":\"A\"},\"skip\",{\"url\":\"u\",\"revised_prompt\":\"r\"}]}",
+  "output": "[{\"b64_json\":\"prior\"},{\"b64_json\":\"A\"},{\"revised_prompt\":\"r\",\"url\":\"u\"}]",
+  "detail": "123"
+ },
+ {
+  "codec": "images-append-data",
+  "input": "{\"data\":null}",
+  "output": "[{\"b64_json\":\"prior\"}]",
+  "detail": "0"
+ },
+ {
+  "codec": "images-append-data",
+  "input": "nope",
+  "output": "",
+  "err": "parse images response: invalid character 'o' in literal null (expecting 'u')"
+ },
+ {
+  "codec": "responses-to-images",
+  "input": "{\"created_at\":77,\"output\":[{\"type\":\"message\"},{\"type\":\"image_generation_call\",\"result\":\"OLD\"},null,{\"type\":\"image_generation_call\",\"result\":\"IMG\",\"revised_prompt\":\"better\"}]}",
+  "response_format": "b64_json",
+  "output": "{\"created\":77,\"data\":[{\"b64_json\":\"IMG\",\"revised_prompt\":\"better\"}]}"
+ },
+ {
+  "codec": "responses-to-images",
+  "input": "{\"created_at\":78,\"output\":[{\"type\":\"image_generation_call\",\"result\":\"IMG\"}]}",
+  "response_format": "url",
+  "output": "{\"created\":78,\"data\":[{\"url\":\"data:image/png;base64,IMG\"}]}"
+ },
+ {
+  "codec": "responses-to-images",
+  "input": "{\"created_at\":79,\"output\":[{\"type\":\"image_generation_call\",\"result\":\"\"}]}",
+  "response_format": "b64_json",
+  "output": "",
+  "err": "Codex image_generation did not return image bytes"
+ },
+ {
+  "codec": "responses-to-images",
+  "input": "[",
+  "output": "",
+  "err": "parse responses image response: unexpected end of JSON input"
+ }
+]
