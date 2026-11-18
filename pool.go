@@ -304,6 +304,7 @@ type CodexAuthJSON struct {
 	AllowedSourceIPs []string          `json:"allowed_source_ips"`
 	CyberAccess      bool              `json:"cyber_access"`
 	CodexCookies     map[string]string `json:"cookies"`
+	PlanType         string            `json:"plan_type"`
 }
 
 type TokenData struct {
@@ -574,6 +575,20 @@ func accountTier(accType AccountType, planType string) int {
 // the same quota as Pro Lite, so they normalize to "prolite". Matching is
 // substring-based so future "business_prolite" variants work without a new
 // special case.
+func updateAccountPlan(a *Account, plan string) {
+	a.mu.Lock()
+	previous := a.PlanType
+	a.PlanType = plan
+	a.mu.Unlock()
+	if previous == plan {
+		return
+	}
+	log.Printf("%s account %s plan changed: %s -> %s", a.Type, a.ID, previous, plan)
+	if err := saveAccount(a); err != nil {
+		log.Printf("save %s plan change: %v", a.ID, err)
+	}
+}
+
 func normalizeCodexPlanType(planType string) string {
 	p := strings.ToLower(strings.TrimSpace(planType))
 	if strings.Contains(p, "prolite") {
@@ -1774,6 +1789,11 @@ func saveCodexAccount(a *Account) error {
 		root["cyber_access"] = true
 	} else {
 		delete(root, "cyber_access")
+	}
+	if a.PlanType != "" {
+		root["plan_type"] = a.PlanType
+	} else {
+		delete(root, "plan_type")
 	}
 
 	if len(a.CodexCookies) > 0 {

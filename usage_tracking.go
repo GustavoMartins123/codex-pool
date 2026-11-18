@@ -475,9 +475,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 		whamSnap.CreditsBalance, _ = readFloatFromMap(credits, "balance")
 	}
 	if planType, ok := payload["plan_type"].(string); ok && planType != "" {
-		a.mu.Lock()
-		a.PlanType = normalizeCodexPlanType(planType)
-		a.mu.Unlock()
+		updateAccountPlan(a, normalizeCodexPlanType(planType))
 	}
 	log.Printf("usage fetch %s: 5hr=%.1f%% weekly=%.1f%%", a.ID, usagePrimaryUsed(whamSnap)*100, usageSecondaryUsed(whamSnap)*100)
 	a.mu.Lock()
