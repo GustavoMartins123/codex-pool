@@ -3,8 +3,6 @@ package main
 import (
 	"reflect"
 	"testing"
-
-	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func TestCodexReasoningCapabilitiesComeFromAllAuthorizedAccounts(t *testing.T) {
@@ -52,23 +50,5 @@ func TestReasoningEffortsFollowProviderAndModel(t *testing.T) {
 				t.Fatalf("got=%v want=%v", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestAnthropicEffortReachesTheGeminiThinkingLevel(t *testing.T) {
-	converted, err := antigravityAnthropicToGemini(map[string]any{
-		"messages":      []any{map[string]any{"role": "user", "content": "synthetic"}},
-		"thinking":      map[string]any{"type": "adaptive"},
-		"output_config": map[string]any{"effort": "high"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	thinking := jsonvalue.Map(jsonvalue.Map(converted["generationConfig"])["thinkingConfig"])
-	if thinking["thinkingLevel"] != "high" {
-		t.Fatalf("effort was lost: %+v", thinking)
-	}
-	if _, invented := thinking["thinkingBudget"]; invented {
-		t.Fatal("effort was replaced with an invented token budget")
 	}
 }

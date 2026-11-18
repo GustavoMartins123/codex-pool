@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/wire"
 )
 
 func TestAntigravityReplayRestoresNativeFunctionCallSignature(t *testing.T) {
@@ -21,7 +23,7 @@ func TestAntigravityReplayRestoresNativeFunctionCallSignature(t *testing.T) {
 
 	next := replayTestEnvelope("gemini-3.1-flash-lite", "session-1", []any{
 		map[string]any{"role": "user", "parts": []any{map[string]any{"text": "read the file"}}},
-		map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"id": "call-1", "name": "default_api:Read", "args": map[string]any{"file_path": "README.md"}}, "thoughtSignature": antigravityFunctionThoughtSignature}}},
+		map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"id": "call-1", "name": "default_api:Read", "args": map[string]any{"file_path": "README.md"}}, "thoughtSignature": wire.GeminiSkipThoughtSignature}}},
 		map[string]any{"role": "user", "parts": []any{map[string]any{"functionResponse": map[string]any{"id": "call-1", "name": "default_api:Read", "response": map[string]any{"result": "ok"}}}}},
 	})
 	updated, changed := cache.apply(scope, next)
@@ -78,7 +80,7 @@ func TestAntigravityReplayRestoresSignatureForCallWithoutID(t *testing.T) {
 	cache.capture(scope, request, response)
 	next := replayTestEnvelope("gemini-3.1-flash-lite", "session-no-id", []any{
 		map[string]any{"role": "user", "parts": []any{map[string]any{"text": "search"}}},
-		map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"name": "search", "args": map[string]any{"query": "gemini"}}, "thoughtSignature": antigravityFunctionThoughtSignature}}},
+		map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": map[string]any{"name": "search", "args": map[string]any{"query": "gemini"}}, "thoughtSignature": wire.GeminiSkipThoughtSignature}}},
 		map[string]any{"role": "user", "parts": []any{map[string]any{"functionResponse": map[string]any{"name": "search", "response": map[string]any{"result": "ok"}}}}},
 	})
 	updated, changed := cache.apply(scope, next)
@@ -104,13 +106,13 @@ func TestAntigravityReplayDoesNotReplaceSyntheticSignatureWithUnsignedParallelCa
 		map[string]any{"role": "user", "parts": []any{map[string]any{"text": "read both"}}},
 		map[string]any{"role": "model", "parts": []any{map[string]any{
 			"functionCall":     map[string]any{"id": "call-2", "name": "default_api:Read", "args": map[string]any{"file_path": "package.json"}},
-			"thoughtSignature": antigravityFunctionThoughtSignature,
+			"thoughtSignature": wire.GeminiSkipThoughtSignature,
 		}}},
 		map[string]any{"role": "user", "parts": []any{map[string]any{"functionResponse": map[string]any{"id": "call-2", "name": "default_api:Read", "response": map[string]any{"result": "ok"}}}}},
 	})
 	updated, _ := cache.apply(scope, next)
 	part := replayTestPart(t, updated, 1, 0)
-	if part["thoughtSignature"] != antigravityFunctionThoughtSignature {
+	if part["thoughtSignature"] != wire.GeminiSkipThoughtSignature {
 		t.Fatalf("synthetic signature was lost: %#v", part)
 	}
 }

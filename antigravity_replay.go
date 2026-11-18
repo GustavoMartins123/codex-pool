@@ -73,9 +73,9 @@ func antigravityReplayScopeFromBody(body []byte) antigravityReplayScope {
 	if model == "" {
 		model = strings.TrimSpace(jsonvalue.String(request["model"]))
 	}
-	session := firstAntigravityString(root, "sessionId", "session_id")
+	session := jsonvalue.FirstString(root, "sessionId", "session_id")
 	if session == "" {
-		session = firstAntigravityString(request, "sessionId", "session_id")
+		session = jsonvalue.FirstString(request, "sessionId", "session_id")
 	}
 	if session == "" {
 		session = antigravityStableReplaySession(request)
@@ -240,12 +240,12 @@ func antigravityReplayPendingPosition(request map[string]any) (int, int) {
 }
 
 func antigravityNativeThoughtSignature(part map[string]any) string {
-	if value := firstAntigravityString(part, "thoughtSignature", "thought_signature"); value != "" {
+	if value := jsonvalue.FirstString(part, "thoughtSignature", "thought_signature"); value != "" {
 		return value
 	}
 	extra, _ := part["extra_content"].(map[string]any)
 	google, _ := extra["google"].(map[string]any)
-	return firstAntigravityString(google, "thought_signature", "thoughtSignature")
+	return jsonvalue.FirstString(google, "thought_signature", "thoughtSignature")
 }
 
 func appendOrReplaceAntigravityReplayPart(parts []antigravityReplayPart, candidate antigravityReplayPart) []antigravityReplayPart {

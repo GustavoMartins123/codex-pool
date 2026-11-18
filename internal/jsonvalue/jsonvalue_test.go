@@ -36,6 +36,25 @@ func TestAccessors(t *testing.T) {
 	}
 }
 
+func TestFirstString(t *testing.T) {
+	object := map[string]any{"empty": "", "number": 1.0, "a": "first", "b": "second"}
+	for _, tc := range []struct {
+		object map[string]any
+		keys   []string
+		want   string
+	}{
+		{object, []string{"a", "b"}, "first"},
+		{object, []string{"empty", "number", "missing", "b"}, "second"},
+		{object, []string{"empty", "number"}, ""},
+		{object, nil, ""},
+		{nil, []string{"a"}, ""},
+	} {
+		if got := FirstString(tc.object, tc.keys...); got != tc.want {
+			t.Fatalf("FirstString(%v) = %q, want %q", tc.keys, got, tc.want)
+		}
+	}
+}
+
 func TestInt64(t *testing.T) {
 	for _, tc := range []struct {
 		value any

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -392,7 +393,11 @@ func TestConsolePendingPairingsVisibility(t *testing.T) {
 	if err := json.Unmarshal(list.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Pairings) != 2 || body.Pairings[0].ID != rotation.ID || body.Pairings[1].ID != fresh.ID {
+	want := []string{rotation.ID, fresh.ID}
+	if cmp.Or(fresh.ExpiresAt.Compare(rotation.ExpiresAt), strings.Compare(fresh.ID, rotation.ID)) < 0 {
+		want = []string{fresh.ID, rotation.ID}
+	}
+	if len(body.Pairings) != 2 || body.Pairings[0].ID != want[0] || body.Pairings[1].ID != want[1] {
 		t.Fatalf("visibility or expiry sort wrong: %+v", body.Pairings)
 	}
 	for _, secret := range []string{unclaimed.UserCode, unclaimed.DeviceSecret, fresh.UserCode, fresh.DeviceSecret, "secret_digest", "code_digest", "user_code"} {

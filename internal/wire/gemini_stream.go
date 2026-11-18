@@ -200,7 +200,7 @@ func (sw *antigravityStreamWriter) emitResponses(r antigravityResult) error {
 			if sw.responsesReasoningDone {
 				continue
 			}
-			if part.Signature != "" && part.Signature != "skip_thought_signature_validator" {
+			if part.Signature != "" && part.Signature != GeminiSkipThoughtSignature {
 				sw.responsesReasoningSig = part.Signature
 			}
 			if err := sw.ensureResponsesReasoning(); err != nil {
