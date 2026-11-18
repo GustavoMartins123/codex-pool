@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // aistudioMaxServerFailover bounds how many keys a request may try after
@@ -279,7 +281,7 @@ func aistudioRequestedEffort(body []byte) string {
 // model outside the table, keeps the model's default thinking, because the
 // API rejects unknown levels and Gemini 4 rejects a level and budget together.
 func aistudioApplyThinking(gemini map[string]any, model, effort string) {
-	config := mapValue(gemini["generationConfig"])
+	config := jsonvalue.Map(gemini["generationConfig"])
 	thinking, known := aistudioThinkingFor(model)
 	if !known {
 		if config != nil {

@@ -3,6 +3,8 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func TestCodexReasoningCapabilitiesComeFromAllAuthorizedAccounts(t *testing.T) {
@@ -62,7 +64,7 @@ func TestAnthropicEffortReachesTheGeminiThinkingLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	thinking := mapValue(mapValue(converted["generationConfig"])["thinkingConfig"])
+	thinking := jsonvalue.Map(jsonvalue.Map(converted["generationConfig"])["thinkingConfig"])
 	if thinking["thinkingLevel"] != "high" {
 		t.Fatalf("effort was lost: %+v", thinking)
 	}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 type qwenResponseTool struct {
@@ -70,8 +72,8 @@ func (p *qwenResponsesRequest) convertTools(raw any, namespace string) ([]any, e
 		if !ok {
 			return nil, fmt.Errorf("tools[%d] must be an object", index)
 		}
-		kind := stringValue(tool["type"])
-		name := stringValue(tool["name"])
+		kind := jsonvalue.String(tool["type"])
+		name := jsonvalue.String(tool["name"])
 		if kind == "namespace" {
 			if name == "" {
 				return nil, fmt.Errorf("tool namespace requires a name")
@@ -97,19 +99,19 @@ func (p *qwenResponsesRequest) convertTools(raw any, namespace string) ([]any, e
 			return nil, fmt.Errorf("duplicate Qwen tool declaration %q", name)
 		}
 		p.declared[meta.UpstreamName] = true
-		description := stringValue(tool["description"])
+		description := jsonvalue.String(tool["description"])
 		params, _ := tool["parameters"].(map[string]any)
 		if kind == "custom" {
 			description += "\nProvide the raw tool input in the input string."
-			if format := mapValue(tool["format"]); format != nil {
-				switch stringValue(format["type"]) {
+			if format := jsonvalue.Map(tool["format"]); format != nil {
+				switch jsonvalue.String(format["type"]) {
 				case "text":
 				case "grammar":
-					definition := stringValue(format["definition"])
+					definition := jsonvalue.String(format["definition"])
 					if definition == "" {
 						return nil, fmt.Errorf("custom tool %q requires a grammar definition", name)
 					}
-					description += "\nInput grammar (" + stringValue(format["syntax"]) + "):\n" + definition
+					description += "\nInput grammar (" + jsonvalue.String(format["syntax"]) + "):\n" + definition
 				default:
 					return nil, fmt.Errorf("custom tool %q has an unsupported input format", name)
 				}
@@ -153,8 +155,8 @@ func prepareQwenResponsesRequest(path string, body []byte, model string) (*qwenR
 		}
 		tools = append(tools, converted...)
 	}
-	for _, raw := range anySlice(root["input"]) {
-		item := mapValue(raw)
+	for _, raw := range jsonvalue.Slice(root["input"]) {
+		item := jsonvalue.Map(raw)
 		if item["type"] == "additional_tools" {
 			converted, err := p.convertTools(item["tools"], "")
 			if err != nil {
@@ -194,10 +196,10 @@ func prepareQwenResponsesRequest(path string, body []byte, model string) (*qwenR
 	if value, exists := root["max_output_tokens"]; exists {
 		out["max_tokens"] = value
 	}
-	if reasoning := mapValue(root["reasoning"]); reasoning != nil {
-		applyQwenReasoningEffort(model, stringValue(reasoning["effort"]), out)
+	if reasoning := jsonvalue.Map(root["reasoning"]); reasoning != nil {
+		applyQwenReasoningEffort(model, jsonvalue.String(reasoning["effort"]), out)
 	}
-	if format := mapValue(mapValue(root["text"])["format"]); format != nil {
+	if format := jsonvalue.Map(jsonvalue.Map(root["text"])["format"]); format != nil {
 		switch format["type"] {
 		case "text":
 		case "json_object":
@@ -236,7 +238,7 @@ func (p *qwenResponsesRequest) convertToolChoice(raw any, out map[string]any) er
 	if !ok || (choice["type"] != "function" && choice["type"] != "custom") {
 		return fmt.Errorf("unsupported Qwen tool_choice")
 	}
-	name := p.toolNames[qwenResponseToolKey(stringValue(choice["namespace"]), stringValue(choice["name"]))]
+	name := p.toolNames[qwenResponseToolKey(jsonvalue.String(choice["namespace"]), jsonvalue.String(choice["name"]))]
 	if !p.declared[name] {
 		return fmt.Errorf("Qwen tool_choice must refer to a declared tool")
 	}
@@ -268,7 +270,7 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 		if !ok {
 			return nil, fmt.Errorf("input[%d] must be an object", index)
 		}
-		kind := stringValue(item["type"])
+		kind := jsonvalue.String(item["type"])
 		switch kind {
 		case "additional_tools":
 			continue
@@ -277,14 +279,14 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 			// reasoning belongs to the provider that produced it (for example a
 			// GPT turn earlier in a conversation that switched to Qwen), so it
 			// is left out while the rest of the history is kept.
-			for _, part := range anySlice(item["summary"]) {
-				reasoning.WriteString(stringValue(mapValue(part)["text"]))
+			for _, part := range jsonvalue.Slice(item["summary"]) {
+				reasoning.WriteString(jsonvalue.String(jsonvalue.Map(part)["text"]))
 			}
 		case "function_call", "custom_tool_call":
 			if pending == nil && len(calls) != len(results) {
 				return nil, fmt.Errorf("all parallel tool results must precede the next assistant turn")
 			}
-			id := stringValue(item["call_id"])
+			id := jsonvalue.String(item["call_id"])
 			if id == "" || calls[id] {
 				return nil, fmt.Errorf("input[%d] requires a unique function call_id", index)
 			}
@@ -292,7 +294,7 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 			if kind == "custom_tool_call" {
 				toolType = "custom"
 			}
-			tool, err := p.registerTool(stringValue(item["namespace"]), stringValue(item["name"]), toolType)
+			tool, err := p.registerTool(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]), toolType)
 			if err != nil {
 				return nil, err
 			}
@@ -316,11 +318,11 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 				pending["reasoning_content"] = reasoning.String()
 				reasoning.Reset()
 			}
-			pending["tool_calls"] = append(anySlice(pending["tool_calls"]), map[string]any{"id": id, "type": "function", "function": map[string]any{"name": tool.UpstreamName, "arguments": args}})
+			pending["tool_calls"] = append(jsonvalue.Slice(pending["tool_calls"]), map[string]any{"id": id, "type": "function", "function": map[string]any{"name": tool.UpstreamName, "arguments": args}})
 			calls[id] = true
 		case "function_call_output", "custom_tool_call_output":
 			flush()
-			id := stringValue(item["call_id"])
+			id := jsonvalue.String(item["call_id"])
 			if !calls[id] || results[id] {
 				return nil, fmt.Errorf("tool output requires a unique preceding call; include the complete Responses history")
 			}
@@ -335,7 +337,7 @@ func (p *qwenResponsesRequest) convertInput(raw any) ([]any, error) {
 				return nil, fmt.Errorf("all tool results must precede the next message")
 			}
 			flush()
-			role := stringValue(item["role"])
+			role := jsonvalue.String(item["role"])
 			if role == "developer" {
 				role = "system"
 			}
@@ -372,7 +374,7 @@ func qwenToolOutput(raw any) (string, error) {
 	if parts, ok := raw.([]any); ok {
 		var text strings.Builder
 		for _, raw := range parts {
-			part := mapValue(raw)
+			part := jsonvalue.Map(raw)
 			if part["type"] != "input_text" && part["type"] != "output_text" && part["type"] != "text" {
 				return "", fmt.Errorf("Qwen tool results currently require text content")
 			}
@@ -397,7 +399,7 @@ func qwenMessageContent(raw any) (any, error) {
 	}
 	out := make([]any, 0, len(parts))
 	for _, raw := range parts {
-		part := mapValue(raw)
+		part := jsonvalue.Map(raw)
 		switch part["type"] {
 		case "input_text", "output_text", "text":
 			text, ok := part["text"].(string)
@@ -406,7 +408,7 @@ func qwenMessageContent(raw any) (any, error) {
 			}
 			out = append(out, map[string]any{"type": "text", "text": text})
 		case "input_image":
-			image := stringValue(part["image_url"])
+			image := jsonvalue.String(part["image_url"])
 			if image == "" {
 				return nil, fmt.Errorf("Qwen input images require an image_url")
 			}

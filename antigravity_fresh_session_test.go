@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
@@ -70,7 +72,7 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 	}
 	session := func(index int) string {
 		request, _ := upstream[index]["request"].(map[string]any)
-		return stringValue(request["sessionId"])
+		return jsonvalue.String(request["sessionId"])
 	}
 	if session(0) == session(1) || session(1) != session(2) {
 		t.Fatalf("native sessions reused across epochs or changed within epoch: %q %q %q", session(0), session(1), session(2))

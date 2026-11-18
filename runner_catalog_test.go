@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/runnerproto"
 )
 
@@ -165,7 +166,7 @@ func TestFinalizeCodexModelCatalogAddsDiscoveredQwenModels(t *testing.T) {
 	}
 	slugs := map[string]int{}
 	for _, model := range catalog.Models {
-		slugs[stringValue(model["slug"])]++
+		slugs[jsonvalue.String(model["slug"])]++
 	}
 	if catalog.ETag != "keep" || slugs["gpt-6.1-sol"] != 1 || slugs["kimi-k3"] != 0 || len(slugs) != len(qwenModels)+1 {
 		t.Fatalf("catalog slugs = %v etag=%q", slugs, catalog.ETag)
@@ -176,7 +177,7 @@ func TestFinalizeCodexModelCatalogAddsDiscoveredQwenModels(t *testing.T) {
 		}
 	}
 	for _, model := range catalog.Models {
-		if _, qwen := qwenModels[stringValue(model["slug"])]; qwen &&
+		if _, qwen := qwenModels[jsonvalue.String(model["slug"])]; qwen &&
 			(model["context_window"] != float64(500000) || model["max_context_window"] != float64(500000) || model["visibility"] != "list") {
 			t.Fatalf("Qwen catalog entry = %v", model)
 		}
@@ -412,7 +413,7 @@ func TestCodexModelsEndpointServesStaticGPTModelsFromDiscovery(t *testing.T) {
 	}
 	found := map[string]map[string]any{}
 	for _, entry := range catalog.Models {
-		found[stringValue(entry["slug"])] = entry
+		found[jsonvalue.String(entry["slug"])] = entry
 	}
 	for _, slug := range []string{"gpt-5.6-sol", "gpt-5.6-sol[1m]"} {
 		if found[slug] == nil || found[slug]["base_instructions"] != "You are Codex on gpt-5.6-sol." {

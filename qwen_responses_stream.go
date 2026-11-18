@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"codex-pool-proxy/internal/jsonvalue"
 	"codex-pool-proxy/internal/sse"
-	"codex-pool-proxy/internal/wire"
 )
 
 type qwenStreamTool struct {
@@ -110,12 +110,12 @@ func (s *qwenResponsesStream) textDelta(value string, reasoning bool) {
 	if reasoning {
 		if s.reasonIndex < 0 {
 			s.reasonIndex = s.addItem(map[string]any{"id": "rs_" + uuid.NewString(), "type": "reasoning", "summary": []any{}})
-			s.emit("response.reasoning_summary_part.added", map[string]any{"item_id": mapValue(s.output[s.reasonIndex])["id"], "output_index": s.reasonIndex, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": ""}})
+			s.emit("response.reasoning_summary_part.added", map[string]any{"item_id": jsonvalue.Map(s.output[s.reasonIndex])["id"], "output_index": s.reasonIndex, "summary_index": 0, "part": map[string]any{"type": "summary_text", "text": ""}})
 		}
-		item := mapValue(s.output[s.reasonIndex])
+		item := jsonvalue.Map(s.output[s.reasonIndex])
 		text := ""
-		if summary := anySlice(item["summary"]); len(summary) > 0 {
-			text = stringValue(mapValue(summary[0])["text"])
+		if summary := jsonvalue.Slice(item["summary"]); len(summary) > 0 {
+			text = jsonvalue.String(jsonvalue.Map(summary[0])["text"])
 		}
 		item["summary"] = []any{map[string]any{"type": "summary_text", "text": text + value}}
 		s.emit("response.reasoning_summary_text.delta", map[string]any{"item_id": item["id"], "output_index": s.reasonIndex, "summary_index": 0, "delta": value})
@@ -123,12 +123,12 @@ func (s *qwenResponsesStream) textDelta(value string, reasoning bool) {
 	}
 	if s.textIndex < 0 {
 		s.textIndex = s.addItem(map[string]any{"id": "msg_" + uuid.NewString(), "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}})
-		s.emit("response.content_part.added", map[string]any{"item_id": mapValue(s.output[s.textIndex])["id"], "output_index": s.textIndex, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}}})
+		s.emit("response.content_part.added", map[string]any{"item_id": jsonvalue.Map(s.output[s.textIndex])["id"], "output_index": s.textIndex, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}}})
 	}
-	item := mapValue(s.output[s.textIndex])
+	item := jsonvalue.Map(s.output[s.textIndex])
 	text := ""
-	if content := anySlice(item["content"]); len(content) > 0 {
-		text = stringValue(mapValue(content[0])["text"])
+	if content := jsonvalue.Slice(item["content"]); len(content) > 0 {
+		text = jsonvalue.String(jsonvalue.Map(content[0])["text"])
 	}
 	item["content"] = []any{map[string]any{"type": "output_text", "text": text + value, "annotations": []any{}, "logprobs": []any{}}}
 	s.emit("response.output_text.delta", map[string]any{"item_id": item["id"], "output_index": s.textIndex, "content_index": 0, "delta": value, "logprobs": []any{}})
@@ -145,17 +145,17 @@ func (s *qwenResponsesStream) toolDelta(raw map[string]any) error {
 		tool = &qwenStreamTool{OutputIndex: -1}
 		s.tools[index] = tool
 	}
-	if kind := stringValue(raw["type"]); kind != "" && kind != "function" {
+	if kind := jsonvalue.String(raw["type"]); kind != "" && kind != "function" {
 		return fmt.Errorf("Qwen returned an unsupported tool call type")
 	}
-	if id := stringValue(raw["id"]); id != "" {
+	if id := jsonvalue.String(raw["id"]); id != "" {
 		if tool.ID != "" && tool.ID != id {
 			return fmt.Errorf("Qwen changed a tool call ID during streaming")
 		}
 		tool.ID = id
 	}
-	function := mapValue(raw["function"])
-	if name := stringValue(function["name"]); name != "" {
+	function := jsonvalue.Map(raw["function"])
+	if name := jsonvalue.String(function["name"]); name != "" {
 		if tool.OutputIndex >= 0 {
 			return fmt.Errorf("Qwen changed a tool name after starting its arguments")
 		}
@@ -184,7 +184,7 @@ func (s *qwenResponsesStream) toolDelta(raw map[string]any) error {
 		tool.OutputIndex = s.addItem(item)
 	}
 	if meta.Type == "function" && len(tool.Arguments) > tool.EmittedArguments {
-		item := mapValue(s.output[tool.OutputIndex])
+		item := jsonvalue.Map(s.output[tool.OutputIndex])
 		s.emit("response.function_call_arguments.delta", map[string]any{"item_id": item["id"], "output_index": tool.OutputIndex, "delta": tool.Arguments[tool.EmittedArguments:]})
 		tool.EmittedArguments = len(tool.Arguments)
 	}
@@ -203,36 +203,36 @@ func (s *qwenResponsesStream) consume(data []byte, streaming bool) error {
 		return fmt.Errorf("Qwen reported an upstream error")
 	}
 	if !s.started {
-		if id := stringValue(chunk["id"]); id != "" {
+		if id := jsonvalue.String(chunk["id"]); id != "" {
 			s.id = "resp_" + id
 		}
-		if created := wire.JSONInt64(chunk["created"]); created > 0 {
+		if created := jsonvalue.Int64(chunk["created"]); created > 0 {
 			s.createdAt = created
 		}
 		s.start()
 	}
-	if usage := mapValue(chunk["usage"]); usage != nil {
-		input, output := wire.JSONInt64(usage["prompt_tokens"]), wire.JSONInt64(usage["completion_tokens"])
+	if usage := jsonvalue.Map(chunk["usage"]); usage != nil {
+		input, output := jsonvalue.Int64(usage["prompt_tokens"]), jsonvalue.Int64(usage["completion_tokens"])
 		s.usage = map[string]any{"input_tokens": input, "output_tokens": output, "total_tokens": input + output,
-			"input_tokens_details":  map[string]any{"cached_tokens": wire.JSONInt64(mapValue(usage["prompt_tokens_details"])["cached_tokens"])},
-			"output_tokens_details": map[string]any{"reasoning_tokens": wire.JSONInt64(mapValue(usage["completion_tokens_details"])["reasoning_tokens"])}}
+			"input_tokens_details":  map[string]any{"cached_tokens": jsonvalue.Int64(jsonvalue.Map(usage["prompt_tokens_details"])["cached_tokens"])},
+			"output_tokens_details": map[string]any{"reasoning_tokens": jsonvalue.Int64(jsonvalue.Map(usage["completion_tokens_details"])["reasoning_tokens"])}}
 	}
-	for _, raw := range anySlice(chunk["choices"]) {
-		choice := mapValue(raw)
-		if index, exists := choice["index"]; exists && wire.JSONInt64(index) != 0 {
+	for _, raw := range jsonvalue.Slice(chunk["choices"]) {
+		choice := jsonvalue.Map(raw)
+		if index, exists := choice["index"]; exists && jsonvalue.Int64(index) != 0 {
 			return fmt.Errorf("Qwen Responses conversion expects one completion choice")
 		}
-		message := mapValue(choice["message"])
+		message := jsonvalue.Map(choice["message"])
 		if streaming {
-			message = mapValue(choice["delta"])
+			message = jsonvalue.Map(choice["delta"])
 		}
 		if message["refusal"] != nil && message["refusal"] != "" {
 			return fmt.Errorf("Qwen refused the request")
 		}
-		s.textDelta(stringValue(message["reasoning_content"]), true)
-		s.textDelta(stringValue(message["content"]), false)
-		for index, raw := range anySlice(message["tool_calls"]) {
-			call := cloneAnyMap(mapValue(raw))
+		s.textDelta(jsonvalue.String(message["reasoning_content"]), true)
+		s.textDelta(jsonvalue.String(message["content"]), false)
+		for index, raw := range jsonvalue.Slice(message["tool_calls"]) {
+			call := cloneAnyMap(jsonvalue.Map(raw))
 			if !streaming {
 				call["index"] = float64(index)
 			}
@@ -240,7 +240,7 @@ func (s *qwenResponsesStream) consume(data []byte, streaming bool) error {
 				return err
 			}
 		}
-		if reason := stringValue(choice["finish_reason"]); reason != "" {
+		if reason := jsonvalue.String(choice["finish_reason"]); reason != "" {
 			if s.finishReason != "" {
 				return fmt.Errorf("Qwen returned more than one terminal choice")
 			}
@@ -280,7 +280,7 @@ func (s *qwenResponsesStream) finish() error {
 		if json.Unmarshal([]byte(tool.Arguments), &args) != nil || args == nil {
 			return fmt.Errorf("Qwen returned incomplete or invalid function arguments")
 		}
-		item := mapValue(s.output[tool.OutputIndex])
+		item := jsonvalue.Map(s.output[tool.OutputIndex])
 		if meta.Type == "custom" {
 			input, ok := args["input"].(string)
 			if !ok || len(args) != 1 {
@@ -301,13 +301,13 @@ func (s *qwenResponsesStream) finish() error {
 		return fmt.Errorf("Qwen returned parallel calls when parallel_tool_calls is false")
 	}
 	for index, raw := range s.output {
-		item := mapValue(raw)
+		item := jsonvalue.Map(raw)
 		if item["type"] == "message" {
-			part := mapValue(anySlice(item["content"])[0])
+			part := jsonvalue.Map(jsonvalue.Slice(item["content"])[0])
 			s.emit("response.output_text.done", map[string]any{"item_id": item["id"], "output_index": index, "content_index": 0, "text": part["text"], "logprobs": []any{}})
 			s.emit("response.content_part.done", map[string]any{"item_id": item["id"], "output_index": index, "content_index": 0, "part": part})
 		} else if item["type"] == "reasoning" {
-			part := mapValue(anySlice(item["summary"])[0])
+			part := jsonvalue.Map(jsonvalue.Slice(item["summary"])[0])
 			s.emit("response.reasoning_summary_text.done", map[string]any{"item_id": item["id"], "output_index": index, "summary_index": 0, "text": part["text"]})
 			s.emit("response.reasoning_summary_part.done", map[string]any{"item_id": item["id"], "output_index": index, "summary_index": 0, "part": part})
 		}

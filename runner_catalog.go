@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"codex-pool-proxy/internal/runnerproto"
 	"go.etcd.io/bbolt"
+
+	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/runnerproto"
 )
 
 func (h *proxyHandler) handleRunnerCatalog(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +126,7 @@ func runnerCatalog(models []poolModelDescriptor) runnerproto.RunnerCatalog {
 				continue
 			}
 			if upstream != nil {
-				if stringValue(upstream["slug"]) != model.ID {
+				if jsonvalue.String(upstream["slug"]) != model.ID {
 					upstream["slug"], upstream["display_name"], upstream["description"] = model.ID, model.Name, model.Description
 					upstream["context_window"], upstream["max_context_window"] = model.ContextWindow, model.ContextWindow
 				}
@@ -181,11 +183,11 @@ func finalizeCodexModelCatalog(body []byte, models []poolModelDescriptor) ([]byt
 		seen := make(map[string]bool, len(existing))
 		for _, raw := range existing {
 			if model, ok := raw.(map[string]any); ok {
-				seen[stringValue(model["slug"])] = true
+				seen[jsonvalue.String(model["slug"])] = true
 			}
 		}
 		for _, model := range generated.Models {
-			if slug := stringValue(model["slug"]); !seen[slug] {
+			if slug := jsonvalue.String(model["slug"]); !seen[slug] {
 				seen[slug] = true
 				existing = append(existing, model)
 			}
@@ -239,7 +241,7 @@ func orderCodexCatalogModels(models []any) error {
 	ranked := make([]rankedModel, len(models))
 	for i, raw := range models {
 		entry, _ := raw.(map[string]any)
-		slug := stringValue(entry["slug"])
+		slug := jsonvalue.String(entry["slug"])
 		if strings.TrimSpace(slug) == "" {
 			return fmt.Errorf("Codex model catalog entry %d has no model slug", i+1)
 		}

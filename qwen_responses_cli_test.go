@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func TestQwenResponsesRealCodexCLI(t *testing.T) {
@@ -67,9 +69,9 @@ func runQwenResponsesRealCodexCLI(t *testing.T, binary string, websockets bool) 
 		}
 		if turn == 1 {
 			var names []string
-			for _, raw := range anySlice(request["tools"]) {
-				function := mapValue(mapValue(raw)["function"])
-				name := stringValue(function["name"])
+			for _, raw := range jsonvalue.Slice(request["tools"]) {
+				function := jsonvalue.Map(jsonvalue.Map(raw)["function"])
+				name := jsonvalue.String(function["name"])
 				names = append(names, name)
 				if strings.HasPrefix(name, "functions_exec_command_") {
 					shellName = name
@@ -90,9 +92,9 @@ func runQwenResponsesRealCodexCLI(t *testing.T, binary string, websockets bool) 
 				wantID, wantOutput = "call-cli-patch", "qwen-output.txt"
 			}
 			found := false
-			for _, raw := range anySlice(request["messages"]) {
-				message := mapValue(raw)
-				if message["role"] == "tool" && message["tool_call_id"] == wantID && strings.Contains(stringValue(message["content"]), wantOutput) {
+			for _, raw := range jsonvalue.Slice(request["messages"]) {
+				message := jsonvalue.Map(raw)
+				if message["role"] == "tool" && message["tool_call_id"] == wantID && strings.Contains(jsonvalue.String(message["content"]), wantOutput) {
 					found = true
 				}
 			}
@@ -202,10 +204,10 @@ const codexCLIDiagnosticLines, codexCLIDiagnosticWidth = 12, 240
 // not dump the whole converted conversation history.
 func qwenCLIToolResults(messages any) string {
 	var results []string
-	for _, raw := range anySlice(messages) {
-		message := mapValue(raw)
+	for _, raw := range jsonvalue.Slice(messages) {
+		message := jsonvalue.Map(raw)
 		if message["role"] == "tool" {
-			results = append(results, fmt.Sprintf("%s=%q", stringValue(message["tool_call_id"]), clipDiagnostic(stringValue(message["content"]), 120)))
+			results = append(results, fmt.Sprintf("%s=%q", jsonvalue.String(message["tool_call_id"]), clipDiagnostic(jsonvalue.String(message["content"]), 120)))
 		}
 	}
 	if len(results) == 0 {

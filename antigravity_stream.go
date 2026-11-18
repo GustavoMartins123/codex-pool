@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"codex-pool-proxy/internal/sse"
 	"github.com/google/uuid"
+
+	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/sse"
 )
 
 type antigravityStreamWriter struct {
@@ -134,7 +136,7 @@ func (sw *antigravityStreamWriter) emitOpenAI(r antigravityResult) error {
 		var calls []any
 		for i, call := range r.Tools {
 			args, _ := json.Marshal(call["args"])
-			id := stringValue(call["id"])
+			id := jsonvalue.String(call["id"])
 			if id == "" {
 				id = fmt.Sprintf("call_%d_%s", i, uuid.NewString())
 			}
@@ -280,7 +282,7 @@ func (sw *antigravityStreamWriter) emitResponses(r antigravityResult) error {
 }
 
 func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error {
-	callID := stringValue(call["id"])
+	callID := jsonvalue.String(call["id"])
 	if callID == "" {
 		callID = "call_" + uuid.NewString()
 	}
@@ -289,7 +291,7 @@ func (sw *antigravityStreamWriter) emitResponsesTool(call map[string]any) error 
 	if call["args"] != nil {
 		args, _ = json.Marshal(call["args"])
 	}
-	name := stringValue(call["name"])
+	name := jsonvalue.String(call["name"])
 	if original := sw.responsesFunctionNames[name]; original != "" {
 		name = original
 	}
@@ -324,7 +326,7 @@ func (sw *antigravityStreamWriter) emitResponsesCustomTool(callID, name, namespa
 	input := ""
 	var envelope map[string]any
 	if json.Unmarshal([]byte(args), &envelope) == nil {
-		input = stringValue(envelope["input"])
+		input = jsonvalue.String(envelope["input"])
 	}
 	itemID := "ctc_" + uuid.NewString()
 	item := map[string]any{"id": itemID, "type": "custom_tool_call", "status": "in_progress", "call_id": callID, "name": name, "input": ""}
@@ -484,7 +486,7 @@ func (sw *antigravityStreamWriter) emitClaude(r antigravityResult) error {
 	}
 	for _, call := range r.Tools {
 		idx := sw.contentIndex
-		id := stringValue(call["id"])
+		id := jsonvalue.String(call["id"])
 		if id == "" {
 			id = "toolu_" + uuid.NewString()
 		}

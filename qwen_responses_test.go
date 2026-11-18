@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func qwenCodexToolDeclarations() []any {
@@ -58,8 +60,8 @@ func TestQwenResponsesKeepsCodexToolsAcrossProviderHandoff(t *testing.T) {
 	if err := json.Unmarshal(prepared.Body, &chat); err != nil {
 		t.Fatal(err)
 	}
-	if len(anySlice(chat["tools"])) != 2 {
-		t.Fatalf("Qwen received %d tools after provider handoff, want 2", len(anySlice(chat["tools"])))
+	if len(jsonvalue.Slice(chat["tools"])) != 2 {
+		t.Fatalf("Qwen received %d tools after provider handoff, want 2", len(jsonvalue.Slice(chat["tools"])))
 	}
 	for _, tool := range prepared.Tools {
 		if tool.Name == "exec_command" && tool.Namespace != "functions" {
@@ -93,27 +95,27 @@ func TestQwenResponsesConvertsCodexToolsHistoryAndRawPatch(t *testing.T) {
 			t.Fatalf("Responses-only field %q reached Qwen", key)
 		}
 	}
-	tools := anySlice(chat["tools"])
-	if len(tools) != 2 || mapValue(chat["stream_options"])["include_usage"] != true || chat["max_tokens"] != float64(4096) || chat["parallel_tool_calls"] != false {
+	tools := jsonvalue.Slice(chat["tools"])
+	if len(tools) != 2 || jsonvalue.Map(chat["stream_options"])["include_usage"] != true || chat["max_tokens"] != float64(4096) || chat["parallel_tool_calls"] != false {
 		t.Fatalf("missing tool or generation contract: %s", prepared.Body)
 	}
 	execName := prepared.toolNames[qwenResponseToolKey("functions", "exec_command")]
-	if !qwenFunctionNamePattern.MatchString(execName) || mapValue(mapValue(chat["tool_choice"])["function"])["name"] != execName {
+	if !qwenFunctionNamePattern.MatchString(execName) || jsonvalue.Map(jsonvalue.Map(chat["tool_choice"])["function"])["name"] != execName {
 		t.Fatal("namespaced tool choice was not mapped to the upstream declaration")
 	}
-	if !strings.Contains(stringValue(mapValue(mapValue(tools[1])["function"])["description"]), "start: begin_patch") {
+	if !strings.Contains(jsonvalue.String(jsonvalue.Map(jsonvalue.Map(tools[1])["function"])["description"]), "start: begin_patch") {
 		t.Fatal("custom tool grammar was not provided to Qwen")
 	}
-	messages := anySlice(chat["messages"])
-	if len(messages) != 7 || mapValue(messages[0])["content"] != "Use the tools." || mapValue(messages[1])["role"] != "system" {
+	messages := jsonvalue.Slice(chat["messages"])
+	if len(messages) != 7 || jsonvalue.Map(messages[0])["content"] != "Use the tools." || jsonvalue.Map(messages[1])["role"] != "system" {
 		t.Fatalf("system messages or tool history were lost: %s", prepared.Body)
 	}
-	command := mapValue(messages[3])
-	if command["reasoning_content"] != "Check the directory first." || mapValue(mapValue(anySlice(command["tool_calls"])[0])["function"])["name"] != execName || mapValue(messages[4])["tool_call_id"] != "call-command" {
+	command := jsonvalue.Map(messages[3])
+	if command["reasoning_content"] != "Check the directory first." || jsonvalue.Map(jsonvalue.Map(jsonvalue.Slice(command["tool_calls"])[0])["function"])["name"] != execName || jsonvalue.Map(messages[4])["tool_call_id"] != "call-command" {
 		t.Fatal("namespaced call history or reasoning was lost")
 	}
 	var args map[string]string
-	if json.Unmarshal([]byte(stringValue(mapValue(mapValue(anySlice(mapValue(messages[5])["tool_calls"])[0])["function"])["arguments"])), &args) != nil || args["input"] != patch || mapValue(messages[6])["content"] != "Done!" {
+	if json.Unmarshal([]byte(jsonvalue.String(jsonvalue.Map(jsonvalue.Map(jsonvalue.Slice(jsonvalue.Map(messages[5])["tool_calls"])[0])["function"])["arguments"])), &args) != nil || args["input"] != patch || jsonvalue.Map(messages[6])["content"] != "Done!" {
 		t.Fatal("raw custom tool input or output was changed")
 	}
 }
@@ -160,8 +162,8 @@ func TestQwenResponsesPreservesImagesAndAvoidsToolNameCollisions(t *testing.T) {
 	}
 	var request map[string]any
 	json.Unmarshal(prepared.Body, &request)
-	image := mapValue(anySlice(mapValue(anySlice(request["messages"])[0])["content"])[0])
-	if image["type"] != "image_url" || mapValue(image["image_url"])["url"] != "data:image/png;base64,dGVzdA==" || mapValue(image["image_url"])["detail"] != "high" {
+	image := jsonvalue.Map(jsonvalue.Slice(jsonvalue.Map(jsonvalue.Slice(request["messages"])[0])["content"])[0])
+	if image["type"] != "image_url" || jsonvalue.Map(image["image_url"])["url"] != "data:image/png;base64,dGVzdA==" || jsonvalue.Map(image["image_url"])["detail"] != "high" {
 		t.Fatal("image input was lost in Responses conversion")
 	}
 }
@@ -188,8 +190,8 @@ func TestQwenResponsesDropsOtherProvidersEncryptedReasoning(t *testing.T) {
 		t.Fatalf("encrypted reasoning leaked to Qwen: %s", encoded)
 	}
 	var roles []string
-	for _, raw := range anySlice(request["messages"]) {
-		roles = append(roles, stringValue(mapValue(raw)["role"]))
+	for _, raw := range jsonvalue.Slice(request["messages"]) {
+		roles = append(roles, jsonvalue.String(jsonvalue.Map(raw)["role"]))
 	}
 	if strings.Join(roles, ",") != "user,assistant,user" || !strings.Contains(encoded, "Here is the plan.") {
 		t.Fatalf("visible history was not kept: %s", encoded)

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
@@ -38,7 +40,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 						t.Fatal(err)
 					}
 					request, _ := root["request"].(map[string]any)
-					sessions = append(sessions, stringValue(request["sessionId"]))
+					sessions = append(sessions, jsonvalue.String(request["sessionId"]))
 					if len(sessions) == 1 || test.alwaysFail {
 						return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(test.firstError)), Request: req}, nil
 					}

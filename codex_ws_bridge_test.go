@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // codexBridgeFixture is a Codex websocket proxy with a ChatGPT upstream that
@@ -107,7 +109,7 @@ func completedResponseID(t *testing.T, events []map[string]any) string {
 	if last["type"] != "response.completed" {
 		t.Fatalf("turn did not complete: %v", last)
 	}
-	id := stringValue(mapValue(last["response"])["id"])
+	id := jsonvalue.String(jsonvalue.Map(last["response"])["id"])
 	if id == "" {
 		t.Fatalf("completed response has no id: %v", last)
 	}
@@ -174,8 +176,8 @@ func TestCodexWebSocketRoutesEachModelToItsProvider(t *testing.T) {
 		t.Fatalf("Codex upstream did not receive the complete history: %s", input)
 	}
 	var history []string
-	for _, raw := range anySlice(fx.qwenBodies[1]["messages"]) {
-		history = append(history, fmt.Sprint(mapValue(raw)["content"]))
+	for _, raw := range jsonvalue.Slice(fx.qwenBodies[1]["messages"]) {
+		history = append(history, fmt.Sprint(jsonvalue.Map(raw)["content"]))
 	}
 	joined := strings.Join(history, " | ")
 	for _, want := range []string{"first", "QWEN_REPLY_1", "second", "GPT_REPLY_1", "third"} {
@@ -198,7 +200,7 @@ func TestCodexWebSocketBridgeReportsProviderErrors(t *testing.T) {
 	}
 	events := readTurn(t, conn)
 	last := events[len(events)-1]
-	if last["type"] != "error" || !strings.Contains(fmt.Sprint(mapValue(last["error"])["message"]), "AI Studio") {
+	if last["type"] != "error" || !strings.Contains(fmt.Sprint(jsonvalue.Map(last["error"])["message"]), "AI Studio") {
 		t.Fatalf("provider failure was not reported as a websocket error: %s", eventsText(events))
 	}
 	if strings.Contains(eventsText(events), "ChatGPT account") {

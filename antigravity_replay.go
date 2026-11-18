@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 const (
@@ -67,9 +69,9 @@ func antigravityReplayScopeFromBody(body []byte) antigravityReplayScope {
 		return antigravityReplayScope{}
 	}
 	request, _ := root["request"].(map[string]any)
-	model := strings.TrimSpace(stringValue(root["model"]))
+	model := strings.TrimSpace(jsonvalue.String(root["model"]))
 	if model == "" {
-		model = strings.TrimSpace(stringValue(request["model"]))
+		model = strings.TrimSpace(jsonvalue.String(request["model"]))
 	}
 	session := firstAntigravityString(root, "sessionId", "session_id")
 	if session == "" {
@@ -85,14 +87,14 @@ func antigravityReplayScopeFromBody(body []byte) antigravityReplayScope {
 }
 
 func antigravityStableReplaySession(request map[string]any) string {
-	for _, rawContent := range anySlice(request["contents"]) {
+	for _, rawContent := range jsonvalue.Slice(request["contents"]) {
 		content, _ := rawContent.(map[string]any)
-		if !strings.EqualFold(stringValue(content["role"]), "user") {
+		if !strings.EqualFold(jsonvalue.String(content["role"]), "user") {
 			continue
 		}
-		for _, rawPart := range anySlice(content["parts"]) {
+		for _, rawPart := range jsonvalue.Slice(content["parts"]) {
 			part, _ := rawPart.(map[string]any)
-			if text := strings.TrimSpace(stringValue(part["text"])); text != "" {
+			if text := strings.TrimSpace(jsonvalue.String(part["text"])); text != "" {
 				sum := sha256.Sum256([]byte(text))
 				return hex.EncodeToString(sum[:16])
 			}
@@ -185,14 +187,14 @@ func (c *antigravityReplayCache) capture(scope antigravityReplayScope, requestBo
 	if response == nil {
 		response = responseRoot
 	}
-	candidates := anySlice(response["candidates"])
+	candidates := jsonvalue.Slice(response["candidates"])
 	if len(candidates) == 0 {
 		return false
 	}
 	candidate, _ := candidates[0].(map[string]any)
 	content, _ := candidate["content"].(map[string]any)
 	var captured []antigravityReplayPart
-	for offset, rawPart := range anySlice(content["parts"]) {
+	for offset, rawPart := range jsonvalue.Slice(content["parts"]) {
 		part, _ := rawPart.(map[string]any)
 		if part == nil {
 			continue
@@ -226,13 +228,13 @@ func (c *antigravityReplayCache) capture(scope antigravityReplayScope, requestBo
 }
 
 func antigravityReplayPendingPosition(request map[string]any) (int, int) {
-	contents := anySlice(request["contents"])
+	contents := jsonvalue.Slice(request["contents"])
 	if len(contents) == 0 {
 		return 0, 0
 	}
 	last, _ := contents[len(contents)-1].(map[string]any)
-	if strings.EqualFold(stringValue(last["role"]), "model") {
-		return len(contents) - 1, len(anySlice(last["parts"]))
+	if strings.EqualFold(jsonvalue.String(last["role"]), "model") {
+		return len(contents) - 1, len(jsonvalue.Slice(last["parts"]))
 	}
 	return len(contents), 0
 }
@@ -264,7 +266,7 @@ func appendOrReplaceAntigravityReplayPart(parts []antigravityReplayPart, candida
 
 func antigravityReplayFunctionCallID(part map[string]any) string {
 	call, _ := part["functionCall"].(map[string]any)
-	return strings.TrimSpace(stringValue(call["id"]))
+	return strings.TrimSpace(jsonvalue.String(call["id"]))
 }
 
 func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte) ([]byte, bool) {
@@ -277,7 +279,7 @@ func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte
 		return body, false
 	}
 	request, _ := root["request"].(map[string]any)
-	contents := anySlice(request["contents"])
+	contents := jsonvalue.Slice(request["contents"])
 	changed := false
 	for _, replay := range entry.Parts {
 		callID := antigravityReplayFunctionCallID(replay.Part)
@@ -285,7 +287,7 @@ func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte
 		if callID != "" {
 			if ci, pi, found := antigravityFindFunctionCall(contents, callID); found {
 				content := contents[ci].(map[string]any)
-				parts := anySlice(content["parts"])
+				parts := jsonvalue.Slice(content["parts"])
 				part, _ := parts[pi].(map[string]any)
 				if replay.Signature != "" && antigravityNativeThoughtSignature(part) != replay.Signature {
 					part["thoughtSignature"] = replay.Signature
@@ -304,11 +306,11 @@ func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte
 		}
 		if hasCall && replay.ContentIndex >= 0 && replay.ContentIndex < len(contents) {
 			content, _ := contents[replay.ContentIndex].(map[string]any)
-			parts := anySlice(content["parts"])
+			parts := jsonvalue.Slice(content["parts"])
 			if replay.PartIndex >= 0 && replay.PartIndex < len(parts) {
 				part, _ := parts[replay.PartIndex].(map[string]any)
 				requestCall, _ := part["functionCall"].(map[string]any)
-				if requestCall != nil && stringValue(requestCall["name"]) == stringValue(cachedCall["name"]) {
+				if requestCall != nil && jsonvalue.String(requestCall["name"]) == jsonvalue.String(cachedCall["name"]) {
 					if replay.Signature != "" && antigravityNativeThoughtSignature(part) != replay.Signature {
 						part["thoughtSignature"] = replay.Signature
 						changed = true
@@ -319,7 +321,7 @@ func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte
 		}
 		if replay.Signature != "" && replay.ContentIndex >= 0 && replay.ContentIndex < len(contents) {
 			content, _ := contents[replay.ContentIndex].(map[string]any)
-			parts := anySlice(content["parts"])
+			parts := jsonvalue.Slice(content["parts"])
 			if replay.PartIndex >= 0 && replay.PartIndex < len(parts) {
 				part, _ := parts[replay.PartIndex].(map[string]any)
 				if antigravityNativeThoughtSignature(part) == "" {
@@ -343,7 +345,7 @@ func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte
 func antigravityFindFunctionCall(contents []any, callID string) (int, int, bool) {
 	for ci, rawContent := range contents {
 		content, _ := rawContent.(map[string]any)
-		for pi, rawPart := range anySlice(content["parts"]) {
+		for pi, rawPart := range jsonvalue.Slice(content["parts"]) {
 			part, _ := rawPart.(map[string]any)
 			if antigravityReplayFunctionCallID(part) == callID {
 				return ci, pi, true
@@ -356,10 +358,10 @@ func antigravityFindFunctionCall(contents []any, callID string) (int, int, bool)
 func antigravityFindFunctionResponseContent(contents []any, callID string) (int, bool) {
 	for ci, rawContent := range contents {
 		content, _ := rawContent.(map[string]any)
-		for _, rawPart := range anySlice(content["parts"]) {
+		for _, rawPart := range jsonvalue.Slice(content["parts"]) {
 			part, _ := rawPart.(map[string]any)
 			response, _ := part["functionResponse"].(map[string]any)
-			if strings.TrimSpace(stringValue(response["id"])) == callID {
+			if strings.TrimSpace(jsonvalue.String(response["id"])) == callID {
 				return ci, true
 			}
 		}

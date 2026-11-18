@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"codex-pool-proxy/internal/wire"
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func unwrapAntigravityResponse(body []byte) ([]byte, error) {
@@ -81,22 +81,22 @@ type antigravityResponsePart struct {
 
 func parseAntigravityGeminiResponse(response map[string]any) antigravityResult {
 	var result antigravityResult
-	result.ResponseID = stringValue(response["responseId"])
-	if raw := stringValue(response["createTime"]); raw != "" {
+	result.ResponseID = jsonvalue.String(response["responseId"])
+	if raw := jsonvalue.String(response["createTime"]); raw != "" {
 		result.CreateTime, _ = time.Parse(time.RFC3339Nano, raw)
 	}
-	candidates := anySlice(response["candidates"])
+	candidates := jsonvalue.Slice(response["candidates"])
 	if len(candidates) > 0 {
 		candidate, _ := candidates[0].(map[string]any)
-		result.FinishReason = stringValue(candidate["finishReason"])
+		result.FinishReason = jsonvalue.String(candidate["finishReason"])
 		content, _ := candidate["content"].(map[string]any)
-		for _, raw := range anySlice(content["parts"]) {
+		for _, raw := range jsonvalue.Slice(content["parts"]) {
 			part, _ := raw.(map[string]any)
 			text, _ := part["text"].(string)
 			if thought, _ := part["thought"].(bool); thought {
-				sig := stringValue(part["thoughtSignature"])
+				sig := jsonvalue.String(part["thoughtSignature"])
 				if sig == "" {
-					sig = stringValue(part["thought_signature"])
+					sig = jsonvalue.String(part["thought_signature"])
 				}
 				if text != "" || sig != "" {
 					result.Parts = append(result.Parts, antigravityResponsePart{Kind: "reasoning", Text: text, Signature: sig})
@@ -122,11 +122,11 @@ func parseAntigravityGeminiResponse(response map[string]any) antigravityResult {
 		}
 	}
 	usage, _ := response["usageMetadata"].(map[string]any)
-	result.PromptTokens = wire.JSONInt64(usage["promptTokenCount"])
-	result.OutputTokens = wire.JSONInt64(usage["candidatesTokenCount"])
-	result.ReasoningTokens = wire.JSONInt64(usage["thoughtsTokenCount"])
-	result.CachedTokens = wire.JSONInt64(usage["cachedContentTokenCount"])
-	result.TotalTokens = wire.JSONInt64(usage["totalTokenCount"])
+	result.PromptTokens = jsonvalue.Int64(usage["promptTokenCount"])
+	result.OutputTokens = jsonvalue.Int64(usage["candidatesTokenCount"])
+	result.ReasoningTokens = jsonvalue.Int64(usage["thoughtsTokenCount"])
+	result.CachedTokens = jsonvalue.Int64(usage["cachedContentTokenCount"])
+	result.TotalTokens = jsonvalue.Int64(usage["totalTokenCount"])
 	if result.TotalTokens == 0 {
 		result.TotalTokens = result.PromptTokens + result.OutputTokens
 	}
@@ -146,7 +146,7 @@ func antigravityGeminiToOpenAI(response map[string]any, model string) map[string
 	if len(r.Tools) > 0 {
 		calls := make([]any, 0, len(r.Tools))
 		for i, call := range r.Tools {
-			id := stringValue(call["id"])
+			id := jsonvalue.String(call["id"])
 			if id == "" {
 				id = fmt.Sprintf("call_%d_%s", i, uuid.NewString())
 			}
@@ -249,7 +249,7 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 		case "tool":
 			flushReasoning()
 			flushMessage()
-			callID := stringValue(part.Tool["id"])
+			callID := jsonvalue.String(part.Tool["id"])
 			if callID == "" {
 				callID = fmt.Sprintf("call_%d_%s", toolIndex, uuid.NewString())
 			}
@@ -257,15 +257,15 @@ func antigravityResponsesOutput(r antigravityResult, functionNames map[string]st
 			if part.Tool["args"] != nil {
 				args, _ = json.Marshal(part.Tool["args"])
 			}
-			name := stringValue(part.Tool["name"])
+			name := jsonvalue.String(part.Tool["name"])
 			if original := functionNames[name]; original != "" {
 				name = original
 			}
 			bareName, namespace := antigravitySplitToolCallName(name, namespacedTools)
 			if customTools[name] {
 				input := ""
-				if args := mapValue(part.Tool["args"]); args != nil {
-					input = stringValue(args["input"])
+				if args := jsonvalue.Map(part.Tool["args"]); args != nil {
+					input = jsonvalue.String(args["input"])
 				}
 				item := map[string]any{"id": "ctc_" + uuid.NewString(), "type": "custom_tool_call", "status": "completed", "call_id": callID, "name": bareName, "input": input}
 				if namespace != "" {
@@ -302,7 +302,7 @@ func antigravityGeminiToClaude(response map[string]any, model string) map[string
 		content = append(content, map[string]any{"type": "text", "text": r.Text})
 	}
 	for i, call := range r.Tools {
-		id := stringValue(call["id"])
+		id := jsonvalue.String(call["id"])
 		if id == "" {
 			id = fmt.Sprintf("toolu_%d_%s", i, uuid.NewString())
 		}
@@ -340,12 +340,7 @@ func antigravityClaudeFinishReason(reason string, hasTools bool) string {
 	return "end_turn"
 }
 func antigravityImageDataURL(image map[string]any) string {
-	return "data:" + stringValue(image["mimeType"]) + ";base64," + stringValue(image["data"])
-}
-
-func anySlice(value any) []any {
-	items, _ := value.([]any)
-	return items
+	return "data:" + jsonvalue.String(image["mimeType"]) + ";base64," + jsonvalue.String(image["data"])
 }
 
 func translateAntigravityError(body []byte, format antigravityClientFormat, status int) []byte {
@@ -356,7 +351,7 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 	if json.Unmarshal(body, &obj) == nil {
 		errObj, _ := obj["error"].(map[string]any)
 		if errObj != nil {
-			if m := stringValue(errObj["message"]); m != "" {
+			if m := jsonvalue.String(errObj["message"]); m != "" {
 				message = m
 			}
 			if c := antigravityErrorValue(errObj["code"]); c != "" {
@@ -364,7 +359,7 @@ func translateAntigravityError(body []byte, format antigravityClientFormat, stat
 			} else if c := antigravityErrorValue(errObj["status"]); c != "" {
 				code = strings.ToLower(c)
 			}
-			errorType = stringValue(errObj["type"])
+			errorType = jsonvalue.String(errObj["type"])
 		}
 	}
 	if message == "" {
@@ -409,7 +404,7 @@ func antigravityErrorSummary(body []byte) string {
 		}
 		return safeText([]byte(text))
 	}
-	errObj := mapValue(obj["error"])
+	errObj := jsonvalue.Map(obj["error"])
 	if errObj == nil {
 		return "unstructured_error"
 	}

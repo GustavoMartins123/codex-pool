@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // OpenAIChatRequestToResponses converts an OpenAI Chat Completions request
@@ -511,7 +513,7 @@ func ResponsesResponseToOpenAICompletions(body []byte) ([]byte, error) {
 	out := map[string]any{
 		"id":      stringField(resp, "id", "cmpl-translated"),
 		"object":  "text_completion",
-		"created": JSONInt64(resp["created_at"]),
+		"created": jsonvalue.Int64(resp["created_at"]),
 		"model":   stringField(resp, "model", "unknown"),
 		"choices": []any{
 			map[string]any{
@@ -572,9 +574,9 @@ func completionsUsageFromResponses(resp map[string]any) map[string]any {
 }
 
 func openAIUsageFromResponsesUsage(u map[string]any) map[string]any {
-	promptTokens := JSONInt64(u["input_tokens"])
-	completionTokens := JSONInt64(u["output_tokens"])
-	totalTokens := JSONInt64(u["total_tokens"])
+	promptTokens := jsonvalue.Int64(u["input_tokens"])
+	completionTokens := jsonvalue.Int64(u["output_tokens"])
+	totalTokens := jsonvalue.Int64(u["total_tokens"])
 	if totalTokens == 0 {
 		totalTokens = promptTokens + completionTokens
 	}
@@ -584,13 +586,13 @@ func openAIUsageFromResponsesUsage(u map[string]any) map[string]any {
 		"total_tokens":      totalTokens,
 	}
 	if details, ok := u["input_tokens_details"].(map[string]any); ok {
-		if cached := JSONInt64(details["cached_tokens"]); cached > 0 {
+		if cached := jsonvalue.Int64(details["cached_tokens"]); cached > 0 {
 			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": cached}
 		}
 	}
 	if details, ok := u["output_tokens_details"].(map[string]any); ok {
 		outDetails := map[string]any{}
-		if reasoning := JSONInt64(details["reasoning_tokens"]); reasoning > 0 {
+		if reasoning := jsonvalue.Int64(details["reasoning_tokens"]); reasoning > 0 {
 			outDetails["reasoning_tokens"] = reasoning
 		}
 		if len(outDetails) > 0 {
@@ -698,7 +700,7 @@ func ResponsesResponseToOpenAIChat(body []byte) ([]byte, error) {
 	out := map[string]any{
 		"id":      id,
 		"object":  "chat.completion",
-		"created": JSONInt64(resp["created_at"]),
+		"created": jsonvalue.Int64(resp["created_at"]),
 		"model":   model,
 		"choices": []any{
 			map[string]any{
@@ -1226,9 +1228,9 @@ func AnthropicResponseToResponses(body []byte) ([]byte, error) {
 
 	if usage, ok := resp["usage"].(map[string]any); ok {
 		result["usage"] = map[string]any{
-			"input_tokens":  JSONInt64(usage["input_tokens"]),
-			"output_tokens": JSONInt64(usage["output_tokens"]),
-			"total_tokens":  JSONInt64(usage["input_tokens"]) + JSONInt64(usage["output_tokens"]),
+			"input_tokens":  jsonvalue.Int64(usage["input_tokens"]),
+			"output_tokens": jsonvalue.Int64(usage["output_tokens"]),
+			"total_tokens":  jsonvalue.Int64(usage["input_tokens"]) + jsonvalue.Int64(usage["output_tokens"]),
 		}
 	}
 
@@ -1660,22 +1662,4 @@ func SanitizeCodexResponsesParams(obj map[string]any) {
 	} {
 		delete(obj, key)
 	}
-}
-
-func JSONInt64(v any) int64 {
-	if v == nil {
-		return 0
-	}
-	switch n := v.(type) {
-	case float64:
-		return int64(n)
-	case int64:
-		return n
-	case int:
-		return int64(n)
-	case json.Number:
-		i, _ := n.Int64()
-		return i
-	}
-	return 0
 }

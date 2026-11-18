@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // The Antigravity wire contract and translation behavior are adapted from
@@ -109,7 +111,7 @@ func antigravityModelFromGeminiPath(path string) string {
 // Gemini CLI / Code Assist envelope {model, request:{contents...}}. Nesting
 // the envelope again would send request.request to Google.
 func unwrapGeminiClientRequest(root map[string]any) map[string]any {
-	request := mapValue(root["request"])
+	request := jsonvalue.Map(root["request"])
 	if request != nil {
 		if _, ok := request["contents"]; ok {
 			return cloneAnyMap(request)
@@ -132,7 +134,7 @@ func prepareAntigravityRequest(path string, body []byte, requestedModel, project
 	upstreamModel := antigravityCanonicalModel(publicModel)
 	return prepareGeminiNativeRequest(path, body, publicModel, upstreamModel, conversationID, func(gemini map[string]any) map[string]any {
 		if !strings.Contains(strings.ToLower(upstreamModel), "claude") {
-			if generationConfig := mapValue(gemini["generationConfig"]); generationConfig != nil {
+			if generationConfig := jsonvalue.Map(gemini["generationConfig"]); generationConfig != nil {
 				delete(generationConfig, "maxOutputTokens")
 			}
 		}
@@ -199,7 +201,7 @@ func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamM
 	if err != nil {
 		return antigravityPreparedRequest{}, err
 	}
-	if contents := anySlice(gemini["contents"]); len(contents) > 0 {
+	if contents := jsonvalue.Slice(gemini["contents"]); len(contents) > 0 {
 		contents = antigravityAlignFunctionResponses(contents)
 		gemini["contents"] = antigravityEnsureTrailingUserTurn(contents)
 	}
@@ -294,19 +296,19 @@ func antigravityMergeConsecutiveRoleContents(contents []any) []any {
 	}
 	merged := make([]any, 0, len(contents))
 	for _, raw := range contents {
-		entry := mapValue(raw)
+		entry := jsonvalue.Map(raw)
 		if entry == nil {
 			continue
 		}
-		role := stringValue(entry["role"])
-		parts := anySlice(entry["parts"])
+		role := jsonvalue.String(entry["role"])
+		parts := jsonvalue.Slice(entry["parts"])
 		if len(parts) == 0 {
 			continue
 		}
 		if len(merged) > 0 {
-			prev := mapValue(merged[len(merged)-1])
-			if stringValue(prev["role"]) == role {
-				prevParts := anySlice(prev["parts"])
+			prev := jsonvalue.Map(merged[len(merged)-1])
+			if jsonvalue.String(prev["role"]) == role {
+				prevParts := jsonvalue.Slice(prev["parts"])
 				prev["parts"] = append(prevParts, parts...)
 				continue
 			}
@@ -326,16 +328,16 @@ func antigravityAlignFunctionResponses(contents []any) []any {
 	}
 	var pending []callRef
 	for contentIndex, raw := range contents {
-		content := mapValue(raw)
-		parts := anySlice(content["parts"])
+		content := jsonvalue.Map(raw)
+		parts := jsonvalue.Slice(content["parts"])
 		calls := make([]callRef, 0)
 		responseParts := make([]int, 0)
 		for partIndex, rawPart := range parts {
-			part := mapValue(rawPart)
-			if call := mapValue(part["functionCall"]); call != nil {
-				calls = append(calls, callRef{id: strings.TrimSpace(stringValue(call["id"])), name: stringValue(call["name"])})
+			part := jsonvalue.Map(rawPart)
+			if call := jsonvalue.Map(part["functionCall"]); call != nil {
+				calls = append(calls, callRef{id: strings.TrimSpace(jsonvalue.String(call["id"])), name: jsonvalue.String(call["name"])})
 			}
-			if mapValue(part["functionResponse"]) != nil {
+			if jsonvalue.Map(part["functionResponse"]) != nil {
 				responseParts = append(responseParts, partIndex)
 			}
 		}
@@ -348,8 +350,8 @@ func antigravityAlignFunctionResponses(contents []any) []any {
 		}
 		byID := make(map[string]map[string]any, len(responseParts))
 		for _, partIndex := range responseParts {
-			response := mapValue(mapValue(parts[partIndex])["functionResponse"])
-			id := strings.TrimSpace(stringValue(response["id"]))
+			response := jsonvalue.Map(jsonvalue.Map(parts[partIndex])["functionResponse"])
+			id := strings.TrimSpace(jsonvalue.String(response["id"]))
 			if id == "" {
 				byID = nil
 				break
@@ -370,7 +372,7 @@ func antigravityAlignFunctionResponses(contents []any) []any {
 			if call.name != "" {
 				response["name"] = call.name
 			}
-			part := cloneAnyMap(mapValue(parts[responseParts[responseIndex]]))
+			part := cloneAnyMap(jsonvalue.Map(parts[responseParts[responseIndex]]))
 			part["functionResponse"] = response
 			ordered = append(ordered, part)
 		}
@@ -390,12 +392,12 @@ func antigravityAlignFunctionResponses(contents []any) []any {
 func antigravityChatFunctionNames(messages []any) map[string]string {
 	names := make(map[string]string)
 	for _, raw := range messages {
-		message := mapValue(raw)
-		for _, rawCall := range anySlice(message["tool_calls"]) {
-			call := mapValue(rawCall)
-			function := mapValue(call["function"])
-			id := strings.TrimSpace(stringValue(call["id"]))
-			name := sanitizeAntigravityFunctionName(stringValue(function["name"]))
+		message := jsonvalue.Map(raw)
+		for _, rawCall := range jsonvalue.Slice(message["tool_calls"]) {
+			call := jsonvalue.Map(rawCall)
+			function := jsonvalue.Map(call["function"])
+			id := strings.TrimSpace(jsonvalue.String(call["id"]))
+			name := sanitizeAntigravityFunctionName(jsonvalue.String(function["name"]))
 			if id != "" && name != "" {
 				names[id] = name
 			}
@@ -407,14 +409,14 @@ func antigravityChatFunctionNames(messages []any) map[string]string {
 func antigravityAnthropicFunctionNames(messages []any) map[string]string {
 	names := make(map[string]string)
 	for _, raw := range messages {
-		message := mapValue(raw)
-		for _, rawBlock := range anySlice(message["content"]) {
-			block := mapValue(rawBlock)
-			if stringValue(block["type"]) != "tool_use" {
+		message := jsonvalue.Map(raw)
+		for _, rawBlock := range jsonvalue.Slice(message["content"]) {
+			block := jsonvalue.Map(rawBlock)
+			if jsonvalue.String(block["type"]) != "tool_use" {
 				continue
 			}
-			id := strings.TrimSpace(stringValue(block["id"]))
-			name := sanitizeAntigravityFunctionName(stringValue(block["name"]))
+			id := strings.TrimSpace(jsonvalue.String(block["id"]))
+			name := sanitizeAntigravityFunctionName(jsonvalue.String(block["name"]))
 			if id != "" && name != "" {
 				names[id] = name
 			}
@@ -471,11 +473,11 @@ func antigravityChatToGemini(input map[string]any) (map[string]any, error) {
 				case map[string]any:
 					arguments = rawArgs
 				}
-				parts = append(parts, map[string]any{"functionCall": map[string]any{"name": sanitizeAntigravityFunctionName(stringValue(function["name"])), "args": arguments, "id": stringValue(call["id"])}, "thoughtSignature": antigravityFunctionThoughtSignature})
+				parts = append(parts, map[string]any{"functionCall": map[string]any{"name": sanitizeAntigravityFunctionName(jsonvalue.String(function["name"])), "args": arguments, "id": jsonvalue.String(call["id"])}, "thoughtSignature": antigravityFunctionThoughtSignature})
 			}
 		}
 		if role == "tool" {
-			parts = []any{map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(stringValue(message["name"]), functionNames, stringValue(message["tool_call_id"])), "id": stringValue(message["tool_call_id"]), "response": map[string]any{"content": message["content"]}}}}
+			parts = []any{map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(jsonvalue.String(message["name"]), functionNames, jsonvalue.String(message["tool_call_id"])), "id": jsonvalue.String(message["tool_call_id"]), "response": map[string]any{"content": message["content"]}}}}
 		}
 		contents = append(contents, map[string]any{"role": geminiRole, "parts": parts})
 	}
@@ -500,18 +502,18 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 	if text, ok := input["input"].(string); ok {
 		contents = append(contents, map[string]any{"role": "user", "parts": []any{map[string]any{"text": text}}})
 	} else {
-		items := antigravityNormalizeResponsesItems(anySlice(input["input"]))
+		items := antigravityNormalizeResponsesItems(jsonvalue.Slice(input["input"]))
 		callNames := make(map[string]string)
 		for index := 0; index < len(items); index++ {
 			item, _ := items[index].(map[string]any)
-			switch stringValue(item["type"]) {
+			switch jsonvalue.String(item["type"]) {
 			case "function_call", "custom_tool_call":
-				callNames[firstAntigravityString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"])))
+				callNames[firstAntigravityString(item, "call_id", "id")] = mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"])))
 			}
 		}
 		for index := 0; index < len(items); index++ {
 			item, _ := items[index].(map[string]any)
-			switch stringValue(item["type"]) {
+			switch jsonvalue.String(item["type"]) {
 			case "function_call":
 				arguments := any(map[string]any{})
 				if rawArguments, ok := item["arguments"].(string); ok {
@@ -521,14 +523,14 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 				} else if item["arguments"] != nil {
 					arguments = item["arguments"]
 				}
-				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": arguments}
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": arguments}
 				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
 			case "custom_tool_call":
-				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(stringValue(item["namespace"]), stringValue(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": map[string]any{"input": stringValue(item["input"])}}
+				call := map[string]any{"name": mapAntigravityFunctionName(functionNames, antigravityNamespacedToolName(jsonvalue.String(item["namespace"]), jsonvalue.String(item["name"]))), "id": firstAntigravityString(item, "call_id", "id"), "args": map[string]any{"input": jsonvalue.String(item["input"])}}
 				contents = append(contents, map[string]any{"role": "model", "parts": []any{map[string]any{"functionCall": call, "thoughtSignature": antigravityFunctionThoughtSignature}}})
 			case "function_call_output", "custom_tool_call_output":
 				response := map[string]any{"result": antigravityJSONValue(item["output"])}
-				callID := stringValue(item["call_id"])
+				callID := jsonvalue.String(item["call_id"])
 				functionResponse := map[string]any{"id": callID, "response": response}
 				name := callNames[callID]
 				if name == "" {
@@ -539,7 +541,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 			case "reasoning":
 				visible := ""
 				if index+1 < len(items) && strings.Contains(strings.ToLower(model), "gemini") {
-					if text, ok := antigravityResponsesAssistantVisibleText(mapValue(items[index+1])); ok {
+					if text, ok := antigravityResponsesAssistantVisibleText(jsonvalue.Map(items[index+1])); ok {
 						visible = text
 						index++
 					}
@@ -549,15 +551,15 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 					contents = append(contents, map[string]any{"role": "model", "parts": parts})
 				}
 			default:
-				role := strings.ToLower(stringValue(item["role"]))
+				role := strings.ToLower(jsonvalue.String(item["role"]))
 				if role == "system" || role == "developer" {
 					parts := antigravityContentParts(item["content"])
 					if len(parts) > 0 {
-						system := mapValue(result["systemInstruction"])
+						system := jsonvalue.Map(result["systemInstruction"])
 						if system == nil {
 							system = map[string]any{"parts": []any{}}
 						}
-						system["parts"] = append(anySlice(system["parts"]), parts...)
+						system["parts"] = append(jsonvalue.Slice(system["parts"]), parts...)
 						result["systemInstruction"] = system
 					}
 					continue
@@ -570,7 +572,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 	}
 	contents = antigravityMergeConsecutiveRoleContents(contents)
 	contents = antigravityAlignFunctionResponses(contents)
-	if len(contents) > 0 && antigravityIsTrailingModelPrefill(mapValue(contents[len(contents)-1])) {
+	if len(contents) > 0 && antigravityIsTrailingModelPrefill(jsonvalue.Map(contents[len(contents)-1])) {
 		contents = contents[:len(contents)-1]
 	}
 	result["contents"] = contents
@@ -585,7 +587,7 @@ func antigravityResponsesToGemini(input map[string]any, model string) (map[strin
 
 func antigravityResponsesMessageContents(item map[string]any) []any {
 	defaultRole := "user"
-	if role := strings.ToLower(stringValue(item["role"])); role == "assistant" || role == "model" {
+	if role := strings.ToLower(jsonvalue.String(item["role"])); role == "assistant" || role == "model" {
 		defaultRole = "model"
 	}
 	blocks, ok := item["content"].([]any)
@@ -606,9 +608,9 @@ func antigravityResponsesMessageContents(item map[string]any) []any {
 		currentParts = nil
 	}
 	for _, raw := range blocks {
-		block := mapValue(raw)
+		block := jsonvalue.Map(raw)
 		role := defaultRole
-		if stringValue(block["type"]) == "output_text" {
+		if jsonvalue.String(block["type"]) == "output_text" {
 			role = "model"
 		}
 		parts := antigravityContentParts([]any{block})
@@ -626,19 +628,19 @@ func antigravityResponsesMessageContents(item map[string]any) []any {
 }
 
 func antigravityResponsesAssistantVisibleText(item map[string]any) (string, bool) {
-	itemType := stringValue(item["type"])
+	itemType := jsonvalue.String(item["type"])
 	if itemType != "" && itemType != "message" {
 		return "", false
 	}
 	if text, ok := item["content"].(string); ok {
-		role := strings.ToLower(stringValue(item["role"]))
+		role := strings.ToLower(jsonvalue.String(item["role"]))
 		return text, role == "assistant" || role == "model"
 	}
 	texts := make([]string, 0)
-	for _, raw := range anySlice(item["content"]) {
-		part := mapValue(raw)
-		if stringValue(part["type"]) == "output_text" {
-			texts = append(texts, stringValue(part["text"]))
+	for _, raw := range jsonvalue.Slice(item["content"]) {
+		part := jsonvalue.Map(raw)
+		if jsonvalue.String(part["type"]) == "output_text" {
+			texts = append(texts, jsonvalue.String(part["text"]))
 		}
 	}
 	return strings.Join(texts, "\n"), len(texts) > 0
@@ -646,15 +648,15 @@ func antigravityResponsesAssistantVisibleText(item map[string]any) (string, bool
 
 func antigravityResponsesReasoningParts(item map[string]any, model, visible string) []any {
 	texts := make([]string, 0)
-	for _, raw := range anySlice(item["summary"]) {
-		part := mapValue(raw)
-		if stringValue(part["type"]) == "summary_text" {
-			texts = append(texts, stringValue(part["text"]))
+	for _, raw := range jsonvalue.Slice(item["summary"]) {
+		part := jsonvalue.Map(raw)
+		if jsonvalue.String(part["type"]) == "summary_text" {
+			texts = append(texts, jsonvalue.String(part["text"]))
 		}
 	}
 	if len(texts) == 0 {
 		for _, raw := range antigravityContentParts(item["content"]) {
-			if text := stringValue(mapValue(raw)["text"]); text != "" {
+			if text := jsonvalue.String(jsonvalue.Map(raw)["text"]); text != "" {
 				texts = append(texts, text)
 			}
 		}
@@ -692,11 +694,11 @@ func normalizeAntigravityGeminiSignature(signature string) string {
 }
 
 func antigravityIsTrailingModelPrefill(content map[string]any) bool {
-	if stringValue(content["role"]) != "model" {
+	if jsonvalue.String(content["role"]) != "model" {
 		return false
 	}
-	for _, raw := range anySlice(content["parts"]) {
-		part := mapValue(raw)
+	for _, raw := range jsonvalue.Slice(content["parts"]) {
+		part := jsonvalue.Map(raw)
 		if part["thought"] == true || part["functionCall"] != nil || part["thoughtSignature"] != nil {
 			return false
 		}
@@ -713,19 +715,19 @@ func antigravityEnsureTrailingUserTurn(contents []any) []any {
 	if len(contents) == 0 {
 		return contents
 	}
-	last := mapValue(contents[len(contents)-1])
-	if last == nil || stringValue(last["role"]) != "model" {
+	last := jsonvalue.Map(contents[len(contents)-1])
+	if last == nil || jsonvalue.String(last["role"]) != "model" {
 		return contents
 	}
 	parts := make([]any, 0)
-	for _, raw := range anySlice(last["parts"]) {
-		call := mapValue(mapValue(raw)["functionCall"])
+	for _, raw := range jsonvalue.Slice(last["parts"]) {
+		call := jsonvalue.Map(jsonvalue.Map(raw)["functionCall"])
 		if call == nil {
 			continue
 		}
 		parts = append(parts, map[string]any{"functionResponse": map[string]any{
-			"id":   stringValue(call["id"]),
-			"name": stringValue(call["name"]),
+			"id":   jsonvalue.String(call["id"]),
+			"name": jsonvalue.String(call["name"]),
 			"response": map[string]any{
 				"error": "tool call was not executed",
 			},
@@ -740,36 +742,36 @@ func antigravityEnsureTrailingUserTurn(contents []any) []any {
 func antigravityNormalizeResponsesItems(items []any) []any {
 	normalized := make([]any, 0, len(items))
 	for index := 0; index < len(items); {
-		item := mapValue(items[index])
-		if stringValue(item["type"]) != "function_call" {
+		item := jsonvalue.Map(items[index])
+		if jsonvalue.String(item["type"]) != "function_call" {
 			normalized = append(normalized, items[index])
 			index++
 			continue
 		}
 		calls := make([]any, 0)
-		for index < len(items) && stringValue(mapValue(items[index])["type"]) == "function_call" {
+		for index < len(items) && jsonvalue.String(jsonvalue.Map(items[index])["type"]) == "function_call" {
 			calls = append(calls, items[index])
 			index++
 		}
 		outputs := make([]any, 0)
-		for index < len(items) && stringValue(mapValue(items[index])["type"]) == "function_call_output" {
+		for index < len(items) && jsonvalue.String(jsonvalue.Map(items[index])["type"]) == "function_call_output" {
 			outputs = append(outputs, items[index])
 			index++
 		}
 		byCallID := make(map[string]any, len(outputs))
 		for _, output := range outputs {
-			byCallID[stringValue(mapValue(output)["call_id"])] = output
+			byCallID[jsonvalue.String(jsonvalue.Map(output)["call_id"])] = output
 		}
 		for _, call := range calls {
 			normalized = append(normalized, call)
-			callID := stringValue(mapValue(call)["call_id"])
+			callID := jsonvalue.String(jsonvalue.Map(call)["call_id"])
 			if output, ok := byCallID[callID]; ok {
 				normalized = append(normalized, output)
 				delete(byCallID, callID)
 			}
 		}
 		for _, output := range outputs {
-			if _, ok := byCallID[stringValue(mapValue(output)["call_id"])]; ok {
+			if _, ok := byCallID[jsonvalue.String(jsonvalue.Map(output)["call_id"])]; ok {
 				normalized = append(normalized, output)
 			}
 		}
@@ -821,10 +823,10 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 				block, _ := rawBlock.(map[string]any)
 				switch block["type"] {
 				case "text":
-					parts = append(parts, map[string]any{"text": stringValue(block["text"])})
+					parts = append(parts, map[string]any{"text": jsonvalue.String(block["text"])})
 				case "thinking", "redacted_thinking":
-					part := map[string]any{"text": stringValue(block["thinking"]), "thought": true}
-					if signature := stringValue(block["signature"]); signature != "" {
+					part := map[string]any{"text": jsonvalue.String(block["thinking"]), "thought": true}
+					if signature := jsonvalue.String(block["signature"]); signature != "" {
 						part["thoughtSignature"] = signature
 					}
 					parts = append(parts, part)
@@ -832,13 +834,13 @@ func antigravityAnthropicToGemini(input map[string]any) (map[string]any, error) 
 					source, _ := block["source"].(map[string]any)
 					if source["type"] == "base64" {
 						parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": source["media_type"], "data": source["data"]}})
-					} else if sourceURL := stringValue(source["url"]); sourceURL != "" {
+					} else if sourceURL := jsonvalue.String(source["url"]); sourceURL != "" {
 						parts = append(parts, map[string]any{"fileData": map[string]any{"fileUri": sourceURL}})
 					}
 				case "tool_use":
-					parts = append(parts, map[string]any{"functionCall": map[string]any{"name": sanitizeAntigravityFunctionName(stringValue(block["name"])), "args": block["input"], "id": block["id"]}, "thoughtSignature": antigravityFunctionThoughtSignature})
+					parts = append(parts, map[string]any{"functionCall": map[string]any{"name": sanitizeAntigravityFunctionName(jsonvalue.String(block["name"])), "args": block["input"], "id": block["id"]}, "thoughtSignature": antigravityFunctionThoughtSignature})
 				case "tool_result":
-					parts = append(parts, map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(stringValue(block["name"]), functionNames, stringValue(block["tool_use_id"])), "id": block["tool_use_id"], "response": map[string]any{"content": block["content"], "is_error": block["is_error"]}}})
+					parts = append(parts, map[string]any{"functionResponse": map[string]any{"name": antigravityFunctionResponseName(jsonvalue.String(block["name"]), functionNames, jsonvalue.String(block["tool_use_id"])), "id": block["tool_use_id"], "response": map[string]any{"content": block["content"], "is_error": block["is_error"]}}})
 				}
 			}
 		}
@@ -862,13 +864,13 @@ func antigravityContentParts(value any) []any {
 	case []any:
 		for _, raw := range content {
 			block, _ := raw.(map[string]any)
-			typeName := stringValue(block["type"])
+			typeName := jsonvalue.String(block["type"])
 			switch typeName {
 			case "text", "input_text", "output_text":
-				parts = append(parts, map[string]any{"text": stringValue(block["text"])})
+				parts = append(parts, map[string]any{"text": jsonvalue.String(block["text"])})
 			case "image_url":
 				imageURL, _ := block["image_url"].(map[string]any)
-				if urlText := stringValue(imageURL["url"]); strings.HasPrefix(urlText, "data:") {
+				if urlText := jsonvalue.String(imageURL["url"]); strings.HasPrefix(urlText, "data:") {
 					if inline := antigravityDataURL(urlText); inline != nil {
 						parts = append(parts, inline)
 					}
@@ -889,16 +891,16 @@ func antigravityContentParts(value any) []any {
 				if audio == nil {
 					audio = block
 				}
-				if data := stringValue(audio["data"]); data != "" {
-					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": antigravityAudioMIME(stringValue(audio["format"])), "data": data}})
+				if data := jsonvalue.String(audio["data"]); data != "" {
+					parts = append(parts, map[string]any{"inlineData": map[string]any{"mimeType": antigravityAudioMIME(jsonvalue.String(audio["format"])), "data": data}})
 				}
 			case "file":
 				file, _ := block["file"].(map[string]any)
-				if data := stringValue(file["file_data"]); strings.HasPrefix(data, "data:") {
+				if data := jsonvalue.String(file["file_data"]); strings.HasPrefix(data, "data:") {
 					if inline := antigravityDataURL(data); inline != nil {
 						parts = append(parts, inline)
 					}
-				} else if fileID := stringValue(file["file_id"]); fileID != "" {
+				} else if fileID := jsonvalue.String(file["file_id"]); fileID != "" {
 					parts = append(parts, map[string]any{"fileData": map[string]any{"fileUri": fileID}})
 				}
 			}
@@ -954,18 +956,18 @@ func antigravityCopyGenerationConfig(input, result map[string]any) {
 			config["thinkingConfig"] = map[string]any{"thinkingBudget": budget, "includeThoughts": true}
 		}
 	}
-	if effort := stringValue(input["reasoning_effort"]); effort != "" {
+	if effort := jsonvalue.String(input["reasoning_effort"]); effort != "" {
 		budgets := map[string]int{"none": 0, "minimal": 1024, "low": 4096, "medium": 8192, "high": 24576}
 		config["thinkingConfig"] = map[string]any{"thinkingBudget": budgets[effort], "includeThoughts": effort != "none"}
 	}
 	if reasoning, ok := input["reasoning"].(map[string]any); ok {
-		if effort := stringValue(reasoning["effort"]); effort != "" {
+		if effort := jsonvalue.String(reasoning["effort"]); effort != "" {
 			budgets := map[string]int{"none": 0, "minimal": 1024, "low": 4096, "medium": 8192, "high": 24576}
 			config["thinkingConfig"] = map[string]any{"thinkingBudget": budgets[effort], "includeThoughts": effort != "none"}
 		}
 	}
 	if output, ok := input["output_config"].(map[string]any); ok {
-		if effort := stringValue(output["effort"]); effort != "" {
+		if effort := jsonvalue.String(output["effort"]); effort != "" {
 			config["thinkingConfig"] = map[string]any{"thinkingLevel": effort, "includeThoughts": true}
 		}
 	}
@@ -989,13 +991,13 @@ func antigravityCopyResponseFormat(format, config map[string]any) {
 }
 
 func antigravityApplyResponsesGenerationConfig(input, result map[string]any) {
-	config := mapValue(result["generationConfig"])
+	config := jsonvalue.Map(result["generationConfig"])
 	if config == nil {
 		config = map[string]any{}
 	}
-	if text := mapValue(input["text"]); text != nil {
-		if format := mapValue(text["format"]); format != nil {
-			switch strings.ToLower(stringValue(format["type"])) {
+	if text := jsonvalue.Map(input["text"]); text != nil {
+		if format := jsonvalue.Map(text["format"]); format != nil {
+			switch strings.ToLower(jsonvalue.String(format["type"])) {
 			case "json_object":
 				config["responseMimeType"] = "application/json"
 				delete(config, "responseSchema")
@@ -1003,9 +1005,9 @@ func antigravityApplyResponsesGenerationConfig(input, result map[string]any) {
 			case "json_schema":
 				config["responseMimeType"] = "application/json"
 				delete(config, "responseSchema")
-				schema := mapValue(format["schema"])
+				schema := jsonvalue.Map(format["schema"])
 				if schema == nil {
-					schema = mapValue(mapValue(format["json_schema"])["schema"])
+					schema = jsonvalue.Map(jsonvalue.Map(format["json_schema"])["schema"])
 				}
 				if schema != nil {
 					config["responseJsonSchema"] = schema
@@ -1013,8 +1015,8 @@ func antigravityApplyResponsesGenerationConfig(input, result map[string]any) {
 			}
 		}
 	}
-	if reasoning := mapValue(input["reasoning"]); reasoning != nil {
-		if effort := strings.ToLower(strings.TrimSpace(stringValue(reasoning["effort"]))); effort != "" {
+	if reasoning := jsonvalue.Map(input["reasoning"]); reasoning != nil {
+		if effort := strings.ToLower(strings.TrimSpace(jsonvalue.String(reasoning["effort"]))); effort != "" {
 			if effort == "auto" {
 				config["thinkingConfig"] = map[string]any{"thinkingBudget": -1, "includeThoughts": true}
 			} else {
@@ -1042,7 +1044,7 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 	seenDeclarations := make(map[string]bool)
 	for _, raw := range rawTools {
 		tool, _ := raw.(map[string]any)
-		toolType := stringValue(tool["type"])
+		toolType := jsonvalue.String(tool["type"])
 		if strings.HasPrefix(toolType, "web_search") || tool["google_search"] != nil {
 			if includeBuiltIns {
 				googleTools = append(googleTools, map[string]any{"googleSearch": map[string]any{}})
@@ -1053,7 +1055,7 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 		if function, ok := tool["function"].(map[string]any); ok {
 			definition = function
 		}
-		name := mapAntigravityFunctionName(functionNames, stringValue(definition["name"]))
+		name := mapAntigravityFunctionName(functionNames, jsonvalue.String(definition["name"]))
 		if name == "" {
 			continue
 		}
@@ -1062,12 +1064,12 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 		}
 		seenDeclarations[name] = true
 		declaration := map[string]any{"name": name}
-		if description := strings.TrimSpace(stringValue(definition["description"])); description != "" {
+		if description := strings.TrimSpace(jsonvalue.String(definition["description"])); description != "" {
 			declaration["description"] = description
 		}
-		schema := mapValue(definition["input_schema"])
+		schema := jsonvalue.Map(definition["input_schema"])
 		if schema == nil {
-			schema = mapValue(definition["parameters"])
+			schema = jsonvalue.Map(definition["parameters"])
 		}
 		declaration["parameters"] = cleanAntigravityFunctionParameters(schema)
 		declarations = append(declarations, declaration)
@@ -1098,9 +1100,9 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 			mode = "VALIDATED"
 		}
 		config := map[string]any{"mode": mode}
-		name := stringValue(choice["name"])
+		name := jsonvalue.String(choice["name"])
 		if function, _ := choice["function"].(map[string]any); name == "" && function != nil {
-			name = stringValue(function["name"])
+			name = jsonvalue.String(function["name"])
 		}
 		if name != "" {
 			config["allowedFunctionNames"] = []string{mapAntigravityFunctionName(functionNames, name)}
@@ -1126,13 +1128,13 @@ func antigravityCopyToolsFilteredMapped(input, result map[string]any, includeBui
 func antigravityResponsesFunctionNameMap(input map[string]any) map[string]string {
 	unique := make(map[string]bool)
 	baseCounts := make(map[string]int)
-	for _, raw := range anySlice(input["tools"]) {
-		tool := mapValue(raw)
+	for _, raw := range jsonvalue.Slice(input["tools"]) {
+		tool := jsonvalue.Map(raw)
 		definition := tool
-		if function := mapValue(tool["function"]); function != nil {
+		if function := jsonvalue.Map(tool["function"]); function != nil {
 			definition = function
 		}
-		name := stringValue(definition["name"])
+		name := jsonvalue.String(definition["name"])
 		if name == "" || unique[name] {
 			continue
 		}
@@ -1199,7 +1201,7 @@ func reverseAntigravityFunctionNameMap(nameMap map[string]string) map[string]str
 // returns the set of namespaced tool names and the subset that are freeform
 // custom tools.
 func antigravityInlineAdditionalTools(root map[string]any) (namespaced, custom map[string]bool) {
-	items := anySlice(root["input"])
+	items := jsonvalue.Slice(root["input"])
 	if len(items) == 0 {
 		return nil, nil
 	}
@@ -1209,19 +1211,19 @@ func antigravityInlineAdditionalTools(root map[string]any) (namespaced, custom m
 	kept := make([]any, 0, len(items))
 	changed := false
 	for _, raw := range items {
-		item := mapValue(raw)
-		if item == nil || stringValue(item["type"]) != "additional_tools" {
+		item := jsonvalue.Map(raw)
+		if item == nil || jsonvalue.String(item["type"]) != "additional_tools" {
 			kept = append(kept, raw)
 			continue
 		}
 		changed = true
-		flattened = append(flattened, antigravityFlattenToolDeclarations(anySlice(item["tools"]), "", namespaced, custom)...)
+		flattened = append(flattened, antigravityFlattenToolDeclarations(jsonvalue.Slice(item["tools"]), "", namespaced, custom)...)
 	}
 	if !changed {
 		return nil, nil
 	}
 	if len(flattened) > 0 {
-		root["tools"] = append(anySlice(root["tools"]), flattened...)
+		root["tools"] = append(jsonvalue.Slice(root["tools"]), flattened...)
 	}
 	root["input"] = kept
 	return namespaced, custom
@@ -1230,26 +1232,26 @@ func antigravityInlineAdditionalTools(root map[string]any) (namespaced, custom m
 func antigravityFlattenToolDeclarations(tools []any, namespace string, namespaced, custom map[string]bool) []any {
 	flattened := make([]any, 0, len(tools))
 	for _, raw := range tools {
-		tool := mapValue(raw)
+		tool := jsonvalue.Map(raw)
 		if tool == nil {
 			continue
 		}
-		switch stringValue(tool["type"]) {
+		switch jsonvalue.String(tool["type"]) {
 		case "namespace":
-			name := sanitizeAntigravityNamespaceComponent(stringValue(tool["name"]))
+			name := sanitizeAntigravityNamespaceComponent(jsonvalue.String(tool["name"]))
 			if name == "" {
 				continue
 			}
 			if namespace != "" {
 				name = namespace + "_" + name
 			}
-			flattened = append(flattened, antigravityFlattenToolDeclarations(anySlice(tool["tools"]), name, namespaced, custom)...)
+			flattened = append(flattened, antigravityFlattenToolDeclarations(jsonvalue.Slice(tool["tools"]), name, namespaced, custom)...)
 		case "function":
 			definition := tool
-			if function := mapValue(tool["function"]); function != nil {
+			if function := jsonvalue.Map(tool["function"]); function != nil {
 				definition = function
 			}
-			name := antigravityNamespacedToolName(namespace, stringValue(definition["name"]))
+			name := antigravityNamespacedToolName(namespace, jsonvalue.String(definition["name"]))
 			if name == "" {
 				continue
 			}
@@ -1257,17 +1259,17 @@ func antigravityFlattenToolDeclarations(tools []any, namespace string, namespace
 				namespaced[name] = true
 			}
 			converted := map[string]any{"type": "function", "name": name}
-			if description := strings.TrimSpace(stringValue(definition["description"])); description != "" {
+			if description := strings.TrimSpace(jsonvalue.String(definition["description"])); description != "" {
 				converted["description"] = description
 			}
-			if parameters := mapValue(definition["parameters"]); parameters != nil {
+			if parameters := jsonvalue.Map(definition["parameters"]); parameters != nil {
 				converted["parameters"] = parameters
-			} else if parameters := mapValue(definition["input_schema"]); parameters != nil {
+			} else if parameters := jsonvalue.Map(definition["input_schema"]); parameters != nil {
 				converted["parameters"] = parameters
 			}
 			flattened = append(flattened, converted)
 		case "custom":
-			name := antigravityNamespacedToolName(namespace, stringValue(tool["name"]))
+			name := antigravityNamespacedToolName(namespace, jsonvalue.String(tool["name"]))
 			if name == "" {
 				continue
 			}
@@ -1275,7 +1277,7 @@ func antigravityFlattenToolDeclarations(tools []any, namespace string, namespace
 				namespaced[name] = true
 			}
 			custom[name] = true
-			description := strings.TrimSpace(stringValue(tool["description"]))
+			description := strings.TrimSpace(jsonvalue.String(tool["description"]))
 			if description == "" {
 				description = "Freeform tool."
 			}
@@ -1387,12 +1389,12 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 			}
 		}
 	}
-	if ref := stringValue(working["$ref"]); ref != "" {
+	if ref := jsonvalue.String(working["$ref"]); ref != "" {
 		name := ref
 		if index := strings.LastIndexByte(ref, '/'); index >= 0 {
 			name = ref[index+1:]
 		}
-		description := antigravityAppendSchemaHint(stringValue(working["description"]), "See: "+name)
+		description := antigravityAppendSchemaHint(jsonvalue.String(working["description"]), "See: "+name)
 		return map[string]any{"type": "object", "description": description}
 	}
 
@@ -1400,7 +1402,7 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 	working = antigravityFlattenSchemaUnion(working)
 
 	result := make(map[string]any, len(working))
-	description := stringValue(working["description"])
+	description := jsonvalue.String(working["description"])
 	for key, value := range working {
 		// Gemini rejects a null "required" outright, so drop the key instead of
 		// replacing it with an empty list as the OpenAI-family paths do.
@@ -1436,7 +1438,7 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 				selected := "string"
 				accepted := make([]string, 0, len(types))
 				for _, rawType := range types {
-					typeName := stringValue(rawType)
+					typeName := jsonvalue.String(rawType)
 					if typeName == "" || typeName == "null" {
 						continue
 					}
@@ -1484,7 +1486,7 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 		properties, _ := result["properties"].(map[string]any)
 		cleaned := make([]any, 0, len(required))
 		for _, value := range required {
-			name := stringValue(value)
+			name := jsonvalue.String(value)
 			if _, exists := properties[name]; exists && !nullableProperties[name] {
 				cleaned = append(cleaned, name)
 			}
@@ -1504,14 +1506,14 @@ func cleanAntigravitySchemaNode(schema map[string]any, propertyMap bool) map[str
 func antigravitySchemaAllowsNull(schema map[string]any) bool {
 	if types, ok := schema["type"].([]any); ok {
 		for _, value := range types {
-			if stringValue(value) == "null" {
+			if jsonvalue.String(value) == "null" {
 				return true
 			}
 		}
 	}
 	for _, keyword := range []string{"anyOf", "oneOf"} {
-		for _, raw := range anySlice(schema[keyword]) {
-			if child, ok := raw.(map[string]any); ok && stringValue(child["type"]) == "null" {
+		for _, raw := range jsonvalue.Slice(schema[keyword]) {
+			if child, ok := raw.(map[string]any); ok && jsonvalue.String(child["type"]) == "null" {
 				return true
 			}
 		}
@@ -1528,15 +1530,15 @@ func antigravityMergeAllOf(schema map[string]any) {
 	required, _ := schema["required"].([]any)
 	seenRequired := make(map[string]bool)
 	for _, value := range required {
-		seenRequired[stringValue(value)] = true
+		seenRequired[jsonvalue.String(value)] = true
 	}
 	for _, raw := range allOf {
 		item, _ := raw.(map[string]any)
-		for name, value := range mapValue(item["properties"]) {
+		for name, value := range jsonvalue.Map(item["properties"]) {
 			properties[name] = value
 		}
-		for _, value := range anySlice(item["required"]) {
-			name := stringValue(value)
+		for _, value := range jsonvalue.Slice(item["required"]) {
+			name := jsonvalue.String(value)
 			if name != "" && !seenRequired[name] {
 				required = append(required, name)
 				seenRequired[name] = true
@@ -1562,7 +1564,7 @@ func antigravityFlattenSchemaUnion(schema map[string]any) map[string]any {
 		types := make([]string, 0, len(options))
 		for _, raw := range options {
 			option, _ := raw.(map[string]any)
-			typeName := stringValue(option["type"])
+			typeName := jsonvalue.String(option["type"])
 			score := 0
 			switch {
 			case typeName == "object" || option["properties"] != nil:
@@ -1582,11 +1584,11 @@ func antigravityFlattenSchemaUnion(schema map[string]any) map[string]any {
 			}
 		}
 		selected := cloneAnyMap(best)
-		if description := stringValue(schema["description"]); description != "" {
-			selected["description"] = antigravityAppendSchemaHint(stringValue(selected["description"]), description)
+		if description := jsonvalue.String(schema["description"]); description != "" {
+			selected["description"] = antigravityAppendSchemaHint(jsonvalue.String(selected["description"]), description)
 		}
 		if len(types) > 1 {
-			selected["description"] = antigravityAppendSchemaHint(stringValue(selected["description"]), "Accepts: "+strings.Join(types, " | "))
+			selected["description"] = antigravityAppendSchemaHint(jsonvalue.String(selected["description"]), "Accepts: "+strings.Join(types, " | "))
 		}
 		for key, value := range schema {
 			if key != keyword && key != "description" {
@@ -1608,11 +1610,6 @@ func antigravityAppendSchemaHint(description, hint string) string {
 		return description
 	}
 	return description + " (" + hint + ")"
-}
-
-func mapValue(value any) map[string]any {
-	result, _ := value.(map[string]any)
-	return result
 }
 
 func sanitizeAntigravityFunctionName(name string) string {
@@ -1643,8 +1640,6 @@ func sanitizeAntigravityFunctionName(name string) string {
 	}
 	return value
 }
-
-func stringValue(value any) string { text, _ := value.(string); return text }
 
 func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Request, body []byte, requestedModel, conversationID, userID, originID, clientIP, reqID string, routingProfile RoutingProfile) bool {
 	if !shouldRouteAntigravityModel(requestedModel) {
@@ -1732,7 +1727,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			var envelope map[string]any
 			if json.Unmarshal(prepared.Body, &envelope) == nil {
 				request, _ := envelope["request"].(map[string]any)
-				h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, stringValue(request["sessionId"]))
+				h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, jsonvalue.String(request["sessionId"]))
 			}
 		}
 		attemptStarted := time.Now()
@@ -1789,7 +1784,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 					var envelope map[string]any
 					if json.Unmarshal(prepared.Body, &envelope) == nil {
 						request, _ := envelope["request"].(map[string]any)
-						h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, stringValue(request["sessionId"]))
+						h.getContextHandoff().BindNativeSession(conversationScopedKey(userID, conversationID), AccountTypeAntigravity, jsonvalue.String(request["sessionId"]))
 					}
 					log.Printf("conversation=%s transition=%s->antigravity epoch=%d recovery_retry=true error_class=%s", conversationID, transition.From, transition.Epoch, providerErr.Class)
 					atomic.AddInt64(&account.Inflight, 1)

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 func decodeMap(t *testing.T, raw []byte) map[string]any {
@@ -80,7 +82,7 @@ func TestBuildAntigravityOpenAIRequestBackfillsToolResponseName(t *testing.T) {
 	}
 	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
 	contents := inner["contents"].([]any)
-	response := mapValue(mapValue(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
+	response := jsonvalue.Map(jsonvalue.Map(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
 	if response["name"] != "mcp_read_file" {
 		t.Fatalf("function response name = %#v", response)
 	}
@@ -96,9 +98,9 @@ func TestBuildAntigravityOpenAIRequestResolvesToolResponseNameByCallID(t *testin
 	contents := inner["contents"].([]any)
 	responses := map[string]map[string]any{}
 	for _, raw := range contents {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
-				responses[stringValue(response["id"])] = response
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			if response := jsonvalue.Map(jsonvalue.Map(rawPart)["functionResponse"]); response != nil {
+				responses[jsonvalue.String(response["id"])] = response
 			}
 		}
 	}
@@ -115,7 +117,7 @@ func TestBuildAntigravityAnthropicRequestBackfillsToolResultName(t *testing.T) {
 	}
 	inner := decodeMap(t, prepared.Body)["request"].(map[string]any)
 	contents := inner["contents"].([]any)
-	response := mapValue(mapValue(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
+	response := jsonvalue.Map(jsonvalue.Map(contents[len(contents)-1])["parts"].([]any)[0])["functionResponse"].(map[string]any)
 	if response["name"] != "mcp_read_file" {
 		t.Fatalf("function response name = %#v", response)
 	}
@@ -305,8 +307,8 @@ func TestBuildAntigravityResponsesMapsFunctionNamesDeterministically(t *testing.
 	if len(declarations) != 2 {
 		t.Fatalf("declarations = %#v, want two unique tools", declarations)
 	}
-	firstMapped := stringValue(declarations[0].(map[string]any)["name"])
-	secondMapped := stringValue(declarations[1].(map[string]any)["name"])
+	firstMapped := jsonvalue.String(declarations[0].(map[string]any)["name"])
+	secondMapped := jsonvalue.String(declarations[1].(map[string]any)["name"])
 	if firstMapped == secondMapped || !strings.HasPrefix(firstMapped, "_123:mcp_") || !strings.HasPrefix(secondMapped, "_123:mcp_") {
 		t.Fatalf("mapped names = %q, %q", firstMapped, secondMapped)
 	}
@@ -326,9 +328,9 @@ func TestBuildAntigravityResponsesMapsFunctionNamesDeterministically(t *testing.
 		part := parts[0].(map[string]any)
 		var got string
 		if call, ok := part["functionCall"].(map[string]any); ok {
-			got = stringValue(call["id"])
+			got = jsonvalue.String(call["id"])
 		} else {
-			got = stringValue(part["functionResponse"].(map[string]any)["id"])
+			got = jsonvalue.String(part["functionResponse"].(map[string]any)["id"])
 		}
 		if got != callID {
 			t.Fatalf("contents[%d] call ID = %q, want %q", index, got, callID)
@@ -378,15 +380,15 @@ func TestBuildAntigravityResponsesMapsRolesMediaReasoningAndSchema(t *testing.T)
 	}
 	inner := decodeMap(t, request.Body)["request"].(map[string]any)
 	systemParts := inner["systemInstruction"].(map[string]any)["parts"].([]any)
-	if len(systemParts) != 2 || mapValue(systemParts[1])["text"] != "developer" {
+	if len(systemParts) != 2 || jsonvalue.Map(systemParts[1])["text"] != "developer" {
 		t.Fatalf("system instruction = %#v", systemParts)
 	}
 	contents := inner["contents"].([]any)
-	if len(contents) != 3 || mapValue(contents[0])["role"] != "user" || mapValue(contents[1])["role"] != "model" || mapValue(contents[2])["role"] != "user" {
+	if len(contents) != 3 || jsonvalue.Map(contents[0])["role"] != "user" || jsonvalue.Map(contents[1])["role"] != "model" || jsonvalue.Map(contents[2])["role"] != "user" {
 		t.Fatalf("role-split contents = %#v", contents)
 	}
-	userParts := mapValue(contents[0])["parts"].([]any)
-	if mapValue(userParts[1])["fileData"] == nil || mapValue(userParts[2])["inlineData"].(map[string]any)["mimeType"] != "audio/mpeg" {
+	userParts := jsonvalue.Map(contents[0])["parts"].([]any)
+	if jsonvalue.Map(userParts[1])["fileData"] == nil || jsonvalue.Map(userParts[2])["inlineData"].(map[string]any)["mimeType"] != "audio/mpeg" {
 		t.Fatalf("media parts = %#v", userParts)
 	}
 	config := inner["generationConfig"].(map[string]any)
@@ -398,7 +400,7 @@ func TestBuildAntigravityResponsesMapsRolesMediaReasoningAndSchema(t *testing.T)
 		t.Fatalf("responseSchema leaked: %#v", config)
 	}
 	schema := config["responseJsonSchema"].(map[string]any)
-	if schema["additionalProperties"] != false || mapValue(mapValue(schema["properties"])["answer"])["minLength"] != float64(1) {
+	if schema["additionalProperties"] != false || jsonvalue.Map(jsonvalue.Map(schema["properties"])["answer"])["minLength"] != float64(1) {
 		t.Fatalf("responseJsonSchema was altered: %#v", schema)
 	}
 }
@@ -414,7 +416,7 @@ func TestBuildAntigravityResponsesUsesNamedThinkingLevelAndOrphanOutputName(t *t
 	if thinking["thinkingLevel"] != "high" {
 		t.Fatalf("thinking config = %#v", thinking)
 	}
-	response := mapValue(mapValue(inner["contents"].([]any)[0])["parts"].([]any)[0])["functionResponse"].(map[string]any)
+	response := jsonvalue.Map(jsonvalue.Map(inner["contents"].([]any)[0])["parts"].([]any)[0])["functionResponse"].(map[string]any)
 	if response["name"] != "unknown" {
 		t.Fatalf("orphan response = %#v", response)
 	}
@@ -543,16 +545,16 @@ func TestAntigravityMergeConsecutiveRoleContents(t *testing.T) {
 	if len(merged) != 3 {
 		t.Fatalf("expected 3 merged contents, got %d", len(merged))
 	}
-	turn0 := mapValue(merged[0])
-	if stringValue(turn0["role"]) != "user" || len(anySlice(turn0["parts"])) != 1 {
+	turn0 := jsonvalue.Map(merged[0])
+	if jsonvalue.String(turn0["role"]) != "user" || len(jsonvalue.Slice(turn0["parts"])) != 1 {
 		t.Fatalf("turn 0 mismatch: %#v", turn0)
 	}
-	turn1 := mapValue(merged[1])
-	if stringValue(turn1["role"]) != "model" || len(anySlice(turn1["parts"])) != 2 {
+	turn1 := jsonvalue.Map(merged[1])
+	if jsonvalue.String(turn1["role"]) != "model" || len(jsonvalue.Slice(turn1["parts"])) != 2 {
 		t.Fatalf("turn 1 mismatch: %#v", turn1)
 	}
-	turn2 := mapValue(merged[2])
-	if stringValue(turn2["role"]) != "user" || len(anySlice(turn2["parts"])) != 2 {
+	turn2 := jsonvalue.Map(merged[2])
+	if jsonvalue.String(turn2["role"]) != "user" || len(jsonvalue.Slice(turn2["parts"])) != 2 {
 		t.Fatalf("turn 2 mismatch: %#v", turn2)
 	}
 }
@@ -574,9 +576,9 @@ func TestAntigravityResponsesScopesRepeatedToolCallIDsByTurn(t *testing.T) {
 	}
 	var names []string
 	for _, raw := range prepared["contents"].([]any) {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
-				names = append(names, stringValue(response["name"]))
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			if response := jsonvalue.Map(jsonvalue.Map(rawPart)["functionResponse"]); response != nil {
+				names = append(names, jsonvalue.String(response["name"]))
 			}
 		}
 	}
@@ -604,13 +606,13 @@ func TestAntigravityResponsesAlignsDetachedParallelToolResponses(t *testing.T) {
 	contents := prepared["contents"].([]any)
 	var responses []any
 	for _, raw := range contents {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			if response := mapValue(mapValue(rawPart)["functionResponse"]); response != nil {
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			if response := jsonvalue.Map(jsonvalue.Map(rawPart)["functionResponse"]); response != nil {
 				responses = append(responses, response)
 			}
 		}
 	}
-	if len(responses) != 2 || stringValue(responses[0].(map[string]any)["id"]) != "call-1" || stringValue(responses[1].(map[string]any)["id"]) != "call-2" {
+	if len(responses) != 2 || jsonvalue.String(responses[0].(map[string]any)["id"]) != "call-1" || jsonvalue.String(responses[1].(map[string]any)["id"]) != "call-2" {
 		t.Fatalf("function response order = %#v", responses)
 	}
 }
@@ -636,8 +638,8 @@ func TestAntigravityResponsesMergesConsecutiveRolesInMultiTurnHistory(t *testing
 	}
 	lastRole := ""
 	for i, c := range contents {
-		m := mapValue(c)
-		role := stringValue(m["role"])
+		m := jsonvalue.Map(c)
+		role := jsonvalue.String(m["role"])
 		if role == lastRole {
 			t.Fatalf("role did not alternate at index %d: %s", i, role)
 		}
@@ -669,7 +671,7 @@ func antigravityRequestContents(t *testing.T, path string, body []byte, model st
 		t.Fatal(err)
 	}
 	envelope := decodeMap(t, request.Body)
-	return anySlice(envelope["request"].(map[string]any)["contents"])
+	return jsonvalue.Slice(envelope["request"].(map[string]any)["contents"])
 }
 
 // Gemini rejects any generateContent request whose final content has the model
@@ -685,9 +687,9 @@ func TestAntigravityAppendsUserTurnAfterTrailingAbortedReasoning(t *testing.T) {
 	if len(contents) < 2 {
 		t.Fatalf("contents = %#v", contents)
 	}
-	last := mapValue(contents[len(contents)-1])
-	if stringValue(last["role"]) != "user" {
-		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	last := jsonvalue.Map(contents[len(contents)-1])
+	if jsonvalue.String(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", jsonvalue.String(last["role"]), contents)
 	}
 }
 
@@ -698,15 +700,15 @@ func TestAntigravityAppendsUserTurnAfterTrailingSignedText(t *testing.T) {
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial answer"}]}
 	]}`)
 	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
-	last := mapValue(contents[len(contents)-1])
-	if stringValue(last["role"]) != "user" {
-		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	last := jsonvalue.Map(contents[len(contents)-1])
+	if jsonvalue.String(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", jsonvalue.String(last["role"]), contents)
 	}
 	// The signed partial answer must survive; only a continuation turn is added.
 	signed := false
 	for _, raw := range contents {
-		for _, rawPart := range anySlice(mapValue(raw)["parts"]) {
-			if part := mapValue(rawPart); part["text"] == "partial answer" && part["thoughtSignature"] == "sig-1" {
+		for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(raw)["parts"]) {
+			if part := jsonvalue.Map(rawPart); part["text"] == "partial answer" && part["thoughtSignature"] == "sig-1" {
 				signed = true
 			}
 		}
@@ -722,16 +724,16 @@ func TestAntigravitySynthesizesResponsesForTrailingFunctionCalls(t *testing.T) {
 		{"type":"function_call","call_id":"call-1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}
 	]}`)
 	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
-	last := mapValue(contents[len(contents)-1])
-	if stringValue(last["role"]) != "user" {
-		t.Fatalf("request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	last := jsonvalue.Map(contents[len(contents)-1])
+	if jsonvalue.String(last["role"]) != "user" {
+		t.Fatalf("request still ends with role=%q contents=%#v", jsonvalue.String(last["role"]), contents)
 	}
-	parts := anySlice(last["parts"])
+	parts := jsonvalue.Slice(last["parts"])
 	if len(parts) != 1 {
 		t.Fatalf("synthesized turn parts = %#v", parts)
 	}
-	response := mapValue(mapValue(parts[0])["functionResponse"])
-	if response == nil || stringValue(response["id"]) != "call-1" || stringValue(response["name"]) == "" || response["response"] == nil {
+	response := jsonvalue.Map(jsonvalue.Map(parts[0])["functionResponse"])
+	if response == nil || jsonvalue.String(response["id"]) != "call-1" || jsonvalue.String(response["name"]) == "" || response["response"] == nil {
 		t.Fatalf("synthesized function response = %#v", response)
 	}
 }
@@ -742,7 +744,7 @@ func TestAntigravityPlainPrefillIsStillStrippedWithoutUserTurn(t *testing.T) {
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"trailing prefill"}]}
 	]}`)
 	contents := antigravityRequestContents(t, "/v1/responses", body, "gemini-3.5-flash")
-	if len(contents) != 1 || stringValue(mapValue(contents[0])["role"]) != "user" {
+	if len(contents) != 1 || jsonvalue.String(jsonvalue.Map(contents[0])["role"]) != "user" {
 		t.Fatalf("plain prefill was not stripped: %#v", contents)
 	}
 }
@@ -753,8 +755,8 @@ func TestAntigravityNativeGeminiRequestGetsTrailingUserTurn(t *testing.T) {
 		{"role":"model","parts":[{"text":"cut off mid sentence"}]}
 	]}`)
 	contents := antigravityRequestContents(t, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", body, "gemini-2.5-pro")
-	last := mapValue(contents[len(contents)-1])
-	if stringValue(last["role"]) != "user" {
-		t.Fatalf("native request still ends with role=%q contents=%#v", stringValue(last["role"]), contents)
+	last := jsonvalue.Map(contents[len(contents)-1])
+	if jsonvalue.String(last["role"]) != "user" {
+		t.Fatalf("native request still ends with role=%q contents=%#v", jsonvalue.String(last["role"]), contents)
 	}
 }

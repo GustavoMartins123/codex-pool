@@ -9,6 +9,8 @@ import (
 	_ "image/png"
 	"math"
 	"strings"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 const (
@@ -26,7 +28,7 @@ func estimateAntigravityRequestTokens(path string, body []byte) int {
 	if json.Unmarshal(body, &root) != nil {
 		return 0
 	}
-	model := stringValue(root["model"])
+	model := jsonvalue.String(root["model"])
 	if model == "" {
 		model = antigravityModelFromGeminiPath(path)
 	}
@@ -57,7 +59,7 @@ func estimateAntigravityWireValue(value any, key string) int {
 	switch typed := value.(type) {
 	case map[string]any:
 		total := antigravityJSONMapOverhead
-		mimeType := strings.ToLower(stringValue(typed["mimeType"]))
+		mimeType := strings.ToLower(jsonvalue.String(typed["mimeType"]))
 		imageData := ""
 		hasImageData := false
 		if strings.HasPrefix(mimeType, "image/") {

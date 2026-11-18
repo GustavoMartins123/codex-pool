@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // transitionFixture keeps the client wire format separate from the provider.
@@ -177,7 +179,7 @@ func strictAntigravityTransitionStatus(body []byte, failure string) (int, string
 		return http.StatusBadRequest, `{"error":{"message":"invalid JSON"}}`
 	}
 	request, _ := envelope["request"].(map[string]any)
-	if !isAntigravitySessionID(stringValue(request["sessionId"])) {
+	if !isAntigravitySessionID(jsonvalue.String(request["sessionId"])) {
 		return http.StatusTooManyRequests, `{"error":{"status":"RESOURCE_EXHAUSTED","message":"invalid session identifier"}}`
 	}
 	encoded, _ := json.Marshal(request)

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"codex-pool-proxy/internal/jsonvalue"
 )
 
 // TestAIStudioResponsesRealCodexCLI drives the real Codex CLI through the pool
@@ -61,9 +63,9 @@ func runAIStudioResponsesRealCodexCLI(t *testing.T, binary string, websockets bo
 		request := aistudioGeminiRequest(t, r, "AIza-cli-test")
 		turn := calls.Add(1)
 		var shellName, patchName string
-		for _, raw := range anySlice(request["tools"]) {
-			for _, declaration := range anySlice(mapValue(raw)["functionDeclarations"]) {
-				name := stringValue(mapValue(declaration)["name"])
+		for _, raw := range jsonvalue.Slice(request["tools"]) {
+			for _, declaration := range jsonvalue.Slice(jsonvalue.Map(raw)["functionDeclarations"]) {
+				name := jsonvalue.String(jsonvalue.Map(declaration)["name"])
 				if strings.Contains(name, "exec_command") {
 					shellName = name
 				}
@@ -74,13 +76,13 @@ func runAIStudioResponsesRealCodexCLI(t *testing.T, binary string, websockets bo
 		}
 		var signatures []string
 		var results []string
-		for _, rawContent := range anySlice(request["contents"]) {
-			for _, rawPart := range anySlice(mapValue(rawContent)["parts"]) {
-				part := mapValue(rawPart)
-				if mapValue(part["functionCall"]) != nil {
-					signatures = append(signatures, stringValue(part["thoughtSignature"]))
+		for _, rawContent := range jsonvalue.Slice(request["contents"]) {
+			for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(rawContent)["parts"]) {
+				part := jsonvalue.Map(rawPart)
+				if jsonvalue.Map(part["functionCall"]) != nil {
+					signatures = append(signatures, jsonvalue.String(part["thoughtSignature"]))
 				}
-				if response := mapValue(part["functionResponse"]); response != nil {
+				if response := jsonvalue.Map(part["functionResponse"]); response != nil {
 					results = append(results, fmt.Sprint(response["response"]))
 				}
 			}
@@ -217,19 +219,19 @@ func TestAIStudioMessagesRealClaudeCodeCLI(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		request := aistudioGeminiRequest(t, r, "AIza-claude-cli")
 		tools := map[string]bool{}
-		for _, raw := range anySlice(request["tools"]) {
-			for _, declaration := range anySlice(mapValue(raw)["functionDeclarations"]) {
-				tools[stringValue(mapValue(declaration)["name"])] = true
+		for _, raw := range jsonvalue.Slice(request["tools"]) {
+			for _, declaration := range jsonvalue.Slice(jsonvalue.Map(raw)["functionDeclarations"]) {
+				tools[jsonvalue.String(jsonvalue.Map(declaration)["name"])] = true
 			}
 		}
 		var signatures, results []string
-		for _, rawContent := range anySlice(request["contents"]) {
-			for _, rawPart := range anySlice(mapValue(rawContent)["parts"]) {
-				part := mapValue(rawPart)
-				if mapValue(part["functionCall"]) != nil {
-					signatures = append(signatures, stringValue(part["thoughtSignature"]))
+		for _, rawContent := range jsonvalue.Slice(request["contents"]) {
+			for _, rawPart := range jsonvalue.Slice(jsonvalue.Map(rawContent)["parts"]) {
+				part := jsonvalue.Map(rawPart)
+				if jsonvalue.Map(part["functionCall"]) != nil {
+					signatures = append(signatures, jsonvalue.String(part["thoughtSignature"]))
 				}
-				if response := mapValue(part["functionResponse"]); response != nil {
+				if response := jsonvalue.Map(part["functionResponse"]); response != nil {
 					results = append(results, fmt.Sprint(response["response"]))
 				}
 			}
