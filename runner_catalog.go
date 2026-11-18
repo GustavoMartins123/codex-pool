@@ -115,8 +115,20 @@ func runnerCatalog(models []poolModelDescriptor) runnerproto.RunnerCatalog {
 			if !supportsAgent(efforts, defaultEffort) {
 				defaultEffort = ""
 			}
+			var upstream map[string]any
+			if agent == "codex" && model.Provider == string(AccountTypeCodex) && json.Unmarshal(model.CodexCatalogEntry, &upstream) != nil {
+				continue
+			}
 			result.Models = append(result.Models, runnerproto.AgentModel{Agent: agent, Model: model.ID, ReasoningEfforts: efforts, DefaultReasoningEffort: defaultEffort})
 			if agent != "codex" {
+				continue
+			}
+			if upstream != nil {
+				if stringValue(upstream["slug"]) != model.ID {
+					upstream["slug"], upstream["display_name"], upstream["description"] = model.ID, model.Name, model.Description
+					upstream["context_window"], upstream["max_context_window"] = model.ContextWindow, model.ContextWindow
+				}
+				native = append(native, upstream)
 				continue
 			}
 			contextWindow := model.ContextWindow

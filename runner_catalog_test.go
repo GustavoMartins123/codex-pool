@@ -235,6 +235,11 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 			},
 		},
 	}
+	for id, model := range discovered.Models {
+		model.CatalogEntry = upstreamCodexEntry(t, model)
+		discovered.Models[id] = model
+	}
+	discovered.Models["gpt-6.2-terra-preview"] = DiscoveredModel{ID: "gpt-6.2-terra-preview", DisplayName: "No catalog entry"}
 	grok := &Account{ID: "grok", Type: AccountTypeGrok, AccessToken: "grok-access", Models: map[string]DiscoveredModel{
 		"grok-chat-only": {ID: "grok-chat-only", Protocol: "openai"},
 	}}
@@ -271,6 +276,8 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 			ReasoningLevels []struct {
 				Effort string `json:"effort"`
 			} `json:"supported_reasoning_levels"`
+			BaseInstructions string         `json:"base_instructions"`
+			ModelMessages    map[string]any `json:"model_messages"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &catalog); err != nil {
@@ -299,7 +306,8 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 		counts[model.Slug]++
 		if expected, ok := discovered.Models[model.Slug]; ok {
 			if model.Name != expected.DisplayName || model.ContextWindow != expected.ContextWindow || model.MaxContext != expected.ContextWindow ||
-				model.Visibility != "list" || model.DefaultEffort != expected.DefaultReasoningEffort || len(model.ReasoningLevels) != len(expected.ReasoningEfforts) {
+				model.Visibility != "list" || model.DefaultEffort != expected.DefaultReasoningEffort || len(model.ReasoningLevels) != len(expected.ReasoningEfforts) ||
+				model.BaseInstructions != "You are Codex on "+model.Slug+"." || model.ModelMessages["instructions_template"] != model.Slug {
 				t.Fatalf("discovered model metadata = %+v", model)
 			}
 			for i, level := range model.ReasoningLevels {
@@ -317,10 +325,62 @@ func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 			t.Fatalf("catalog has %d entries for %s", counts[id], id)
 		}
 	}
+	if counts["gpt-6.2-terra-preview"] != 0 {
+		t.Fatal("Codex model without an upstream catalog entry was listed")
+	}
 	if counts["grok-chat-only"] != 0 {
 		t.Fatal("chat-only model included in the Codex catalog")
 	}
 	if len(otherModels) < 2 || otherModels[0] != "upstream-other-a" || otherModels[1] != "upstream-other-b" {
 		t.Fatalf("other models did not retain their order: %v", otherModels)
+	}
+}
+
+func upstreamCodexEntry(t *testing.T, model DiscoveredModel) json.RawMessage {
+	t.Helper()
+	levels := []map[string]string{}
+	for _, effort := range model.ReasoningEfforts {
+		levels = append(levels, map[string]string{"effort": effort, "description": effort})
+	}
+	raw, err := json.Marshal(map[string]any{
+		"slug": model.ID, "display_name": model.DisplayName, "visibility": "list",
+		"context_window": model.ContextWindow, "max_context_window": model.ContextWindow,
+		"default_reasoning_level": model.DefaultReasoningEffort, "supported_reasoning_levels": levels,
+		"base_instructions": "You are Codex on " + model.ID + ".", "model_messages": map[string]any{"instructions_template": model.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestRunnerCatalogServesUpstreamCodexEntries(t *testing.T) {
+	entry := json.RawMessage(`{"slug":"gpt-6.1-sol","display_name":"GPT-6.1 Sol","context_window":500000,"max_context_window":872000,"base_instructions":"You are Codex.","priority":4}`)
+	catalog := runnerCatalog([]poolModelDescriptor{
+		{ID: "gpt-6.1-sol", Provider: "codex", Protocol: "openai", CodexCatalogEntry: entry},
+		{ID: "gpt-6.1-sol[1m]", Name: "GPT-6.1 Sol 1M", Description: "1M context", Provider: "codex", Protocol: "openai", ContextWindow: 1000000, CodexCatalogEntry: entry},
+		{ID: "gpt-6.2-sol", Provider: "codex", Protocol: "openai"},
+	})
+	if len(catalog.Models) != 2 || runnerproto.SupportsModel(catalog.Models, "codex", "gpt-6.2-sol", "") {
+		t.Fatalf("runner models = %+v", catalog.Models)
+	}
+	var native struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(catalog.CodexCatalog), &native); err != nil || len(native.Models) != 2 {
+		t.Fatalf("Codex native catalog = %s", catalog.CodexCatalog)
+	}
+	base, variant := native.Models[0], native.Models[1]
+	if base["slug"] != "gpt-6.1-sol" || base["display_name"] != "GPT-6.1 Sol" || base["context_window"] != float64(500000) || base["max_context_window"] != float64(872000) {
+		t.Fatalf("upstream entry was rewritten: %v", base)
+	}
+	if variant["slug"] != "gpt-6.1-sol[1m]" || variant["display_name"] != "GPT-6.1 Sol 1M" || variant["description"] != "1M context" ||
+		variant["context_window"] != float64(1000000) || variant["max_context_window"] != float64(1000000) {
+		t.Fatalf("context variant entry = %v", variant)
+	}
+	for _, model := range native.Models {
+		if model["base_instructions"] != "You are Codex." {
+			t.Fatalf("Codex entry lost base instructions: %v", model)
+		}
 	}
 }
