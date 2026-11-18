@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,7 +120,8 @@ func runGeminiParityFunc(t *testing.T, tc geminiParityFunc) geminiParityFunc {
 	}
 	got.Output = normalizeGeminiParityOutput(string(out), start, time.Now().Unix())
 	if err != nil {
-		got.Err = err.Error()
+		// Go 1.27 aliases json.RawMessage to jsontext.Value in unmarshal type errors.
+		got.Err = strings.ReplaceAll(err.Error(), "jsontext.Value", "json.RawMessage")
 	}
 	return got
 }
@@ -142,7 +144,7 @@ func runGeminiParityStream(t *testing.T, tc geminiParityStream) geminiParityStre
 		n, err := writer.Write([]byte(chunk))
 		write := geminiParityWrite{N: n}
 		if err != nil {
-			write.Err = err.Error()
+			write.Err = strings.ReplaceAll(err.Error(), "jsontext.Value", "json.RawMessage")
 		}
 		got.Writes = append(got.Writes, write)
 	}
