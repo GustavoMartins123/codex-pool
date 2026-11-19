@@ -113,42 +113,7 @@ func (p *OpencodeGoProvider) ParseUsage(obj map[string]any) *RequestUsage {
 		}
 	}
 
-	// Anthropic-style: message_start / message_delta.
-	eventType, _ := obj["type"].(string)
-	if eventType == "message_delta" {
-		usageMap, ok := obj["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		ru.OutputTokens = readInt64(usageMap, "output_tokens")
-		if ru.OutputTokens == 0 {
-			return nil
-		}
-		ru.BillableTokens = ru.OutputTokens
-		return ru
-	}
-	if eventType == "message_start" {
-		msg, ok := obj["message"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		usageMap, ok := msg["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		applyAnthropicInputUsage(ru, usageMap)
-		if ru.InputTokens == 0 {
-			return nil
-		}
-		if model, ok := msg["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	return nil
+	return anthropicStreamUsage(obj)
 }
 
 func opencodeGoUsageFromOpenAIMap(obj map[string]any, usageMap map[string]any) *RequestUsage {

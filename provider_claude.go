@@ -122,46 +122,7 @@ func (p *ClaudeProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 }
 
 func (p *ClaudeProvider) ParseUsage(obj map[string]any) *RequestUsage {
-	eventType, _ := obj["type"].(string)
-
-	// Handle message_delta event (has final output tokens)
-	if eventType == "message_delta" {
-		usageMap, ok := obj["usage"].(map[string]any)
-		if !ok || usageMap == nil {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		ru.OutputTokens = readInt64(usageMap, "output_tokens")
-		if ru.OutputTokens == 0 {
-			return nil
-		}
-		ru.BillableTokens = ru.OutputTokens
-		return ru
-	}
-
-	// Handle message_start event (has input tokens)
-	if eventType == "message_start" {
-		msg, ok := obj["message"].(map[string]any)
-		if !ok || msg == nil {
-			return nil
-		}
-		usageMap, ok := msg["usage"].(map[string]any)
-		if !ok || usageMap == nil {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		applyAnthropicInputUsage(ru, usageMap)
-		if ru.InputTokens == 0 {
-			return nil
-		}
-		// Extract model from message object (e.g., "claude-sonnet-4-5-20250929")
-		if model, ok := msg["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	return nil
+	return anthropicStreamUsage(obj)
 }
 
 func (p *ClaudeProvider) ParseUsageHeaders(acc *Account, headers http.Header) {

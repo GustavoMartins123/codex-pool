@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,14 +14,12 @@ import (
 
 // ZAIProvider handles Z.ai GLM Coding Plan accounts through the Anthropic-compatible API.
 type ZAIProvider struct {
-	zaiBase *url.URL
+	apiKeyUpstream
 }
 
 // NewZAIProvider creates a new Z.ai provider.
 func NewZAIProvider(zaiBase *url.URL) *ZAIProvider {
-	return &ZAIProvider{
-		zaiBase: zaiBase,
-	}
+	return &ZAIProvider{apiKeyUpstream: apiKeyUpstream{base: zaiBase}}
 }
 
 func (p *ZAIProvider) Type() AccountType {
@@ -120,10 +117,6 @@ func (p *ZAIProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	}
 }
 
-func (p *ZAIProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
-	return nil
-}
-
 func (p *ZAIProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	if obj == nil {
 		return nil
@@ -163,43 +156,12 @@ func (p *ZAIProvider) ParseUsage(obj map[string]any) *RequestUsage {
 
 	eventType, _ := obj["type"].(string)
 
-	// 2. Anthropic streaming: message_delta
-	if eventType == "message_delta" {
-		usageMap, ok := obj["usage"].(map[string]any)
-		if !ok || usageMap == nil {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		ru.OutputTokens = readInt64(usageMap, "output_tokens")
-		if ru.OutputTokens == 0 {
-			return nil
-		}
-		ru.BillableTokens = ru.OutputTokens
-		return ru
+	// 2. Anthropic streaming: message_delta and message_start
+	if eventType == "message_delta" || eventType == "message_start" {
+		return anthropicStreamUsage(obj)
 	}
 
-	// 3. Anthropic streaming: message_start
-	if eventType == "message_start" {
-		msg, ok := obj["message"].(map[string]any)
-		if !ok || msg == nil {
-			return nil
-		}
-		usageMap, ok := msg["usage"].(map[string]any)
-		if !ok || usageMap == nil {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		applyAnthropicInputUsage(ru, usageMap)
-		if ru.InputTokens == 0 {
-			return nil
-		}
-		if model, ok := msg["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	// 4. Anthropic non-streaming: type == "message"
+	// 3. Anthropic non-streaming: type == "message"
 	if eventType == "message" {
 		usageMap, ok := obj["usage"].(map[string]any)
 		if !ok || usageMap == nil {
@@ -332,23 +294,6 @@ func parseZAIResponseRateLimits(headers http.Header) (UsageSnapshot, bool) {
 	}
 
 	return snap, true
-}
-
-func (p *ZAIProvider) UpstreamURL(path string) *url.URL {
-	return p.zaiBase
-}
-
-func (p *ZAIProvider) MatchesPath(path string) bool {
-	// Z.ai is model-routed.
-	return false
-}
-
-func (p *ZAIProvider) NormalizePath(path string) string {
-	return path
-}
-
-func (p *ZAIProvider) DetectsSSE(path string, contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 func isZAIModel(model string) bool {

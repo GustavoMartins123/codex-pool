@@ -1,24 +1,22 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
-	"time"
 )
 
 // AdverserialProvider handles platform.adverserial.ai accounts through its
 // Anthropic-compatible API.
 type AdverserialProvider struct {
-	adverserialBase *url.URL
+	apiKeyUpstream
+	bearerAuth
 }
 
 func NewAdverserialProvider(adverserialBase *url.URL) *AdverserialProvider {
-	return &AdverserialProvider{adverserialBase: adverserialBase}
+	return &AdverserialProvider{apiKeyUpstream: apiKeyUpstream{base: adverserialBase}}
 }
 
 func (p *AdverserialProvider) Type() AccountType {
@@ -40,106 +38,24 @@ func (p *AdverserialProvider) LoadAccount(name, path string, data []byte) (*Acco
 		return nil, nil
 	}
 
-	acc := &Account{
-		Type:        AccountTypeAdverserial,
-		ID:          strings.TrimSuffix(name, filepath.Ext(name)),
-		File:        path,
-		AccessToken: aj.APIKey,
-		PlanType:    "adverserial",
-		Dead:        aj.Dead,
-		Disabled:    aj.Disabled,
-	}
+	acc := newAPIKeyAccount(AccountTypeAdverserial, "adverserial", name, path, aj.APIKey)
+	acc.Dead = aj.Dead
+	acc.Disabled = aj.Disabled
 	return acc, nil
 }
 
 func (p *AdverserialProvider) SetAuthHeaders(req *http.Request, acc *Account) {
-	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
+	p.bearerAuth.SetAuthHeaders(req, acc)
 	// The upstream authenticates on the bearer token alone. A stale X-Api-Key
 	// forwarded from the client must not reach it.
 	req.Header.Del("X-Api-Key")
 }
 
-func (p *AdverserialProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
-	return nil
-}
-
 func (p *AdverserialProvider) ParseUsage(obj map[string]any) *RequestUsage {
-	if usageMap, ok := obj["usage"].(map[string]any); ok {
-		ru := adverserialUsageFromMap(usageMap)
-		if ru == nil {
-			return nil
-		}
-		if model, ok := obj["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	eventType, _ := obj["type"].(string)
-	if eventType == "message_delta" {
-		usageMap, ok := obj["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		ru.OutputTokens = readInt64(usageMap, "output_tokens")
-		if ru.OutputTokens == 0 {
-			return nil
-		}
-		ru.BillableTokens = ru.OutputTokens
-		return ru
-	}
-
-	if eventType == "message_start" {
-		msg, ok := obj["message"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		usageMap, ok := msg["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := adverserialUsageFromMap(usageMap)
-		if ru == nil {
-			return nil
-		}
-		if model, ok := msg["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	return nil
-}
-
-func adverserialUsageFromMap(usageMap map[string]any) *RequestUsage {
-	ru := &RequestUsage{Timestamp: time.Now()}
-	applyAnthropicInputUsage(ru, usageMap)
-	ru.OutputTokens = readInt64(usageMap, "output_tokens")
-	if ru.InputTokens == 0 && ru.OutputTokens == 0 {
-		return nil
-	}
-	ru.BillableTokens += ru.OutputTokens
-	return ru
+	return anthropicCombinedUsage(obj)
 }
 
 func (p *AdverserialProvider) ParseUsageHeaders(acc *Account, headers http.Header) {
-}
-
-func (p *AdverserialProvider) UpstreamURL(path string) *url.URL {
-	return p.adverserialBase
-}
-
-func (p *AdverserialProvider) MatchesPath(path string) bool {
-	return false
-}
-
-func (p *AdverserialProvider) NormalizePath(path string) string {
-	return path
-}
-
-func (p *AdverserialProvider) DetectsSSE(path string, contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 func isAdverserialModel(model string) bool {
