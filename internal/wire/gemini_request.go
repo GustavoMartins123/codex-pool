@@ -719,9 +719,13 @@ func antigravityDataURL(value string) map[string]any {
 
 func antigravityCopyGenerationConfig(input, result map[string]any) {
 	config := map[string]any{}
-	for source, target := range map[string]string{"temperature": "temperature", "top_p": "topP", "top_k": "topK", "max_tokens": "maxOutputTokens", "max_completion_tokens": "maxOutputTokens", "max_output_tokens": "maxOutputTokens", "stop": "stopSequences"} {
-		if value, ok := input[source]; ok {
-			config[target] = value
+	// Later token limits win, so the most specific field overrides the legacy ones.
+	for _, field := range [...]struct{ source, target string }{
+		{"temperature", "temperature"}, {"top_p", "topP"}, {"top_k", "topK"}, {"stop", "stopSequences"},
+		{"max_tokens", "maxOutputTokens"}, {"max_completion_tokens", "maxOutputTokens"}, {"max_output_tokens", "maxOutputTokens"},
+	} {
+		if value, ok := input[field.source]; ok {
+			config[field.target] = value
 		}
 	}
 	if responseFormat, ok := input["response_format"].(map[string]any); ok {

@@ -177,3 +177,23 @@ func TestCleanAntigravitySchemaOrdersHintsStably(t *testing.T) {
 		}
 	}
 }
+
+func TestAntigravityGenerationConfigPrefersMostSpecificTokenLimit(t *testing.T) {
+	for _, tc := range []struct {
+		input map[string]any
+		want  any
+	}{
+		{map[string]any{"max_tokens": 1.0}, 1.0},
+		{map[string]any{"max_tokens": 1.0, "max_completion_tokens": 2.0}, 2.0},
+		{map[string]any{"max_tokens": 1.0, "max_output_tokens": 3.0}, 3.0},
+		{map[string]any{"max_tokens": 1.0, "max_completion_tokens": 2.0, "max_output_tokens": 3.0}, 3.0},
+	} {
+		for range 20 {
+			result := map[string]any{}
+			antigravityCopyGenerationConfig(tc.input, result)
+			if got := jsonvalue.Map(result["generationConfig"])["maxOutputTokens"]; got != tc.want {
+				t.Fatalf("%v: maxOutputTokens = %v, want %v", tc.input, got, tc.want)
+			}
+		}
+	}
+}
