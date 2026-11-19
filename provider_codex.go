@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -136,13 +135,10 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 		return err
 	}
 	refreshURL := p.refreshBase.ResolveReference(&url.URL{Path: "/oauth/token"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, refreshURL.String(), bytes.NewReader(bodyJSON))
+	req, err := newTokenRefreshRequest(ctx, refreshURL.String(), "application/json", "codex-pool-proxy", bytes.NewReader(bodyJSON))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "codex-pool-proxy")
 
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
@@ -151,18 +147,10 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		if len(bytes.TrimSpace(msg)) > 0 {
-			return fmt.Errorf("refresh unauthorized: %s: %s", resp.Status, safeText(msg))
-		}
-		return fmt.Errorf("refresh unauthorized: %s", resp.Status)
+		return tokenRefreshFailure(resp, "refresh unauthorized")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		if len(bytes.TrimSpace(msg)) > 0 {
-			return fmt.Errorf("refresh failed: %s: %s", resp.Status, safeText(msg))
-		}
-		return fmt.Errorf("refresh failed: %s", resp.Status)
+		return tokenRefreshFailure(resp, "refresh failed")
 	}
 
 	var payload struct {

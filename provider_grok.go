@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -207,13 +205,10 @@ func (p *GrokProvider) RefreshToken(ctx context.Context, acc *Account, transport
 	form.Set("client_id", grokOAuthClientID)
 	form.Set("refresh_token", refreshTok)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	req, err := newTokenRefreshRequest(ctx, tokenEndpoint, "application/x-www-form-urlencoded", "codex-pool-proxy", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "codex-pool-proxy")
 
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
@@ -222,11 +217,7 @@ func (p *GrokProvider) RefreshToken(ctx context.Context, acc *Account, transport
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		if len(bytes.TrimSpace(msg)) > 0 {
-			return fmt.Errorf("grok refresh failed: %s: %s", resp.Status, safeText(msg))
-		}
-		return fmt.Errorf("grok refresh failed: %s", resp.Status)
+		return tokenRefreshFailure(resp, "grok refresh failed")
 	}
 
 	var payload struct {
