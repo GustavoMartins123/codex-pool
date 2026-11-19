@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -112,13 +110,10 @@ func (p *GeminiProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshTok)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, geminiOAuthTokenURL, strings.NewReader(form.Encode()))
+	req, err := newTokenRefreshRequest(ctx, geminiOAuthTokenURL, "application/x-www-form-urlencoded", "codex-pool-proxy", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "codex-pool-proxy")
 
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
@@ -127,18 +122,10 @@ func (p *GeminiProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		if len(bytes.TrimSpace(msg)) > 0 {
-			return fmt.Errorf("gemini refresh unauthorized: %s: %s", resp.Status, safeText(msg))
-		}
-		return fmt.Errorf("gemini refresh unauthorized: %s", resp.Status)
+		return tokenRefreshFailure(resp, "gemini refresh unauthorized")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024))
-		if len(bytes.TrimSpace(msg)) > 0 {
-			return fmt.Errorf("gemini refresh failed: %s: %s", resp.Status, safeText(msg))
-		}
-		return fmt.Errorf("gemini refresh failed: %s", resp.Status)
+		return tokenRefreshFailure(resp, "gemini refresh failed")
 	}
 
 	var payload struct {

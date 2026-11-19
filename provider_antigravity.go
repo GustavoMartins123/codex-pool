@@ -155,13 +155,10 @@ func (p *AntigravityProvider) RefreshToken(ctx context.Context, acc *Account, tr
 	if secret := antigravityOAuthClientSecret(); secret != "" {
 		form.Set("client_secret", secret)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, antigravityOAuthTokenURL, strings.NewReader(form.Encode()))
+	req, err := newTokenRefreshRequest(ctx, antigravityOAuthTokenURL, "application/x-www-form-urlencoded", "Go-http-client/2.0", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Go-http-client/2.0")
 	resp, err := transport.RoundTrip(req)
 	if err != nil {
 		return err
