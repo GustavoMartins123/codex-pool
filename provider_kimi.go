@@ -1,13 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"codex-pool-proxy/internal/ratelimit"
@@ -15,14 +12,13 @@ import (
 
 // KimiProvider handles Kimi API accounts.
 type KimiProvider struct {
-	kimiBase *url.URL
+	apiKeyUpstream
+	bearerAuth
 }
 
 // NewKimiProvider creates a new Kimi provider.
 func NewKimiProvider(kimiBase *url.URL) *KimiProvider {
-	return &KimiProvider{
-		kimiBase: kimiBase,
-	}
+	return &KimiProvider{apiKeyUpstream: apiKeyUpstream{base: kimiBase}}
 }
 
 func (p *KimiProvider) Type() AccountType {
@@ -42,24 +38,7 @@ func (p *KimiProvider) LoadAccount(name, path string, data []byte) (*Account, er
 	if kj.APIKey == "" {
 		return nil, nil
 	}
-
-	acc := &Account{
-		Type:        AccountTypeKimi,
-		ID:          strings.TrimSuffix(name, filepath.Ext(name)),
-		File:        path,
-		AccessToken: kj.APIKey,
-		PlanType:    "kimi",
-	}
-	return acc, nil
-}
-
-func (p *KimiProvider) SetAuthHeaders(req *http.Request, acc *Account) {
-	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
-}
-
-func (p *KimiProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
-	// API keys don't need refresh
-	return nil
+	return newAPIKeyAccount(AccountTypeKimi, "kimi", name, path, kj.APIKey), nil
 }
 
 func (p *KimiProvider) ParseUsage(obj map[string]any) *RequestUsage {
@@ -87,42 +66,7 @@ func (p *KimiProvider) ParseUsage(obj map[string]any) *RequestUsage {
 		return ru
 	}
 
-	// Anthropic-style: message_start / message_delta
-	eventType, _ := obj["type"].(string)
-	if eventType == "message_delta" {
-		usageMap, ok := obj["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		ru.OutputTokens = readInt64(usageMap, "output_tokens")
-		if ru.OutputTokens == 0 {
-			return nil
-		}
-		ru.BillableTokens = ru.OutputTokens
-		return ru
-	}
-	if eventType == "message_start" {
-		msg, ok := obj["message"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		usageMap, ok := msg["usage"].(map[string]any)
-		if !ok {
-			return nil
-		}
-		ru := &RequestUsage{Timestamp: time.Now()}
-		applyAnthropicInputUsage(ru, usageMap)
-		if ru.InputTokens == 0 {
-			return nil
-		}
-		if model, ok := msg["model"].(string); ok {
-			ru.Model = model
-		}
-		return ru
-	}
-
-	return nil
+	return anthropicStreamUsage(obj)
 }
 
 func (p *KimiProvider) ParseUsageHeaders(acc *Account, headers http.Header) {
@@ -133,24 +77,6 @@ func (p *KimiProvider) ParseUsageHeaders(acc *Account, headers http.Header) {
 	acc.mu.Lock()
 	acc.Usage = mergeUsage(acc.Usage, snap)
 	acc.mu.Unlock()
-}
-
-func (p *KimiProvider) UpstreamURL(path string) *url.URL {
-	return p.kimiBase
-}
-
-func (p *KimiProvider) MatchesPath(path string) bool {
-	// Kimi is routed by model name, not by path.
-	// It never wins path-based routing.
-	return false
-}
-
-func (p *KimiProvider) NormalizePath(path string) string {
-	return path
-}
-
-func (p *KimiProvider) DetectsSSE(path string, contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 // kimiModels lists model names that should be routed to the Kimi provider.
