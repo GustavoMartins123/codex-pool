@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func testGenericProvider(t *testing.T) (*GenericOpenAIProvider, *Account) {
@@ -130,11 +132,11 @@ func TestGenericProviderUsesSmartRouter(t *testing.T) {
 	first.Usage.SecondaryUsed = 0.95
 	second.Usage.SecondaryUsed = 0.10
 	pool := newPoolState([]*Account{first, second}, false)
-	selected, profile, _, _, _, _ := pool.candidateWithRoutingTrace(
-		"", nil, first.Type, "", "", "local-vllm/qwen", RoutingQuotaSaver,
-	)
-	if selected == nil || selected.ID != second.ID || profile != string(RoutingQuotaSaver) {
-		t.Fatalf("selected=%v profile=%q", selected, profile)
+	decision := pool.selectRoute(routing.Request{
+		Provider: string(first.Type), Model: "local-vllm/qwen", Profile: string(RoutingQuotaSaver),
+	})
+	if decision.Account != second || decision.Policy != string(RoutingQuotaSaver) {
+		t.Fatalf("selected=%v profile=%q", decision.Account, decision.Policy)
 	}
 }
 

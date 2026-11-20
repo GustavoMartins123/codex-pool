@@ -2,7 +2,10 @@ package main
 
 import (
 	"testing"
+	"testing/synctest"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestAccountRoutingContract(t *testing.T) {
@@ -18,8 +21,10 @@ func TestAccountRoutingContract(t *testing.T) {
 					{ID: "available", Type: AccountTypeCodex, PlanType: "pro", Models: models,
 						Usage: UsageSnapshot{PrimaryUsedPercent: 0.42}},
 				}, false)
-				account, _, _, _, _, _ := pool.candidateWithRoutingTraceForUser(
-					"alice", "", nil, AccountTypeCodex, "pro", "127.0.0.1", model, profile)
+				account := pool.selectRoute(routing.Request{
+					UserID: "alice", Provider: string(AccountTypeCodex), RequiredPlan: "pro",
+					ClientIP: "127.0.0.1", Model: model, Profile: string(profile), Trace: true,
+				}).Account
 				if account == nil || account.ID != "available" {
 					t.Fatalf("selection = %+v, want available", account)
 				}
@@ -28,8 +33,10 @@ func TestAccountRoutingContract(t *testing.T) {
 			t.Run("account visibility", func(t *testing.T) {
 				_, pool := ownershipFixture(t)
 				for _, user := range []string{"alice", "bob"} {
-					account, _, _, _, _, _ := pool.candidateWithRoutingTraceForUser(
-						user, "", nil, AccountTypeCodex, "pro", "127.0.0.1", "gpt-5.5", profile)
+					account := pool.selectRoute(routing.Request{
+						UserID: user, Provider: string(AccountTypeCodex), RequiredPlan: "pro",
+						ClientIP: "127.0.0.1", Model: "gpt-5.5", Profile: string(profile), Trace: true,
+					}).Account
 					if user == "alice" && (account == nil || account.ID != "private") {
 						t.Fatalf("owner selection = %+v, want private", account)
 					}
@@ -45,12 +52,46 @@ func TestAccountRoutingContract(t *testing.T) {
 					{ID: "open", Type: AccountTypeClaude, PlanType: "max"},
 				}, false)
 				for i := 0; i < 3; i++ {
-					pool.circuitBreakers.RecordFailure("claude", "open", "", nil, ErrorClassTransient)
+					pool.circuitBreakers.RecordFailure("claude", "open", "", nil, ErrorClassTransient.Retryable())
 				}
-				account, _, _, _, _, _ := pool.candidateWithRoutingTraceForUser(
-					"alice", "", nil, AccountTypeClaude, "", "127.0.0.1", "", profile)
+				account := pool.selectRoute(routing.Request{
+					UserID: "alice", Provider: string(AccountTypeClaude), ClientIP: "127.0.0.1",
+					Profile: string(profile), Trace: true,
+				}).Account
 				if account != nil {
 					t.Fatalf("selection = %+v, want no eligible account", account)
+				}
+			})
+		})
+	}
+}
+
+func TestCircuitBreakerCandidateSelectionDoesNotConsumeUnselectedProbes(t *testing.T) {
+	const model = "gpt-5.5"
+	for _, profile := range []RoutingProfile{RoutingLegacy, RoutingBalanced} {
+		t.Run(string(profile), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				first := &Account{ID: "acc_1", Type: AccountTypeCodex, PlanType: "pro",
+					Usage: UsageSnapshot{PrimaryUsedPercent: 0.8}}
+				second := &Account{ID: "acc_2", Type: AccountTypeCodex, PlanType: "pro",
+					Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
+				pool := newPoolState([]*Account{first, second}, false)
+				for _, account := range []*Account{first, second} {
+					for i := 0; i < 3; i++ {
+						pool.circuitBreakers.RecordFailure("codex", account.ID, model, nil, true)
+					}
+				}
+				time.Sleep(46 * time.Second)
+
+				got := pool.selectRoute(routing.Request{
+					Provider: string(AccountTypeCodex), Model: model, Profile: string(profile),
+				}).Account
+				if got != second {
+					t.Fatalf("selected %v, want %s", got, second.ID)
+				}
+				pool.circuitBreakers.RecordSuccess("codex", second.ID, model, nil)
+				if allowed, _, err := pool.circuitBreakers.AllowTarget("codex", first.ID, model, nil); !allowed {
+					t.Fatalf("unselected account could not probe: %v", err)
 				}
 			})
 		})

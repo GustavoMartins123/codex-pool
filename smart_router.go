@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 type RoutingProfile string
@@ -23,58 +25,8 @@ const (
 	RoutingLegacy     RoutingProfile = "legacy"
 )
 
-type RoutingProfileWeights struct {
-	QuotaHeadroom  float64 `toml:"quota_headroom" json:"quota_headroom"`
-	ProjectedQuota float64 `toml:"projected_quota" json:"projected_quota"`
-	RemainingQuota float64 `toml:"remaining_quota" json:"remaining_quota"`
-	ResetUrgency   float64 `toml:"reset_urgency" json:"reset_urgency"`
-	ResetTiming    float64 `toml:"reset_timing" json:"reset_timing"`
-	ResetProximity float64 `toml:"reset_proximity" json:"reset_proximity"`
-	Health         float64 `toml:"health" json:"health"`
-	TTFT           float64 `toml:"ttft" json:"ttft"`
-	Throughput     float64 `toml:"throughput" json:"throughput"`
-	Performance    float64 `toml:"performance" json:"performance"`
-	Affinity       float64 `toml:"affinity" json:"affinity"`
-	Inflight       float64 `toml:"inflight" json:"inflight"`
-	RecentFailure  float64 `toml:"recent_failure" json:"recent_failure"`
-}
-
-func (w RoutingProfileWeights) total() float64 {
-	return w.QuotaHeadroom + w.ProjectedQuota + w.RemainingQuota +
-		w.ResetUrgency + w.ResetTiming + w.ResetProximity +
-		w.Health + w.TTFT + w.Throughput + w.Performance +
-		w.Affinity + w.Inflight + w.RecentFailure
-}
-
-func (w RoutingProfileWeights) normalized() RoutingProfileWeights {
-	total := w.total()
-	if total <= 0 {
-		return w
-	}
-	scale := func(value float64) float64 {
-		if value < 0 {
-			return 0
-		}
-		return value / total
-	}
-	w.QuotaHeadroom = scale(w.QuotaHeadroom)
-	w.ProjectedQuota = scale(w.ProjectedQuota)
-	w.RemainingQuota = scale(w.RemainingQuota)
-	w.ResetUrgency = scale(w.ResetUrgency)
-	w.ResetTiming = scale(w.ResetTiming)
-	w.ResetProximity = scale(w.ResetProximity)
-	w.Health = scale(w.Health)
-	w.TTFT = scale(w.TTFT)
-	w.Throughput = scale(w.Throughput)
-	w.Performance = scale(w.Performance)
-	w.Affinity = scale(w.Affinity)
-	w.Inflight = scale(w.Inflight)
-	w.RecentFailure = scale(w.RecentFailure)
-	return w
-}
-
-func defaultRoutingProfiles() map[RoutingProfile]RoutingProfileWeights {
-	return map[RoutingProfile]RoutingProfileWeights{
+func defaultRoutingProfiles() map[RoutingProfile]routing.Weights {
+	return map[RoutingProfile]routing.Weights{
 		RoutingBalanced: {
 			QuotaHeadroom: 0.25, ResetUrgency: 0.15, Health: 0.20,
 			TTFT: 0.10, Throughput: 0.10, Affinity: 0.10,
@@ -103,8 +55,8 @@ func defaultRoutingProfiles() map[RoutingProfile]RoutingProfileWeights {
 	}
 }
 
-func mergeRoutingWeights(base, override RoutingProfileWeights) RoutingProfileWeights {
-	if math.Abs(override.total()-1) <= 0.000001 {
+func mergeRoutingWeights(base, override routing.Weights) routing.Weights {
+	if math.Abs(override.Total()-1) <= 0.000001 {
 		return override
 	}
 	if override.QuotaHeadroom > 0 {
@@ -152,20 +104,20 @@ func mergeRoutingWeights(base, override RoutingProfileWeights) RoutingProfileWei
 type routingPolicySet struct {
 	DefaultProfile RoutingProfile
 	DefaultModel   string
-	Profiles       map[RoutingProfile]RoutingProfileWeights
+	Profiles       map[RoutingProfile]routing.Weights
 }
 
 func newRoutingPolicySet(cfg RoutingConfigFile) routingPolicySet {
 	profiles := defaultRoutingProfiles()
 	for rawName, override := range cfg.Profiles {
 		name := RoutingProfile(strings.ToLower(strings.TrimSpace(rawName)))
-		if _, ok := profiles[name]; !ok || override.total() <= 0 {
+		if _, ok := profiles[name]; !ok || override.Total() <= 0 {
 			continue
 		}
-		profiles[name] = mergeRoutingWeights(profiles[name], override).normalized()
+		profiles[name] = mergeRoutingWeights(profiles[name], override).Normalized()
 	}
 	for name, weights := range profiles {
-		profiles[name] = weights.normalized()
+		profiles[name] = weights.Normalized()
 	}
 	defaultProfile := RoutingProfile(strings.ToLower(strings.TrimSpace(cfg.DefaultProfile)))
 	if defaultProfile != RoutingLegacy {
@@ -183,9 +135,9 @@ func newRoutingPolicySet(cfg RoutingConfigFile) routingPolicySet {
 	return routingPolicySet{DefaultProfile: defaultProfile, DefaultModel: defaultModel, Profiles: profiles}
 }
 
-func (s routingPolicySet) weights(profile RoutingProfile) (RoutingProfileWeights, bool) {
+func (s routingPolicySet) weights(profile RoutingProfile) (routing.Weights, bool) {
 	if profile == RoutingLegacy {
-		return RoutingProfileWeights{}, true
+		return routing.Weights{}, true
 	}
 	weights, ok := s.Profiles[profile]
 	return weights, ok
@@ -201,36 +153,12 @@ type routingTelemetry struct {
 	LastUpdated      time.Time
 }
 
-type routingSignals struct {
-	QuotaHeadroom  float64
-	ProjectedQuota float64
-	RemainingQuota float64
-	ResetUrgency   float64
-	ResetTiming    float64
-	ResetProximity float64
-	Health         float64
-	TTFT           float64
-	Throughput     float64
-	Performance    float64
-	Affinity       float64
-	Inflight       float64
-	RecentFailure  float64
-}
-
 type routingScore struct {
 	Profile   RoutingProfile
 	Score     float64
-	Signals   routingSignals
-	Weights   RoutingProfileWeights
+	Signals   routing.Signals
+	Weights   routing.Weights
 	Telemetry routingTelemetry
-}
-
-type smartRouteDecision struct {
-	Account      *Account
-	Profile      RoutingProfile
-	Score        routingScore
-	Reasons      []string
-	Alternatives []RouteAlternative
 }
 
 func clampUnit(value float64) float64 {
@@ -283,7 +211,7 @@ func routingProjectedQuotaScore(usage UsageSnapshot, now time.Time, headroom flo
 	return clampUnit(1 / projected)
 }
 
-func routingSignalsLocked(account *Account, telemetry routingTelemetry, pinned bool, now time.Time) routingSignals {
+func routingSignalsLocked(account *Account, telemetry routingTelemetry, pinned bool, now time.Time) routing.Signals {
 	headroom := 1.0
 	if usageSecondaryWindowAvailable(account.Usage) {
 		headroom = 1 - usageSecondaryUsed(account.Usage)
@@ -322,7 +250,7 @@ func routingSignalsLocked(account *Account, telemetry routingTelemetry, pinned b
 	if pinned {
 		affinity = 1
 	}
-	return routingSignals{
+	return routing.Signals{
 		QuotaHeadroom:  headroom,
 		ProjectedQuota: routingProjectedQuotaScore(account.Usage, now, headroom),
 		RemainingQuota: headroom,
@@ -337,57 +265,6 @@ func routingSignalsLocked(account *Account, telemetry routingTelemetry, pinned b
 		Inflight:       clampUnit(inflight),
 		RecentFailure:  recentFailure,
 	}
-}
-
-func weightedRoutingScore(profile RoutingProfile, weights RoutingProfileWeights, signals routingSignals, telemetry routingTelemetry) routingScore {
-	score := signals.QuotaHeadroom*weights.QuotaHeadroom +
-		signals.ProjectedQuota*weights.ProjectedQuota +
-		signals.RemainingQuota*weights.RemainingQuota +
-		signals.ResetUrgency*weights.ResetUrgency +
-		signals.ResetTiming*weights.ResetTiming +
-		signals.ResetProximity*weights.ResetProximity +
-		signals.Health*weights.Health +
-		signals.TTFT*weights.TTFT +
-		signals.Throughput*weights.Throughput +
-		signals.Performance*weights.Performance +
-		signals.Affinity*weights.Affinity +
-		signals.Inflight*weights.Inflight +
-		signals.RecentFailure*weights.RecentFailure
-	return routingScore{Profile: profile, Score: clampUnit(score), Signals: signals, Weights: weights, Telemetry: telemetry}
-}
-
-func routingReasons(score routingScore) []string {
-	type reason struct {
-		name  string
-		value float64
-	}
-	values := []reason{
-		{"quota_headroom", score.Signals.QuotaHeadroom * score.Weights.QuotaHeadroom},
-		{"projected_quota", score.Signals.ProjectedQuota * score.Weights.ProjectedQuota},
-		{"reset_urgency", score.Signals.ResetUrgency*score.Weights.ResetUrgency + score.Signals.ResetProximity*score.Weights.ResetProximity},
-		{"health", score.Signals.Health * score.Weights.Health},
-		{"ttft", score.Signals.TTFT * score.Weights.TTFT},
-		{"throughput", score.Signals.Throughput * score.Weights.Throughput},
-		{"conversation_affinity", score.Signals.Affinity * score.Weights.Affinity},
-		{"inflight", score.Signals.Inflight * score.Weights.Inflight},
-		{"recent_failure", score.Signals.RecentFailure * score.Weights.RecentFailure},
-	}
-	sort.Slice(values, func(i, j int) bool {
-		if values[i].value == values[j].value {
-			return values[i].name < values[j].name
-		}
-		return values[i].value > values[j].value
-	})
-	out := []string{"profile:" + string(score.Profile)}
-	for _, item := range values {
-		if item.value > 0 {
-			out = append(out, item.name)
-		}
-		if len(out) == 4 {
-			break
-		}
-	}
-	return out
 }
 
 func (p *poolState) configureRouting(cfg RoutingConfigFile) {
@@ -483,85 +360,71 @@ func (p *poolState) recordRoutingOutcome(accountID string, duration time.Duratio
 	p.routingTelemetry[accountID] = row
 }
 
-func (p *poolState) smartCandidateForModel(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) smartRouteDecision {
-	return p.smartCandidateForModelForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
-}
-
-func (p *poolState) smartCandidateForModelForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) smartRouteDecision {
-	if p == nil {
-		return smartRouteDecision{Profile: profile}
-	}
-	exclude = p.accountExclusions(userID, exclude, model)
-	exclude = p.controlExclusions(userID, conversationID, exclude)
+func (p *poolState) selectSmartRoute(req routing.Request) routeSelection {
+	exclude := p.accountExclusions(req.UserID, req.Exclude, req.Model)
+	exclude = p.controlExclusions(req.UserID, req.ConversationID, exclude)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	profile := RoutingProfile(req.Profile)
 	weights, ok := p.routing.weights(profile)
 	if !ok {
-		profile = p.routing.DefaultProfile
-		weights, _ = p.routing.weights(profile)
+		return routeSelection{Policy: req.Profile, Reasons: []string{"invalid_routing_profile"}}
 	}
 	now := time.Now()
 	p.evictOldestPinsLocked(now)
 	pinnedID := ""
-	if conversationID != "" {
-		owner := p.convOwner[conversationID]
-		if owner == "" || userID == "" || owner == userID {
-			pinnedID = p.convPin[conversationID]
-		}
+	if owner := p.convOwner[req.ConversationID]; owner == "" || req.UserID == "" || owner == req.UserID {
+		pinnedID = p.convPin[req.ConversationID]
 	}
-	canonicalAntigravityModel := ""
+	model := req.Model
+	accountType := AccountType(req.Provider)
 	if accountType == AccountTypeAntigravity {
-		canonicalAntigravityModel = antigravityCanonicalModel(model)
-		if canonicalAntigravityModel != "" {
-			model = canonicalAntigravityModel
+		if canonical := antigravityCanonicalModel(model); canonical != "" {
+			model = canonical
 		}
 	}
 	requiresDiscovery := p.discoveredModelRequiresEntitlementLocked(accountType, model)
 	type candidate struct {
-		account *Account
-		score   routingScore
-		reasons []string
+		account   *Account
+		score     routingScore
+		preferPin bool
 	}
 	candidates := make([]candidate, 0, len(p.accounts))
 	for _, account := range p.accounts {
-		if account == nil || exclude != nil && exclude[account.ID] {
+		if account == nil || exclude[account.ID] {
 			continue
 		}
 		account.mu.Lock()
-		eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) &&
-			(accountType == "" || account.Type == accountType) &&
-			planMatchesRequired(account.PlanType, requiredPlan) &&
-			accountAllowsClientIPLocked(account, clientIP) &&
-			(account.RateLimitUntil.IsZero() || !account.RateLimitUntil.After(now))
-		// Antigravity usage aggregates every model family; its exhaustion is
-		// decided per family by DiscoveryAvailability below.
+		eligible := accountMatchesRouteLocked(account, req) && !account.RateLimitUntil.After(now)
+		// Antigravity exhaustion is decided for each model family.
 		if eligible && account.Type != AccountTypeAntigravity {
-			eligible = !primaryUsageBlocksRoutingLocked(account, accountPrimaryUsageLocked(account)) &&
-				accountSecondaryUsageLocked(account) < secondaryHardExcludeThreshold
+			eligible = quotaAllowsRouteLocked(account)
 		}
 		if eligible && account.Type == AccountTypeAntigravity {
-			modelCooldown := antigravityModelCooldownLocked(account, model)
 			discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
 			eligible = antigravityModels.Supports(account.ID, model) &&
-				!modelCooldown.After(now) && discoveryAvailable
+				!antigravityModelCooldownLocked(account, model).After(now) && discoveryAvailable
 		} else if eligible && requiresDiscovery {
 			_, eligible = accountDiscoveredModel(account, model)
 		}
-		if eligible && p.circuitBreakers != nil {
-			if allowed, _, _ := p.circuitBreakers.CanAllowTarget(string(account.Type), account.ID, model, nil); !allowed {
-				eligible = false
-			}
+		if eligible {
+			eligible, _, _ = p.circuitBreakers.CanAllowTarget(string(account.Type), account.ID, model, nil)
 		}
 		if eligible {
 			telemetry := p.routingTelemetry[account.ID]
-			signals := routingSignalsLocked(account, telemetry, pinnedID == account.ID, now)
-			score := weightedRoutingScore(profile, weights, signals, telemetry)
-			candidates = append(candidates, candidate{account: account, score: score, reasons: routingReasons(score)})
+			pinned := pinnedID == account.ID
+			signals := routingSignalsLocked(account, telemetry, pinned, now)
+			score := routingScore{Profile: profile, Score: routing.WeightedScore(weights, signals),
+				Signals: signals, Weights: weights, Telemetry: telemetry}
+			candidates = append(candidates, candidate{
+				account: account, score: score, preferPin: pinned && account.CyberAccess,
+			})
 		}
 		account.mu.Unlock()
 	}
 	if len(candidates) == 0 {
-		return smartRouteDecision{Profile: profile}
+		return routeSelection{Policy: req.Profile}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].score.Score == candidates[j].score.Score {
@@ -570,77 +433,37 @@ func (p *poolState) smartCandidateForModelForUser(userID, conversationID string,
 		return candidates[i].score.Score > candidates[j].score.Score
 	})
 	selected := candidates[0]
-	if pinnedID != "" {
+	for _, item := range candidates {
+		if item.preferPin {
+			selected = item
+			break
+		}
+	}
+	if allowed, scope, _ := p.circuitBreakers.AllowTarget(string(selected.account.Type), selected.account.ID, model, nil); !allowed {
+		return routeSelection{Policy: req.Profile, Reasons: []string{"circuit_unavailable:" + scope}}
+	}
+	if req.ConversationID != "" {
+		if err := p.pinForUserLocked(req.UserID, req.ConversationID, selected.account.ID, now); err != nil {
+			return routeSelection{Policy: req.Profile, Reasons: []string{err.Error()}}
+		}
+	}
+	decision := routeSelection{Account: selected.account, Policy: req.Profile, Score: selected.score.Score}
+	if req.Trace {
+		decision.Reasons = routing.Reasons(req.Profile, weights, selected.score.Signals)
+		decision.Breakdown = newRoutingBreakdownView(selected.score)
+		decision.Alternatives = make([]RouteAlternative, 0, len(candidates)-1)
 		for _, item := range candidates {
-			if item.account.ID == pinnedID && item.account.CyberAccess {
-				selected = item
-				break
+			if item.account == selected.account {
+				continue
 			}
+			decision.Alternatives = append(decision.Alternatives, RouteAlternative{
+				Provider: string(item.account.Type), Model: model, Score: item.score.Score,
+				Reasons: routing.Reasons(req.Profile, weights, item.score.Signals), AccountID: item.account.ID,
+				ScoreBreakdown: newRoutingBreakdownView(item.score),
+			})
 		}
 	}
-	if p.circuitBreakers != nil {
-		_, _, _ = p.circuitBreakers.AllowTarget(string(selected.account.Type), selected.account.ID, model, nil)
-	}
-	if conversationID != "" {
-		if err := p.pinForUserLocked(userID, conversationID, selected.account.ID, now); err != nil {
-			return smartRouteDecision{Profile: profile, Reasons: []string{err.Error()}}
-		}
-	}
-	alternatives := make([]RouteAlternative, 0, len(candidates)-1)
-	for _, item := range candidates[1:] {
-		alternatives = append(alternatives, RouteAlternative{
-			Provider: string(item.account.Type), Model: model, Score: item.score.Score,
-			Reasons: item.reasons, AccountID: item.account.ID,
-			ScoreBreakdown: newRoutingBreakdownView(item.score),
-		})
-	}
-	return smartRouteDecision{
-		Account: selected.account, Profile: profile, Score: selected.score,
-		Reasons: selected.reasons, Alternatives: alternatives,
-	}
-}
-
-func (p *poolState) candidateWithRoutingTrace(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	return p.candidateWithRoutingTraceForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
-}
-
-func (p *poolState) candidateWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	exclude = p.accountExclusions(userID, exclude, model)
-	exclude = p.controlExclusions(userID, conversationID, exclude)
-	if profile == RoutingLegacy {
-		return p.candidateWithTraceForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model)
-	}
-	decision := p.smartCandidateForModelForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model, profile)
-	if decision.Account == nil {
-		return nil, string(decision.Profile), nil, 0, nil, nil
-	}
-	return decision.Account, string(decision.Profile), decision.Reasons, decision.Score.Score, decision.Alternatives, newRoutingBreakdownView(decision.Score)
-}
-
-func (p *poolState) candidateForAntigravityModelWithRoutingTrace(conversationID string, exclude map[string]bool, model, clientIP string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	return p.candidateForAntigravityModelWithRoutingTraceForUser("", conversationID, exclude, model, clientIP, profile)
-}
-
-func (p *poolState) candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID string, exclude map[string]bool, model, clientIP string, profile RoutingProfile) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	exclude = p.accountExclusions(userID, exclude, model)
-	exclude = p.controlExclusions(userID, conversationID, exclude)
-	if profile == RoutingLegacy {
-		return p.candidateForAntigravityModelWithTrace(conversationID, exclude, model, clientIP)
-	}
-	decision := p.smartCandidateForModelForUser(userID, conversationID, exclude, AccountTypeAntigravity, "", clientIP, model, profile)
-	if decision.Account == nil {
-		return nil, string(decision.Profile), nil, 0, nil, nil
-	}
-	if conversationID != "" {
-		canonical := antigravityCanonicalModel(model)
-		p.mu.Lock()
-		err := p.pinForUserLocked(userID, "antigravity:"+canonical+":"+conversationID, decision.Account.ID, time.Now())
-		p.mu.Unlock()
-		if err != nil {
-			return nil, string(profile), []string{err.Error()}, 0, nil, nil
-		}
-	}
-	return decision.Account, string(decision.Profile), decision.Reasons, decision.Score.Score, decision.Alternatives, newRoutingBreakdownView(decision.Score)
+	return decision
 }
 
 func (p *poolState) discoveredModelRequiresEntitlementLocked(accountType AccountType, model string) bool {
@@ -729,7 +552,7 @@ func validateRoutingConfig(cfg RoutingConfigFile) error {
 				return fmt.Errorf("routing profile %s contains an invalid weight", name)
 			}
 		}
-		if weights.total() <= 0 {
+		if weights.Total() <= 0 {
 			return fmt.Errorf("routing profile %s must contain at least one positive weight", name)
 		}
 	}
@@ -738,7 +561,7 @@ func validateRoutingConfig(cfg RoutingConfigFile) error {
 		return errors.New("routing default profile is invalid")
 	}
 	for name, weights := range set.Profiles {
-		if math.Abs(weights.total()-1) > 0.000001 {
+		if math.Abs(weights.Total()-1) > 0.000001 {
 			return fmt.Errorf("routing profile %s weights do not normalize to 1", name)
 		}
 	}

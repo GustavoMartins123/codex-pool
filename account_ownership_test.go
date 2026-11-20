@@ -1,9 +1,11 @@
 package main
 
 import (
-	"go.etcd.io/bbolt"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
+	"go.etcd.io/bbolt"
 )
 
 func ownershipFixture(t *testing.T) (*PassportStore, *poolState) {
@@ -39,16 +41,19 @@ func TestAccountOwnershipSelectionAndPins(t *testing.T) {
 	identity := "alice-c-" + client.ID
 	pool.pin("session", "private")
 	for _, profile := range []RoutingProfile{RoutingBalanced, RoutingLegacy} {
-		a, _, _, _, alternatives, _ := pool.candidateWithRoutingTraceForUser("bob", "session", nil, AccountTypeCodex, "", "", "", profile)
-		if a != nil || len(alternatives) != 0 {
+		req := routing.Request{UserID: "bob", ConversationID: "session", Provider: string(AccountTypeCodex), Profile: string(profile), Trace: true}
+		decision := pool.selectRoute(req)
+		if decision.Account != nil || len(decision.Alternatives) != 0 {
 			t.Fatalf("foreign private account selected (%s)", profile)
 		}
-		a, _, _, _, _, _ = pool.candidateWithRoutingTraceForUser(identity, "session", nil, AccountTypeCodex, "", "", "", profile)
-		if a == nil || a.ID != "private" {
+		req.UserID = identity
+		if a := pool.selectRoute(req).Account; a == nil || a.ID != "private" {
 			t.Fatalf("owner denied (%s)", profile)
 		}
 	}
-	if pool.candidateByIDForUser("bob", "private", AccountTypeCodex, "", "") != nil || pool.candidateWithCyberAccessForUser("bob", nil, AccountTypeCodex, "", "") != nil {
+	exact := pool.selectRoute(routing.Request{Mode: routing.MatchAccountID, UserID: "bob", AccountID: "private", Provider: string(AccountTypeCodex)})
+	cyber := pool.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, UserID: "bob", Provider: string(AccountTypeCodex)})
+	if exact.Account != nil || cyber.Account != nil {
 		t.Fatal("private account escaped selector")
 	}
 	if len(pool.visiblePool("bob").allAccounts()) != 1 || len(pool.visiblePool(identity).allAccounts()) != 2 {

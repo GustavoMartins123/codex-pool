@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 type mockUpstreamTransport struct {
@@ -53,7 +55,7 @@ func TestPoolAutoResponsesEndpointIntegration(t *testing.T) {
 		metrics:         newMetrics(),
 		recent:          newRecentErrors(50),
 		routeTraces:     newRouteTraceStore(100),
-		circuitBreakers: newCircuitBreakerManager(),
+		circuitBreakers: routing.NewCircuitBreakerManager(),
 		fallbackGraph:   newFallbackGraph(),
 		poolAuto:        newPoolAutoOrchestrator(nil),
 		pricing:         newPricingData(),
@@ -152,7 +154,7 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 		metrics:         newMetrics(),
 		recent:          newRecentErrors(50),
 		routeTraces:     newRouteTraceStore(100),
-		circuitBreakers: newCircuitBreakerManager(),
+		circuitBreakers: routing.NewCircuitBreakerManager(),
 		fallbackGraph:   newFallbackGraph(),
 		poolAuto:        newPoolAutoOrchestrator(nil),
 		pricing:         newPricingData(),

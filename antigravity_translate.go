@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -243,7 +244,12 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 	}
 	contextCompactionRetry := false
 	for attempt := 0; attempt < attempts; attempt++ {
-		account, policy, reasons, score, alternatives, breakdownView := h.pool.candidateForAntigravityModelWithRoutingTraceForUser(userID, conversationID, exclude, canonical, clientIP, routingProfile)
+		selection := h.pool.selectRoute(routing.Request{
+			Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity),
+			UserID: userID, ConversationID: conversationID, Exclude: exclude,
+			Model: canonical, ClientIP: clientIP, Profile: string(routingProfile), Trace: true,
+		})
+		account := selection.Account
 		if account == nil {
 			if err := h.checkAccountRoutingAccess(userID, AccountTypeAntigravity, canonical); err != nil {
 				respondPolicyError(w, err)
@@ -252,26 +258,26 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			break
 		}
 		primaryReason := "quota_headroom"
-		if len(reasons) > 0 {
-			primaryReason = reasons[len(reasons)-1]
+		if len(selection.Reasons) > 0 {
+			primaryReason = selection.Reasons[len(selection.Reasons)-1]
 		}
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Transition:     h.transitionForTrace(userID, conversationID, AccountTypeAntigravity, w.Header()),
 			Timestamp:      time.Now().UTC(),
-			Policy:         policy,
+			Policy:         selection.Policy,
 			Selected:       RouteTarget{Provider: "antigravity", Model: canonical},
-			Score:          score,
-			Reasons:        reasons,
-			Alternatives:   alternatives,
+			Score:          selection.Score,
+			Reasons:        selection.Reasons,
+			Alternatives:   selection.Alternatives,
 			AccountID:      account.ID,
-			ScoreBreakdown: breakdownView,
+			ScoreBreakdown: selection.Breakdown,
 			ClientIP:       clientIP,
 			UserID:         userID,
 			Attempts:       attempt + 1,
 		}
 		h.getRouteTraces().Record(trace)
-		setPoolRouteHeaders(w.Header(), "antigravity", canonical, policy, primaryReason, attempt+1, reqID)
+		setPoolRouteHeaders(w.Header(), "antigravity", canonical, selection.Policy, primaryReason, attempt+1, reqID)
 		exclude[account.ID] = true
 		if h.needsRefresh(account) {
 			_ = h.refreshAccount(r.Context(), account)

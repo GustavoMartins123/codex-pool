@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 //go:embed templates/cute_code_landing.html templates/og-image.png templates/og-image-transparent.webp templates/favicon.png
@@ -2333,7 +2335,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		breakdown := scoreBreakdown{}
+		breakdown := routing.QuotaScore{}
 		score := float64(0)
 		if !acc.Dead && !acc.Disabled && !healthBlocked {
 			breakdown = scoreAccountBreakdownLocked(acc, stats.GeneratedAt)

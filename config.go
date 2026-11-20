@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"codex-pool-proxy/internal/routing"
 	"github.com/BurntSushi/toml"
 )
 
@@ -70,9 +71,9 @@ type PoolUsersConfig struct {
 // RoutingConfigFile is the [routing] section. Profiles can override any
 // subset of the built-in weights under [routing.profiles.<name>].
 type RoutingConfigFile struct {
-	DefaultProfile string                           `toml:"default_profile"`
-	DefaultModel   string                           `toml:"default_model"`
-	Profiles       map[string]RoutingProfileWeights `toml:"profiles"`
+	DefaultProfile string                     `toml:"default_profile"`
+	DefaultModel   string                     `toml:"default_model"`
+	Profiles       map[string]routing.Weights `toml:"profiles"`
 }
 
 // setHotReloadable publishes the fields the config watcher can refresh at

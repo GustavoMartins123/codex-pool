@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/routing"
 )
 
 // aistudioMaxServerFailover bounds how many keys a request may try after
@@ -147,7 +148,10 @@ func (h *proxyHandler) handleAIStudioProxy(w http.ResponseWriter, r *http.Reques
 				exclude[account.ID] = true
 			}
 		}
-		account := h.pool.candidateForModelForUser(userID, conversationID, exclude, AccountTypeAIStudio, "", clientIP, model)
+		account := h.pool.selectRoute(routing.Request{
+			UserID: userID, ConversationID: conversationID, Exclude: exclude, Provider: string(AccountTypeAIStudio),
+			ClientIP: clientIP, Model: model, Profile: string(RoutingLegacy),
+		}).Account
 		if account == nil {
 			if err := h.checkAccountRoutingAccess(userID, AccountTypeAIStudio, model); err != nil {
 				respondPolicyError(w, err)

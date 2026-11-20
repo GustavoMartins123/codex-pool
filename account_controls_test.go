@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestAccountControlsPersistAndEnforcePinnedDraining(t *testing.T) {
@@ -20,10 +22,12 @@ func TestAccountControlsPersistAndEnforcePinnedDraining(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, profile := range []RoutingProfile{RoutingLegacy, RoutingBalanced} {
-		if got, _, _, _, _, _ := pool.candidateWithRoutingTraceForUser("alice", "new", nil, a.Type, "", "", "gpt-5.5", profile); got != nil {
+		req := routing.Request{UserID: "alice", ConversationID: "new", Provider: string(a.Type), Model: "gpt-5.5", Profile: string(profile)}
+		if got := pool.selectRoute(req).Account; got != nil {
 			t.Fatal("draining admitted a new conversation")
 		}
-		if got, _, _, _, _, _ := pool.candidateWithRoutingTraceForUser("alice", key, nil, a.Type, "", "", "gpt-5.5", profile); got != a {
+		req.ConversationID = key
+		if got := pool.selectRoute(req).Account; got != a {
 			t.Fatal("draining lost an existing pin")
 		}
 	}
@@ -59,11 +63,12 @@ func TestAccountControlsPersistAndEnforcePinnedDraining(t *testing.T) {
 		t.Fatal(err)
 	}
 	pool.accountAuthority = reloaded
-	if got := pool.candidateForUser("alice", key, nil, a.Type, "", ""); got != nil {
+	req := routing.Request{UserID: "alice", ConversationID: key, Provider: string(a.Type), Profile: string(RoutingLegacy)}
+	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatal("restart lost maintenance")
 	}
 	restoreValidatedAccount(a, "test")
-	if got := pool.candidateForUser("alice", key, nil, a.Type, "", ""); got != nil {
+	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatal("refresh bypassed maintenance")
 	}
 }

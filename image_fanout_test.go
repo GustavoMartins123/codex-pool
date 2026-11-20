@@ -3,6 +3,8 @@ package main
 import (
 	"sync/atomic"
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestImageFanoutExcludesBusyAccountsWhenIdleCapacityExists(t *testing.T) {
@@ -28,7 +30,7 @@ func TestImageFanoutCandidateRotatesAcrossAccounts(t *testing.T) {
 	pool := newPoolState([]*Account{third, first, second}, false)
 
 	for index, want := range []string{"a", "b", "c", "a"} {
-		got := pool.imageFanoutCandidate(index, map[string]bool{}, "", "")
+		got := pool.selectRoute(routing.Request{Mode: routing.MatchImageFanout, Index: index}).Account
 		if got == nil || got.ID != want {
 			t.Fatalf("index %d candidate = %#v, want %q", index, got, want)
 		}

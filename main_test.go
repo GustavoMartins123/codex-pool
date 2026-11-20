@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
 )
@@ -1422,7 +1423,9 @@ func TestClaudePremiumRequestSkipsPinnedProAccount(t *testing.T) {
 	pool := newPoolState([]*Account{pro, team}, false)
 	pool.pin("conv", pro.ID)
 
-	got := pool.candidate("conv", nil, AccountTypeClaude, "claude_premium", "")
+	got := pool.selectRoute(routing.Request{
+		ConversationID: "conv", Provider: string(AccountTypeClaude), RequiredPlan: "claude_premium", Profile: string(RoutingLegacy),
+	}).Account
 	if got == nil {
 		t.Fatal("expected a premium Claude account")
 	}

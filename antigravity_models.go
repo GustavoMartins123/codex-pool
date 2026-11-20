@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 type AntigravityQuotaInfo struct {
@@ -920,10 +922,11 @@ func antigravityCanonicalModel(model string) string {
 	return canonical
 }
 
-func (p *poolState) candidateForAntigravityModel(conversationID string, exclude map[string]bool, model, clientIP string) *Account {
+func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	model = antigravityCanonicalModel(model)
+	model := antigravityCanonicalModel(req.Model)
+	conversationID, exclude := req.ConversationID, req.Exclude
 	now := time.Now()
 	p.evictOldestPinsLocked(now)
 	pinKey := "antigravity:" + model + ":" + conversationID
@@ -945,10 +948,12 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				account.mu.Lock()
 				until := antigravityModelCooldownLocked(account, model)
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+				eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
-					return account
+					if allowed, _, _ := p.circuitBreakers.AllowTarget(req.Provider, account.ID, model, nil); allowed {
+						return account
+					}
 				}
 			}
 			p.unpinLocked(pinKey)
@@ -960,9 +965,12 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 				account.mu.Lock()
 				until := antigravityModelCooldownLocked(account, model)
 				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-				eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+				eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
+					if allowed, _, _ := p.circuitBreakers.AllowTarget(req.Provider, account.ID, model, nil); !allowed {
+						continue
+					}
 					if err := p.pinForUserLocked(p.convOwner[conversationID], pinKey, account.ID, now); err != nil {
 						return nil
 					}
@@ -985,15 +993,17 @@ func (p *poolState) candidateForAntigravityModel(conversationID string, exclude 
 		account.mu.Lock()
 		until := antigravityModelCooldownLocked(account, model)
 		discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-		eligible := !account.Dead && !account.Disabled && !accountHealthBlockedLocked(account) && accountAllowsClientIPLocked(account, clientIP) && !until.After(now) && discoveryAvailable
+		eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 		score := scoreAccountLocked(account, now) - float64(atomic.LoadInt64(&account.Inflight))*0.02
 		account.mu.Unlock()
 		if eligible && (best == nil || score > bestScore) {
 			best, bestScore = account, score
 		}
 	}
-	if best != nil && p.circuitBreakers != nil {
-		_, _, _ = p.circuitBreakers.AllowTarget(string(AccountTypeAntigravity), best.ID, model, nil)
+	if best != nil {
+		if allowed, _, _ := p.circuitBreakers.AllowTarget(req.Provider, best.ID, model, nil); !allowed {
+			return nil
+		}
 	}
 	if best != nil && conversationID != "" {
 		if err := p.pinForUserLocked(p.convOwner[conversationID], pinKey, best.ID, now); err != nil {
@@ -1155,67 +1165,4 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 			}
 		}
 	}()
-}
-
-func (p *poolState) candidateForAntigravityModelWithTrace(conversationID string, exclude map[string]bool, model, clientIP string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	acc := p.candidateForAntigravityModel(conversationID, exclude, model, clientIP)
-	if acc == nil {
-		return nil, "none", nil, 0, nil, nil
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	now := time.Now()
-
-	policy := "balanced"
-	reasons := []string{"healthy"}
-
-	canonical := antigravityCanonicalModel(model)
-	pinKey := "antigravity:" + canonical + ":" + conversationID
-	if conversationID != "" && (p.convPin[pinKey] == acc.ID || p.convPin[conversationID] == acc.ID) {
-		policy = "pinned"
-		reasons = append(reasons, "conversation_pin")
-	}
-
-	acc.mu.Lock()
-	sb := scoreAccountBreakdownLocked(acc, now)
-	inflight := atomic.LoadInt64(&acc.Inflight)
-	hadHealthError := accountHealthBlockedLocked(acc)
-	acc.mu.Unlock()
-
-	score := sb.Score - float64(inflight)*0.02
-	reasons = append(reasons, "quota_headroom")
-
-	breakdownView := newScoreBreakdownView(sb, inflight, hadHealthError)
-
-	var alternatives []RouteAlternative
-	for _, a := range p.accounts {
-		if a == nil || a.ID == acc.ID || a.Type != AccountTypeAntigravity || a.Dead || a.Disabled {
-			continue
-		}
-		a.mu.Lock()
-		if accountHealthBlockedLocked(a) {
-			a.mu.Unlock()
-			continue
-		}
-		altSB := scoreAccountBreakdownLocked(a, now)
-		altInflight := atomic.LoadInt64(&a.Inflight)
-		altHealthErr := accountHealthBlockedLocked(a)
-		a.mu.Unlock()
-
-		altScore := altSB.Score - float64(altInflight)*0.02
-		altReasons := []string{"healthy", "quota_headroom"}
-		altView := newScoreBreakdownView(altSB, altInflight, altHealthErr)
-
-		alternatives = append(alternatives, RouteAlternative{
-			Provider:       string(a.Type),
-			Model:          model,
-			Score:          altScore,
-			Reasons:        altReasons,
-			AccountID:      a.ID,
-			ScoreBreakdown: altView,
-		})
-	}
-
-	return acc, policy, reasons, score, alternatives, breakdownView
 }

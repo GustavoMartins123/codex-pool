@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestPoolAutoOrchestrationProfiles(t *testing.T) {
@@ -13,7 +15,7 @@ func TestPoolAutoOrchestrationProfiles(t *testing.T) {
 		{ID: "gemini_1", Type: AccountTypeGemini, PlanType: "api"},
 	}, false)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 	pricing := newPricingData()
 
 	capsText := RequestCapabilities{
@@ -76,7 +78,7 @@ func TestPoolAutoGateRejectsIncompatibleModels(t *testing.T) {
 		{ID: "minimax_1", Type: AccountTypeMinimax, PlanType: "pro"},
 	}, false)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 	pricing := newPricingData()
 
 	// Multimodal image request
@@ -113,7 +115,7 @@ func TestPoolAutoConversationAffinity(t *testing.T) {
 	convID := "pinned-conversation-123"
 	pool.pin(convID, claudeAccount.ID)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 	pricing := newPricingData()
 
 	caps := RequestCapabilities{ContextTokens: 1000, Modalities: []string{"text"}}

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 // FallbackTrigger specifies the condition that triggered model fallback.
@@ -139,7 +141,7 @@ func (fg *FallbackGraph) ResolveFallback(
 	trigger FallbackTrigger,
 	caps RequestCapabilities,
 	pool *poolState,
-	cb *CircuitBreakerManager,
+	cb *routing.CircuitBreakerManager,
 ) (string, string, bool) {
 	return fg.ResolveFallbackWithTransition(currentModel, trigger, caps, pool, cb, nil)
 }
@@ -149,7 +151,7 @@ func (fg *FallbackGraph) ResolveFallbackWithTransition(
 	trigger FallbackTrigger,
 	caps RequestCapabilities,
 	pool *poolState,
-	cb *CircuitBreakerManager,
+	cb *routing.CircuitBreakerManager,
 	conversation *ConversationState,
 ) (string, string, bool) {
 	return fg.ResolveFallbackWithTransitionExcluding(currentModel, trigger, caps, pool, cb, conversation, nil)
@@ -160,7 +162,7 @@ func (fg *FallbackGraph) ResolveFallbackWithTransitionExcluding(
 	trigger FallbackTrigger,
 	caps RequestCapabilities,
 	pool *poolState,
-	cb *CircuitBreakerManager,
+	cb *routing.CircuitBreakerManager,
 	conversation *ConversationState,
 	exclude map[string]bool,
 ) (string, string, bool) {

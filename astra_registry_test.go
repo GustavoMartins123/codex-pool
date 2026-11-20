@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestAstraRegistry(t *testing.T) {
@@ -56,7 +58,10 @@ func TestAstraAccountEntitlement(t *testing.T) {
 	if !pool.discoveredModelRequiresEntitlement(AccountTypeCodex, "gpt-6-astra") {
 		t.Fatal("catalog inclusion bypassed account entitlement")
 	}
-	if got := pool.candidateForModel("", map[string]bool{entitled.ID: true}, AccountTypeCodex, "", "", "gpt-6-astra"); got != nil {
+	if got := pool.selectRoute(routing.Request{
+		Provider: string(AccountTypeCodex), Model: "gpt-6-astra", Profile: string(RoutingLegacy),
+		Exclude: map[string]bool{entitled.ID: true},
+	}).Account; got != nil {
 		t.Fatalf("selected account without Astra: %s", got.ID)
 	}
 	found := 0
@@ -73,7 +78,7 @@ func TestAstraAccountEntitlement(t *testing.T) {
 		t.Fatalf("Astra descriptor count = %d", found)
 	}
 	cold := newPoolState([]*Account{other}, false)
-	if got := cold.candidateForModel("", nil, AccountTypeCodex, "", "", "gpt-6-astra"); got != nil {
+	if got := cold.selectRoute(routing.Request{Provider: string(AccountTypeCodex), Model: "gpt-6-astra", Profile: string(RoutingLegacy)}).Account; got != nil {
 		t.Fatal("Astra routed before an account advertised access")
 	}
 }

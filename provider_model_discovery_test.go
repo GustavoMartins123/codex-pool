@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestParseProviderModelsReadsSlugWhenIDMissing(t *testing.T) {
@@ -158,7 +160,7 @@ func TestPoolCandidateForModelHonorsPerAccountEntitlement(t *testing.T) {
 	}}
 	pool := newPoolState([]*Account{ineligible, eligible}, false)
 
-	got := pool.candidateForModel("", nil, AccountTypeCodex, "", "", "GPT-DAYBREAK-BLUE-LATEST")
+	got := pool.selectRoute(routing.Request{Provider: string(AccountTypeCodex), Model: "GPT-DAYBREAK-BLUE-LATEST", Profile: string(RoutingLegacy)}).Account
 	if got != eligible {
 		t.Fatalf("candidate = %#v, want eligible account", got)
 	}
