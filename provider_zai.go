@@ -22,6 +22,12 @@ func NewZAIProvider(zaiBase *url.URL) *ZAIProvider {
 	return &ZAIProvider{apiKeyUpstream: apiKeyUpstream{base: zaiBase}}
 }
 
+func (p *ZAIProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/v1/models")
+}
+
+func (*ZAIProvider) WireFormat() WireFormat { return WireAnthropic }
+
 func (p *ZAIProvider) Type() AccountType {
 	return AccountTypeZAI
 }

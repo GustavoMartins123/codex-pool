@@ -36,6 +36,12 @@ func NewOpencodeGoProvider(opencodeGoBase *url.URL) *OpencodeGoProvider {
 	return &OpencodeGoProvider{opencodeGoBase: opencodeGoBase}
 }
 
+func (p *OpencodeGoProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/models"), "/models")
+}
+
+func (*OpencodeGoProvider) WireFormat() WireFormat { return WireUnknown }
+
 func (p *OpencodeGoProvider) Type() AccountType {
 	return AccountTypeOpencodeGo
 }

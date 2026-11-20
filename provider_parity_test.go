@@ -49,7 +49,7 @@ type providerParityFixture struct {
 	Routing []providerRoutingParityCase `json:"routing"`
 }
 
-func providerParityProviders(t *testing.T) map[string]Provider {
+func providerParityProviders(t *testing.T) map[string]ProviderDriver {
 	t.Helper()
 	base := func(raw string) *url.URL {
 		u, err := url.Parse(raw)
@@ -58,7 +58,7 @@ func providerParityProviders(t *testing.T) map[string]Provider {
 		}
 		return u
 	}
-	return map[string]Provider{
+	return map[string]ProviderDriver{
 		"claude":      NewClaudeProvider(base("https://claude.example.test")),
 		"kimi":        NewKimiProvider(base("https://kimi.example.test/coding")),
 		"minimax":     NewMinimaxProvider(base("https://minimax.example.test/anthropic")),
@@ -78,7 +78,7 @@ func providerParityJSON(t *testing.T, value any) string {
 	return string(encoded)
 }
 
-func runProviderUsageParity(t *testing.T, providers map[string]Provider, tc providerUsageParityCase) providerUsageParityCase {
+func runProviderUsageParity(t *testing.T, providers map[string]ProviderDriver, tc providerUsageParityCase) providerUsageParityCase {
 	t.Helper()
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(tc.Input), &obj); err != nil {
@@ -93,7 +93,7 @@ func runProviderUsageParity(t *testing.T, providers map[string]Provider, tc prov
 	return got
 }
 
-func runProviderLoadParity(t *testing.T, providers map[string]Provider, tc providerLoadParityCase) providerLoadParityCase {
+func runProviderLoadParity(t *testing.T, providers map[string]ProviderDriver, tc providerLoadParityCase) providerLoadParityCase {
 	t.Helper()
 	got := tc
 	got.Output, got.Err = "", ""
@@ -108,7 +108,7 @@ func runProviderLoadParity(t *testing.T, providers map[string]Provider, tc provi
 	return got
 }
 
-func runProviderAuthParity(t *testing.T, providers map[string]Provider, tc providerAuthParityCase) providerAuthParityCase {
+func runProviderAuthParity(t *testing.T, providers map[string]ProviderDriver, tc providerAuthParityCase) providerAuthParityCase {
 	t.Helper()
 	req := httptest.NewRequest("POST", "/v1/messages", nil)
 	for name, value := range tc.Headers {
@@ -120,7 +120,7 @@ func runProviderAuthParity(t *testing.T, providers map[string]Provider, tc provi
 	return got
 }
 
-func runProviderRoutingParity(t *testing.T, providers map[string]Provider, tc providerRoutingParityCase) providerRoutingParityCase {
+func runProviderRoutingParity(t *testing.T, providers map[string]ProviderDriver, tc providerRoutingParityCase) providerRoutingParityCase {
 	t.Helper()
 	provider := providers[tc.Provider]
 	got := tc

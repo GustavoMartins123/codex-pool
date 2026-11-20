@@ -36,6 +36,8 @@ func NewAntigravityProvider(dailyBase, prodBase *url.URL) *AntigravityProvider {
 	return &AntigravityProvider{dailyBase: dailyBase, prodBase: prodBase}
 }
 
+func (*AntigravityProvider) WireFormat() WireFormat { return WireGemini }
+
 func (p *AntigravityProvider) Type() AccountType { return AccountTypeAntigravity }
 
 func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Account, error) {
@@ -215,8 +217,6 @@ func (p *AntigravityProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	}
 	return result
 }
-
-func (p *AntigravityProvider) ParseUsageHeaders(_ *Account, _ http.Header) {}
 
 func (p *AntigravityProvider) UpstreamURL(_ string) *url.URL { return p.dailyBase }
 func (p *AntigravityProvider) DailyURL() *url.URL            { return p.dailyBase }

@@ -34,6 +34,12 @@ func NewGrokProvider(grokBase *url.URL) *GrokProvider {
 	return &GrokProvider{grokBase: grokBase, clientVersion: grokClientVersion()}
 }
 
+func (p *GrokProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/models")
+}
+
+func (*GrokProvider) WireFormat() WireFormat { return WireUnknown }
+
 func (p *GrokProvider) Type() AccountType {
 	return AccountTypeGrok
 }

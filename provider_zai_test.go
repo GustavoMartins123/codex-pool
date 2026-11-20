@@ -103,15 +103,14 @@ func TestZAIAccountLoadAndPlanSupport(t *testing.T) {
 	}
 }
 
-
 func TestZAIResponsesPathUsesAnthropicWireTranslation(t *testing.T) {
-	if !shouldTranslateResponsesToAnthropic("/v1/responses", providerTargetFormat(AccountTypeZAI)) {
+	if !shouldTranslateResponsesToAnthropic("/v1/responses", requestFormatForCodec(&ZAIProvider{})) {
 		t.Fatal("ZAI Responses requests must be translated to Anthropic Messages")
 	}
-	if !shouldTranslateResponsesToAnthropic("/responses", providerTargetFormat(AccountTypeZAI)) {
+	if !shouldTranslateResponsesToAnthropic("/responses", requestFormatForCodec(&ZAIProvider{})) {
 		t.Fatal("ZAI /responses requests must be translated to Anthropic Messages")
 	}
-	if shouldTranslateResponsesToAnthropic("/v1/responses", providerTargetFormat(AccountTypeCodex)) {
+	if shouldTranslateResponsesToAnthropic("/v1/responses", requestFormatForCodec(&CodexProvider{})) {
 		t.Fatal("Codex Responses requests must stay on the Responses wire format")
 	}
 }

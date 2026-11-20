@@ -48,7 +48,7 @@ func (rt *oauthRefreshParityTransport) RoundTrip(req *http.Request) (*http.Respo
 	}, nil
 }
 
-func oauthRefreshParityProvider(t *testing.T, name string) (Provider, AccountType) {
+func oauthRefreshParityProvider(t *testing.T, name string) (Authenticator, AccountType) {
 	t.Helper()
 	refreshBase, _ := url.Parse("https://auth.openai.example.test")
 	switch name {

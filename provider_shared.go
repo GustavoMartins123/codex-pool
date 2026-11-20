@@ -15,6 +15,8 @@ type apiKeyUpstream struct {
 	base *url.URL
 }
 
+func (apiKeyUpstream) WireFormat() WireFormat { return WireUnknown }
+
 func (u apiKeyUpstream) UpstreamURL(string) *url.URL { return u.base }
 
 func (apiKeyUpstream) MatchesPath(string) bool { return false }

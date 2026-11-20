@@ -26,6 +26,17 @@ func NewClaudeProvider(claudeBase *url.URL) *ClaudeProvider {
 	}
 }
 
+func (p *ClaudeProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/v1/models")
+}
+
+func (p *ClaudeProvider) SetModelDiscoveryHeaders(req *http.Request) {
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
+}
+
+func (*ClaudeProvider) WireFormat() WireFormat { return WireAnthropic }
+
 func (p *ClaudeProvider) Type() AccountType {
 	return AccountTypeClaude
 }

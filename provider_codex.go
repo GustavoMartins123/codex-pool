@@ -41,6 +41,19 @@ func NewCodexProviderWithRealtime(responsesBase, realtimeBase, whamBase, refresh
 	}
 }
 
+func (p *CodexProvider) ModelDiscoveryURL() *url.URL {
+	target := modelDiscoveryURL(p.whamBase, "/codex/models")
+	if target == nil {
+		return nil
+	}
+	query := target.Query()
+	query.Set("client_version", currentCodexFingerprint().AppVersion)
+	target.RawQuery = query.Encode()
+	return target
+}
+
+func (*CodexProvider) WireFormat() WireFormat { return WireResponses }
+
 func (p *CodexProvider) Type() AccountType {
 	return AccountTypeCodex
 }

@@ -530,7 +530,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("configure federation: %v", err)
 	}
-	extraProviders := []Provider{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider, qwenProvider, aistudioProvider}
+	extraProviders := []ProviderDriver{antigravityProvider, kimiProvider, minimaxProvider, zaiProvider, xiaomiProvider, grokProvider, adverserialProvider, opencodeGoProvider, qwenProvider, aistudioProvider}
 	extraProviders = append(extraProviders, genericProviders...)
 	extraProviders = append(extraProviders, federatedProviders...)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)
@@ -1101,18 +1101,22 @@ func (h *proxyHandler) acquireLargeReplayBody(ctx context.Context, contentLength
 	}
 }
 
-func (h *proxyHandler) pickUpstream(path string, headers http.Header) (Provider, *url.URL) {
+func (h *proxyHandler) pickUpstream(path string, headers http.Header) (ProviderDriver, *url.URL) {
 	// Check headers first - Anthropic requests have X-Api-Key or anthropic-* headers
 	if headers.Get("X-Api-Key") != "" {
 		// X-Api-Key is used by Anthropic Claude API
-		provider := h.registry.ForType(AccountTypeClaude)
-		return provider, provider.UpstreamURL(path)
+		if provider := h.registry.ForType(AccountTypeClaude); provider != nil {
+			return provider, provider.UpstreamURL(path)
+		}
+		return nil, nil
 	}
 	// Check for any anthropic-* headers (version, beta, etc.)
 	for key := range headers {
 		if strings.HasPrefix(strings.ToLower(key), "anthropic-") {
-			provider := h.registry.ForType(AccountTypeClaude)
-			return provider, provider.UpstreamURL(path)
+			if provider := h.registry.ForType(AccountTypeClaude); provider != nil {
+				return provider, provider.UpstreamURL(path)
+			}
+			return nil, nil
 		}
 	}
 
@@ -1121,6 +1125,9 @@ func (h *proxyHandler) pickUpstream(path string, headers http.Header) (Provider,
 	if provider == nil {
 		// Fallback to Codex provider
 		provider = h.registry.ForType(AccountTypeCodex)
+	}
+	if provider == nil {
+		return nil, nil
 	}
 	return provider, provider.UpstreamURL(path)
 }
@@ -1754,105 +1761,12 @@ func requiredPlanForRequest(accountType AccountType, r *http.Request, requestedM
 	return ""
 }
 
-// modelRouteOverride checks if the requested model should be routed to an external
-// provider (Kimi, MiniMax, etc.) instead of the path-detected provider.
-// Returns (provider, baseURL, rewrittenBody) or (nil, nil, nil) if no override.
-func (h *proxyHandler) modelRouteOverride(path, model string, body []byte) (Provider, *url.URL, []byte) {
-	if provider, canonical, ok := h.registry.ResolveModel(model); ok {
-		return provider, provider.UpstreamURL(path), rewriteModelInBody(body, canonical)
+func (h *proxyHandler) modelRouteOverride(path, model string, body []byte) (ProviderDriver, *url.URL, []byte) {
+	provider, rewritten := h.registry.resolveBufferedModel(h.pool, model, body)
+	if provider == nil {
+		return nil, nil, nil
 	}
-	if isQwenModel(model) {
-		provider := h.registry.ForType(AccountTypeQwen)
-		if provider == nil {
-			return nil, nil, nil
-		}
-		canonical := strings.TrimSpace(model)
-		if h.pool != nil {
-			if discovered, ok := h.pool.discoveredCanonicalModel(AccountTypeQwen, model); ok {
-				canonical = discovered
-			}
-		}
-		return provider, provider.UpstreamURL(path), rewriteModelInBody(body, canonical)
-	}
-	if isKimiModel(model) {
-		p := h.registry.ForType(AccountTypeKimi)
-		if p == nil {
-			return nil, nil, nil
-		}
-		return p, p.UpstreamURL(path), nil
-	}
-	if isMinimaxModel(model) {
-		p := h.registry.ForType(AccountTypeMinimax)
-		if p == nil {
-			return nil, nil, nil
-		}
-		// Rewrite the model name to the canonical upstream name
-		canonical := minimaxCanonicalModel(model)
-		rewritten := rewriteModelInBody(body, canonical)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	if isZAIModel(model) {
-		p := h.registry.ForType(AccountTypeZAI)
-		if p == nil {
-			return nil, nil, nil
-		}
-		canonical := zaiCanonicalModel(model)
-		rewritten := rewriteModelInBody(body, canonical)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	if isXiaomiModel(model) {
-		p := h.registry.ForType(AccountTypeXiaomi)
-		if p == nil {
-			return nil, nil, nil
-		}
-		canonical := xiaomiCanonicalModel(model)
-		rewritten := rewriteModelInBody(body, canonical)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	if isAdverserialModel(model) {
-		p := h.registry.ForType(AccountTypeAdverserial)
-		if p == nil {
-			return nil, nil, nil
-		}
-		rewritten := rewriteAndClampAdverserialRequestBody(body, model)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	if isGrokModel(model) {
-		p := h.registry.ForType(AccountTypeGrok)
-		if p == nil {
-			return nil, nil, nil
-		}
-		canonical := grokCanonicalModel(model)
-		rewritten := rewriteAndSanitizeGrokRequestBody(body, canonical)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	if isOpencodeGoModel(model) {
-		p := h.registry.ForType(AccountTypeOpencodeGo)
-		if p == nil {
-			return nil, nil, nil
-		}
-		// The Go upstream expects the bare model ID in the body and rejects the
-		// proxy-only session_id field, which must travel as a header instead.
-		rewritten := opencodeGoUpstreamBody(body, model)
-		return p, p.UpstreamURL(path), rewritten
-	}
-	// Cross-format model routing: detect if the model belongs to a different provider
-	// than the one the request path would normally select.
-	if isOpenAIModel(model) {
-		p := h.registry.ForType(AccountTypeCodex)
-		if p != nil {
-			return p, p.UpstreamURL(path), nil
-		}
-	}
-	if isClaudeModel(model) {
-		p := h.registry.ForType(AccountTypeClaude)
-		if p != nil {
-			canonical := claudeCanonicalModel(model)
-			rewritten := rewriteModelInBody(body, canonical)
-			return p, p.UpstreamURL(path), rewritten
-		}
-	}
-	return nil, nil, nil
+	return provider, provider.UpstreamURL(path), rewritten
 }
 
 const streamedModelRoutePeekBytes = 64 * 1024
@@ -1869,7 +1783,7 @@ func shouldPeekStreamedModelRoute(r *http.Request) bool {
 	return r.ContentLength >= streamedModelRoutePeekBytes
 }
 
-func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provider, targetBase *url.URL, reqID string) (Provider, *url.URL, error) {
+func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider ProviderDriver, targetBase *url.URL, reqID string) (ProviderDriver, *url.URL, error) {
 	if r == nil || r.Body == nil || h == nil || h.registry == nil {
 		return provider, targetBase, nil
 	}
@@ -1938,46 +1852,12 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 	return routeProvider, routeBase, nil
 }
 
-func (h *proxyHandler) resolveStreamedModelRoute(path, model string) (Provider, *url.URL, string) {
-	if provider, canonical, ok := h.registry.ResolveModel(model); ok {
-		return provider, provider.UpstreamURL(path), canonical
+func (h *proxyHandler) resolveStreamedModelRoute(path, model string) (ProviderDriver, *url.URL, string) {
+	provider, canonical := h.registry.resolveStreamedModel(h.pool, model)
+	if provider == nil {
+		return nil, nil, canonical
 	}
-	type route struct {
-		accountType AccountType
-		matches     func(string) bool
-		canonical   func(string) string
-	}
-	routes := []route{
-		{AccountTypeQwen, isQwenModel, strings.TrimSpace},
-		{AccountTypeClaude, isClaudeModel, claudeCanonicalModel},
-		{AccountTypeKimi, isKimiModel, func(model string) string { return model }},
-		{AccountTypeMinimax, isMinimaxModel, minimaxCanonicalModel},
-		{AccountTypeZAI, isZAIModel, zaiCanonicalModel},
-		{AccountTypeXiaomi, isXiaomiModel, xiaomiCanonicalModel},
-		{AccountTypeGrok, isGrokModel, grokCanonicalModel},
-		{AccountTypeAdverserial, isAdverserialModel, adverserialCanonicalModel},
-		{AccountTypeOpencodeGo, isOpencodeGoModel, opencodeGoStreamCanonicalModel},
-	}
-	for _, candidate := range routes {
-		discoveredModel := ""
-		discovered := false
-		if h.pool != nil {
-			discoveredModel, discovered = h.pool.discoveredCanonicalModel(candidate.accountType, model)
-		}
-		if !candidate.matches(model) && !discovered {
-			continue
-		}
-		provider := h.registry.ForType(candidate.accountType)
-		if provider == nil {
-			return nil, nil, model
-		}
-		canonical := candidate.canonical(model)
-		if discovered {
-			canonical = discoveredModel
-		}
-		return provider, provider.UpstreamURL(path), canonical
-	}
-	return nil, nil, model
+	return provider, provider.UpstreamURL(path), canonical
 }
 
 func readBodyPrefix(body io.Reader, limit int64) ([]byte, error) {
@@ -2842,7 +2722,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	// --- Format translation: detect mismatch between client format and provider format ---
 	sourceFormat := detectRequestFormat(r.URL.Path)
-	targetFormat := providerTargetFormat(accountType)
+	targetFormat := requestFormatForCodec(provider)
 	translateDir := wire.TranslateNone
 	var qwenResponses *qwenResponsesRequest
 	if accountType == AccountTypeQwen && isCodexResponsesPath(r.URL.Path) {
@@ -3248,7 +3128,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				provider = fallbackProvider
 				targetBase = fallbackProvider.UpstreamURL(fallbackPath)
 				accountType = fallbackMeta.Provider
-				targetFormat = providerTargetFormat(accountType)
+				targetFormat = requestFormatForCodec(provider)
 				requiredPlan = requiredPlanForRequest(accountType, r, requestedModel)
 				if attempts < attempt+h.pool.countByType(accountType) {
 					attempts = attempt + h.pool.countByType(accountType)
@@ -3582,7 +3462,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		acc.BackoffLevel = 0
 		acc.mu.Unlock()
 
-		provider.ParseUsageHeaders(acc, resp.Header)
+		if quota, ok := provider.(RateLimitHeaderParser); ok {
+			quota.ParseUsageHeaders(acc, resp.Header)
+		}
 		h.logRateLimitResponseHeaders(reqID, acc.Type, resp.Header)
 
 		// Snapshot rate limits from headers for use in SSE callback
@@ -4027,7 +3909,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					return
 				}
 
-				if providerTargetFormat(acc.Type) == wire.FormatClaude {
+				if requestFormatForCodec(provider) == wire.FormatClaude {
 					if claudeAccum == nil {
 						claudeAccum = ru
 					} else {
@@ -4222,7 +4104,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	reqID string,
 	userID string,
 	originID string,
-	provider Provider,
+	provider ProviderDriver,
 	targetBase *url.URL,
 ) {
 	start := time.Now()
@@ -4508,7 +4390,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	r *http.Request,
 	reqID string,
 	providerType AccountType,
-	provider Provider,
+	provider ProviderDriver,
 	targetBase *url.URL,
 	start time.Time,
 ) {
@@ -4878,7 +4760,7 @@ func logRelayFrame(logLabel, label string, msgType websocket.MessageType, data [
 	log.Printf("[ws-relay %s] %s: type=%v len=%d %s%s", logLabel, label, msgType, len(data), string(summary), suffix)
 }
 
-func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider Provider, targetBase *url.URL) {
+func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider ProviderDriver, targetBase *url.URL) {
 	if policyAdmissionFromRequest(r).hasTokenBudget() {
 		respondPolicyError(w, unboundedPolicyRequest())
 		return
@@ -5154,7 +5036,9 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		acc.mu.Unlock()
 	}
 
-	provider.ParseUsageHeaders(acc, resp.Header)
+	if quota, ok := provider.(RateLimitHeaderParser); ok {
+		quota.ParseUsageHeaders(acc, resp.Header)
+	}
 	h.logRateLimitResponseHeaders(reqID, acc.Type, resp.Header)
 
 	// Snapshot rate limits from headers for use in SSE callback
@@ -5255,7 +5139,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 				// Anthropic-wire providers split input (message_start) and output
 				// (message_delta); accumulate them into a single usage record.
-				if providerTargetFormat(acc.Type) == wire.FormatClaude {
+				if requestFormatForCodec(provider) == wire.FormatClaude {
 					if claudeAccum2 == nil {
 						claudeAccum2 = ru
 					} else {
@@ -6044,7 +5928,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider Provider, targetBase *url.URL, start time.Time) {
+func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider ProviderDriver, targetBase *url.URL, start time.Time) {
 	timeout := clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, nil)
 
 	ctx := r.Context()
@@ -6187,7 +6071,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	}
 }
 
-func (h *proxyHandler) tryOnce(ctx context.Context, in *http.Request, bodyBytes []byte, targetBase *url.URL, provider Provider, acc *Account, reqID string, translateDir wire.TranslateDirection, requestedModel, userID, originID, conversationID string) (*http.Response, *bytes.Buffer, bool, error) {
+func (h *proxyHandler) tryOnce(ctx context.Context, in *http.Request, bodyBytes []byte, targetBase *url.URL, provider ProviderDriver, acc *Account, reqID string, translateDir wire.TranslateDirection, requestedModel, userID, originID, conversationID string) (*http.Response, *bytes.Buffer, bool, error) {
 	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil {
 		return nil, nil, false, err
 	}
@@ -6229,7 +6113,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	in *http.Request,
 	bodyBytes []byte,
 	targetBase *url.URL,
-	provider Provider,
+	provider ProviderDriver,
 	acc *Account,
 	reqID string,
 	translateDir wire.TranslateDirection,
@@ -6717,7 +6601,7 @@ func applyStreamingResponseHeaders(header http.Header) {
 	}
 }
 
-func shouldSampleResponseBodyForRequest(provider Provider, acc *Account, path string, resp *http.Response, translateDir wire.TranslateDirection, conversationID string, logBodies bool) bool {
+func shouldSampleResponseBodyForRequest(provider Codec, acc *Account, path string, resp *http.Response, translateDir wire.TranslateDirection, conversationID string, logBodies bool) bool {
 	if provider == nil || resp == nil {
 		return true
 	}
@@ -6727,7 +6611,7 @@ func shouldSampleResponseBodyForRequest(provider Provider, acc *Account, path st
 	if !provider.DetectsSSE(path, resp.Header.Get("Content-Type")) {
 		return true
 	}
-	if provider.Type() == AccountTypeCodex {
+	if provider.WireFormat() == WireResponses {
 		if acc != nil && !acc.CyberAccess {
 			return true
 		}

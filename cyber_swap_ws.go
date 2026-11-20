@@ -21,7 +21,7 @@ import (
 type codexCyberSwapOptions struct {
 	ReqID                       string
 	RequestPath                 string
-	Provider                    Provider
+	Provider                    ProviderDriver
 	InitialAccount              *Account
 	InitialContextAccount       *Account
 	InitialOutURL               *url.URL

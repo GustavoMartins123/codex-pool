@@ -19,6 +19,10 @@ func NewMinimaxProvider(minimaxBase *url.URL) *MinimaxProvider {
 	return &MinimaxProvider{apiKeyUpstream: apiKeyUpstream{base: minimaxBase}}
 }
 
+func (p *MinimaxProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/v1/models")
+}
+
 func (p *MinimaxProvider) Type() AccountType {
 	return AccountTypeMinimax
 }

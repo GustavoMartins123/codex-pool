@@ -27,6 +27,8 @@ func NewGeminiProvider(geminiBase, geminiAPIBase *url.URL) *GeminiProvider {
 	}
 }
 
+func (*GeminiProvider) WireFormat() WireFormat { return WireGemini }
+
 func (p *GeminiProvider) Type() AccountType {
 	return AccountTypeGemini
 }

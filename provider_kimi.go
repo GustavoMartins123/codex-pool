@@ -21,6 +21,10 @@ func NewKimiProvider(kimiBase *url.URL) *KimiProvider {
 	return &KimiProvider{apiKeyUpstream: apiKeyUpstream{base: kimiBase}}
 }
 
+func (p *KimiProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/v1/models")
+}
+
 func (p *KimiProvider) Type() AccountType {
 	return AccountTypeKimi
 }

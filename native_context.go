@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -31,10 +32,15 @@ var (
 	errContextResult      = errors.New("invalid context tool result")
 )
 
+type nativeContextProvider interface {
+	UpstreamURL(path string) *url.URL
+	SetAuthHeaders(*http.Request, *Account)
+}
+
 type nativeContext struct {
 	store     *nativeContextStore
 	pool      *poolState
-	provider  Provider
+	provider  nativeContextProvider
 	transport http.RoundTripper
 	refresh   func(context.Context, *Account) error
 }

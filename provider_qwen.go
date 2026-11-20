@@ -21,7 +21,13 @@ type QwenProvider struct {
 }
 
 func NewQwenProvider(base *url.URL) *QwenProvider { return &QwenProvider{base: base} }
-func (p *QwenProvider) Type() AccountType         { return AccountTypeQwen }
+func (p *QwenProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/models"), "/models")
+}
+
+func (*QwenProvider) WireFormat() WireFormat { return WireOpenAI }
+
+func (p *QwenProvider) Type() AccountType { return AccountTypeQwen }
 
 type QwenAuthJSON struct {
 	APIKey    string                 `json:"api_key"`
@@ -129,9 +135,8 @@ func (p *QwenProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	return ru
 }
 
-func (p *QwenProvider) ParseUsageHeaders(*Account, http.Header) {}
-func (p *QwenProvider) UpstreamURL(string) *url.URL             { return p.base }
-func (p *QwenProvider) MatchesPath(string) bool                 { return false }
+func (p *QwenProvider) UpstreamURL(string) *url.URL { return p.base }
+func (p *QwenProvider) MatchesPath(string) bool     { return false }
 
 func (p *QwenProvider) NormalizePath(path string) string {
 	if isCodexResponsesPath(path) {
