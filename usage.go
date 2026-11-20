@@ -294,6 +294,18 @@ func parseTokenCountEvent(obj map[string]any) *RequestUsage {
 	return ru
 }
 
+type requestUsageRepository interface {
+	recordReliably(RequestUsage, float64) error
+}
+
+func persistRequestUsage(repository requestUsageRepository, usage RequestUsage, cost float64) bool {
+	if err := repository.recordReliably(usage, cost); err != nil {
+		log.Printf("analytics: durable usage write failed: %v", err)
+		return false
+	}
+	return true
+}
+
 func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*policyAdmission) {
 	if a == nil {
 		return
@@ -325,23 +337,22 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 	// analytics fact and raw request commit together.
 	var costUSD float64
 	if h.pricing != nil {
-		costUSD = h.pricing.calculateCost(ru)
+		price, err := h.pricing.calculateCost(ru)
+		if err != nil {
+			ru.PricingUnavailable = true
+			log.Printf("pricing: %v", err)
+		} else {
+			costUSD = price
+		}
 		if costUSD > 0 {
 			a.mu.Lock()
 			a.Totals.TotalCostEstimate += costUSD
 			a.mu.Unlock()
 		}
 	}
-	durable := false
-	if h.store != nil {
-		if err := h.store.recordReliably(ru, costUSD); err != nil {
-			log.Printf("analytics: durable usage write failed: %v", err)
-		} else {
-			durable = true
-			if h.duckAnalytics != nil {
-				h.duckAnalytics.Notify()
-			}
-		}
+	durable := h.store != nil && persistRequestUsage(h.store, ru, costUSD)
+	if durable && h.duckAnalytics != nil {
+		h.duckAnalytics.Notify()
 	}
 	var admission *policyAdmission
 	if len(admissions) > 0 {
@@ -354,12 +365,7 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 			log.Printf("passport policy: record token usage: %v", err)
 		}
 	}
-	// Keep the legacy SQLite store during migration only; DuckDB is canonical.
-	if h.analyticsStore != nil {
-		_ = h.analyticsStore.recordRequest(ru, costUSD)
-	}
-
-	if h != nil && h.cfg != nil && h.cfg.debug.Load() {
+	if h.cfg != nil && h.cfg.debug.Load() {
 		log.Printf("token_count: account=%s plan=%s user=%s origin=%s model=%s in=%d cached=%d out=%d reasoning=%d billable=%d cost=$%.6f primary=%.1f%% secondary=%.1f%%",
 			ru.AccountID, ru.PlanType, ru.UserID, ru.OriginID, ru.Model, ru.InputTokens, ru.CachedInputTokens, ru.OutputTokens, ru.ReasoningTokens, ru.BillableTokens,
 			costUSD, ru.PrimaryUsedPct*100, ru.SecondaryUsedPct*100)

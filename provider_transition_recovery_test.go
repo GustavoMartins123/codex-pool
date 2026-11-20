@@ -28,11 +28,13 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
 			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
+			registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
 			var sessions []string
 			h := &proxyHandler{
-				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
-				pool:     newPoolState([]*Account{account}, false),
-				registry: NewProviderRegistry(nil, nil, nil, NewAntigravityProvider(daily, prod)),
+				contextHandoff: newConversationHandoffStore(),
+				cfg:            &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
+				pool:           newPoolState([]*Account{account}, false),
+				registry:       NewProviderRegistry(nil, nil, nil, NewAntigravityProvider(daily, prod)),
 				transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					body, _ := io.ReadAll(req.Body)
 					var root map[string]any
@@ -48,7 +50,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
 				}),
 			}
-			store := h.getContextHandoff()
+			store := h.contextHandoff
 			conversationID := "recovery-conversation"
 			if _, _, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
 				t.Fatal(err)

@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,7 +75,6 @@ type config struct {
 	usageRefresh               time.Duration
 	maxAttempts                int
 	exhaustionWait             time.Duration // Hold requests while all accounts of a type are usage-exhausted (0 = fail fast)
-	exhaustionPreferWait       bool          // Prefer holding for the provider's window reset over switching to a fallback model
 	ipPrivacy                  bool          // Drop raw client IPs from persistence and traces (hash only)
 	originHashWindow           time.Duration // Rotate the origin hash salt per window (0 = stable forever)
 	originRetention            time.Duration // Retain origin metadata at most this long (0 = unlimited)
@@ -289,10 +287,6 @@ func buildConfig() *config {
 	} else if fileCfg.ExhaustionWaitSeconds > 0 {
 		cfg.exhaustionWait = time.Duration(fileCfg.ExhaustionWaitSeconds) * time.Second
 	}
-	// When the provider's usage window resets inside the exhaustion wait
-	// budget, hold the request for it instead of switching to a fallback
-	// model mid-conversation.
-	cfg.exhaustionPreferWait = parseBoolEnv("PROXY_EXHAUSTION_PREFER_WAIT", true)
 	// IP privacy: stop persisting raw client IPs (and wipe previously stored
 	// ones at startup). Origin analytics keep working on salted hashes.
 	// Enabled unless the operator explicitly opts out, because the roadmap
@@ -398,17 +392,6 @@ func buildConfig() *config {
 	return cfg
 }
 
-// analyticsDBPathFor resolves the legacy SQLite analytics database location:
-// next to the usage store (so a custom PROXY_DB_PATH keeps all databases in
-// one place), unless ANALYTICS_DB_PATH overrides it. The previous hardcoded
-// "./data/analytics.db" scattered databases when operators moved proxy.db.
-func analyticsDBPathFor(storePath string) string {
-	if v := os.Getenv("ANALYTICS_DB_PATH"); v != "" {
-		return v
-	}
-	return filepath.Join(filepath.Dir(storePath), "analytics.db")
-}
-
 func main() {
 	// Before anything can log: the pool has hundreds of log call sites and the
 	// stdlib logger offers no per-call redaction hook, so the output stream
@@ -480,9 +463,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("credential vault: %v", err)
 		}
-		if !store.Enabled() {
-			log.Fatal("credential vault: POOL_CREDENTIAL_KEY is required to verify credential files")
-		}
 		accountCredentialStore = store
 		stats, err := verifyCredentialFiles(cfg.poolDir)
 		if err != nil {
@@ -546,19 +526,6 @@ func main() {
 	pool.tierThreshold = cfg.tierThreshold
 	pool.observeAccountStates(time.Now())
 	pool.configureRouting(cfg.routing)
-	for name, providerConfig := range cfg.genericProviders {
-		for _, model := range providerConfig.Models {
-			publicID := name + "/" + strings.TrimSpace(model.ID)
-			if len(model.Fallbacks) > 0 {
-				pool.fallbackGraph.SetRoute(publicID, FallbackRule{
-					On429: append([]string(nil), model.Fallbacks...), OnUnavailable: append([]string(nil), model.Fallbacks...),
-				})
-			}
-			for _, source := range model.FallbackFor {
-				pool.fallbackGraph.AddCandidate(source, publicID)
-			}
-		}
-	}
 	codexCount := pool.countByType(AccountTypeCodex)
 	claudeCount := pool.countByType(AccountTypeClaude)
 	geminiCount := pool.countByType(AccountTypeGemini)
@@ -729,34 +696,20 @@ func main() {
 	}
 
 	// Initialize pricing data
-	pricing := newPricingData()
-	pricing.startPricingRefresh(shutdownCtx)
-
-	// Initialize canonical DuckDB analytics. SQLite remains during migration.
-	duckAnalytics, duckErr := newDuckAnalytics(duckPath, store.db)
-	if duckErr != nil {
-		log.Printf("warning: failed to open DuckDB analytics: %v (durable outbox will accumulate)", duckErr)
-	} else {
-		defer duckAnalytics.Close()
-		log.Printf("DuckDB analytics initialized")
-	}
-
-	// Initialize legacy analytics store (SQLite)
-	analyticsStore, err := newAnalyticsStore(analyticsDBPathFor(cfg.storePath))
+	pricing, err := newPricingData()
 	if err != nil {
-		log.Printf("warning: failed to open analytics store: %v (cost tracking disabled)", err)
-	} else {
-		defer analyticsStore.Close()
-		analyticsStore.enableAsyncWrites()
-		go func() {
-			if err := analyticsStore.rebuildPricingFromBoltDB(store, pricing); err != nil {
-				log.Printf("warning: failed to rebuild analytics pricing: %v", err)
-				analyticsStore.seedFromBoltDB(store, pricing)
-			}
-		}()
-		analyticsStore.startDailyRollup(shutdownCtx)
-		log.Printf("analytics store initialized at %s", analyticsDBPathFor(cfg.storePath))
+		log.Fatalf("initialize pricing: %v", err)
 	}
+
+	duckAnalytics, err := newDuckAnalytics(duckPath, store.db)
+	if err != nil {
+		log.Fatalf("open DuckDB analytics: %v", err)
+	}
+	defer duckAnalytics.Close()
+	if err := duckAnalytics.migrateSQLiteCosts(shutdownCtx, cfg.storePath, os.Getenv("ANALYTICS_DB_PATH"), time.Now()); err != nil {
+		log.Fatalf("migrate cost history: %v", err)
+	}
+	log.Print("DuckDB analytics initialized")
 
 	var aliasesCfg map[string]string
 	var effortByUser, effortByOrigin map[string]string
@@ -794,7 +747,7 @@ func main() {
 		passport:             passport,
 		registry:             registry,
 		store:                store,
-		analyticsStore:       analyticsStore,
+		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
 		pricing:              pricing,
 		aliases:              newModelAliases(aliasesCfg),
@@ -803,6 +756,9 @@ func main() {
 		accountLocks:         newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
+		contextHandoff:       newConversationHandoffStore(),
+		requestQueue:         newFairQueue(),
+		poolAuto:             newPoolAutoOrchestrator(nil),
 		experiments:          experiments,
 		trafficShadow:        trafficShadow,
 		recent:               newRecentErrors(50),
@@ -853,7 +809,7 @@ func main() {
 	h.startFederationPoller(shutdownCtx)
 
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
-	go h.probeClaudeAccountUUIDs()
+	go h.probeClaudeAccountUUIDs(shutdownCtx)
 
 	h.startConversationCleanup(shutdownCtx)
 
@@ -962,8 +918,7 @@ type proxyHandler struct {
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions
 
-	queueOnce    sync.Once
-	requestQueue *fairQueue
+	requestQueue         *fairQueue
 	cfg                  *config
 	transport            http.RoundTripper
 	antigravityTransport http.RoundTripper
@@ -973,9 +928,8 @@ type proxyHandler struct {
 	registry             *ProviderRegistry
 	store                *usageStore
 	nativeContext        *nativeContext
-	contextHandoffOnce   sync.Once
 	contextHandoff       *conversationHandoffStore
-	analyticsStore       *AnalyticsStore
+	analyticsStore       costAnalyticsRepository
 	duckAnalytics        *DuckAnalytics
 	pricing              *PricingData
 	aliases              *modelAliases
@@ -986,11 +940,8 @@ type proxyHandler struct {
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics
 	routeTraces          *routeTraceStore
-	routeTracesOnce      sync.Once
 	experiments          *experimentTracker
 	trafficShadow        *trafficShadowRuntime
-	circuitBreakers      *routing.CircuitBreakerManager
-	fallbackGraph        *FallbackGraph
 	poolAuto             *PoolAutoOrchestrator
 	recent               *recentErrors
 	inflight             int64
@@ -998,9 +949,7 @@ type proxyHandler struct {
 	pacer                *requestPacer // Per-session request pacing
 	webSocketRegistryMu  sync.Mutex
 	webSockets           *webSocketRegistry
-	runnerBrokerOnce     sync.Once
 	runnerBroker         *sessionBroker
-	runnerBrokerErr      error
 	eventHeartbeat       time.Duration // SSE re-auth interval override for tests; zero uses 15s
 	// Large JSON rewrites temporarily hold several copies of a request. This
 	// deliberately serializes only those requests on a small production host.
@@ -1031,54 +980,6 @@ type proxyHandler struct {
 type refreshCall struct {
 	done chan struct{}
 	err  error
-}
-
-func (h *proxyHandler) getRouteTraces() *routeTraceStore {
-	if h == nil {
-		return nil
-	}
-	h.routeTracesOnce.Do(func() {
-		if h.routeTraces == nil {
-			h.routeTraces = newRouteTraceStore(2048)
-		}
-	})
-	return h.routeTraces
-}
-
-func (h *proxyHandler) getCircuitBreakers() *routing.CircuitBreakerManager {
-	if h == nil {
-		return nil
-	}
-	if h.pool != nil && h.pool.circuitBreakers != nil {
-		return h.pool.circuitBreakers
-	}
-	if h.circuitBreakers == nil {
-		h.circuitBreakers = routing.NewCircuitBreakerManager()
-	}
-	return h.circuitBreakers
-}
-
-func (h *proxyHandler) getFallbackGraph() *FallbackGraph {
-	if h == nil {
-		return nil
-	}
-	if h.pool != nil && h.pool.fallbackGraph != nil {
-		return h.pool.fallbackGraph
-	}
-	if h.fallbackGraph == nil {
-		h.fallbackGraph = newFallbackGraph()
-	}
-	return h.fallbackGraph
-}
-
-func (h *proxyHandler) getPoolAuto() *PoolAutoOrchestrator {
-	if h == nil {
-		return nil
-	}
-	if h.poolAuto == nil {
-		h.poolAuto = newPoolAutoOrchestrator(nil)
-	}
-	return h.poolAuto
 }
 
 const largeReplayBodyThreshold = 8 * 1024 * 1024
@@ -1120,12 +1021,7 @@ func (h *proxyHandler) pickUpstream(path string, headers http.Header) (ProviderD
 		}
 	}
 
-	// Fall back to path-based routing
 	provider := h.registry.ForPath(path)
-	if provider == nil {
-		// Fallback to Codex provider
-		provider = h.registry.ForType(AccountTypeCodex)
-	}
 	if provider == nil {
 		return nil, nil
 	}
@@ -2565,13 +2461,17 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	var autoDecisionInfo *AutoDecision
 	if isPoolAutoModel(requestedModel) {
+		if h.poolAuto == nil {
+			respondJSONError(w, http.StatusServiceUnavailable, "pool/auto is not configured")
+			return
+		}
 		profile := parsePoolAutoProfile(requestedModel)
 		reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
 		var conversation *ConversationState
-		if state, ok := h.getContextHandoff().State(conversationScopedKey(userID, conversationID)); ok {
+		if state, ok := h.contextHandoff.State(conversationScopedKey(userID, conversationID)); ok {
 			conversation = &state
 		}
-		dec, err := h.getPoolAuto().OrchestrateWithTransition(profile, reqCaps, conversationID, h.pool, h.getCircuitBreakers(), h.pricing, h.metrics, conversation)
+		dec, err := h.poolAuto.OrchestrateWithTransition(profile, reqCaps, conversationID, h.pool, h.pool.circuitBreakers, h.pricing, h.metrics, conversation)
 		if err != nil {
 			http.Error(w, "pool/auto orchestration error: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -2688,8 +2588,6 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		setConversationHeaders(r, conversationID, userID)
 	}
 
-	transitionSourceBody := append([]byte(nil), bodyBytes...)
-	transitionSourcePath := r.URL.Path
 	bodyBytes, err = h.prepareProviderContextHandoff(w, userID, conversationID, accountType, r.URL.Path, bodyBytes)
 	if err != nil {
 		http.Error(w, "context handoff error: "+err.Error(), http.StatusBadRequest)
@@ -2938,11 +2836,6 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	exhaustionRetries := 0
 	var lastErr error
 	var lastStatus int
-	var fallbackApplied bool
-	var fallbackFromModel string
-	var fallbackReasonApplied string
-	fallbackVisited := map[string]bool{strings.ToLower(requestedModel): true}
-	fallbackTransitions := 0
 	cyberAccessRetry := false
 	requiredPlan := requiredPlanForRequest(accountType, r, requestedModel)
 
@@ -3018,114 +2911,6 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				respondCapacityError(w, "provider_quota_exhausted", reset)
 				return
 			}
-			// Prefer holding the request for the original provider when its
-			// usage window resets within the exhaustion wait budget, instead
-			// of switching to a fallback model mid-conversation.
-			if h.cfg.exhaustionWait > 0 && h.cfg.exhaustionPreferWait && exhaustionRetries < 3 &&
-				h.usageResetWithinRequestBudget(ctx, accountType, waitExclude) &&
-				h.waitForUsageReset(ctx, accountType, reqID, waitExclude) {
-				exhaustionRetries++
-				exclude = map[string]bool{}
-				if attempt == attempts {
-					attempts++
-				}
-				continue
-			}
-			reqCaps := extractRequestCapabilities(r.URL.Path, bodyBytes, r.Header)
-			trigger := TriggerUnavailable
-			if lastStatus == http.StatusTooManyRequests {
-				trigger = Trigger429
-			}
-			var conversation *ConversationState
-			if state, ok := h.getContextHandoff().State(conversationScopedKey(userID, conversationID)); ok {
-				conversation = &state
-			}
-			fallbackModel, fallbackReason, hasFallback := "", "", false
-			if qwenResponses == nil && accountType != AccountTypeQwen && h.pool.accountAuthority == nil && fallbackTransitions < 4 {
-				fallbackModel, fallbackReason, hasFallback = h.getFallbackGraph().ResolveFallbackWithTransitionExcluding(requestedModel, trigger, reqCaps, h.pool, h.getCircuitBreakers(), conversation, fallbackVisited)
-			}
-			if hasFallback {
-				fallbackMeta, _ := lookupModelMetadata(fallbackModel, h.pool)
-				if !h.enforcePolicy(w, admission, func() error {
-					if err := admission.CheckModel(fallbackModel); err != nil {
-						return err
-					}
-					return admission.CheckProvider(fallbackMeta.Provider)
-				}) {
-					return
-				}
-				if h.cfg.debug.Load() {
-					log.Printf("[%s] triggering %s fallback: %s -> %s", reqID, trigger, requestedModel, fallbackModel)
-				}
-				fallbackBody := rewriteModelInBody(transitionSourceBody, fallbackModel)
-				if fallbackBody == nil {
-					http.Error(w, "fallback model could not be written to request", http.StatusBadRequest)
-					return
-				}
-				fallbackBody, err = h.prepareProviderContextHandoff(w, userID, conversationID, fallbackMeta.Provider, transitionSourcePath, fallbackBody)
-				if err != nil {
-					http.Error(w, "fallback context handoff error: "+err.Error(), http.StatusBadRequest)
-					return
-				}
-				if fallbackMeta.Provider == AccountTypeAntigravity {
-					fallbackRequest := r.Clone(r.Context())
-					fallbackRequest.URL.Path = transitionSourcePath
-					if h.handleAntigravityProxy(w, fallbackRequest, fallbackBody, fallbackModel, conversationID, userID, originID, originIP, reqID, routingProfile) {
-						return
-					}
-					// handleAntigravityProxy declines before writing anything when the
-					// fallback model is not routable for antigravity. Mark the model
-					// as a dead end and keep looping so the request can still wait
-					// for the original provider's cooldown or usage window reset
-					// instead of failing fast with 503.
-					log.Printf("[%s] antigravity fallback declined for model %s", reqID, fallbackModel)
-					h.recent.add(fmt.Sprintf("antigravity fallback declined for model %s", fallbackModel))
-					fallbackVisited[strings.ToLower(fallbackModel)] = true
-					fallbackTransitions++
-					if attempt == attempts {
-						attempts++
-					}
-					continue
-				}
-				fallbackProvider := h.registry.ForType(fallbackMeta.Provider)
-				if fallbackProvider == nil {
-					// Same treatment: a misconfigured fallback provider must not
-					// strand the request when the original provider could recover.
-					log.Printf("[%s] fallback provider %s is not configured", reqID, fallbackMeta.Provider)
-					h.recent.add(fmt.Sprintf("fallback provider %s is not configured", fallbackMeta.Provider))
-					fallbackVisited[strings.ToLower(fallbackModel)] = true
-					fallbackTransitions++
-					if attempt == attempts {
-						attempts++
-					}
-					continue
-				}
-				fallbackBody, fallbackPath, fallbackDir, translateErr := translateFallbackPayload(fallbackBody, transitionSourcePath, fallbackMeta.Provider)
-				if translateErr != nil {
-					http.Error(w, translateErr.Error(), http.StatusBadRequest)
-					return
-				}
-				fallbackFromModel = requestedModel
-				requestedModel = fallbackModel
-				fallbackVisited[strings.ToLower(fallbackModel)] = true
-				fallbackTransitions++
-				bodyBytes = fallbackBody
-				r.URL.Path = fallbackPath
-				translateDir = fallbackDir
-				provider = fallbackProvider
-				targetBase = fallbackProvider.UpstreamURL(fallbackPath)
-				accountType = fallbackMeta.Provider
-				targetFormat = requestFormatForCodec(provider)
-				requiredPlan = requiredPlanForRequest(accountType, r, requestedModel)
-				if attempts < attempt+h.pool.countByType(accountType) {
-					attempts = attempt + h.pool.countByType(accountType)
-				}
-				exclude = map[string]bool{}
-				fallbackApplied = true
-				fallbackReasonApplied = fallbackReason
-				continue
-			}
-
 			// All accounts excluded or rate-limited. If there are rate-limited
 			// accounts, wait for the shortest cooldown instead of 503 immediately.
 			if cooldown := h.pool.nearestCooldown(accountType, waitExclude); cooldown > 0 {
@@ -3182,10 +2967,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			selection.Reasons = append(autoDecisionInfo.Explanation, selection.Reasons...)
 			selection.Score = autoDecisionInfo.Score
 		}
-		if fallbackApplied {
-			selection.Reasons = append(selection.Reasons, fallbackReasonApplied)
-		}
-		circuitState := string(h.getCircuitBreakers().State(routing.ProviderKey(string(accountType))))
+		circuitState := string(h.pool.circuitBreakers.State(routing.ProviderKey(string(accountType))))
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Transition:     h.transitionForTrace(userID, conversationID, accountType, w.Header()),
@@ -3195,8 +2977,6 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			Score:          selection.Score,
 			Reasons:        selection.Reasons,
 			Alternatives:   selection.Alternatives,
-			FallbackFrom:   fallbackFromModel,
-			FallbackReason: fallbackReasonApplied,
 			CircuitState:   circuitState,
 			AccountID:      acc.ID,
 			ScoreBreakdown: selection.Breakdown,
@@ -3208,11 +2988,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			trace.Experiment = experiment.Name
 			trace.Variant = experiment.Variant
 		}
-		h.getRouteTraces().Record(trace)
+		h.routeTraces.Record(trace)
 		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, selection.Policy, primaryReason, attempt, reqID)
-		if fallbackApplied {
-			w.Header().Set("X-Pool-Fallback", fmt.Sprintf("%s->%s", fallbackFromModel, requestedModel))
-		}
 		w.Header().Set("X-Pool-Circuit-State", circuitState)
 
 		if err := h.checkAccountUse(userID, acc); err != nil {
@@ -3238,7 +3015,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if resp != nil {
 			trace.StatusCode = resp.StatusCode
 			if trace.Transition != nil {
-				h.getContextHandoff().MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, "", false)
+				h.contextHandoff.MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, "", false)
 				trace.Transition.StatusCode = resp.StatusCode
 			}
 			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, time.Now())
@@ -3248,7 +3025,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if err != nil {
 			trace.Error = err.Error()
 		}
-		h.getRouteTraces().Record(trace)
+		h.routeTraces.Record(trace)
 		if resp != nil {
 			h.metrics.recordPerformance(string(accountType), requestedModel, float64(reqDuration.Milliseconds()), float64(reqDuration.Milliseconds())*0.4, float64(reqDuration.Milliseconds())*0.2, 0, resp.StatusCode, attempt-1, false)
 		}
@@ -3259,7 +3036,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if ctx.Err() != nil || isContextError(err) {
 				errClass = ErrorClassNone
 			}
-			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass.Retryable())
+			h.pool.circuitBreakers.RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass.Retryable())
 			if isContextError(err) {
 				writeContextError(w, err)
 				return
@@ -3284,7 +3061,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		errClass := classifyStatus(resp.StatusCode)
 		recordClass := errClass
 		if errClass == ErrorClassNone {
-			h.getCircuitBreakers().RecordSuccess(string(accountType), acc.ID, requestedModel, reqCaps.Modalities)
+			h.pool.circuitBreakers.RecordSuccess(string(accountType), acc.ID, requestedModel, reqCaps.Modalities)
 		}
 		if errClass != ErrorClassNone {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
@@ -3299,7 +3076,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 			if recordClass != ErrorClassNone {
-				h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass.Retryable())
+				h.pool.circuitBreakers.RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass.Retryable())
 			}
 			if resp.StatusCode == http.StatusTooManyRequests {
 				providerErr := classifyAntigravityError(resp.StatusCode, errBody)
@@ -4040,7 +3817,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			if conversationID != "" && sampleBuf != nil && sampleBuf.Len() > 0 {
 				if text := extractAssistantTextFromResponseSample(sampleBuf.Bytes()); text != "" {
-					h.getContextHandoff().RecordAssistantText(conversationScopedKey(userID, conversationID), accountType, text)
+					h.contextHandoff.RecordAssistantText(conversationScopedKey(userID, conversationID), accountType, text)
 				}
 			}
 			if conversationID == "" {
@@ -4156,7 +3933,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		return
 	}
 
-	if err := h.checkWebSocketGrant(userID, acc); err != nil { respondPolicyError(w, err); return }
+	if err := h.checkWebSocketGrant(userID, acc); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	releaseAccount, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), acc)
 	if err != nil {
 		respondPolicyError(w, err)
@@ -4791,7 +4571,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil { respondPolicyError(w, err); return }
+	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	prepared, releaseAccount, err := h.acquireGovernedAccount(r, userID, contextSession, acc, requestedModel)
 	if err != nil {
 		respondPolicyError(w, err)
@@ -4941,7 +4724,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	captureCodexResponseState(acc, resp, reqID)
 	if err != nil {
 		var blocked *policyError
-		if errors.As(err, &blocked) { respondPolicyError(w, err); return }
+		if errors.As(err, &blocked) {
+			respondPolicyError(w, err)
+			return
+		}
 		acc.mu.Lock()
 		acc.Penalty += 0.2
 		acc.mu.Unlock()
@@ -5596,10 +5382,6 @@ func isClaudePoolToken(secret, authHeader string) (bool, string) {
 func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, start time.Time) {
 	h.metrics.incPassport("passthrough_requests", string(providerType))
 	provider := h.registry.ForType(providerType)
-	if provider == nil {
-		// Fallback: try to detect from path and headers
-		provider, _ = h.pickUpstream(r.URL.Path, r.Header)
-	}
 	if provider == nil {
 		http.Error(w, "unknown provider", http.StatusBadRequest)
 		return

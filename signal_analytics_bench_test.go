@@ -69,15 +69,6 @@ func BenchmarkSignalAnalytics(b *testing.B) {
 func newSignalBenchmark(b *testing.B, accountCount int) (*proxyHandler, time.Time) {
 	b.Helper()
 	dir := b.TempDir()
-	analytics, err := newAnalyticsStore(filepath.Join(dir, "analytics.db"))
-	if err != nil {
-		b.Fatal(err)
-	}
-	b.Cleanup(func() {
-		if err := analytics.Close(); err != nil {
-			b.Error(err)
-		}
-	})
 	usage, err := newUsageStore(filepath.Join(dir, "usage.db"), 90)
 	if err != nil {
 		b.Fatal(err)
@@ -87,44 +78,46 @@ func newSignalBenchmark(b *testing.B, accountCount int) (*proxyHandler, time.Tim
 			b.Error(err)
 		}
 	})
+	analytics := testDuckCosts(b, usage)
 	now := time.Now().UTC()
-	tx, err := analytics.db.Begin()
-	if err != nil {
+	if _, err := analytics.db.Exec(`
+		INSERT INTO legacy_cost_days
+		WITH fixture AS (
+			SELECT CAST(? AS DATE) - CAST(day_offset AS INTEGER) AS day,
+			       printf('account-%03d', account_index) AS account_id,
+			       printf('model-%d', model_index) AS model
+			FROM range(?) AS accounts(account_index), range(1, 366) AS days(day_offset), range(3) AS models(model_index)
+		)
+		SELECT day, account_id, 'codex', model, CAST(day AS TIMESTAMP) AT TIME ZONE 'UTC',
+		       100000, 0, 0, 20000, 0, 100, 0.01 FROM fixture
+	`, now.Format(time.DateOnly), accountCount); err != nil {
 		b.Fatal(err)
 	}
-	defer tx.Rollback()
-	daily, err := tx.Prepare(`INSERT INTO daily_costs
-		(date, account_id, account_type, model, input_tokens, output_tokens, request_count, cost_usd)
-		VALUES (?, ?, ?, ?, 100000, 20000, 100, 0.01)`)
-	if err != nil {
+	if _, err := analytics.db.Exec(`
+		INSERT INTO usage_events (
+			event_id, proxy_request_id, usage_sequence, attempt_number, observed_at,
+			principal_id, client_credential_id, account_id, account_type, model_normalized,
+			normalization_version, input_tokens, cache_read_tokens, cache_creation_tokens,
+			output_tokens, reasoning_tokens, billable_tokens, api_equivalent_cost_usd,
+			pricing_version, usage_completeness, source, source_grain
+		)
+		WITH fixture AS (
+			SELECT printf('bench-%d-%d', account_index, request_index) AS event_id,
+			       printf('account-%03d', account_index) AS account_id,
+			       printf('model-%d', request_index % 3) AS model
+			FROM range(?) AS accounts(account_index), range(100) AS requests(request_index)
+		)
+		SELECT event_id, event_id, 0, 0, ?, '', '', account_id, 'codex', model,
+		       'v1', 1000, 0, 0, 200, 0, 1200, 0.01, 'fixture', 'complete', 'live', 'request'
+		FROM fixture
+	`, accountCount, now); err != nil {
 		b.Fatal(err)
 	}
-	defer daily.Close()
-	live, err := tx.Prepare(`INSERT INTO request_costs
-		(timestamp, account_id, account_type, model, input_tokens, output_tokens, cost_usd)
-		VALUES (?, ?, ?, ?, 1000, 200, 0.01)`)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer live.Close()
 	accounts := make([]*Account, 0, accountCount*4/5)
 	for i := range accountCount {
 		id := fmt.Sprintf("account-%03d", i)
 		if i < accountCount*4/5 {
 			accounts = append(accounts, &Account{ID: id, Type: AccountTypeCodex, PlanType: "pro"})
-		}
-		for day := 1; day <= 365; day++ {
-			date := now.AddDate(0, 0, -day).Format("2006-01-02")
-			for model := range 3 {
-				if _, err := daily.Exec(date, id, string(AccountTypeCodex), fmt.Sprintf("model-%d", model)); err != nil {
-					b.Fatal(err)
-				}
-			}
-		}
-		for request := range 100 {
-			if _, err := live.Exec(now.Format(time.RFC3339), id, string(AccountTypeCodex), fmt.Sprintf("model-%d", request%3)); err != nil {
-				b.Fatal(err)
-			}
 		}
 		for week := range 6 {
 			if err := usage.record(RequestUsage{
@@ -143,7 +136,7 @@ func newSignalBenchmark(b *testing.B, accountCount int) (*proxyHandler, time.Tim
 			b.Fatal(err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := analytics.drain(accountCount*6 + 24*14); err != nil {
 		b.Fatal(err)
 	}
 	return &proxyHandler{pool: newPoolState(accounts, false), store: usage, analyticsStore: analytics}, now

@@ -590,7 +590,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 		if isTerminalCodexWebSocketEvent(data) && turn.conversationID != "" && s.h != nil {
 			// Retention is best-effort; a retention failure must never
 			// kill the live relay.
-			_ = s.h.getContextHandoff().RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
+			_ = s.h.contextHandoff.RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
 	filtered, drop, changed := filterHostedMCPResponseJSON(data)
@@ -699,7 +699,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 		return []byte{}, nil
 	}
 	if s.h != nil && conversationID != "" {
-		rewritten, result, err := s.h.getContextHandoff().Prepare(
+		rewritten, result, err := s.h.contextHandoff.Prepare(
 			conversationScopedKey(s.owner, conversationID),
 			AccountTypeCodex,
 			s.opts.RequestPath,

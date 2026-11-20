@@ -1536,7 +1536,7 @@ func (h *proxyHandler) transitionForTrace(owner, conversationID string, target A
 		return nil
 	}
 	key := conversationScopedKey(owner, conversationID)
-	state, ok := h.getContextHandoff().State(key)
+	state, ok := h.contextHandoff.State(key)
 	if !ok || state.ActiveProvider != target {
 		return nil
 	}
@@ -1548,7 +1548,7 @@ func (h *proxyHandler) transitionForTrace(owner, conversationID string, target A
 			return nil
 		}
 	}
-	events := h.getContextHandoff().TransitionDiagnostics(key)
+	events := h.contextHandoff.TransitionDiagnostics(key)
 	if len(events) == 0 || events[len(events)-1].Epoch != state.TransitionEpoch {
 		return nil
 	}
@@ -1852,16 +1852,6 @@ func extractAssistantTextFromResponseSample(sample []byte) string {
 	return strings.TrimSpace(completed)
 }
 
-func (h *proxyHandler) getContextHandoff() *conversationHandoffStore {
-	if h == nil {
-		return nil
-	}
-	h.contextHandoffOnce.Do(func() {
-		h.contextHandoff = newConversationHandoffStore()
-	})
-	return h.contextHandoff
-}
-
 func compactAntigravityRequestBody(path string, body []byte) ([]byte, bool, error) {
 	return compactAntigravityRequestBodyWithRecentTokens(path, body, antigravityNormalRecentTokens)
 }
@@ -1950,9 +1940,12 @@ func (h *proxyHandler) prepareProviderContextHandoff(
 	path string,
 	body []byte,
 ) ([]byte, error) {
-	store := h.getContextHandoff()
+	store := h.contextHandoff
 	if store == nil {
-		return body, nil
+		if conversationID == "" {
+			return body, nil
+		}
+		return nil, fmt.Errorf("conversation handoff store is not initialized")
 	}
 	rewritten, result, err := store.Prepare(conversationScopedKey(owner, conversationID), target, path, body)
 	if err != nil {

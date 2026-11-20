@@ -129,10 +129,10 @@ func TestTrafficShadowPublicHeaderDoesNotChangeConversationNamespace(t *testing.
 		t.Fatalf("public header changed routing: %d %s", w.Code, w.Body.String())
 	}
 	owner := testPoolIdentity(t, h, "user")
-	if _, ok := h.getContextHandoff().State(conversationScopedKey(owner, "real-conversation")); !ok {
+	if _, ok := h.contextHandoff.State(conversationScopedKey(owner, "real-conversation")); !ok {
 		t.Fatal("real conversation state missing")
 	}
-	if _, ok := h.getContextHandoff().State(conversationScopedKey(owner, "shadow:forged-by-client\x00real-conversation")); ok {
+	if _, ok := h.contextHandoff.State(conversationScopedKey(owner, "shadow:forged-by-client\x00real-conversation")); ok {
 		t.Fatal("public header created internal shadow state")
 	}
 }

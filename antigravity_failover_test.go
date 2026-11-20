@@ -36,6 +36,9 @@ func newAntigravityFailoverHarness(t *testing.T, statuses map[string]int) (*anti
 			Usage:     UsageSnapshot{PrimaryUsedPercent: 0.1 * float64(len(accounts)), PrimaryUsed: 0.1 * float64(len(accounts))},
 		})
 	}
+	for _, account := range accounts {
+		registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+	}
 	harness := &antigravityFailoverHarness{}
 	harness.handler = &proxyHandler{
 		cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},

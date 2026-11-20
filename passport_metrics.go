@@ -37,8 +37,11 @@ func fileBytes(path string) int64 {
 }
 
 func (h *proxyHandler) serveOperationalMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.requestQueue == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "request queue is not initialized")
+		return
+	}
 	h.metrics.serve(w, r)
-	h.queueOnce.Do(func() { h.requestQueue = newFairQueue() })
 	h.requestQueue.mu.Lock()
 	active, waiting := h.requestQueue.active, h.requestQueue.waiting
 	h.requestQueue.mu.Unlock()

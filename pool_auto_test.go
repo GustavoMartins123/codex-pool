@@ -16,7 +16,7 @@ func TestPoolAutoOrchestrationProfiles(t *testing.T) {
 	}, false)
 
 	cb := routing.NewCircuitBreakerManager()
-	pricing := newPricingData()
+	pricing := testPricingData(t)
 
 	capsText := RequestCapabilities{
 		ContextTokens: 1500,
@@ -79,7 +79,7 @@ func TestPoolAutoGateRejectsIncompatibleModels(t *testing.T) {
 	}, false)
 
 	cb := routing.NewCircuitBreakerManager()
-	pricing := newPricingData()
+	pricing := testPricingData(t)
 
 	// Multimodal image request
 	capsImage := RequestCapabilities{
@@ -116,7 +116,7 @@ func TestPoolAutoConversationAffinity(t *testing.T) {
 	pool.pin(convID, claudeAccount.ID)
 
 	cb := routing.NewCircuitBreakerManager()
-	pricing := newPricingData()
+	pricing := testPricingData(t)
 
 	caps := RequestCapabilities{ContextTokens: 1000, Modalities: []string{"text"}}
 

@@ -376,20 +376,13 @@ func accountHasDaybreak(models map[string]DiscoveredModel) bool {
 	return false
 }
 
-func (h *proxyHandler) startProviderModelPoller(ctx ...context.Context) {
-	if h == nil {
-		return
-	}
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
+func (h *proxyHandler) startProviderModelPoller(ctx context.Context) {
 	syncAll := func() {
 		for _, account := range h.pool.allAccounts() {
 			if _, ok := providerModelsURL(h.registry.ForType(account.Type)); !ok {
 				continue
 			}
-			checkCtx, cancel := context.WithTimeout(c, 30*time.Second)
+			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			if h.needsRefresh(account) {
 				_ = h.refreshAccount(checkCtx, account)
 			}
@@ -403,7 +396,7 @@ func (h *proxyHandler) startProviderModelPoller(ctx ...context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-c.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				syncAll()

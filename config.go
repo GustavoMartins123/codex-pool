@@ -241,7 +241,7 @@ func validateConfigEnvironment() error {
 			}
 		}
 	}
-	for _, key := range []string{"PROXY_DEBUG", "PROXY_DISABLE_REFRESH", "PROXY_LOG_BODIES", "PROXY_CLAUDE_TRACE_INCLUDE_SECRETS", "PROXY_EXHAUSTION_PREFER_WAIT", "PROXY_IP_PRIVACY", "WEBSOCKET_COMPRESSION", "PROXY_TRUST_SAME_SUBNET"} {
+	for _, key := range []string{"PROXY_DEBUG", "PROXY_DISABLE_REFRESH", "PROXY_LOG_BODIES", "PROXY_CLAUDE_TRACE_INCLUDE_SECRETS", "PROXY_IP_PRIVACY", "WEBSOCKET_COMPRESSION", "PROXY_TRUST_SAME_SUBNET"} {
 		if raw, ok := os.LookupEnv(key); ok {
 			if _, err := configBoolValue(raw); err != nil {
 				return fmt.Errorf("%s: %w", key, err)

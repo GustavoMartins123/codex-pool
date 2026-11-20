@@ -370,7 +370,11 @@ func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	traces := h.getRouteTraces()
+	traces := h.routeTraces
+	if traces == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "route trace store is not initialized")
+		return
+	}
 	trace, ok := traces.Get(reqID)
 	if !ok {
 		respondJSONError(w, http.StatusNotFound, "route trace not found")

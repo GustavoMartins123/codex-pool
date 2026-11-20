@@ -196,16 +196,12 @@ func isPersistedCodexCookie(name string) bool {
 	}
 }
 
-func startCodexFingerprintUpdater(ctx ...context.Context) {
+func startCodexFingerprintUpdater(ctx context.Context) {
 	if getenv("CODEX_FINGERPRINT_AUTO_UPDATE", "1") == "0" {
 		return
 	}
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
 	go func() {
-		checkCodexFingerprintUpdate()
+		checkCodexFingerprintUpdate(ctx)
 		period := codexFingerprintPollPeriod
 		if raw := strings.TrimSpace(os.Getenv("CODEX_FINGERPRINT_UPDATE_SECONDS")); raw != "" {
 			if n, err := parseInt64(raw); err == nil && n > 0 {
@@ -216,19 +212,24 @@ func startCodexFingerprintUpdater(ctx ...context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-c.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				checkCodexFingerprintUpdate()
+				checkCodexFingerprintUpdate(ctx)
 			}
 		}
 	}()
 }
 
-func checkCodexFingerprintUpdate() {
+func checkCodexFingerprintUpdate(ctx context.Context) {
 	url := getenv("CODEX_APPCAST_URL", codexAppcastURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		log.Printf("codex fingerprint update check failed: %v", err)
+		return
+	}
 	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("codex fingerprint update check failed: %v", err)
 		return

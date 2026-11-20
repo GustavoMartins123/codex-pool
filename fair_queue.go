@@ -129,7 +129,9 @@ func (q *fairQueue) Acquire(ctx context.Context, owner string) (func(), error) {
 }
 
 func (h *proxyHandler) admitQueuedRequest(r *http.Request, principalID string) (func(), error) {
-	h.queueOnce.Do(func() { h.requestQueue = newFairQueue() })
+	if h.requestQueue == nil {
+		return nil, &policyError{Status: http.StatusServiceUnavailable, Code: "request_queue_unavailable", Message: "request queue is not initialized"}
+	}
 	release, err := h.requestQueue.Acquire(r.Context(), principalID)
 	if err != nil {
 		if err == context.Canceled || err == context.DeadlineExceeded {

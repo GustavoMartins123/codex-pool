@@ -22,11 +22,12 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 
 	// The same account ID is used for the model snapshot and the pool account
 	// so the scheduler resolves models through the real registry association
-	// (Supports/DiscoveryAvailability), not the cold-start fallback.
+	// (Supports/DiscoveryAvailability).
 	const accountID = "agy-e2e-account"
 	antigravityModels.Reset()
 	antigravityModels.ReplaceAccount(accountID, AntigravityAccountSnapshot{
-		FetchedAt: time.Now(),
+		FetchedAt:  time.Now(),
+		Deprecated: map[string]string{"gemini-3.1-pro-high": "gemini-pro-agent"},
 		Models: map[string]AntigravityModelInfo{
 			"gemini-3.8-flash-high": {ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash (High)"},
 			"gemini-pro-agent":      {ID: "gemini-pro-agent", DisplayName: "Gemini 3.1 Pro (High)"},

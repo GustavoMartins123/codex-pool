@@ -14,18 +14,14 @@ import (
 	"codex-pool-proxy/internal/credstore"
 )
 
-// accountCredentialStore encrypts upstream credential files
-// (pool/<provider>/<account>.json) at rest when a master key is configured.
-// Defaults to plaintext for compatibility with existing pools.
-var accountCredentialStore credstore.Store = credstore.PlainStore{}
+// accountCredentialStore is configured before any credential file is opened.
+var accountCredentialStore credstore.Store
 
-// buildCredentialStore reads POOL_CREDENTIAL_KEY (plus the _PREVIOUS
-// rotation window) from the environment. Returns the plain store when no key
-// is configured.
-func buildCredentialStore() (credstore.Store, error) {
+// buildCredentialStore requires a master key and accepts an explicitly configured rotation key.
+func buildCredentialStore() (*credstore.KeyedStore, error) {
 	raw := strings.TrimSpace(os.Getenv("POOL_CREDENTIAL_KEY"))
 	if raw == "" {
-		return credstore.PlainStore{}, nil
+		return nil, fmt.Errorf("POOL_CREDENTIAL_KEY is required")
 	}
 	version := 1
 	if v := strings.TrimSpace(os.Getenv("POOL_CREDENTIAL_KEY_VERSION")); v != "" {
@@ -129,6 +125,9 @@ func writeFileAtomic(path string, payload []byte) error {
 // credential file must go through this (or atomicWriteJSON) so the vault
 // cannot be bypassed by a handler that forgets to encode.
 func writeAccountFile(path string, plaintext []byte) error {
+	if accountCredentialStore == nil {
+		return fmt.Errorf("credential store is not initialized")
+	}
 	payload, err := accountCredentialStore.Encode(plaintext)
 	if err != nil {
 		return fmt.Errorf("encode credential file %s: %w", path, err)
@@ -141,8 +140,8 @@ func writeAccountFile(path string, plaintext []byte) error {
 // the previous key get re-encrypted. Returns files encrypted and rotated.
 func migrateCredentialFiles(poolDir string) (int, int, error) {
 	keyed, ok := accountCredentialStore.(*credstore.KeyedStore)
-	if !ok {
-		return 0, 0, nil
+	if !ok || keyed == nil {
+		return 0, 0, fmt.Errorf("credential migration requires a keyed store")
 	}
 	encrypted, rotated := 0, 0
 	err := filepath.Walk(poolDir, func(path string, info os.FileInfo, err error) error {
@@ -253,7 +252,10 @@ type credentialEnvelopeProbe struct {
 // failures. Used by the -check-credentials flag.
 func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
 	var stats credentialCheckStats
-	keyed, _ := accountCredentialStore.(*credstore.KeyedStore)
+	keyed, ok := accountCredentialStore.(*credstore.KeyedStore)
+	if !ok || keyed == nil {
+		return stats, fmt.Errorf("credential verification requires a keyed store")
+	}
 	err := filepath.Walk(poolDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -276,12 +278,13 @@ func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
 			stats.Failures = append(stats.Failures, path+": "+err.Error())
 			return nil
 		}
-		if keyed != nil {
-			var probe credentialEnvelopeProbe
-			if json.Unmarshal(raw, &probe) == nil && probe.KeyVer != keyed.CurrentVersion() {
-				stats.Previous++
-				return nil
-			}
+		var probe credentialEnvelopeProbe
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return fmt.Errorf("inspect credential envelope %s: %w", path, err)
+		}
+		if probe.KeyVer != keyed.CurrentVersion() {
+			stats.Previous++
+			return nil
 		}
 		stats.Current++
 		return nil
@@ -300,11 +303,6 @@ func initCredentialVault(poolDir string) error {
 		return err
 	}
 	accountCredentialStore = store
-	if !store.Enabled() {
-		return fmt.Errorf("POOL_CREDENTIAL_KEY is required: generate one with `openssl rand -hex 32`; " +
-			"existing plaintext pools are encrypted automatically on first start with the key, " +
-			"and rotation uses POOL_CREDENTIAL_KEY_PREVIOUS (see .env.example)")
-	}
 	encrypted, rotated, err := migrateCredentialFiles(poolDir)
 	if err != nil {
 		return err

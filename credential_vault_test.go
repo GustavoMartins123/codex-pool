@@ -208,12 +208,17 @@ func TestMigrateAndRollbackCredentialFiles(t *testing.T) {
 	}
 }
 
+func TestMain(m *testing.M) {
+	accountCredentialStore = credstore.PlainStore{}
+	os.Exit(m.Run())
+}
+
 func TestBuildCredentialStoreFromEnv(t *testing.T) {
 	t.Setenv("POOL_CREDENTIAL_KEY", "")
 	os.Unsetenv("POOL_CREDENTIAL_KEY")
 	store, err := buildCredentialStore()
-	if err != nil || store.Enabled() {
-		t.Fatalf("no key must yield the plain store, got enabled=%v err=%v", store.Enabled(), err)
+	if err == nil || store != nil {
+		t.Fatalf("missing encryption key: store=%v, err=%v", store, err)
 	}
 
 	t.Setenv("POOL_CREDENTIAL_KEY", strings.Repeat("f", 64))
@@ -223,12 +228,8 @@ func TestBuildCredentialStoreFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyed, ok := store.(*credstore.KeyedStore)
-	if !ok || !store.Enabled() {
-		t.Fatalf("expected keyed store, got %T", store)
-	}
-	if keyed.CurrentVersion() != 3 {
-		t.Fatalf("current version = %d, want 3", keyed.CurrentVersion())
+	if store.CurrentVersion() != 3 {
+		t.Fatalf("current version = %d, want 3", store.CurrentVersion())
 	}
 
 	t.Setenv("POOL_CREDENTIAL_KEY", "short")

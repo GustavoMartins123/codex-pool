@@ -49,23 +49,29 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
 
+  const selectAccount = useCallback((accountID: string | null) => {
+    if (accountID === selected) return;
+    setSelected(accountID);
+    setAction(null);
+    setMessage(null);
+  }, [selected]);
+
   const closeInspector = useCallback(() => {
     updateURL({ account: null }, "replace");
-    setSelected(null);
+    selectAccount(null);
     window.requestAnimationFrame(() => accountTriggerRef.current?.focus());
-  }, []);
+  }, [selectAccount]);
 
-  useEffect(() => { setAction(null); setMessage(null); }, [selected]);
   useEffect(() => updateURL({ account: selected }, "replace"), [selected]);
   useEffect(() => updateURL({ accounts: attentionOnly ? "attention" : null }, "replace"), [attentionOnly]);
   useEffect(() => {
     const restoreAccountState = () => {
-      setSelected(queryValue("account"));
+      selectAccount(queryValue("account"));
       setAttentionOnly(queryValue("accounts") === "attention");
     };
     window.addEventListener("popstate", restoreAccountState);
     return () => window.removeEventListener("popstate", restoreAccountState);
-  }, []);
+  }, [selectAccount]);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1300px)");
     const update = () => setMobileInspector(media.matches);
@@ -184,7 +190,6 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         // list refresh must never read as a failed delete.
         const result = await deleteAccount(selectedAdmin.id);
         const deleted = `${selectedAdmin.id} deleted${result.partial_purge ? " · some stored usage could not be purged; check the server logs" : ""}`;
-        setAction(null);
         closeInspector();
         setMessage({ tone: "success", text: deleted });
         try {
@@ -289,7 +294,11 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
               <button
                 className={classNames("account-row", selected === rowID && "selected")}
                 key={account.id}
-                onClick={(event) => { accountTriggerRef.current = event.currentTarget; updateURL({ account: rowID }, "push"); setSelected(rowID); }}
+                onClick={(event) => {
+                  accountTriggerRef.current = event.currentTarget;
+                  updateURL({ account: rowID }, "push");
+                  selectAccount(rowID);
+                }}
                 style={{ "--provider": provider.color } as CSSProperties}
                 aria-label={`Open ${provider.label} ${account.plan_type || "account"} details`}
               >

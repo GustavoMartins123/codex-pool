@@ -9,7 +9,7 @@ import (
 
 func TestAstraPublishedPricing(t *testing.T) {
 	want := tieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25)
-	pd := newPricingData()
+	pd := testPricingData(t)
 	for _, model := range []string{"gpt-6-astra", "gpt-6-astra[1m]", "gpt-6-astra [1m]", "gpt-6-astra-high", "gpt-6-astra[1m]-xhigh", "gpt-6-astra-none"} {
 		got, ok := pd.lookupPricing(model)
 		if !ok || got != want {
@@ -30,7 +30,7 @@ func TestAstraPublishedPricing(t *testing.T) {
 }
 
 func TestAstraCostThreshold(t *testing.T) {
-	pd := newPricingData()
+	pd := testPricingData(t)
 	for _, tt := range []struct {
 		name  string
 		input int64
@@ -41,7 +41,7 @@ func TestAstraCostThreshold(t *testing.T) {
 		{"above", 272001, 162001*20e-6 + 100000*2e-6 + 10000*25e-6 + 1000*75e-6},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := pd.calculateCost(RequestUsage{AccountType: AccountTypeCodex, Model: "gpt-6-astra", InputTokens: tt.input, CachedInputTokens: 100000, CacheCreationTokens: 10000, OutputTokens: 1000, ReasoningTokens: 800, InputTokenMode: "inclusive"})
+			got := testRequestCost(t, pd, RequestUsage{AccountType: AccountTypeCodex, Model: "gpt-6-astra", InputTokens: tt.input, CachedInputTokens: 100000, CacheCreationTokens: 10000, OutputTokens: 1000, ReasoningTokens: 800, InputTokenMode: "inclusive"})
 			if math.Abs(got-tt.want) > 1e-12 {
 				t.Fatalf("cost = %.12f, want %.12f", got, tt.want)
 			}
@@ -50,7 +50,7 @@ func TestAstraCostThreshold(t *testing.T) {
 }
 
 func TestCodexReasoningCost(t *testing.T) {
-	pd := newPricingData()
+	pd := testPricingData(t)
 	var event map[string]any
 	// The Responses reasoning guide reports reasoning as a subset of output.
 	if err := json.Unmarshal([]byte(`{"response":{"model":"gpt-5.6-sol","usage":{"input_tokens":75,"input_tokens_details":{"cached_tokens":0},"output_tokens":1186,"output_tokens_details":{"reasoning_tokens":1024},"total_tokens":1261}}}`), &event); err != nil {
@@ -62,7 +62,7 @@ func TestCodexReasoningCost(t *testing.T) {
 	}
 	ru.AccountType = AccountTypeCodex
 	want := 75*5e-6 + 1186*30e-6
-	if got := pd.calculateCost(*ru); math.Abs(got-want) > 1e-12 {
+	if got := testRequestCost(t, pd, *ru); math.Abs(got-want) > 1e-12 {
 		t.Fatalf("Codex cost = %.12f, want %.12f", got, want)
 	}
 }
@@ -77,17 +77,17 @@ func TestAstraCacheWriteUsage(t *testing.T) {
 		t.Fatalf("parsed cache usage = %#v", ru)
 	}
 	ru.AccountType = AccountTypeCodex
-	if got, want := newPricingData().calculateCost(*ru), 3.76502; math.Abs(got-want) > 1e-12 {
+	if got, want := testRequestCost(t, testPricingData(t), *ru), 3.76502; math.Abs(got-want) > 1e-12 {
 		t.Fatalf("parsed Astra cost = %.12f, want %.12f", got, want)
 	}
 }
 
 func TestNonCodexReasoningCost(t *testing.T) {
-	pd := newPricingData()
+	pd := testPricingData(t)
 	for _, provider := range []AccountType{AccountTypeGemini, AccountTypeAntigravity, AccountTypeClaude} {
 		usage := RequestUsage{AccountType: provider, Model: "gemini-3.1-pro-preview", OutputTokens: 100, ReasoningTokens: 200}
 		want := 300 * 12e-6
-		if got := pd.calculateCost(usage); math.Abs(got-want) > 1e-12 {
+		if got := testRequestCost(t, pd, usage); math.Abs(got-want) > 1e-12 {
 			t.Errorf("%s cost = %.12f, want %.12f", provider, got, want)
 		}
 	}

@@ -35,8 +35,6 @@ type GenericProviderModelConfig struct {
 	Reasoning       bool     `toml:"reasoning"`
 	WebSearch       bool     `toml:"web_search"`
 	Modalities      []string `toml:"modalities"`
-	Fallbacks       []string `toml:"fallbacks"`
-	FallbackFor     []string `toml:"fallback_for"`
 }
 
 type GenericProviderConfig struct {
@@ -291,11 +289,7 @@ func (p *GenericOpenAIProvider) healthURL() *url.URL {
 	return &target
 }
 
-func (h *proxyHandler) startGenericProviderHealthPoller(ctx ...context.Context) {
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
+func (h *proxyHandler) startGenericProviderHealthPoller(ctx context.Context) {
 	if h == nil || h.registry == nil || h.pool == nil {
 		return
 	}
@@ -320,7 +314,7 @@ func (h *proxyHandler) startGenericProviderHealthPoller(ctx ...context.Context) 
 		}
 		go func(provider *GenericOpenAIProvider, account *Account) {
 			check := func() {
-				checkCtx, cancel := context.WithTimeout(c, 5*time.Second)
+				checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 				req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, provider.healthURL().String(), nil)
 				if err == nil {
@@ -351,7 +345,7 @@ func (h *proxyHandler) startGenericProviderHealthPoller(ctx ...context.Context) 
 			defer ticker.Stop()
 			for {
 				select {
-				case <-c.Done():
+				case <-ctx.Done():
 					return
 				case <-ticker.C:
 					check()

@@ -90,8 +90,6 @@ func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Acco
 	if auth.ModelSnapshot != nil {
 		antigravityModels.ReplaceAccount(acc.ID, *auth.ModelSnapshot)
 		acc.Usage = extractAntigravityAccountUsage(*auth.ModelSnapshot)
-	} else {
-		antigravityModels.MarkAccount(acc.ID)
 	}
 	return acc, nil
 }

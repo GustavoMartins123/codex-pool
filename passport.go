@@ -215,11 +215,17 @@ type passportSession struct {
 	CSRFHash    [32]byte  `json:"csrf_hash"`
 }
 
+type passportRepository interface {
+	View(func(*bbolt.Tx) error) error
+	Update(func(*bbolt.Tx) error) error
+	Stats() bbolt.Stats
+}
+
 type PassportStore struct {
 	contributionMu  sync.Mutex
 	accountMu       sync.Mutex
 	accountInflight map[string]int
-	db              *bbolt.DB
+	db              passportRepository
 	mu              sync.RWMutex
 	principals      map[string]*Principal
 	clients         map[string]*ClientCredential
@@ -252,7 +258,7 @@ func passportAEADForSecret(secret string) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
+func newPassportStore(db passportRepository) (*PassportStore, error) {
 	if db == nil {
 		return nil, errors.New("passport requires bolt")
 	}
@@ -263,7 +269,7 @@ func newPassportStore(db *bbolt.DB) (*PassportStore, error) {
 	return newPassportStoreWithAEAD(db, aead)
 }
 
-func newPassportStoreWithAEAD(db *bbolt.DB, aead cipher.AEAD) (*PassportStore, error) {
+func newPassportStoreWithAEAD(db passportRepository, aead cipher.AEAD) (*PassportStore, error) {
 	p := &PassportStore{db: db, principals: map[string]*Principal{}, clients: map[string]*ClientCredential{}, passwordWork: make(chan struct{}, 4), aead: aead, policyInflight: map[string]int{}, policyReserved: map[string]int64{}, accountInflight: map[string]int{}}
 	if err := db.Update(func(tx *bbolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucketModelVerifications)); err != nil {

@@ -140,7 +140,7 @@ func (s *conversationHandoffStore) saveOutcomeLocked(key conversationKey, record
 }
 
 func (h *proxyHandler) startConversationCleanup(ctx context.Context) {
-	store := h.getContextHandoff()
+	store := h.contextHandoff
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()

@@ -88,7 +88,7 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 		respondJSONError(w, http.StatusBadRequest, "unsupported target provider")
 		return
 	}
-	store := h.getContextHandoff()
+	store := h.contextHandoff
 	key, matches := store.resolveConversationKey(input.Owner, input.ConversationID)
 	if matches == 0 {
 		respondJSONError(w, http.StatusNotFound, "conversation or source provider not found")

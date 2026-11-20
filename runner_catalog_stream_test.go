@@ -22,10 +22,7 @@ func catalogStreamFixture(t *testing.T) (*proxyHandler, *sessionBroker, string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := h.sessionBroker()
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := installTestSessionBroker(t, h)
 	return h, b, principal, login.Token
 }
 
