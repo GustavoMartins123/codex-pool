@@ -173,7 +173,7 @@ func (h *proxyHandler) handleClaudePlanProbe(w http.ResponseWriter, r *http.Requ
 			entry.TokenClaimsErr = claimErr
 		}
 
-		raw, err := readAccountFile(filePath)
+		raw, err := h.cfg.vault.readAccountFile(filePath)
 		if err != nil {
 			entry.LiveError = "failed reading account file: " + err.Error()
 			result = append(result, entry)
@@ -530,7 +530,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	}
 	target.mu.Lock()
 	defer target.mu.Unlock()
-	raw, err := readAccountFile(target.File)
+	raw, err := target.vault.readAccountFile(target.File)
 	if err != nil {
 		return err
 	}
@@ -562,7 +562,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	delete(root, "dead")
 	delete(root, "needs_login")
 	delete(root, "auth_error")
-	if err := atomicWriteJSON(target.File, root); err != nil {
+	if err := target.vault.atomicWriteJSON(target.File, root); err != nil {
 		return err
 	}
 	target.AccessToken = tokens.AccessToken

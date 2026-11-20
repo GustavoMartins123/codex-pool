@@ -129,6 +129,7 @@ func TestAIStudioUsagePollerLeavesKeysAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := aistudioTestAccount("key", "AIza-poller")
+	account.vault = plainTestVault()
 	account.File = file
 	h := &proxyHandler{
 		cfg:  &config{usageRefresh: time.Minute},

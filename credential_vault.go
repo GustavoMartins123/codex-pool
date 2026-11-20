@@ -14,8 +14,10 @@ import (
 	"codex-pool-proxy/internal/credstore"
 )
 
-// accountCredentialStore is configured before any credential file is opened.
-var accountCredentialStore credstore.Store
+// credentialVault owns the store used by this application's account files.
+type credentialVault struct {
+	store credstore.Store
+}
 
 // buildCredentialStore requires a master key and accepts an explicitly configured rotation key.
 func buildCredentialStore() (*credstore.KeyedStore, error) {
@@ -55,8 +57,8 @@ func buildCredentialStore() (*credstore.KeyedStore, error) {
 }
 
 // readAccountFile reads a credential file and decodes it through the vault.
-func readAccountFile(path string) ([]byte, error) {
-	return credstore.ReadFile(accountCredentialStore, path)
+func (v credentialVault) readAccountFile(path string) ([]byte, error) {
+	return credstore.ReadFile(v.store, path)
 }
 
 // renameRetryDelays bounds how long an atomic replace waits for transient
@@ -124,22 +126,30 @@ func writeFileAtomic(path string, payload []byte) error {
 // atomically with owner-only permissions. Every path that persists an account
 // credential file must go through this (or atomicWriteJSON) so the vault
 // cannot be bypassed by a handler that forgets to encode.
-func writeAccountFile(path string, plaintext []byte) error {
-	if accountCredentialStore == nil {
+func (v credentialVault) writeAccountFile(path string, plaintext []byte) error {
+	if v.store == nil {
 		return fmt.Errorf("credential store is not initialized")
 	}
-	payload, err := accountCredentialStore.Encode(plaintext)
+	payload, err := v.store.Encode(plaintext)
 	if err != nil {
 		return fmt.Errorf("encode credential file %s: %w", path, err)
 	}
 	return writeFileAtomic(path, payload)
 }
 
+func (v credentialVault) atomicWriteJSON(path string, data any) error {
+	updated, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	return v.writeAccountFile(path, updated)
+}
+
 // migrateCredentialFiles brings every account file in the pool directory to
 // the current key state: plaintext files get encrypted and envelopes under
 // the previous key get re-encrypted. Returns files encrypted and rotated.
-func migrateCredentialFiles(poolDir string) (int, int, error) {
-	keyed, ok := accountCredentialStore.(*credstore.KeyedStore)
+func (v credentialVault) migrateCredentialFiles(poolDir string) (int, int, error) {
+	keyed, ok := v.store.(*credstore.KeyedStore)
 	if !ok || keyed == nil {
 		return 0, 0, fmt.Errorf("credential migration requires a keyed store")
 	}
@@ -201,9 +211,9 @@ func migrateCredentialFiles(poolDir string) (int, int, error) {
 
 // decryptCredentialFiles reverts every encrypted account file to plaintext.
 // Rollback path for the -decrypt-credentials flag; requires the master key.
-func decryptCredentialFiles(poolDir string) (int, error) {
-	keyed, ok := accountCredentialStore.(*credstore.KeyedStore)
-	if !ok {
+func (v credentialVault) decryptCredentialFiles(poolDir string) (int, error) {
+	keyed, ok := v.store.(*credstore.KeyedStore)
+	if !ok || keyed == nil {
 		return 0, fmt.Errorf("credential decryption requires POOL_CREDENTIAL_KEY")
 	}
 	count := 0
@@ -250,9 +260,9 @@ type credentialEnvelopeProbe struct {
 // vault. Traversal errors fail the check; files are classified as current,
 // previous-key (rotation window, not yet re-encrypted), plaintext, or
 // failures. Used by the -check-credentials flag.
-func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
+func (v credentialVault) verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
 	var stats credentialCheckStats
-	keyed, ok := accountCredentialStore.(*credstore.KeyedStore)
+	keyed, ok := v.store.(*credstore.KeyedStore)
 	if !ok || keyed == nil {
 		return stats, fmt.Errorf("credential verification requires a keyed store")
 	}
@@ -274,7 +284,7 @@ func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
 			stats.Failures = append(stats.Failures, path+": file is not encrypted; start the server once with POOL_CREDENTIAL_KEY to migrate it")
 			return nil
 		}
-		if _, err := accountCredentialStore.Decode(raw); err != nil {
+		if _, err := v.store.Decode(raw); err != nil {
 			stats.Failures = append(stats.Failures, path+": "+err.Error())
 			return nil
 		}
@@ -295,22 +305,21 @@ func verifyCredentialFiles(poolDir string) (credentialCheckStats, error) {
 	return stats, nil
 }
 
-// initCredentialVault wires the global store, migrates the pool directory,
-// and logs the outcome. Called before the pool is first loaded.
-func initCredentialVault(poolDir string) error {
+// newCredentialVault migrates the pool before the application loads credentials.
+func newCredentialVault(poolDir string) (credentialVault, error) {
 	store, err := buildCredentialStore()
 	if err != nil {
-		return err
+		return credentialVault{}, err
 	}
-	accountCredentialStore = store
-	encrypted, rotated, err := migrateCredentialFiles(poolDir)
+	vault := credentialVault{store: store}
+	encrypted, rotated, err := vault.migrateCredentialFiles(poolDir)
 	if err != nil {
-		return err
+		return credentialVault{}, err
 	}
 	if encrypted > 0 || rotated > 0 {
 		log.Printf("credential vault: encrypted %d file(s), rotated %d file(s) to the current key", encrypted, rotated)
 	} else {
 		log.Printf("credential vault: all credential files already encrypted at the current key version")
 	}
-	return nil
+	return vault, nil
 }

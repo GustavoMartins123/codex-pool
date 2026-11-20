@@ -174,7 +174,9 @@ func startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier,
 
 // POST /admin/codex/add - start OAuth flow
 func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
-	if !h.checkContributionAttempt(w,r) { return }
+	if !h.checkContributionAttempt(w, r) {
+		return
+	}
 	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), "")
 	if oauthURL == "" {
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
@@ -330,7 +332,6 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	delete(codexOAuthSessions.sessions, verifier)
 	codexOAuthSessions.Unlock()
 
-
 	respondJSON(w, map[string]any{
 		"success":    true,
 		"account_id": accountID,
@@ -366,11 +367,16 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 		return fmt.Errorf("signed-in account (%s) does not match pool account %s", newClaims.ChatGPTAccountID, accountID)
 	}
 
-	existing := make(map[string]any)
-	if raw, err := readAccountFile(authFile); err == nil {
-		if err := json.Unmarshal(raw, &existing); err != nil {
-			return fmt.Errorf("parse %s: %w", authFile, err)
-		}
+	raw, err := target.vault.readAccountFile(authFile)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", authFile, err)
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return fmt.Errorf("parse %s: %w", authFile, err)
+	}
+	if existing == nil {
+		return fmt.Errorf("parse %s: expected a JSON object", authFile)
 	}
 	existing["tokens"] = map[string]any{
 		"id_token":      tokens.IDToken,
@@ -386,7 +392,7 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
 	}
-	if err := writeAccountFile(authFile, data); err != nil {
+	if err := target.vault.writeAccountFile(authFile, data); err != nil {
 		return err
 	}
 

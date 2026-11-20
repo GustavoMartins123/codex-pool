@@ -190,6 +190,7 @@ func TestGrokProviderRefreshesOAuthToken(t *testing.T) {
 	acc := &Account{
 		Type:         AccountTypeGrok,
 		ID:           "grok",
+		vault:        plainTestVault(),
 		File:         t.TempDir() + "/auth.json",
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
@@ -242,7 +243,7 @@ func TestSaveGrokAccountPreservesPiGrokCliShape(t *testing.T) {
 	path := t.TempDir() + "/pi.json"
 	writeTestFile(t, path, `{"access":"old-access","refresh":"old-refresh","expires":1,"tokenEndpoint":"https://auth.x.ai/oauth2/token","baseUrl":"https://cli-chat-proxy.grok.com/v1"}`)
 	expires := time.Date(2026, 6, 6, 17, 51, 28, 0, time.UTC)
-	acc := &Account{Type: AccountTypeGrok, ID: "pi", File: path, AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: expires, grok: grokAccountState{TokenEndpoint: "https://auth.x.ai/oauth2/token"}}
+	acc := &Account{Type: AccountTypeGrok, ID: "pi", vault: plainTestVault(), File: path, AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: expires, grok: grokAccountState{TokenEndpoint: "https://auth.x.ai/oauth2/token"}}
 	if err := saveGrokAccount(acc); err != nil {
 		t.Fatalf("saveGrokAccount: %v", err)
 	}
@@ -396,6 +397,7 @@ func TestGrokUsagePollerDoesNotDeadMarkAccount(t *testing.T) {
 	acc := &Account{
 		Type:         AccountTypeGrok,
 		ID:           "grok",
+		vault:        plainTestVault(),
 		File:         accountFile,
 		AccessToken:  "access",
 		RefreshToken: "refresh",

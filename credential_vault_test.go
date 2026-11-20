@@ -27,13 +27,13 @@ func TestVaultMigrationRejectsUnauthenticatedFiles(t *testing.T) {
 		{"invalid_json", []byte(`{"cpvault":`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			useKeyedVault(t, hexKey(t, 1, 'b'), nil)
+			vault := keyedTestVault(t, hexKey(t, 1, 'b'), nil)
 			dir := t.TempDir()
 			path := filepath.Join(dir, "account.json")
 			if err := os.WriteFile(path, tc.raw, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := migrateCredentialFiles(dir); err == nil {
+			if _, _, err := vault.migrateCredentialFiles(dir); err == nil {
 				t.Fatal("unauthenticated file accepted")
 			}
 			after, err := os.ReadFile(path)
@@ -45,25 +45,27 @@ func TestVaultMigrationRejectsUnauthenticatedFiles(t *testing.T) {
 }
 
 func TestVaultRuntimeRejectsIntroducedPlaintext(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'a'), nil)
+	vault := keyedTestVault(t, hexKey(t, 1, 'a'), nil)
 	path := filepath.Join(t.TempDir(), "account.json")
 	if err := os.WriteFile(path, []byte(`{"api_key":"synthetic"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readAccountFile(path); err == nil {
+	if _, err := vault.readAccountFile(path); err == nil {
 		t.Fatal("runtime accepted plaintext")
 	}
 }
 
-func useKeyedVault(t *testing.T, current credstore.Key, previous *credstore.Key) {
+func keyedTestVault(t *testing.T, current credstore.Key, previous *credstore.Key) credentialVault {
 	t.Helper()
 	store, err := credstore.NewKeyedStore(current, previous)
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousStore := accountCredentialStore
-	accountCredentialStore = store
-	t.Cleanup(func() { accountCredentialStore = previousStore })
+	return credentialVault{store: store}
+}
+
+func plainTestVault() credentialVault {
+	return credentialVault{store: credstore.PlainStore{}}
 }
 
 func hexKey(t *testing.T, version int, char byte) credstore.Key {
@@ -76,11 +78,11 @@ func hexKey(t *testing.T, version int, char byte) credstore.Key {
 }
 
 func TestVaultRoundTripThroughAtomicWrite(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'a'), nil)
+	vault := keyedTestVault(t, hexKey(t, 1, 'a'), nil)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "account.json")
 
-	if err := atomicWriteJSON(path, map[string]any{"api_key": "super-secret"}); err != nil {
+	if err := vault.atomicWriteJSON(path, map[string]any{"api_key": "super-secret"}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -93,7 +95,7 @@ func TestVaultRoundTripThroughAtomicWrite(t *testing.T) {
 	if strings.Contains(string(raw), "super-secret") {
 		t.Fatal("plaintext secret leaked to disk")
 	}
-	back, err := readAccountFile(path)
+	back, err := vault.readAccountFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +112,8 @@ func TestLoadPoolDecodesEncryptedCredentials(t *testing.T) {
 	}
 	plaintext := []byte(`{"tokens":{"access_token":"tok-123","account_id":"acct-1"},"email":"a@example.com"}`)
 
-	useKeyedVault(t, hexKey(t, 1, 'b'), nil)
-	atRest, err := accountCredentialStore.Encode(plaintext)
+	vault := keyedTestVault(t, hexKey(t, 1, 'b'), nil)
+	atRest, err := vault.store.Encode(plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +125,7 @@ func TestLoadPoolDecodesEncryptedCredentials(t *testing.T) {
 	claudeBase, _ := url.Parse("https://api.anthropic.com")
 	geminiBase, _ := url.Parse("https://generativelanguage.googleapis.com")
 	registry := NewProviderRegistry(NewCodexProvider(base, base, nil), NewClaudeProvider(claudeBase), NewGeminiProvider(geminiBase, geminiBase))
-	accounts, err := loadPool(poolDir, registry)
+	accounts, err := loadPool(poolDir, registry, vault)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +134,16 @@ func TestLoadPoolDecodesEncryptedCredentials(t *testing.T) {
 	}
 	if accounts[0].AccessToken != "tok-123" || accounts[0].codex.AccountID != "acct-1" {
 		t.Fatalf("account not decoded correctly: %+v", accounts[0])
+	}
+	otherVault := keyedTestVault(t, hexKey(t, 1, 'c'), nil)
+	account := accounts[0]
+	account.AccessToken = "updated-token"
+	if err := saveAccount(account); err != nil {
+		t.Fatal(err)
+	}
+	assertEncryptedCredentialFile(t, vault, account.File, "updated-token")
+	if _, err := otherVault.readAccountFile(account.File); err == nil {
+		t.Fatal("another application's vault decoded the saved account")
 	}
 }
 
@@ -162,8 +174,8 @@ func TestMigrateAndRollbackCredentialFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	useKeyedVault(t, v2, &v1)
-	encrypted, rotated, err := migrateCredentialFiles(poolDir)
+	vault := keyedTestVault(t, v2, &v1)
+	encrypted, rotated, err := vault.migrateCredentialFiles(poolDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,13 +196,13 @@ func TestMigrateAndRollbackCredentialFiles(t *testing.T) {
 	}
 
 	// Second run is a no-op.
-	encrypted, rotated, err = migrateCredentialFiles(poolDir)
+	encrypted, rotated, err = vault.migrateCredentialFiles(poolDir)
 	if err != nil || encrypted != 0 || rotated != 0 {
 		t.Fatalf("second migration must be a no-op, got encrypted=%d rotated=%d err=%v", encrypted, rotated, err)
 	}
 
 	// Rollback: decrypt everything back to plaintext.
-	count, err := decryptCredentialFiles(poolDir)
+	count, err := vault.decryptCredentialFiles(poolDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,11 +218,6 @@ func TestMigrateAndRollbackCredentialFiles(t *testing.T) {
 			t.Fatalf("%s must be plaintext after rollback: %s", path, raw)
 		}
 	}
-}
-
-func TestMain(m *testing.M) {
-	accountCredentialStore = credstore.PlainStore{}
-	os.Exit(m.Run())
 }
 
 func TestBuildCredentialStoreFromEnv(t *testing.T) {

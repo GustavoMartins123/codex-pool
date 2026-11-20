@@ -34,6 +34,7 @@ import (
 )
 
 type config struct {
+	vault                  credentialVault
 	ipAccess               ipAccessSettings
 	configPath             string
 	listenAddr             string

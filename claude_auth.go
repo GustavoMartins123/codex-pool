@@ -386,7 +386,7 @@ func saveClaudeAccount(a *Account) error {
 	}
 
 	// Read existing file to preserve any extra fields
-	raw, err := readAccountFile(file)
+	raw, err := a.vault.readAccountFile(file)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -466,7 +466,7 @@ func saveClaudeAccount(a *Account) error {
 		root["account_uuid"] = accountUUID
 	}
 
-	return atomicWriteJSON(file, root)
+	return a.vault.atomicWriteJSON(file, root)
 }
 
 // RefreshClaudeAccountTokens refreshes tokens for a Claude account and updates it.

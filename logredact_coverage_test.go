@@ -442,13 +442,13 @@ func TestIsSensitiveHeaderCoversProviderInventedNames(t *testing.T) {
 // instead of relying on this filter. This test uses a real API-key shape
 // because that is what pool/<provider>/<id>.json actually stores.
 func TestCredentialVaultAndLogRedactionCompose(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'l'), nil)
+	vault := keyedTestVault(t, hexKey(t, 1, 'l'), nil)
 	readLog := captureLog(t)
 	const marker = "sk-VAULTLOGLEAK6d2fabcdefgh"
 
 	dir := t.TempDir()
 	path := dir + "/account.json"
-	if err := writeAccountFile(path, []byte(`{"api_key":"`+marker+`"}`)); err != nil {
+	if err := vault.writeAccountFile(path, []byte(`{"api_key":"`+marker+`"}`)); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(path)
@@ -458,7 +458,7 @@ func TestCredentialVaultAndLogRedactionCompose(t *testing.T) {
 	if !credstore.IsEncrypted(raw) {
 		t.Fatal("file must be encrypted at rest")
 	}
-	decoded, err := readAccountFile(path)
+	decoded, err := vault.readAccountFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -90,8 +90,8 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("credential vault: %w", err)
 		}
-		accountCredentialStore = store
-		count, err := decryptCredentialFiles(cfg.poolDir)
+		vault := credentialVault{store: store}
+		count, err := vault.decryptCredentialFiles(cfg.poolDir)
 		if err != nil {
 			return false, fmt.Errorf("decrypt credentials: %w", err)
 		}
@@ -103,8 +103,8 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("credential vault: %w", err)
 		}
-		accountCredentialStore = store
-		stats, err := verifyCredentialFiles(cfg.poolDir)
+		vault := credentialVault{store: store}
+		stats, err := vault.verifyCredentialFiles(cfg.poolDir)
 		if err != nil {
 			return false, fmt.Errorf("credential check: %w", err)
 		}
@@ -120,9 +120,11 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		log.Printf("credential check: %d file(s) decode with the current key", stats.Checked)
 		return true, nil
 	}
-	if err := initCredentialVault(cfg.poolDir); err != nil {
+	vault, err := newCredentialVault(cfg.poolDir)
+	if err != nil {
 		return false, fmt.Errorf("credential vault: %w", err)
 	}
+	cfg.vault = vault
 	if problems := verifySensitiveFilePermissions(cfg.poolDir); len(problems) > 0 {
 		return false, fmt.Errorf("credential vault: %d path(s) holding upstream credentials are group/world accessible, refusing to start:\n  %s\nFix with: chmod 0600 <file> (or chown to the pool user), then restart.",
 			len(problems), strings.Join(problems, "\n  "))
@@ -167,7 +169,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, extraProviders...)
 
 	log.Printf("loading pool from %s", cfg.poolDir)
-	accounts, err := loadPool(cfg.poolDir, registry)
+	accounts, err := loadPool(cfg.poolDir, registry, cfg.vault)
 	if err != nil {
 		return nil, fmt.Errorf("load pool: %w", err)
 	}

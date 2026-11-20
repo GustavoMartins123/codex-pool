@@ -24,6 +24,7 @@ func accountVerifyTestAccount(t *testing.T, accType AccountType, id string) *Acc
 	}
 	return &Account{
 		Type: accType, ID: id,
+		vault:       plainTestVault(),
 		File:        file,
 		AccessToken: "token",
 		ExpiresAt:   time.Now().Add(24 * time.Hour),
