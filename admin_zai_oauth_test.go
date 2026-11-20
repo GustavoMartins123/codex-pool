@@ -20,7 +20,7 @@ func zaiTestResponse(status int, body string) *http.Response {
 
 func TestZAILoginInitPollAndActor(t *testing.T) {
 	var pollToken string
-	h := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	h := &proxyHandler{cfg: &config{}, transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/api/v1/oauth/cli/init":
 			pollToken = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
