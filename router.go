@@ -352,10 +352,7 @@ func (p *ipAccessPolicy) allowRequest(w http.ResponseWriter, r *http.Request) bo
 }
 
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.httpAppOnce.Do(func() {
-		h.httpApp = h.newHTTPApp(globalIPAccess)
-	})
-	h.httpApp.ServeHTTP(w, r)
+	h.httpHandler().ServeHTTP(w, r)
 }
 
 func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) {

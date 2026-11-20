@@ -19,6 +19,13 @@ func (register httpRouteRegister) subtree(path string, root, children http.Handl
 	register(path+"/", children)
 }
 
+func (h *proxyHandler) httpHandler() *httpapi.App {
+	h.httpAppOnce.Do(func() {
+		h.httpApp = h.newHTTPApp(globalIPAccess)
+	})
+	return h.httpApp
+}
+
 func (h *proxyHandler) newHTTPApp(ipAccess *ipAccessPolicy) *httpapi.App {
 	app := httpapi.New(applySecurityHeaders, ipAccess.allowRequest, randomID, h.logIncomingRequest(h.serveGatewayTraffic))
 
