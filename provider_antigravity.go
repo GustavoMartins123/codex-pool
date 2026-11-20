@@ -236,7 +236,7 @@ func saveAntigravityAccount(acc *Account) error {
 	fileLock := lockValue.(*sync.Mutex)
 	fileLock.Lock()
 	defer fileLock.Unlock()
-	raw, err := readAccountFile(acc.File)
+	raw, err := acc.vault.readAccountFile(acc.File)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -277,5 +277,5 @@ func saveAntigravityAccount(acc *Account) error {
 	if err := os.MkdirAll(filepath.Dir(acc.File), 0o700); err != nil {
 		return err
 	}
-	return atomicWriteJSON(acc.File, root)
+	return acc.vault.atomicWriteJSON(acc.File, root)
 }

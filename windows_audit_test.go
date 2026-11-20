@@ -36,16 +36,16 @@ func auditWaitFor(t *testing.T, timeout time.Duration, cond func() bool) bool {
 // non-ASCII characters. This is the documented deployment shape on Windows.
 func TestAuditCredentialRoundTripInSpacedUnicodeDirectory(t *testing.T) {
 	base := t.TempDir()
-	dir := filepath.Join(base, "codex pool audit ã é ü", "pool")
+	dir := filepath.Join(base, "codex pool audit Ã£ Ã© Ã¼", "pool")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dir, "conta um.json")
 	secret := `{"tokens":{"access_token":"SECRET_SHOULD_NEVER_APPEAR_12345","refresh_token":"r"}}`
-	if err := writeAccountFile(file, []byte(secret)); err != nil {
+	if err := plainTestVault().writeAccountFile(file, []byte(secret)); err != nil {
 		t.Fatalf("writeAccountFile in spaced unicode dir: %v", err)
 	}
-	got, err := readAccountFile(file)
+	got, err := plainTestVault().readAccountFile(file)
 	if err != nil {
 		t.Fatalf("readAccountFile in spaced unicode dir: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestAuditCredentialFilesAreNotObservablyTruncatedByWatcherReload(t *testing
 	dir := t.TempDir()
 	file := filepath.Join(dir, "one.json")
 	payload := []byte(`{"api_key":"` + strings.Repeat("k", 4096) + `"}`)
-	if err := writeAccountFile(file, payload); err != nil {
+	if err := plainTestVault().writeAccountFile(file, payload); err != nil {
 		t.Fatal(err)
 	}
 	stop := make(chan struct{})
@@ -85,7 +85,7 @@ func TestAuditCredentialFilesAreNotObservablyTruncatedByWatcherReload(t *testing
 					return
 				default:
 				}
-				data, err := readAccountFile(file)
+				data, err := plainTestVault().readAccountFile(file)
 				if err != nil {
 					corrupt.Store(err.Error(), true)
 					return
@@ -104,7 +104,7 @@ func TestAuditCredentialFilesAreNotObservablyTruncatedByWatcherReload(t *testing
 	}
 	var writeErr error
 	for i := 0; i < 150; i++ {
-		if err := writeAccountFile(file, payload); err != nil {
+		if err := plainTestVault().writeAccountFile(file, payload); err != nil {
 			writeErr = err
 			break
 		}
@@ -134,7 +134,7 @@ func TestAuditWatcherHotReloadsAtomicCredentialSave(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"tokens":{"access_token":"old-token","refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
+	h := &proxyHandler{cfg: &config{poolDir: dir, vault: plainTestVault()}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
 	h.reloadAccounts()
 	if h.pool.count() != 1 {
 		t.Fatalf("setup: loaded %d accounts, want 1", h.pool.count())
@@ -145,7 +145,7 @@ func TestAuditWatcherHotReloadsAtomicCredentialSave(t *testing.T) {
 	}
 	defer pw.close()
 
-	if err := writeAccountFile(file, []byte(`{"tokens":{"access_token":"new-token","refresh_token":"r"}}`)); err != nil {
+	if err := plainTestVault().writeAccountFile(file, []byte(`{"tokens":{"access_token":"new-token","refresh_token":"r"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if !auditWaitFor(t, 5*time.Second, func() bool {
@@ -180,7 +180,7 @@ func watchlistContains(pw *poolWatcher, path string) bool {
 // (deterministic) instead of sleeping past the debounce.
 func TestAuditWatcherReloadsCredentialAddedToNewProviderDirectory(t *testing.T) {
 	dir := t.TempDir()
-	h := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
+	h := &proxyHandler{cfg: &config{poolDir: dir, vault: plainTestVault()}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
 	pw, err := newPoolWatcher(dir, "", h)
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestAuditWatcherReloadsCredentialAddedToNewProviderDirectory(t *testing.T) 
 // still hot-reload.
 func TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory(t *testing.T) {
 	dir := t.TempDir()
-	h := &proxyHandler{cfg: &config{poolDir: dir}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
+	h := &proxyHandler{cfg: &config{poolDir: dir, vault: plainTestVault()}, pool: newPoolState(nil, false), registry: NewProviderRegistry(&CodexProvider{}, nil, nil)}
 	pw, err := newPoolWatcher(dir, "", h)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory(t *testing.T)
 // TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts
 // BUG-AUDIT-102 regression (cross-platform), driven through the real
 // lifecycle. The original repro called persistActiveAccountingGapSidecar
-// directly with two arbitrary payloads — production cannot race two
+// directly with two arbitrary payloads â€” production cannot race two
 // arbitrary payloads while a single gap is active (all snapshots share the
 // first gap), but it CAN race a close against a delayed open-write, or a
 // close+reopen cycle against a straggling writer, which mixed payloads in
@@ -260,10 +260,10 @@ func TestAuditWatcherRewatchesRenamedAndRecreatedProviderDirectory(t *testing.T)
 // restart.
 //
 // Two real paths are exercised:
-//  1. recordReliably against a failing (closed) Bolt store — many
+//  1. recordReliably against a failing (closed) Bolt store â€” many
 //     concurrent failed records all open/persist the same gap;
 //  2. concurrent openAccountingGap/closeAccountingGap cycles with distinct
-//     timestamps — close must remove the sidecar and no writer may leave a
+//     timestamps â€” close must remove the sidecar and no writer may leave a
 //     torn or stale-behind file behind.
 func TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts(t *testing.T) {
 	s := testUsageStore(t)
@@ -307,7 +307,7 @@ func TestAuditAnalyticsGapSidecarLifecycleNeverCorrupts(t *testing.T) {
 // close is mid-flight must still end up with an active gap. Before the close
 // held analyticsReliabilityMu across its whole body, the failure could see
 // the still-uncleared old gap, skip opening its own, and have its sidecar
-// removed by the finishing close — losing the gap for the period after the
+// removed by the finishing close â€” losing the gap for the period after the
 // recovery.
 func TestAuditAnalyticsGapOpenDuringCloseIsNotLost(t *testing.T) {
 	s := testUsageStore(t)
@@ -357,7 +357,7 @@ func TestAuditAnalyticsGapOpenDuringCloseIsNotLost(t *testing.T) {
 	path := s.analyticsGapPath
 	s.analyticsReliabilityMu.Unlock()
 	if active == nil {
-		t.Fatal("BUG-AUDIT-102: failure that arrived during the close was lost — no active gap remains")
+		t.Fatal("BUG-AUDIT-102: failure that arrived during the close was lost â€” no active gap remains")
 	}
 	if !active.StartedAt.After(gapA) {
 		t.Fatalf("active gap is the old one (%s), not a gap covering the post-recovery failure", active.StartedAt)
@@ -422,7 +422,7 @@ func TestAuditAnalyticsGapSidecarOpenCloseRaceNeverCorrupts(t *testing.T) {
 	raw, readErr := os.ReadFile(sidecarPath)
 	if os.IsNotExist(readErr) {
 		if active != nil {
-			t.Fatalf("BUG-AUDIT-102: active gap %s has no sidecar — a late close removed it", active.StartedAt)
+			t.Fatalf("BUG-AUDIT-102: active gap %s has no sidecar â€” a late close removed it", active.StartedAt)
 		}
 		return
 	}

@@ -32,7 +32,6 @@ const (
 	AccountTypeOpencodeGo  AccountType = "opencode_go"
 	AccountTypeQwen        AccountType = "qwen"
 	AccountTypeAIStudio    AccountType = "aistudio"
-
 )
 
 type Account struct {
@@ -41,6 +40,7 @@ type Account struct {
 	Type            AccountType // codex, gemini, or claude
 	ID              string
 	File            string
+	vault           credentialVault
 	Label           string
 	AccessToken     string
 	RefreshToken    string
@@ -92,9 +92,9 @@ type Account struct {
 
 	// Unified lifecycle state (CP-03). Derived from the flags above by
 	// observeAccountStates — a projection, not authoritative storage.
-	LifecycleState    accountstate.State        `json:"lifecycle_state,omitempty"`
-	LifecycleReason   string                     `json:"lifecycle_reason,omitempty"`
-	LifecycleHistory  []accountstate.Transition  `json:"lifecycle_history,omitempty"`
+	LifecycleState   accountstate.State        `json:"lifecycle_state,omitempty"`
+	LifecycleReason  string                    `json:"lifecycle_reason,omitempty"`
+	LifecycleHistory []accountstate.Transition `json:"lifecycle_history,omitempty"`
 }
 
 type RateLimitResetCredit struct {
@@ -176,7 +176,7 @@ type UsageSnapshot struct {
 
 // RequestUsage captures per-request token consumption parsed from SSE events.
 type RequestUsage struct {
-	PricingUnavailable bool `json:"pricing_unavailable,omitempty"`
+	PricingUnavailable  bool `json:"pricing_unavailable,omitempty"`
 	Timestamp           time.Time
 	AccountID           string
 	PlanType            string
@@ -359,7 +359,7 @@ type ClaudeOAuthData struct {
 	RateLimitTier    string   `json:"rateLimitTier"`
 }
 
-func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
+func loadPool(dir string, registry *ProviderRegistry, vault credentialVault) ([]*Account, error) {
 	var accs []*Account
 	antigravityModels.Reset()
 
@@ -399,8 +399,8 @@ func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 				continue
 			}
-		path := filepath.Join(providerDir, e.Name())
-		data, err := readAccountFile(path)
+			path := filepath.Join(providerDir, e.Name())
+			data, err := vault.readAccountFile(path)
 			if err != nil {
 				return nil, fmt.Errorf("read %s: %w", path, err)
 			}
@@ -410,6 +410,7 @@ func loadPool(dir string, registry *ProviderRegistry) ([]*Account, error) {
 				return nil, err
 			}
 			if acc != nil {
+				acc.vault = vault
 				applyCommonAccountFileState(acc, data)
 				accs = append(accs, acc)
 			}
@@ -469,8 +470,8 @@ const (
 type poolState struct {
 	catalogVerifications map[string]modelVerification
 
-	accountAuthority *PassportStore
-	catalogScoped    bool
+	accountAuthority     *PassportStore
+	catalogScoped        bool
 	catalogAccountAllows func(*Account, string) bool
 	mu                   sync.RWMutex
 	accounts             []*Account
@@ -1100,8 +1101,10 @@ func saveAccount(a *Account) error {
 		return saveAPIKeyAccount(a)
 	case AccountTypeGrok:
 		return saveGrokAccount(a)
-	default:
+	case AccountTypeCodex:
 		return saveCodexAccount(a)
+	default:
+		return fmt.Errorf("credential persistence is unsupported for account type %q", a.Type)
 	}
 }
 
@@ -1119,7 +1122,7 @@ func saveCodexAccount(a *Account) error {
 	// Preserve ALL fields in the original auth.json by modifying only token fields that
 	// refresh updates. If we can't parse the existing file, fail closed to avoid
 	// clobbering user-provided auth.json content.
-	raw, err := readAccountFile(a.File)
+	raw, err := a.vault.readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1208,12 +1211,12 @@ func saveCodexAccount(a *Account) error {
 		delete(root, "disabled")
 	}
 
-	return atomicWriteJSON(a.File, root)
+	return a.vault.atomicWriteJSON(a.File, root)
 }
 
 func saveGeminiAccount(a *Account) error {
 	// Preserve existing fields in the file
-	raw, err := readAccountFile(a.File)
+	raw, err := a.vault.readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1247,12 +1250,12 @@ func saveGeminiAccount(a *Account) error {
 		delete(root, "disabled")
 	}
 
-	return atomicWriteJSON(a.File, root)
+	return a.vault.atomicWriteJSON(a.File, root)
 }
 
 // saveAPIKeyAccount saves an API-key-based account (kimi, minimax, etc.)
 func saveAPIKeyAccount(a *Account) error {
-	raw, err := readAccountFile(a.File)
+	raw, err := a.vault.readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1291,11 +1294,11 @@ func saveAPIKeyAccount(a *Account) error {
 	} else {
 		delete(root, "disabled")
 	}
-	return atomicWriteJSON(a.File, root)
+	return a.vault.atomicWriteJSON(a.File, root)
 }
 
 func saveGrokAccount(a *Account) error {
-	raw, err := readAccountFile(a.File)
+	raw, err := a.vault.readAccountFile(a.File)
 	if err != nil {
 		return err
 	}
@@ -1307,12 +1310,12 @@ func saveGrokAccount(a *Account) error {
 
 	if _, ok := root["access"]; ok {
 		applyGrokTokenFields(root, a, "access", "refresh", "expires", "tokenEndpoint", true)
-		return atomicWriteJSON(a.File, root)
+		return a.vault.atomicWriteJSON(a.File, root)
 	}
 
 	if _, ok := root["access_token"]; ok {
 		applyGrokTokenFields(root, a, "access_token", "refresh_token", "expires_at", "token_endpoint", false)
-		return atomicWriteJSON(a.File, root)
+		return a.vault.atomicWriteJSON(a.File, root)
 	}
 
 	for key, value := range root {
@@ -1327,7 +1330,7 @@ func saveGrokAccount(a *Account) error {
 		}
 		applyGrokTokenFields(entry, a, "key", "refresh_token", "expires_at", "", false)
 		root[key] = entry
-		return atomicWriteJSON(a.File, root)
+		return a.vault.atomicWriteJSON(a.File, root)
 	}
 
 	return fmt.Errorf("grok account %s has no recognized token entry", a.ID)
@@ -1362,14 +1365,6 @@ func applyGrokTokenFields(target map[string]any, a *Account, accessKey, refreshK
 	} else {
 		delete(target, "disabled")
 	}
-}
-
-func atomicWriteJSON(filePath string, data any) error {
-	updated, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAccountFile(filePath, updated)
 }
 
 // mergeUsage blends a newer usage snapshot with prior data, preserving meaningful

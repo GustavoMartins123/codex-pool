@@ -75,19 +75,13 @@ func TestConfigEnvironmentRejectsMalformedExplicitValues(t *testing.T) {
 		t.Fatal("integer parser accepted trailing junk")
 	}
 }
-func resetNetworkAfterTest(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() { globalIPAccess.configure(nil, nil); setTrustedProxies(nil) })
-}
 func TestConfigReloadRejectsWholeCandidate(t *testing.T) {
-	resetNetworkAfterTest(t)
 	for _, bad := range []string{"[routing]\ndefault_profile='typo'", "ip_access_allow=['bad']", "trusted_proxies=['bad']", "[experiments.traffic]\nenabled=true", "[client_policies.test.limits]\ndaily_requests=-1"} {
 		t.Run(bad, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
 			h := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false), aliases: newModelAliases(map[string]string{"probe": "previous"})}
 			h.cfg.setHotReloadable(.7, RoutingConfigFile{}, map[string]ClientPolicy{"old": {}}, ExperimentsConfig{})
-			globalIPAccess.configure([]string{"192.0.2.0/24"}, nil)
-			setTrustedProxies([]string{"198.51.100.1"})
+			h.ipAccess.install(testIPAccessSettings(t, []string{"192.0.2.0/24"}, nil, []string{"198.51.100.1"}))
 			content := "debug=true\ntier_threshold=.2\n" + bad
 			// TOML floating point literals require a leading zero.
 			content = strings.ReplaceAll(content, "=.2", "=0.2")
@@ -104,14 +98,13 @@ func TestConfigReloadRejectsWholeCandidate(t *testing.T) {
 			if _, ok := h.cfg.hotClientPolicies()["old"]; !ok {
 				t.Fatal("rejected reload changed policy")
 			}
-			if globalIPAccess.permitted("203.0.113.1") || !isTrustedProxy(net.ParseIP("198.51.100.1")) {
+			if h.ipAccess.snapshot().permitted("203.0.113.1") || !h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
 				t.Fatal("rejected reload changed network policy")
 			}
 		})
 	}
 }
 func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
-	resetNetworkAfterTest(t)
 	path := filepath.Join(t.TempDir(), "config.toml")
 	h := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false)}
 	pw := &poolWatcher{handler: h, configPath: path}
@@ -121,7 +114,7 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 	if err := pw.reloadConfigCandidate(); err != nil {
 		t.Fatal(err)
 	}
-	if !h.cfg.debug.Load() || globalIPAccess.permitted("203.0.113.1") || !isTrustedProxy(net.ParseIP("198.51.100.1")) {
+	if !h.cfg.debug.Load() || h.ipAccess.snapshot().permitted("203.0.113.1") || !h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
 		t.Fatal("valid reload not applied")
 	}
 	if err := os.WriteFile(path, []byte("debug=false"), 0600); err != nil {
@@ -138,7 +131,7 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if h.cfg.debug.Load() || globalIPAccess.restricted() || isTrustedProxy(net.ParseIP("198.51.100.1")) {
+	if h.cfg.debug.Load() || h.ipAccess.snapshot().restricted() || h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
 		t.Fatal("empty network lists retained prior policy")
 	}
 	if err := os.Remove(path); err != nil {
@@ -149,12 +142,8 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 	}
 }
 func TestIPAccessLoopbackOnlyBypassesReadOnlyHealth(t *testing.T) {
-	resetNetworkAfterTest(t)
-	setTrustedProxies(nil)
-	if err := globalIPAccess.configure(nil, []string{"127.0.0.0/8", "::1", "203.0.113.1"}); err != nil {
-		t.Fatal(err)
-	}
 	h := &proxyHandler{pool: newPoolState(nil, false)}
+	h.ipAccess.install(testIPAccessSettings(t, nil, []string{"127.0.0.0/8", "::1", "203.0.113.1"}, nil))
 	for _, peer := range []string{"127.0.0.1:1234", "[::1]:1234"} {
 		for _, tc := range []struct {
 			method, path, xff string
@@ -179,27 +168,26 @@ func TestIPAccessLoopbackOnlyBypassesReadOnlyHealth(t *testing.T) {
 }
 
 func TestIPAccessForwardingChainUsesNearestUntrustedHop(t *testing.T) {
-	resetNetworkAfterTest(t)
-	setTrustedProxies([]string{"10.0.0.0/8"})
+	policy := testIPAccessSettings(t, nil, nil, []string{"10.0.0.0/8"})
 	r := httptest.NewRequest("GET", "/livez", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
 	r.Header.Set("X-Forwarded-For", "127.0.0.1, 203.0.113.1, 10.0.0.2")
-	if ip, err := requestClientIP(r); err != nil || ip != "203.0.113.1" {
+	if ip, err := policy.resolveClientIP(r); err != nil || ip != "203.0.113.1" {
 		t.Fatalf("spoofed leftmost origin accepted: %s %v", ip, err)
 	}
 	r.Header.Set("CF-Connecting-IP", "invalid")
 	r.Header.Set("X-Real-IP", "127.0.0.1")
-	if ip, err := requestClientIP(r); err == nil || ip != "" {
+	if ip, err := policy.resolveClientIP(r); err == nil || ip != "" {
 		t.Fatalf("invalid canonical header selected secondary origin: %s %v", ip, err)
 	}
-	h := &proxyHandler{}
+	h := &proxyHandler{ipAccess: ipAccessPolicy{settings: policy}}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid forwarding attribution: %d", w.Code)
 	}
 	r.RemoteAddr = "198.51.100.1:1234"
-	if ip, err := requestClientIP(r); err != nil || ip != "198.51.100.1" {
+	if ip, err := policy.resolveClientIP(r); err != nil || ip != "198.51.100.1" {
 		t.Fatalf("untrusted peer used forwarding header: %s %v", ip, err)
 	}
 }

@@ -85,7 +85,7 @@ func TestContributionAccountLimitAndExpiredPendingRemainClosed(t *testing.T) {
 	if _, err := h.persistContribution("alice", AccountTypeKimi, "key-0", func(string) error { called = true; return nil }); err == nil || called {
 		t.Fatal("expired pending resumed")
 	}
-	if _, err := h.persistContribution("alice", AccountTypeKimi, "new", func(path string) error { return writeAccountFile(path, []byte(`{"api_key":"new"}`)) }); err != nil {
+	if _, err := h.persistContribution("alice", AccountTypeKimi, "new", func(path string) error { return h.cfg.vault.writeAccountFile(path, []byte(`{"api_key":"new"}`)) }); err != nil {
 		t.Fatal("expired pending blocked capacity", err)
 	}
 }

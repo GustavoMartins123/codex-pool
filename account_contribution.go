@@ -38,7 +38,7 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 	if h.passport == nil || h.cfg == nil || !h.passport.contributionActorAllowed(actor) {
 		return "", errors.New("account contribution is not authorized")
 	}
-	if _, ok := accountCredentialStore.(*credstore.KeyedStore); !ok {
+	if keyed, ok := h.cfg.vault.store.(*credstore.KeyedStore); !ok || keyed == nil {
 		return "", errors.New("encrypted credential vault is required")
 	}
 	dir, err := contributionDirectory(provider)
@@ -119,7 +119,7 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 	if err := write(path); err != nil {
 		return "", err
 	}
-	data, err := readAccountFile(path)
+	data, err := h.cfg.vault.readAccountFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -166,7 +166,7 @@ func (h *proxyHandler) saveContribution(r *http.Request, provider AccountType, i
 	if err != nil {
 		return "", err
 	}
-	return h.persistContribution(providerContributionActor(r), provider, identity, func(path string) error { return writeAccountFile(path, data) })
+	return h.persistContribution(providerContributionActor(r), provider, identity, func(path string) error { return h.cfg.vault.writeAccountFile(path, data) })
 }
 
 func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.Request) {

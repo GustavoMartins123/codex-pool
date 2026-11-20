@@ -99,7 +99,7 @@ func TestRestoreValidatedStaticAccountPersistsHealthyState(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"api_key":"secret","dead":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	account := &Account{ID: "minimax", Type: AccountTypeMinimax, File: path, AccessToken: "secret", Dead: true, Penalty: 100}
+	account := &Account{ID: "minimax", Type: AccountTypeMinimax, vault: plainTestVault(), File: path, AccessToken: "secret", Dead: true, Penalty: 100}
 
 	restoreValidatedAccount(account, "test")
 
@@ -120,7 +120,7 @@ func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"tokens":{"access_token":"a","refresh_token":"r"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	acc := &Account{ID: "codex", Type: AccountTypeCodex, File: path, AccessToken: "a", RefreshToken: "r"}
+	acc := &Account{ID: "codex", Type: AccountTypeCodex, vault: plainTestVault(), File: path, AccessToken: "a", RefreshToken: "r"}
 
 	markAccountNeedsLogin(acc, "refresh failed: 400 Bad Request: invalid_grant")
 
@@ -270,7 +270,7 @@ func TestDeleteWithdrawnAccountPurgesAuthorityAndUsage(t *testing.T) {
 func TestForceRefreshAccountJoinsInFlightRefresh(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "account.json")
 	_ = os.WriteFile(file, []byte(`{"tokens":{"access_token":"old-token","refresh_token":"valid-refresh"}}`), 0o600)
-	acc := &Account{Type: AccountTypeCodex, ID: "codex_force", File: file, AccessToken: "old-token", RefreshToken: "valid-refresh"}
+	acc := &Account{Type: AccountTypeCodex, ID: "codex_force", vault: plainTestVault(), File: file, AccessToken: "old-token", RefreshToken: "valid-refresh"}
 
 	refreshStarted := make(chan struct{})
 	release := make(chan struct{})
@@ -328,6 +328,7 @@ func TestForceRefreshAccountMarksNeedsLoginOnPermanentFailure(t *testing.T) {
 	acc := &Account{
 		Type:         AccountTypeCodex,
 		ID:           "codex_dead_rt",
+		vault:        plainTestVault(),
 		File:         file,
 		AccessToken:  "old-token",
 		RefreshToken: "dead-refresh",

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"codex-pool-proxy/internal/credstore"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,7 +33,7 @@ func attachContributionFixture(t *testing.T, h *proxyHandler, actor string) {
 		t.Fatal(err)
 	}
 	h.pool.accountAuthority = p
-	useKeyedVault(t, hexKey(t, 1, 'c'), nil)
+	h.cfg.vault = keyedTestVault(t, hexKey(t, 1, 'c'), nil)
 }
 
 func contributionRequestActor(r *http.Request, actor string) *http.Request {
@@ -85,7 +84,7 @@ func TestPrivateContributionCapabilityAndDeduplication(t *testing.T) {
 	if h.passport.authorizeAccount("operator", accounts[0], "use") == nil {
 		t.Fatal("body changed ownership")
 	}
-	assertEncryptedCredentialFile(t, accounts[0].File, "private-key")
+	assertEncryptedCredentialFile(t, h.cfg.vault, accounts[0].File, "private-key")
 	duplicate := httptest.NewRecorder()
 	h.ServeHTTP(duplicate, request())
 	if duplicate.Code != 409 {
@@ -98,7 +97,7 @@ func TestContributionPendingSurvivesFailureAndCanResume(t *testing.T) {
 	h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, nil, nil, NewKimiProvider(base))}
 	attachContributionFixture(t, h, "alice")
 	_, err := h.persistContribution("alice", AccountTypeKimi, "key", func(path string) error {
-		if err := writeAccountFile(path, []byte(`{"api_key":"key"}`)); err != nil {
+		if err := h.cfg.vault.writeAccountFile(path, []byte(`{"api_key":"key"}`)); err != nil {
 			return err
 		}
 		return errors.New("interrupted before activation")
@@ -213,10 +212,10 @@ func TestContributionVaultAndOAuthSessionAreFailClosed(t *testing.T) {
 	h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, nil, nil, NewKimiProvider(base))}
 	attachContributionFixture(t, h, "alice")
 	r := contributionRequestActor(httptest.NewRequest("POST", "/", nil), "alice")
-	keyed := accountCredentialStore
-	accountCredentialStore = credstore.PlainStore{}
+	keyed := h.cfg.vault
+	h.cfg.vault = plainTestVault()
 	_, err := h.saveContribution(r, AccountTypeKimi, "key", map[string]any{"api_key": "key"})
-	accountCredentialStore = keyed
+	h.cfg.vault = keyed
 	if err == nil {
 		t.Fatal("plaintext contribution accepted")
 	}

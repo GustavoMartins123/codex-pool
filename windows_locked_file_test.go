@@ -88,7 +88,7 @@ func TestAuditWriteFileAtomicSurvivesTransientExclusiveHolder(t *testing.T) {
 			return func() { syscall.CloseHandle(handle) }
 		},
 		func() error {
-			return writeAccountFile(path, []byte(`{"tokens":{"access_token":"new"}}`))
+			return plainTestVault().writeAccountFile(path, []byte(`{"tokens":{"access_token":"new"}}`))
 		})
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestAuditWriteFileAtomicSurvivesTransientGoReader(t *testing.T) {
 			return func() { f.Close() }
 		},
 		func() error {
-			return writeAccountFile(path, []byte(`{"v":2}`))
+			return plainTestVault().writeAccountFile(path, []byte(`{"v":2}`))
 		})
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -150,7 +150,7 @@ func TestAuditWriteFileAtomicGivesUpOnPermanentLockWithinBudget(t *testing.T) {
 	}
 	deadline := time.Now().Add(budget + 5*time.Second)
 	writeErr := make(chan error, 1)
-	go func() { writeErr <- writeAccountFile(path, []byte(`{"v":2}`)) }()
+	go func() { writeErr <- plainTestVault().writeAccountFile(path, []byte(`{"v":2}`)) }()
 	select {
 	case err := <-writeErr:
 		if err == nil {

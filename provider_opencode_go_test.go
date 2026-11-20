@@ -322,7 +322,7 @@ func TestFetchOpencodeGoUsageUnauthorizedMarksDead(t *testing.T) {
 	defer server.Close()
 
 	base, _ := url.Parse(server.URL)
-	acc := &Account{Type: AccountTypeOpencodeGo, ID: "go", File: accountFile, AccessToken: "sk-bad"}
+	acc := &Account{Type: AccountTypeOpencodeGo, ID: "go", vault: plainTestVault(), File: accountFile, AccessToken: "sk-bad"}
 	h := &proxyHandler{cfg: &config{opencodeGoBase: base}, transport: http.DefaultTransport}
 	if err := h.fetchOpencodeGoUsage(time.Now(), acc); err == nil {
 		t.Fatal("expected error for 401 usage")
@@ -638,7 +638,7 @@ func TestLoadPoolLoadsOpencodeGoAccounts(t *testing.T) {
 
 	goBase, _ := url.Parse("https://opencode.ai/zen/go/v1")
 	registry := NewProviderRegistry(&CodexProvider{}, &ClaudeProvider{}, &GeminiProvider{}, NewOpencodeGoProvider(goBase))
-	accounts, err := loadPool(poolDir, registry)
+	accounts, err := loadPool(poolDir, registry, plainTestVault())
 	if err != nil {
 		t.Fatal(err)
 	}

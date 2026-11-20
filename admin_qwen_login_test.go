@@ -136,7 +136,7 @@ func TestQwenBrowserLoginPersistsPrivateAccountAndAutomaticCredits(t *testing.T)
 	if err != nil || strings.Contains(string(encrypted), "synthetic-oauth") || strings.Contains(string(encrypted), "sk-sp-browser-test-key") {
 		t.Fatal("browser credentials were not encrypted")
 	}
-	data, err := readAccountFile(account.File)
+	data, err := account.vault.readAccountFile(account.File)
 	var stored QwenAuthJSON
 	if err != nil || json.Unmarshal(data, &stored) != nil || stored.TokenPlan.CloudOAuth.snapshot().RefreshToken != "synthetic-oauth-refresh" {
 		t.Fatal("OAuth renewal credentials were not persisted")

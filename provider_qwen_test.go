@@ -83,10 +83,10 @@ func TestQwenProxyRoutesClientProtocolsAndUsage(t *testing.T) {
 
 func TestQwenDiscoveryFailureClearsCatalogAndRecovers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "qwen.json")
-	if err := writeAccountFile(path, []byte(`{"api_key":"sk-sp-discovery-test-key"}`)); err != nil {
+	if err := plainTestVault().writeAccountFile(path, []byte(`{"api_key":"sk-sp-discovery-test-key"}`)); err != nil {
 		t.Fatal(err)
 	}
-	account := &Account{ID: "qwen", Type: AccountTypeQwen, File: path, AccessToken: "sk-sp-discovery-test-key", Models: map[string]DiscoveredModel{"qwen-old": {ID: "qwen-old"}}}
+	account := &Account{ID: "qwen", Type: AccountTypeQwen, vault: plainTestVault(), File: path, AccessToken: "sk-sp-discovery-test-key", Models: map[string]DiscoveredModel{"qwen-old": {ID: "qwen-old"}}}
 	h := qwenTestHandler(t, nil, account)
 	failed := roundTripFunc(func(*http.Request) (*http.Response, error) { return qwenJSONResponse(503, `{}`), nil })
 	if syncProviderModels(context.Background(), failed, h.registry, account) == nil || len(account.Models) != 0 || account.HealthError == "" {

@@ -5,49 +5,36 @@ import (
 	"testing"
 )
 
-// P1-01 regression: a malformed allowlist must be rejected, and a rejected
-// reconfigure must keep the previously installed restriction.
-func TestIPAccessInvalidPolicyRejectedKeepsPrevious(t *testing.T) {
-	p := &ipAccessPolicy{}
-	if err := p.configure([]string{"192.0.2.0/24"}, nil); err != nil {
+func testIPAccessSettings(t *testing.T, allow, deny, proxies []string) ipAccessSettings {
+	t.Helper()
+	settings, err := parseIPAccessSettings(allow, deny, proxies, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.restricted() || p.permitted("198.51.100.20") {
-		t.Fatal("valid allowlist control did not reject outsider")
-	}
+	return settings
+}
+
+func TestIPAccessRejectsMalformedAllowlist(t *testing.T) {
 	for _, bad := range [][]string{{"192.0.2.0/33"}, {"not-an-ip"}, {" "}, {"198.51.100.1/24/25"}} {
-		if err := p.configure(bad, nil); err == nil {
+		if _, err := parseIPAccessSettings(bad, nil, nil, false); err == nil {
 			t.Fatalf("invalid allowlist %q accepted", bad)
 		}
-	}
-	if !p.restricted() {
-		t.Fatal("rejected reconfigure dropped the restriction")
-	}
-	if p.permitted("198.51.100.20") {
-		t.Fatal("fail-open: outsider permitted after invalid policy was rejected")
 	}
 }
 
 func TestIPAccessInvalidEntriesNamedWithField(t *testing.T) {
-	p := &ipAccessPolicy{}
-	err := p.configure([]string{"192.0.2.0/33"}, nil)
+	_, err := parseIPAccessSettings([]string{"192.0.2.0/33"}, nil, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "PROXY_IP_ALLOW") || !strings.Contains(err.Error(), "192.0.2.0/33") {
 		t.Fatalf("allow error lacks field and entry: %v", err)
 	}
-	err = p.configure(nil, []string{"203.0.113.5/40"})
+	_, err = parseIPAccessSettings(nil, []string{"203.0.113.5/40"}, nil, false)
 	if err == nil || !strings.Contains(err.Error(), "PROXY_IP_DENY") || !strings.Contains(err.Error(), "203.0.113.5/40") {
 		t.Fatalf("deny error lacks field and entry: %v", err)
-	}
-	if p.restricted() {
-		t.Fatal("failed configure must not install a policy")
 	}
 }
 
 func TestIPAccessSemantics(t *testing.T) {
-	p := &ipAccessPolicy{}
-	if err := p.configure([]string{"10.0.0.0/8", "2001:db8::/32"}, []string{"10.6.0.0/16"}); err != nil {
-		t.Fatal(err)
-	}
+	p := testIPAccessSettings(t, []string{"10.0.0.0/8", "2001:db8::/32"}, []string{"10.6.0.0/16"}, nil)
 	cases := []struct {
 		ip   string
 		want bool
@@ -70,7 +57,7 @@ func TestIPAccessSemantics(t *testing.T) {
 	if p.restricted() != true {
 		t.Fatal("policy with entries must be restricted")
 	}
-	if err := p.configure(nil, nil); err != nil || p.restricted() {
+	if p := testIPAccessSettings(t, nil, nil, nil); p.restricted() {
 		t.Fatal("empty policy must be accepted and unrestricted")
 	}
 }
