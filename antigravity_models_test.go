@@ -168,18 +168,13 @@ func TestAntigravityCanonicalModelUsesForcedPrefixAndDeprecatedAlias(t *testing.
 	}
 }
 
-func TestAntigravityCanonicalStaticAliasSurvivesColdStart(t *testing.T) {
-	// No snapshots: discovery is down and the registry only has the static
-	// catalog, so the official deprecated slug must still resolve.
+func TestAntigravityCatalogRequiresDiscovery(t *testing.T) {
 	registry := &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot)}
-	if got, ok := registry.Canonical("gemini-3.1-pro-high"); !ok || got != "gemini-pro-agent" {
-		t.Fatalf("cold-start alias resolved to %q, %v, want gemini-pro-agent", got, ok)
-	}
-	if got, ok := registry.Canonical("antigravity/gemini-3.1-pro-high"); !ok || got != "gemini-pro-agent" {
-		t.Fatalf("forced cold-start alias resolved to %q, %v", got, ok)
+	model := "gemini-3.1-pro-high"
+	if _, ok := registry.Canonical(model); ok || registry.Supports("account", model) || len(registry.Models(nil)) != 0 {
+		t.Fatal("an undiscovered model appeared in the catalog or became eligible")
 	}
 
-	// Live snapshot deprecations keep priority over the static alias.
 	registry.ReplaceAccount("account", AntigravityAccountSnapshot{
 		FetchedAt:  time.Now(),
 		Models:     map[string]AntigravityModelInfo{"gemini-new": {ID: "gemini-new"}},
@@ -215,4 +210,23 @@ func TestAntigravityModelCooldownDoesNotBlockAnotherModel(t *testing.T) {
 	if got := pool.selectRoute(req).Account; got != account {
 		t.Fatalf("unlimited model should use the account, got %#v", got)
 	}
+}
+
+func registerTestAntigravityModels(t *testing.T, accountID string, models ...string) {
+	t.Helper()
+	previous, existed := antigravityModels.AccountSnapshot(accountID)
+	t.Cleanup(func() {
+		antigravityModels.mu.Lock()
+		defer antigravityModels.mu.Unlock()
+		if existed {
+			antigravityModels.accounts[accountID] = previous
+		} else {
+			delete(antigravityModels.accounts, accountID)
+		}
+	})
+	snapshot := AntigravityAccountSnapshot{Models: make(map[string]AntigravityModelInfo, len(models))}
+	for _, model := range models {
+		snapshot.Models[model] = AntigravityModelInfo{ID: model, DisplayName: model}
+	}
+	antigravityModels.ReplaceAccount(accountID, snapshot)
 }

@@ -50,6 +50,15 @@ func ensureTestPassport(t *testing.T, h *proxyHandler) error {
 	t.Helper()
 	testPoolCredentialMu.Lock()
 	defer testPoolCredentialMu.Unlock()
+	if h.contextHandoff == nil {
+		h.contextHandoff = newConversationHandoffStore()
+	}
+	if h.requestQueue == nil {
+		h.requestQueue = newFairQueue()
+	}
+	if h.routeTraces == nil {
+		h.routeTraces = newRouteTraceStore(2048)
+	}
 	if h.passport != nil {
 		return nil
 	}

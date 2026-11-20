@@ -19,9 +19,6 @@ func TestAstraRegistry(t *testing.T) {
 	if resolved, aliased := newModelAliases(nil).resolve("gpt-6-astra[1m]"); !aliased || resolved != "gpt-6-astra" {
 		t.Fatalf("Astra 1M alias = %q, aliased=%v", resolved, aliased)
 	}
-	if defaultModelForProvider[AccountTypeCodex] != model.ID {
-		t.Fatalf("Codex default = %q", defaultModelForProvider[AccountTypeCodex])
-	}
 	found := false
 	for _, item := range piModelsForProvider(AccountTypeCodex) {
 		if item.ID != model.ID {

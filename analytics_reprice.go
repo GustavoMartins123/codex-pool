@@ -74,7 +74,10 @@ func (s *AnalyticsStore) rebuildPricingFromBoltDB(store *usageStore, pricing *Pr
 			if ru.InputTokens == 0 && ru.CachedInputTokens == 0 && ru.CacheCreationTokens == 0 && ru.OutputTokens == 0 {
 				return nil
 			}
-			cost := pricing.calculateCost(ru)
+			cost, err := pricing.calculateCost(ru)
+			if err != nil {
+				return err
+			}
 			totalRequests++
 
 			key := analyticsPricingAggKey{

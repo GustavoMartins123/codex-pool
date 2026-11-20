@@ -89,27 +89,13 @@ type AntigravityCatalogModel struct {
 type antigravityModelRegistry struct {
 	mu       sync.RWMutex
 	accounts map[string]AntigravityAccountSnapshot
-	known    map[string]bool
 }
 
-var antigravityModels = &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot), known: make(map[string]bool)}
+var antigravityModels = &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot)}
 
 func (r *antigravityModelRegistry) Reset() {
 	r.mu.Lock()
 	r.accounts = make(map[string]AntigravityAccountSnapshot)
-	r.known = make(map[string]bool)
-	r.mu.Unlock()
-}
-
-func (r *antigravityModelRegistry) MarkAccount(accountID string) {
-	if strings.TrimSpace(accountID) == "" {
-		return
-	}
-	r.mu.Lock()
-	if r.known == nil {
-		r.known = make(map[string]bool)
-	}
-	r.known[accountID] = true
 	r.mu.Unlock()
 }
 
@@ -121,10 +107,6 @@ func (r *antigravityModelRegistry) ReplaceAccount(accountID string, snapshot Ant
 		snapshot.FetchedAt = time.Now().UTC()
 	}
 	r.mu.Lock()
-	if r.known == nil {
-		r.known = make(map[string]bool)
-	}
-	r.known[accountID] = true
 	r.accounts[accountID] = snapshot
 	r.mu.Unlock()
 }
@@ -142,7 +124,7 @@ func (r *antigravityModelRegistry) Supports(accountID, model string) bool {
 	snapshot, ok := r.accounts[accountID]
 	r.mu.RUnlock()
 	if !ok {
-		return true // allow cold-start discovery/fallback accounts to be tried
+		return false
 	}
 	_, ok = snapshot.Models[model]
 	return ok
@@ -154,7 +136,7 @@ func (r *antigravityModelRegistry) DiscoveryAvailability(accountID, model string
 	snapshot, ok := r.accounts[accountID]
 	r.mu.RUnlock()
 	if !ok {
-		return true, time.Time{}
+		return false, time.Time{}
 	}
 	info, ok := snapshot.Models[model]
 	if !ok {
@@ -273,13 +255,6 @@ func (s *AntigravityQuotaSummary) familyExhaustedUntil(family string, now time.T
 	return until
 }
 
-// antigravityStaticAliases resolves official deprecated slugs even when
-// discovery is unavailable and the registry falls back to the static catalog.
-// Live snapshot deprecations always win over these entries.
-var antigravityStaticAliases = map[string]string{
-	"gemini-3.1-pro-high": "gemini-pro-agent",
-}
-
 func (r *antigravityModelRegistry) Canonical(model string) (string, bool) {
 	model = strings.TrimSpace(strings.TrimPrefix(model, "antigravity/"))
 	if model == "" {
@@ -299,14 +274,6 @@ func (r *antigravityModelRegistry) Canonical(model string) (string, bool) {
 	if found {
 		return model, true
 	}
-	if replacement, ok := antigravityStaticAliases[model]; ok {
-		return replacement, true
-	}
-	for _, fallback := range antigravityFallbackModels {
-		if fallback.ID == model {
-			return model, true
-		}
-	}
 	return model, false
 }
 
@@ -316,7 +283,6 @@ func (r *antigravityModelRegistry) Models(pool *poolState) []AntigravityCatalogM
 	for id, snapshot := range r.accounts {
 		snapshots[id] = snapshot
 	}
-	knownAccounts := len(r.known)
 	r.mu.RUnlock()
 
 	merged := make(map[string]*AntigravityCatalogModel)
@@ -367,13 +333,6 @@ func (r *antigravityModelRegistry) Models(pool *poolState) []AntigravityCatalogM
 			}
 		}
 	}
-	if len(merged) == 0 && knownAccounts > 0 {
-		for _, fallback := range antigravityFallbackModels {
-			copy := fallback
-			copy.Stale = true
-			merged[copy.ID] = &copy
-		}
-	}
 	result := make([]AntigravityCatalogModel, 0, len(merged))
 	for id, entry := range merged {
 		entry.Stale = !fresh[id]
@@ -412,32 +371,6 @@ func antigravityAccountModelAvailable(pool *poolState, accountID, model string) 
 		return !until.After(now) && discoveryAvailable, until
 	}
 	return false, time.Time{}
-}
-
-var antigravityFallbackModels = []AntigravityCatalogModel{
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 Thinking", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3-flash", DisplayName: "Gemini 3 Flash", SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3-flash-agent", DisplayName: "Gemini 3.5 Flash (High)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image", MaxTokens: 131072, MaxOutputTokens: 32768, SupportsImages: true, SupportsThinking: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-pro-agent", DisplayName: "Gemini 3.1 Pro (High)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro (Low)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gpt-oss-120b-medium", DisplayName: "GPT OSS 120B (Medium)", SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.1-flash-lite", DisplayName: "Gemini 3.1 Flash Lite", SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.5-flash-low", DisplayName: "Gemini 3.5 Flash (Medium)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.5-flash-extra-low", DisplayName: "Gemini 3.5 Flash (Low)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.6-flash-high", DisplayName: "Gemini 3.6 Flash (High)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.6-flash-medium", DisplayName: "Gemini 3.6 Flash (Medium)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.6-flash-low", DisplayName: "Gemini 3.6 Flash (Low)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.6-flash-tiered", DisplayName: "Gemini 3.6 Flash (Tiered)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.7-flash-high", DisplayName: "Gemini 3.7 Flash (High)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.7-flash-medium", DisplayName: "Gemini 3.7 Flash (Medium)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.7-flash-low", DisplayName: "Gemini 3.7 Flash (Low)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.7-flash-tiered", DisplayName: "Gemini 3.7 Flash (Tiered)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash (High)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash (Medium)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.8-flash-low", DisplayName: "Gemini 3.8 Flash (Low)", SupportsThinking: true, SupportsTools: true}},
-	{AntigravityModelInfo: AntigravityModelInfo{ID: "gemini-3.8-flash-tiered", DisplayName: "Gemini 3.8 Flash (Tiered)", SupportsThinking: true, SupportsTools: true}},
 }
 
 func parseAntigravityModelSnapshot(body []byte, fetchedAt time.Time) (AntigravityAccountSnapshot, error) {

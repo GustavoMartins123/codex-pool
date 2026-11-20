@@ -6,6 +6,36 @@ import (
 	"time"
 )
 
+func testPricingData(t *testing.T) *PricingData {
+	t.Helper()
+	pricing, err := newPricingData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pricing
+}
+
+func testRequestCost(t *testing.T, pricing *PricingData, usage RequestUsage) float64 {
+	t.Helper()
+	cost, err := pricing.calculateCost(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cost
+}
+
+func TestPricingRequiresCanonicalData(t *testing.T) {
+	pricing := testPricingData(t)
+	for _, model := range []string{"", "gpt-5.5-20991101"} {
+		if _, err := pricing.calculateCost(RequestUsage{Model: model}); err == nil {
+			t.Fatalf("pricing %q succeeded without a catalog entry", model)
+		}
+	}
+	if err := pricing.loadFromJSON([]byte("{}")); err == nil {
+		t.Fatal("empty catalog was accepted")
+	}
+}
+
 func TestCodexProLiteSubscriptionCost(t *testing.T) {
 	t.Parallel()
 
@@ -88,7 +118,7 @@ func TestClaudeSonnet5PricingDoesNotIncreaseAfterLaunch(t *testing.T) {
 func TestLookupPricingUsesClaudeSonnet5Aliases(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	want, ok := pd.lookupPricing("claude-sonnet-5")
 	if !ok {
 		t.Fatal("missing Claude Sonnet 5 pricing")
@@ -104,7 +134,7 @@ func TestLookupPricingUsesClaudeSonnet5Aliases(t *testing.T) {
 func TestLookupPricingIncludesClaudeFable51Fallback(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	got, ok := pd.lookupPricing("claude-fable-5-1")
 	if !ok {
 		t.Fatal("missing Claude Fable 5.1 fallback pricing")
@@ -117,7 +147,7 @@ func TestLookupPricingIncludesClaudeFable51Fallback(t *testing.T) {
 func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	got, ok := pd.lookupPricing("claude-opus-5")
 	if !ok {
 		t.Fatal("missing Claude Opus 5 fallback pricing")
@@ -134,7 +164,7 @@ func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 
 func TestClaude55PricingAndContextAliases(t *testing.T) {
 	t.Parallel()
-	pd := newPricingData()
+	pd := testPricingData(t)
 	for model, want := range map[string]ModelPricing{
 		"claude-opus-5-5":   flatPricing(4, 20, 0.2, 5),
 		"claude-sonnet-5-5": flatPricing(2, 10, 0.2, 2.5),
@@ -155,7 +185,7 @@ func TestClaude55PricingAndContextAliases(t *testing.T) {
 func TestLookupPricingGLM53UsesPublishedRates(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	want := ModelPricing{
 		InputCostPerToken:  1.4e-6,
 		OutputCostPerToken: 4.4e-6,
@@ -239,8 +269,8 @@ func TestLoadFromJSONParsesLongContextRates(t *testing.T) {
 func TestCalculateCostUsesProviderTokenSemantics(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
-	claude := pd.calculateCost(RequestUsage{
+	pd := testPricingData(t)
+	claude := testRequestCost(t, pd, RequestUsage{
 		AccountType:         AccountTypeClaude,
 		Model:               "claude-sonnet-5",
 		InputTokens:         100,
@@ -254,7 +284,7 @@ func TestCalculateCostUsesProviderTokenSemantics(t *testing.T) {
 		t.Fatalf("Claude cost = %.12f, want %.12f", claude, wantClaude)
 	}
 
-	openAI := pd.calculateCost(RequestUsage{
+	openAI := testRequestCost(t, pd, RequestUsage{
 		AccountType:       AccountTypeCodex,
 		Model:             "gpt-5.6-sol",
 		InputTokens:       1000,
@@ -271,8 +301,8 @@ func TestCalculateCostUsesProviderTokenSemantics(t *testing.T) {
 func TestCalculateCostAppliesLongContextTier(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
-	cost := pd.calculateCost(RequestUsage{
+	pd := testPricingData(t)
+	cost := testRequestCost(t, pd, RequestUsage{
 		AccountType:       AccountTypeCodex,
 		Model:             "gpt-5.6-sol",
 		InputTokens:       300_000,
@@ -289,7 +319,7 @@ func TestCalculateCostAppliesLongContextTier(t *testing.T) {
 func TestAntigravityAliasesUseAPIEquivalentPricing(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	for alias, canonical := range map[string]string{
 		"claude-opus-4-6-thinking":   "claude-opus-4-6",
 		"gemini-3-flash":             "gemini-3-flash-preview",
@@ -317,26 +347,10 @@ func TestAntigravityAliasesUseAPIEquivalentPricing(t *testing.T) {
 	}
 }
 
-func TestAllAntigravityFallbackModelsHaveAPIEquivalentPricing(t *testing.T) {
-	t.Parallel()
-
-	pd := newPricingData()
-	for _, model := range antigravityFallbackModels {
-		pricing, ok := pd.lookupPricing(model.ID)
-		if !ok {
-			t.Errorf("missing API-equivalent pricing for Antigravity model %q", model.ID)
-			continue
-		}
-		if pricing.InputCostPerToken <= 0 || pricing.OutputCostPerToken <= 0 {
-			t.Errorf("non-positive API-equivalent pricing for Antigravity model %q: %#v", model.ID, pricing)
-		}
-	}
-}
-
 func TestLookupPricingDoesNotGuessByPrefix(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
+	pd := testPricingData(t)
 	if _, ok := pd.lookupPricing("zai.glm-5.99"); ok {
 		t.Fatal("unknown model inherited a price by prefix")
 	}
@@ -345,8 +359,8 @@ func TestLookupPricingDoesNotGuessByPrefix(t *testing.T) {
 func TestCalculateCostZAIRequestIsNotFree(t *testing.T) {
 	t.Parallel()
 
-	pd := newPricingData()
-	cost := pd.calculateCost(RequestUsage{
+	pd := testPricingData(t)
+	cost := testRequestCost(t, pd, RequestUsage{
 		AccountType:  AccountTypeZAI,
 		Model:        "glm-5.3",
 		InputTokens:  1_000_000,

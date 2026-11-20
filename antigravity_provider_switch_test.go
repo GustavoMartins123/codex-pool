@@ -29,6 +29,7 @@ func TestConversationSwitchCodexToAntigravity(t *testing.T) {
 	codexAcc := &Account{Type: AccountTypeCodex, ID: "codex-1", AccessToken: "codex-token", PlanType: "pro"}
 	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 
+	registerTestAntigravityModels(t, antiAcc.ID, "gemini-3.8-flash-high")
 	pool := newPoolState([]*Account{codexAcc, antiAcc}, false)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, antigravityProvider)
 

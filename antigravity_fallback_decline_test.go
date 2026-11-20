@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +10,8 @@ import (
 	"time"
 )
 
-// newFallbackDeclineHandler builds a proxyHandler whose pool has no codex
-// accounts and a single live antigravity account, so a request for a codex
-// model immediately enters the fallback branch of the attempt loop.
-func newFallbackDeclineHandler(t *testing.T, transport http.RoundTripper) *proxyHandler {
+// The pool offers Antigravity capacity to test that unavailable Codex requests stay on Codex.
+func newAntigravityOnlyHandler(t *testing.T, transport http.RoundTripper) *proxyHandler {
 	t.Helper()
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
@@ -58,54 +55,17 @@ func postCodexModelRequest(t *testing.T, h *proxyHandler, model string) *httptes
 	return w
 }
 
-// A fallback candidate that carries "gemini" resolves to the antigravity
-// provider via lookupModelMetadata but is not routable by
-// shouldRouteAntigravityModel. The loop must answer with a real 503 so the
-// client can back off — never an empty 200.
-func TestFallbackToNonRoutableAntigravityModelWrites503(t *testing.T) {
-	h := newFallbackDeclineHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		t.Errorf("upstream must not be called for a non-routable fallback: %s", req.URL.Host)
+func TestUnavailableCodexModelDoesNotCallOtherProviders(t *testing.T) {
+	h := newAntigravityOnlyHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Errorf("unavailable Codex model reached an upstream: %s", req.URL.Host)
 		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
 	}))
-	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
-		OnUnavailable: []string{"gemini-custom-unknown"},
-	})
 
 	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 (body=%q)", w.Code, w.Body.String())
 	}
 	if strings.TrimSpace(w.Body.String()) == "" {
-		t.Fatal("declined fallback must write an error body, got empty response")
-	}
-}
-
-// A routable antigravity fallback is served normally through the same branch.
-func TestFallbackToRoutableAntigravityModelServesResponse(t *testing.T) {
-	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if !strings.Contains(req.URL.Host, "example") {
-			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Request: req}, nil
-		}
-		respSSE := `data: {"response":{"responseId":"anti-resp-1","candidates":[{"content":{"parts":[{"text":"hello from antigravity"}]},"finishReason":"STOP"}]}}` + "\n\n"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			Body:       io.NopCloser(strings.NewReader(respSSE)),
-			Request:    req,
-		}, nil
-	})
-	h := newFallbackDeclineHandler(t, transport)
-	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
-		OnUnavailable: []string{"antigravity/gemini-3.8-flash-high"},
-	})
-
-	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body=%q)", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "hello from antigravity") {
-		var probe map[string]any
-		_ = json.Unmarshal(w.Body.Bytes(), &probe)
-		t.Fatalf("antigravity fallback response missing payload: %q", w.Body.String())
+		t.Fatal("unavailable model returned an empty response")
 	}
 }

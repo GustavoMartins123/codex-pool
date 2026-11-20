@@ -145,15 +145,18 @@ func validSessionState(s string) bool {
 }
 
 func (h *proxyHandler) sessionBroker() (*sessionBroker, error) {
-	h.runnerBrokerOnce.Do(func() { h.runnerBroker, h.runnerBrokerErr = newSessionBroker(h.passport) })
-	return h.runnerBroker, h.runnerBrokerErr
+	if h.runnerBroker == nil {
+		return nil, errors.New("session broker is not initialized")
+	}
+	return h.runnerBroker, nil
 }
 
 func (h *proxyHandler) startSessionBroker(ctx context.Context) error {
-	b, err := h.sessionBroker()
+	b, err := newSessionBroker(h.passport)
 	if err != nil {
 		return err
 	}
+	h.runnerBroker = b
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()

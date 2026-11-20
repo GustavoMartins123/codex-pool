@@ -111,20 +111,6 @@ func TestGenericProviderParticipatesInProxyRouting(t *testing.T) {
 	}
 }
 
-func TestGenericProviderCanJoinFallbackGraph(t *testing.T) {
-	provider, account := testGenericProvider(t)
-	pool := newPoolState([]*Account{account}, false)
-	pool.fallbackGraph.AddCandidate("gpt-5.6-sol", "local-vllm/qwen")
-	model, _, ok := pool.fallbackGraph.ResolveFallback(
-		"gpt-5.6-sol", TriggerUnavailable, RequestCapabilities{},
-		pool, nil,
-	)
-	if !ok || model != "local-vllm/qwen" {
-		t.Fatalf("fallback = %q, %v", model, ok)
-	}
-	_ = provider
-}
-
 func TestGenericProviderUsesSmartRouter(t *testing.T) {
 	provider, first := testGenericProvider(t)
 	second := provider.syntheticAccount()

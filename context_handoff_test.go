@@ -282,7 +282,7 @@ func TestAntigravitySameProviderLargeRequestIsCompacted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := &proxyHandler{}
+	h := &proxyHandler{contextHandoff: newConversationHandoffStore()}
 	w := httptest.NewRecorder()
 	rewritten, err := h.prepareProviderContextHandoff(w, "user", "antigravity-large", AccountTypeAntigravity, "/v1/responses", body)
 	if err != nil {

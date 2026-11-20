@@ -121,7 +121,7 @@ func TestRouteTraceEndpointAuth(t *testing.T) {
 		AccountID:      "operator_secret_account",
 		ScoreBreakdown: &ScoreBreakdownView{QuotaScore: 0.90, Score: 0.85},
 	}
-	h.getRouteTraces().Record(trace)
+	h.routeTraces.Record(trace)
 
 	// The HTTP router must deny unauthenticated trace lookups.
 	req1 := httptest.NewRequest("GET", "/api/pool/routes/req_endpoint_abc", nil)
@@ -310,8 +310,9 @@ func TestCircuitBreakersEndpoint(t *testing.T) {
 
 	h := &proxyHandler{
 		cfg:             &config{adminToken: "operator-pass"},
-		circuitBreakers: cb,
+		pool:            newPoolState(nil, false),
 	}
+	h.pool.circuitBreakers = cb
 
 	req := httptest.NewRequest("GET", "/api/pool/circuit-breakers", nil)
 	req.Header.Set("X-Admin-Token", "operator-pass")

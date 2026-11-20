@@ -168,7 +168,11 @@ func (h *proxyHandler) registerContributionRoutes(register httpRouteRegister) {
 }
 
 func (h *proxyHandler) handleTransitionDiagnostics(w http.ResponseWriter, _ *http.Request) {
-	events := h.getContextHandoff().TransitionDiagnostics(conversationKey{})
+	if h.contextHandoff == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "conversation handoff store is not initialized")
+		return
+	}
+	events := h.contextHandoff.TransitionDiagnostics(conversationKey{})
 	sort.Slice(events, func(i, j int) bool { return events[i].Timestamp.After(events[j].Timestamp) })
 	if len(events) > 100 {
 		events = events[:100]
@@ -182,7 +186,11 @@ func (h *proxyHandler) handleConversationDiagnostics(w http.ResponseWriter, r *h
 		respondJSONError(w, http.StatusBadRequest, "invalid conversation id")
 		return
 	}
-	key, matches := h.getContextHandoff().resolveConversationKey("", id)
+	if h.contextHandoff == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "conversation handoff store is not initialized")
+		return
+	}
+	key, matches := h.contextHandoff.resolveConversationKey("", id)
 	if matches == 0 {
 		respondJSONError(w, http.StatusNotFound, "conversation not found")
 		return
@@ -191,7 +199,7 @@ func (h *proxyHandler) handleConversationDiagnostics(w http.ResponseWriter, r *h
 		respondJSONError(w, http.StatusConflict, fmt.Sprintf("conversation id shared by %d owners", matches))
 		return
 	}
-	state, _ := h.getContextHandoff().State(key)
+	state, _ := h.contextHandoff.State(key)
 	respondJSON(w, map[string]any{"conversation_id": id, "owner": key.owner, "active_provider": state.ActiveProvider,
-		"transition_epoch": state.TransitionEpoch, "transitions": h.getContextHandoff().TransitionDiagnostics(key)})
+		"transition_epoch": state.TransitionEpoch, "transitions": h.contextHandoff.TransitionDiagnostics(key)})
 }

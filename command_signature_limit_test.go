@@ -18,10 +18,7 @@ func TestSessionHTTPTurnAndApprovalSignatureLimits(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			b, err := h.sessionBroker()
-			if err != nil {
-				t.Fatal(err)
-			}
+			b := installTestSessionBroker(t, h)
 			r := brokerRunner(t, b, principal)
 			created := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","permission_mode":"gated","workspace":{"mode":"ephemeral"}}`)
 			if created.Code != 201 {

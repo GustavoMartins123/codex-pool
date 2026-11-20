@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"codex-pool-proxy/internal/routing"
 )
 
 type mockUpstreamTransport struct {
@@ -55,10 +54,8 @@ func TestPoolAutoResponsesEndpointIntegration(t *testing.T) {
 		metrics:         newMetrics(),
 		recent:          newRecentErrors(50),
 		routeTraces:     newRouteTraceStore(100),
-		circuitBreakers: routing.NewCircuitBreakerManager(),
-		fallbackGraph:   newFallbackGraph(),
 		poolAuto:        newPoolAutoOrchestrator(nil),
-		pricing:         newPricingData(),
+		pricing:         testPricingData(t),
 	}
 
 	// Test 1: POST /v1/responses with pool/auto
@@ -89,7 +86,7 @@ func TestPoolAutoResponsesEndpointIntegration(t *testing.T) {
 	if reqID == "" {
 		t.Fatalf("expected X-Pool-Request-Id header")
 	}
-	trace, ok := handler.getRouteTraces().Get(reqID)
+	trace, ok := handler.routeTraces.Get(reqID)
 	if !ok {
 		t.Fatalf("expected trace for %s", reqID)
 	}
@@ -98,32 +95,25 @@ func TestPoolAutoResponsesEndpointIntegration(t *testing.T) {
 	}
 }
 
-func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
+func TestPoolAutoChatCompletionsIntegration(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "integration-secret")
 
-	// Upstream returns 429 on first model, succeeds on fallback
 	attempts := 0
 	upstreamHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
-
-		if attempts == 1 {
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":{"message":"Rate limit exceeded"}}`))
-			return
-		}
 
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/messages":
 			_, _ = io.WriteString(w, `{
 				"id":"msg_retry","type":"message","role":"assistant","model":"claude-haiku-4-5-20251001",
-				"content":[{"type":"text","text":"fallback success"}],"stop_reason":"end_turn",
+				"content":[{"type":"text","text":"automatic selection success"}],"stop_reason":"end_turn",
 				"usage":{"input_tokens":10,"output_tokens":5}
 			}`)
 		case "/responses":
 			_, _ = io.WriteString(w, `{
 				"id":"resp_retry","object":"response","status":"completed","model":"gpt-5.4-mini",
-				"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fallback success"}]}],
+				"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"automatic selection success"}]}],
 				"usage":{"input_tokens":10,"output_tokens":5}
 			}`)
 		default:
@@ -140,7 +130,7 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 	}
 	codexAccount := &Account{
 		Type:        AccountTypeCodex,
-		ID:          "codex_acc_fallback",
+		ID:          "codex_acc_auto",
 		AccessToken: "test-token",
 		PlanType:    "pro",
 	}
@@ -154,10 +144,8 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 		metrics:         newMetrics(),
 		recent:          newRecentErrors(50),
 		routeTraces:     newRouteTraceStore(100),
-		circuitBreakers: routing.NewCircuitBreakerManager(),
-		fallbackGraph:   newFallbackGraph(),
 		poolAuto:        newPoolAutoOrchestrator(nil),
-		pricing:         newPricingData(),
+		pricing:         testPricingData(t),
 	}
 
 	// POST /v1/chat/completions with pool/auto-fast
@@ -170,10 +158,10 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 	testPoolServeHTTP(t, handler, rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK after fallback, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 OK after automatic selection, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if attempts != 2 {
-		t.Fatalf("expected two upstream attempts, got %d", attempts)
+	if attempts != 1 {
+		t.Fatalf("expected one upstream attempt, got %d", attempts)
 	}
 	var completion struct {
 		Object  string `json:"object"`
@@ -187,13 +175,13 @@ func TestPoolAutoChatCompletionsAndFallbackIntegration(t *testing.T) {
 		t.Fatalf("decode Chat Completions response: %v", err)
 	}
 	if completion.Object != "chat.completion" || len(completion.Choices) != 1 ||
-		completion.Choices[0].Message.Content != "fallback success" {
+		completion.Choices[0].Message.Content != "automatic selection success" {
 		t.Fatalf("expected translated Chat Completions reply, got %s", rec.Body.String())
 	}
 
 	// Verify route trace records decision
 	reqID := rec.Header().Get("X-Pool-Request-Id")
-	trace, ok := handler.getRouteTraces().Get(reqID)
+	trace, ok := handler.routeTraces.Get(reqID)
 	if !ok {
 		t.Fatalf("expected trace for request")
 	}

@@ -116,7 +116,6 @@ func TestClaudeExhaustedQuotaReturnsErrorWithoutHolding(t *testing.T) {
 	syncUsageCooldown(account)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.exhaustionWait = 100 * time.Millisecond
-	fx.handler.cfg.exhaustionPreferWait = true
 	fx.handler.aliases = newModelAliases(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

@@ -1,21 +1,18 @@
 package main
 
 import (
-	"context"
 	_ "embed"
 	"encoding/json"
-	"io"
+	"errors"
+	"fmt"
 	"log"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
-//go:embed pricing_fallback.json
-var fallbackPricingJSON []byte
-
-const litellmPricingURL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+//go:embed pricing_catalog.json
+var pricingCatalogJSON []byte
 
 // ModelPricing holds per-token costs (in USD per token).
 type ModelPricing struct {
@@ -91,10 +88,6 @@ func getSubscriptionCost(accType AccountType, planType string) (monthly float64,
 	if info, ok := subscriptionCosts[subscriptionKey{accType, planType}]; ok {
 		return info.monthly, info.label
 	}
-	// Try empty plan fallback
-	if info, ok := subscriptionCosts[subscriptionKey{accType, ""}]; ok {
-		return info.monthly, info.label
-	}
 	return 0, string(accType)
 }
 
@@ -111,21 +104,19 @@ func estimateSubscriptionSpend(monthly float64, firstSeen, now time.Time) (spend
 	return monthly * float64(billingCycles), billingCycles
 }
 
-// newPricingData loads pricing from the embedded fallback.
-func newPricingData() *PricingData {
-	pd := &PricingData{
-		models: make(map[string]ModelPricing),
+func newPricingData() (*PricingData, error) {
+	pd := &PricingData{}
+	if err := pd.loadFromJSON(pricingCatalogJSON); err != nil {
+		return nil, fmt.Errorf("load pricing catalog: %w", err)
 	}
-	pd.loadFromJSON(fallbackPricingJSON)
-	return pd
+	return pd, nil
 }
 
 // loadFromJSON parses the LiteLLM pricing JSON format into the models map.
-func (pd *PricingData) loadFromJSON(data []byte) {
+func (pd *PricingData) loadFromJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		log.Printf("pricing: failed to parse JSON: %v", err)
-		return
+		return err
 	}
 
 	models := make(map[string]ModelPricing, len(raw))
@@ -166,12 +157,24 @@ func (pd *PricingData) loadFromJSON(data []byte) {
 			}
 			mp.LongContextThreshold = threshold.tokens
 			mp.LongInputCost = longInput
-			mp.LongOutputCost, _ = pricingJSONFloat(entry, "output_cost_per_token_above_"+threshold.suffix+"_tokens")
-			mp.LongCacheReadCost, _ = pricingJSONFloat(entry, "cache_read_input_token_cost_above_"+threshold.suffix+"_tokens")
-			mp.LongCacheWriteCost, _ = pricingJSONFloat(entry, "cache_creation_input_token_cost_above_"+threshold.suffix+"_tokens")
+			mp.LongOutputCost = mp.OutputCostPerToken
+			mp.LongCacheReadCost = mp.CacheReadCost
+			mp.LongCacheWriteCost = mp.CacheWriteCost
+			for key, rate := range map[string]*float64{
+				"output_cost_per_token": &mp.LongOutputCost,
+				"cache_read_input_token_cost": &mp.LongCacheReadCost,
+				"cache_creation_input_token_cost": &mp.LongCacheWriteCost,
+			} {
+				if override, ok := pricingJSONFloat(entry, key+"_above_"+threshold.suffix+"_tokens"); ok {
+					*rate = override
+				}
+			}
 			break
 		}
 		models[key] = mp
+	}
+	if len(models) == 0 {
+		return errors.New("pricing catalog contains no model rates")
 	}
 	// Fill IDs absent from LiteLLM and override the small set whose pool-facing
 	// name, promotion schedule, or provider rate cannot be represented there.
@@ -185,6 +188,7 @@ func (pd *PricingData) loadFromJSON(data []byte) {
 	pd.models = models
 	pd.mu.Unlock()
 	log.Printf("pricing: loaded %d model prices", len(models))
+	return nil
 }
 
 func pricingJSONFloat(entry map[string]json.RawMessage, key string) (float64, bool) {
@@ -197,50 +201,6 @@ func pricingJSONFloat(entry map[string]json.RawMessage, key string) (float64, bo
 		return 0, false
 	}
 	return value, true
-}
-
-// fetchAndUpdate fetches the latest pricing from LiteLLM and updates the models map.
-func (pd *PricingData) fetchAndUpdate() {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(litellmPricingURL)
-	if err != nil {
-		log.Printf("pricing: fetch failed: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("pricing: fetch returned %s", resp.Status)
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
-	if err != nil {
-		log.Printf("pricing: read failed: %v", err)
-		return
-	}
-	pd.loadFromJSON(data)
-}
-
-// startPricingRefresh fetches pricing on startup and refreshes every 24h.
-func (pd *PricingData) startPricingRefresh(ctx ...context.Context) {
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
-	// Fetch fresh data on startup (in background)
-	go pd.fetchAndUpdate()
-
-	ticker := time.NewTicker(24 * time.Hour)
-	go func() {
-		defer ticker.Stop()
-		for {
-			select {
-			case <-c.Done():
-				return
-			case <-ticker.C:
-				pd.fetchAndUpdate()
-			}
-		}
-	}()
 }
 
 var pricingModelAliases = map[string]string{
@@ -324,53 +284,17 @@ func (pd *PricingData) lookupPricing(model string) (ModelPricing, bool) {
 	pd.mu.RLock()
 	defer pd.mu.RUnlock()
 
-	if mp, ok := pd.models[model]; ok {
-		return mp, true
-	}
-
-	// Try without a dated suffix (e.g. claude-sonnet-4-5-20250929).
-	parts := strings.Split(model, "-")
-	for i := len(parts) - 1; i >= 1; i-- {
-		if len(parts[i]) == 8 && isAllDigits(parts[i]) {
-			if mp, ok := pd.models[strings.Join(parts[:i], "-")]; ok {
-				return mp, true
-			}
-		}
-	}
-	return ModelPricing{}, false
+	mp, ok := pd.models[model]
+	return mp, ok
 }
 
-func isAllDigits(s string) bool {
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
+func (pd *PricingData) calculateCost(ru RequestUsage) (float64, error) {
+	if strings.TrimSpace(ru.Model) == "" {
+		return 0, errors.New("model is required to calculate request cost")
 	}
-	return len(s) > 0
-}
-
-// defaultModelForProvider returns a fallback model name when the request didn't include one.
-var defaultModelForProvider = map[AccountType]string{
-	AccountTypeCodex:       defaultCodexModel,
-	AccountTypeClaude:      "claude-sonnet-5",
-	AccountTypeAntigravity: "gemini-3.6-flash",
-	AccountTypeKimi:        "k3",
-	AccountTypeMinimax:     "MiniMax-M3",
-	AccountTypeZAI:         "glm-5.3",
-	AccountTypeXiaomi:      "mimo-v2.5-pro",
-	AccountTypeGrok:        "grok-4.6",
-	AccountTypeAdverserial: "lordx64/cyberkimi",
-	AccountTypeOpencodeGo:  "opencode-go/longcat-2.0",
-}
-
-func (pd *PricingData) calculateCost(ru RequestUsage) float64 {
-	model := ru.Model
-	if model == "" {
-		model = defaultModelForProvider[ru.AccountType]
-	}
-	mp, ok := pd.lookupPricing(model)
+	mp, ok := pd.lookupPricing(ru.Model)
 	if !ok {
-		return 0
+		return 0, fmt.Errorf("pricing is unavailable for model %q", ru.Model)
 	}
 
 	totalInput := ru.InputTokens
@@ -388,10 +312,10 @@ func (pd *PricingData) calculateCost(ru RequestUsage) float64 {
 	cacheReadCost := mp.CacheReadCost
 	cacheWriteCost := mp.CacheWriteCost
 	if mp.LongContextThreshold > 0 && totalInput > mp.LongContextThreshold {
-		inputCost = nonzeroPrice(mp.LongInputCost, inputCost)
-		outputCost = nonzeroPrice(mp.LongOutputCost, outputCost)
-		cacheReadCost = nonzeroPrice(mp.LongCacheReadCost, cacheReadCost)
-		cacheWriteCost = nonzeroPrice(mp.LongCacheWriteCost, cacheWriteCost)
+		inputCost = mp.LongInputCost
+		outputCost = mp.LongOutputCost
+		cacheReadCost = mp.LongCacheReadCost
+		cacheWriteCost = mp.LongCacheWriteCost
 	}
 
 	cost := float64(uncachedInput) * inputCost
@@ -403,14 +327,7 @@ func (pd *PricingData) calculateCost(ru RequestUsage) float64 {
 		outputTokens += ru.ReasoningTokens
 	}
 	cost += float64(outputTokens) * outputCost
-	return cost
-}
-
-func nonzeroPrice(candidate, fallback float64) float64 {
-	if candidate > 0 {
-		return candidate
-	}
-	return fallback
+	return cost, nil
 }
 
 func inputTokensExcludeCached(ru RequestUsage) bool {

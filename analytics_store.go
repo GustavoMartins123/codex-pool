@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.etcd.io/bbolt"
 	_ "modernc.org/sqlite"
 )
 
@@ -606,7 +605,7 @@ func (s *AnalyticsStore) runDailyRollup() {
 func (s *AnalyticsStore) startDailyRollup(ctx ...context.Context) {
 	c := context.Background()
 	if len(ctx) > 0 && ctx[0] != nil {
-	c = ctx[0]
+		c = ctx[0]
 	}
 	// Run once at startup to catch up
 	go func() {
@@ -636,134 +635,6 @@ func (s *AnalyticsStore) startDailyRollup(ctx ...context.Context) {
 	}()
 }
 
-// seedFromBoltDB backfills daily_costs from historical BoltDB request data.
-// Only runs if daily_costs is empty (first time setup).
-func (s *AnalyticsStore) seedFromBoltDB(store *usageStore, pricing *PricingData) {
-	if s == nil || store == nil || store.db == nil || pricing == nil {
-		return
-	}
-
-	// Check if we already have data
-	var count int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM daily_costs`).Scan(&count); err != nil || count > 0 {
-		return
-	}
-
-	log.Printf("analytics: seeding from BoltDB historical data...")
-
-	// Aggregate: date -> accountID -> model -> {tokens, cost}
-	type aggKey struct {
-		date, accountID, accountType, model string
-	}
-	type aggVal struct {
-		input, cached, cacheCreation, output, reasoning, count int64
-		cost                                                   float64
-	}
-	agg := make(map[aggKey]*aggVal)
-	var totalRequests int64
-
-	err := store.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(bucketUsageRequests))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
-			var ru RequestUsage
-			if err := json.Unmarshal(v, &ru); err != nil {
-				return nil // skip bad records
-			}
-			if ru.InputTokens == 0 && ru.OutputTokens == 0 {
-				return nil
-			}
-			totalRequests++
-
-			date := ru.Timestamp.UTC().Format("2006-01-02")
-			model := ru.Model
-			accType := string(ru.AccountType)
-
-			costUSD := pricing.calculateCost(ru)
-
-			key := aggKey{date, ru.AccountID, accType, model}
-			if v, ok := agg[key]; ok {
-				v.input += ru.InputTokens
-				v.cached += ru.CachedInputTokens
-				v.cacheCreation += ru.CacheCreationTokens
-				v.output += ru.OutputTokens
-				v.reasoning += ru.ReasoningTokens
-				v.count++
-				v.cost += costUSD
-			} else {
-				agg[key] = &aggVal{
-					input:         ru.InputTokens,
-					cached:        ru.CachedInputTokens,
-					cacheCreation: ru.CacheCreationTokens,
-					output:        ru.OutputTokens,
-					reasoning:     ru.ReasoningTokens,
-					count:         1,
-					cost:          costUSD,
-				}
-			}
-			return nil
-		})
-	})
-	if err != nil {
-		log.Printf("analytics: seed scan failed: %v", err)
-		return
-	}
-
-	if len(agg) == 0 {
-		log.Printf("analytics: no historical data to seed")
-		return
-	}
-
-	// Batch insert into daily_costs
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		log.Printf("analytics: seed transaction failed: %v", err)
-		return
-	}
-
-	stmt, err := tx.Prepare(`
-		INSERT INTO daily_costs (date, account_id, account_type, model,
-			input_tokens, cached_tokens, cache_creation_tokens, output_tokens, reasoning_tokens, request_count, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(date, account_id, model) DO UPDATE SET
-			input_tokens = input_tokens + excluded.input_tokens,
-			cached_tokens = cached_tokens + excluded.cached_tokens,
-			cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens,
-			output_tokens = output_tokens + excluded.output_tokens,
-			reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
-			request_count = request_count + excluded.request_count,
-			cost_usd = cost_usd + excluded.cost_usd`)
-	if err != nil {
-		tx.Rollback()
-		log.Printf("analytics: seed prepare failed: %v", err)
-		return
-	}
-	defer stmt.Close()
-
-	var totalCost float64
-	for key, val := range agg {
-		_, err := stmt.Exec(key.date, key.accountID, key.accountType, key.model,
-			val.input, val.cached, val.cacheCreation, val.output, val.reasoning, val.count, val.cost)
-		if err != nil {
-			log.Printf("analytics: seed insert failed for %s/%s: %v", key.date, key.accountID, err)
-		}
-		totalCost += val.cost
-	}
-
-	if err := tx.Commit(); err != nil {
-		log.Printf("analytics: seed commit failed: %v", err)
-		return
-	}
-
-	log.Printf("analytics: seeded %d daily aggregates from %d historical requests, total cost $%.2f", len(agg), totalRequests, totalCost)
-}
-
-// Close closes the underlying database connection.
 func (s *AnalyticsStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil

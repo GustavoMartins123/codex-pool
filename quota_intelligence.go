@@ -87,7 +87,7 @@ func (h *proxyHandler) refreshQuotaIntelligence() {
 		}
 		account.mu.Unlock()
 	}
-	var costFor func(RequestUsage) float64
+	var costFor func(RequestUsage) (float64, error)
 	if h.pricing != nil {
 		costFor = h.pricing.calculateCost
 	}
@@ -214,7 +214,7 @@ func quantile(values []float64, fraction float64) float64 {
 // provider may report the same rounded percentage for many requests, so tokens
 // accumulate until the next positive tick instead of being attributed only to
 // the request that happened to cross the display boundary.
-func inferQuotaIntelligence(rows []RequestUsage, metadata map[string]quotaAccountMeta, costFor func(RequestUsage) float64) ([]QuotaCapacityPoint, []ModelQuotaEfficiency, []ResetObservation) {
+func inferQuotaIntelligence(rows []RequestUsage, metadata map[string]quotaAccountMeta, costFor func(RequestUsage) (float64, error)) ([]QuotaCapacityPoint, []ModelQuotaEfficiency, []ResetObservation) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].AccountID != rows[j].AccountID {
 			return rows[i].AccountID < rows[j].AccountID
@@ -278,7 +278,9 @@ func inferQuotaIntelligence(rows []RequestUsage, metadata map[string]quotaAccoun
 		usage.tokens += quotaThroughput(row, accountType)
 		usage.requests++
 		if costFor != nil {
-			usage.apiValue += costFor(row)
+			if cost, err := costFor(row); err == nil {
+				usage.apiValue += cost
+			}
 		}
 
 		if row.SecondaryUsedPct+0.005 < state.lastPct {

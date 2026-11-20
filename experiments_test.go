@@ -454,7 +454,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	realPin := h.pool.convPin["state-iso"]
 	h.pool.mu.RUnlock()
 	owner := testPoolIdentity(t, h, "user")
-	before, ok := h.getContextHandoff().State(conversationScopedKey(owner, "state-iso"))
+	before, ok := h.contextHandoff.State(conversationScopedKey(owner, "state-iso"))
 	if !ok || realPin == "" {
 		t.Fatalf("setup: real pin/state missing (pin=%q)", realPin)
 	}
@@ -465,7 +465,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	}
 	shadowKey := conversationScopedKey(owner, "shadow:gpt-5.6-sol->gpt-5.5\x00state-iso")
 	for time.Now().Before(deadline) {
-		if _, ok := h.getContextHandoff().State(shadowKey); ok {
+		if _, ok := h.contextHandoff.State(shadowKey); ok {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -482,7 +482,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	if shadowPinned == "" {
 		t.Fatal("shadow leg never ran (no namespaced pin)")
 	}
-	after, ok := h.getContextHandoff().State(conversationScopedKey(owner, "state-iso"))
+	after, ok := h.contextHandoff.State(conversationScopedKey(owner, "state-iso"))
 	if !ok {
 		t.Fatal("real state lost")
 	}
@@ -495,7 +495,7 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	if want := len(before.Messages) + 2; len(after.Messages) != want {
 		t.Fatalf("real history grew beyond request 2's own turn: want %d messages, got %d (shadow wrote into the real conversation)", want, len(after.Messages))
 	}
-	shadowState, ok := h.getContextHandoff().State(shadowKey)
+	shadowState, ok := h.contextHandoff.State(shadowKey)
 	if !ok || len(shadowState.Messages) == 0 {
 		t.Fatal("shadow leg state missing from its own namespace")
 	}
