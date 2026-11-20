@@ -357,7 +357,11 @@ func TestNativeContextHTTPRefresh(t *testing.T) {
 func TestNativeContextRefreshWait(t *testing.T) {
 	a := contextTestAccount("a", "user-a")
 	pending := &refreshCall{done: make(chan struct{})}
-	h := &proxyHandler{refreshCalls: map[string]*refreshCall{string(a.Type) + ":" + a.ID: pending}}
+	h := &proxyHandler{
+		refreshCoordinator: accountRefreshCoordinator{
+			calls: map[string]*refreshCall{string(a.Type) + ":" + a.ID: pending},
+		},
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result := make(chan error, 1)
