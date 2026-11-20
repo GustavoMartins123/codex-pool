@@ -26,6 +26,12 @@ func TestChatMessagesProxyRejectsWrongUpstreamProtocol(t *testing.T) {
 			upstreamBody: `{"object":"chat.completion","choices":[],"unexpected":"upstream-body-must-not-be-relayed"}`,
 			account:      &Account{ID: "claude", Type: AccountTypeClaude, AccessToken: "upstream-test", PlanType: "pro"},
 		},
+		{
+			name: "chat client with invalid Responses JSON", path: "/v1/chat/completions", upstreamPath: "/responses",
+			request:      `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`,
+			upstreamBody: `{"unexpected":"upstream-body-must-not-be-relayed"`,
+			account:      &Account{ID: "codex", Type: AccountTypeCodex, AccessToken: "upstream-test", PlanType: "pro"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
