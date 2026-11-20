@@ -294,6 +294,18 @@ func parseTokenCountEvent(obj map[string]any) *RequestUsage {
 	return ru
 }
 
+type requestUsageRepository interface {
+	recordReliably(RequestUsage, float64) error
+}
+
+func persistRequestUsage(repository requestUsageRepository, usage RequestUsage, cost float64) bool {
+	if err := repository.recordReliably(usage, cost); err != nil {
+		log.Printf("analytics: durable usage write failed: %v", err)
+		return false
+	}
+	return true
+}
+
 func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*policyAdmission) {
 	if a == nil {
 		return
@@ -332,16 +344,9 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 			a.mu.Unlock()
 		}
 	}
-	durable := false
-	if h.store != nil {
-		if err := h.store.recordReliably(ru, costUSD); err != nil {
-			log.Printf("analytics: durable usage write failed: %v", err)
-		} else {
-			durable = true
-			if h.duckAnalytics != nil {
-				h.duckAnalytics.Notify()
-			}
-		}
+	durable := h.store != nil && persistRequestUsage(h.store, ru, costUSD)
+	if durable && h.duckAnalytics != nil {
+		h.duckAnalytics.Notify()
 	}
 	var admission *policyAdmission
 	if len(admissions) > 0 {

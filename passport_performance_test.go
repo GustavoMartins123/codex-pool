@@ -194,7 +194,7 @@ func seedAnalyticsFacts(b *testing.B, a *DuckAnalytics, rows int) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		stmt, err := tx.Prepare(`INSERT OR IGNORE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		stmt, err := tx.Prepare(insertLegacyAnalyticsFact)
 		if err != nil {
 			_ = tx.Rollback()
 			b.Fatal(err)

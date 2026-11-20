@@ -127,7 +127,7 @@ type historyCapacityStudy struct {
 	Disk        historyStudyDisk          `json:"disk"`
 }
 
-func historyStudyBroker(t *testing.T) (*sessionBroker, string) {
+func historyStudyBroker(t *testing.T) (*sessionBroker, *bbolt.DB) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "synthetic.db")
 	db, err := bbolt.Open(path, 0600, nil)
@@ -139,7 +139,7 @@ func historyStudyBroker(t *testing.T) (*sessionBroker, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return broker, path
+	return broker, db
 }
 
 func historyStudySeed(t *testing.T, broker *sessionBroker, id, principal string, events []sessionEvent) *sessionRecord {
@@ -209,7 +209,8 @@ func TestSessionHistoryCapacityStudy(t *testing.T) {
 			raw, _ := json.Marshal(event)
 			rawBytes += len(raw) + 1
 		}
-		broker, path := historyStudyBroker(t)
+		broker, db := historyStudyBroker(t)
+		path := db.Path()
 		s := historyStudySeed(t, broker, "synthetic-session", "synthetic-principal", events)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -415,7 +416,8 @@ func historyStudyConcurrent(t *testing.T, writers, readers int) historyStudyConc
 
 func historyStudyDiskLifecycle(t *testing.T, codec historyStudyCodec) historyStudyDisk {
 	t.Helper()
-	broker, path := historyStudyBroker(t)
+	broker, db := historyStudyBroker(t)
+	path := db.Path()
 	events := historyStudyFixture(10000, false)
 	s := historyStudySeed(t, broker, "synthetic-session", "synthetic-principal", events)
 	archive, err := historyStudyBuildArchive(events, codec, 256<<10)
@@ -482,7 +484,7 @@ func historyStudyDiskLifecycle(t *testing.T, codec historyStudyCodec) historyStu
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := bbolt.Compact(destination, broker.store.db, 0); err != nil {
+	if err := bbolt.Compact(destination, db, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := destination.Close(); err != nil {

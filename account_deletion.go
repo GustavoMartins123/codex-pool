@@ -218,6 +218,16 @@ func (a *DuckAnalytics) DeleteAccountUsage(accountID string) error {
 	}
 	a.queryMu.Lock()
 	defer a.queryMu.Unlock()
-	_, err := a.db.Exec(`DELETE FROM usage_events WHERE account_id=?`, accountID)
-	return err
+	tx, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM usage_events WHERE account_id=?`, accountID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM legacy_cost_days WHERE account_id=?`, accountID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

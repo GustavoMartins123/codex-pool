@@ -742,11 +742,13 @@ func main() {
 	}
 
 	// Initialize legacy analytics store (SQLite)
+	var costRepository legacyCostAnalyticsRepository
 	analyticsStore, err := newAnalyticsStore(analyticsDBPathFor(cfg.storePath))
 	if err != nil {
 		log.Printf("warning: failed to open analytics store: %v (cost tracking disabled)", err)
 	} else {
 		defer analyticsStore.Close()
+		costRepository = analyticsStore
 		analyticsStore.enableAsyncWrites()
 		go func() {
 			if err := analyticsStore.rebuildPricingFromBoltDB(store, pricing); err != nil {
@@ -794,7 +796,7 @@ func main() {
 		passport:             passport,
 		registry:             registry,
 		store:                store,
-		analyticsStore:       analyticsStore,
+		analyticsStore:       costRepository,
 		duckAnalytics:        duckAnalytics,
 		pricing:              pricing,
 		aliases:              newModelAliases(aliasesCfg),
@@ -975,7 +977,7 @@ type proxyHandler struct {
 	nativeContext        *nativeContext
 	contextHandoffOnce   sync.Once
 	contextHandoff       *conversationHandoffStore
-	analyticsStore       *AnalyticsStore
+	analyticsStore       legacyCostAnalyticsRepository
 	duckAnalytics        *DuckAnalytics
 	pricing              *PricingData
 	aliases              *modelAliases
