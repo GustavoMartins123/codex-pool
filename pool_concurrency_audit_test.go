@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func auditClaudePool(n int) *poolState {
@@ -25,13 +27,13 @@ func auditClaudePool(n int) *poolState {
 }
 
 // TestAuditPoolPinningStableUnderConcurrentSelection pins a conversation and
-// then hammers candidateForUser from many goroutines at once. Invariant: a
+// then selects a route from many goroutines at once. Invariant: a
 // healthy pinned account must be returned to every caller — concurrent
 // selection must never silently break stickiness or hand out different
 // accounts for the same conversation.
 func TestAuditPoolPinningStableUnderConcurrentSelection(t *testing.T) {
 	p := auditClaudePool(5)
-	first := p.candidateForUser("user-1", "conv-1", nil, AccountTypeClaude, "", "")
+	first := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user-1", ConversationID: "conv-1", Provider: string(AccountTypeClaude)}).Account
 	if first == nil {
 		t.Fatal("no candidate")
 	}
@@ -44,7 +46,7 @@ func TestAuditPoolPinningStableUnderConcurrentSelection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				got := p.candidateForUser("user-1", "conv-1", nil, AccountTypeClaude, "", "")
+				got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user-1", ConversationID: "conv-1", Provider: string(AccountTypeClaude)}).Account
 				if got == nil || got.ID != first.ID {
 					violations.Add(1)
 					return
@@ -94,7 +96,7 @@ func TestAuditPoolReplaceWhileSelecting(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for !stop.Load() {
-				acc := p.candidateForUser("user", "", nil, AccountTypeClaude, "", "")
+				acc := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user", Provider: string(AccountTypeClaude)}).Account
 				if acc != nil && !known[acc] {
 					t.Errorf("phantom account returned: %s", acc.ID)
 					return
@@ -131,14 +133,14 @@ func TestAuditExhaustedOrCoolingAccountNeverSelected(t *testing.T) {
 	p := newPoolState([]*Account{healthy, cooling, exhausted}, false)
 
 	for i := 0; i < 200; i++ {
-		got := p.candidate("", nil, AccountTypeClaude, "", "")
+		got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeClaude)}).Account
 		if got == nil || got.ID != "claude-healthy" {
 			t.Fatalf("iteration %d: selected %v, want claude-healthy", i, got)
 		}
 	}
 
 	allBad := newPoolState([]*Account{cooling, exhausted}, false)
-	if got := allBad.candidate("", nil, AccountTypeClaude, "", ""); got != nil {
+	if got := allBad.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeClaude)}).Account; got != nil {
 		t.Fatalf("exhausted pool returned %s instead of nil", got.ID)
 	}
 }
@@ -155,7 +157,7 @@ func TestAuditPinSurvivesAccountReplacementWhenReplacementKeepsPointer(t *testin
 		Usage:    UsageSnapshot{PrimaryUsedPercent: 0.2, SecondaryUsedPercent: 0.2},
 	}}
 	p := newPoolState(current, false)
-	acc := p.candidateForUser("user-1", "conv-1", nil, AccountTypeClaude, "", "")
+	acc := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user-1", ConversationID: "conv-1", Provider: string(AccountTypeClaude)}).Account
 	if acc == nil {
 		t.Fatal("no candidate")
 	}
@@ -169,7 +171,7 @@ func TestAuditPinSurvivesAccountReplacementWhenReplacementKeepsPointer(t *testin
 	}}
 	p.replace(mergeReloadedAccounts(p.allAccounts(), loaded))
 
-	got := p.candidateForUser("user-1", "conv-1", nil, AccountTypeClaude, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user-1", ConversationID: "conv-1", Provider: string(AccountTypeClaude)}).Account
 	if got == nil || got.ID != acc.ID {
 		t.Fatalf("pin lost across reload: got %v want %s", got, acc.ID)
 	}

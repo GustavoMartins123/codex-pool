@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestScorePrefersHeadroomAndPlan(t *testing.T) {
@@ -75,15 +77,15 @@ func TestCandidateUsesPinUnlessExcluded(t *testing.T) {
 
 	// Control: with no pin in place, selection must prefer a2. If this ever
 	// flips, the pinned assertions below would stop proving pinning.
-	if got := p.candidate("fresh-conversation", nil, "", "", ""); got == nil || got.ID != "a2" {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "fresh-conversation"}).Account; got == nil || got.ID != "a2" {
 		t.Fatalf("control: unpinned selection returned %+v, want a2 (best score)", got)
 	}
 
 	p.pin("c1", "a1")
-	if got := p.candidate("c1", nil, "", "", ""); got == nil || got.ID != "a1" {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "c1"}).Account; got == nil || got.ID != "a1" {
 		t.Fatalf("expected pinned a1 despite worse score, got %+v", got)
 	}
-	if got := p.candidate("c1", map[string]bool{"a1": true}, "", "", ""); got == nil || got.ID != "a2" {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "c1", Exclude: map[string]bool{"a1": true}}).Account; got == nil || got.ID != "a2" {
 		t.Fatalf("expected a2 when pinned excluded, got %+v", got)
 	}
 }
@@ -94,7 +96,7 @@ func TestCandidateSkipsDeadOrDisabled(t *testing.T) {
 	ok := &Account{ID: "ok", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.5}}
 	p := newPoolState([]*Account{dead, disabled, ok}, false)
 
-	got := p.candidate("", nil, "", "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy)}).Account
 	if got == nil || got.ID != "ok" {
 		t.Fatalf("expected ok, got %+v", got)
 	}
@@ -169,7 +171,7 @@ func TestCandidateSkipsHealthBlockedAccounts(t *testing.T) {
 	healthy := &Account{ID: "healthy", Type: AccountTypeCodex, Usage: UsageSnapshot{PrimaryUsedPercent: 0.5}}
 	pool := newPoolState([]*Account{blocked, healthy}, false)
 
-	if got := pool.candidate("", nil, AccountTypeCodex, "", ""); got != healthy {
+	if got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account; got != healthy {
 		t.Fatalf("candidate = %v, want healthy account", got)
 	}
 }
@@ -184,7 +186,7 @@ func TestCandidateSkipsRateLimitedCodexAccount(t *testing.T) {
 	healthy := &Account{ID: "healthy", Type: AccountTypeCodex, PlanType: "pro"}
 	pool := newPoolState([]*Account{rateLimited, healthy}, false)
 
-	if got := pool.candidate("", nil, AccountTypeCodex, "", ""); got != healthy {
+	if got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account; got != healthy {
 		t.Fatalf("candidate = %v, want healthy account", got)
 	}
 }
@@ -200,7 +202,7 @@ func TestCandidateUnpinsRateLimitedCodexAccount(t *testing.T) {
 	pool := newPoolState([]*Account{rateLimited, healthy}, false)
 	pool.pin("conversation", rateLimited.ID)
 
-	if got := pool.candidate("conversation", nil, AccountTypeCodex, "", ""); got != healthy {
+	if got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "conversation", Provider: string(AccountTypeCodex)}).Account; got != healthy {
 		t.Fatalf("candidate = %v, want healthy account", got)
 	}
 }
@@ -210,7 +212,7 @@ func TestCandidateRequiredPlanFiltersAccounts(t *testing.T) {
 	pro := &Account{ID: "pro", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{plus, pro}, false)
 
-	got := p.candidate("", nil, AccountTypeCodex, "pro", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), RequiredPlan: "pro"}).Account
 	if got == nil || got.ID != "pro" {
 		t.Fatalf("expected pro account, got %+v", got)
 	}
@@ -246,7 +248,7 @@ func TestCodexProMaxHasProAccessAndTier(t *testing.T) {
 	plus := &Account{ID: "plus", Type: AccountTypeCodex, PlanType: "plus", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1}}
 	proMax := &Account{ID: "promax", Type: AccountTypeCodex, PlanType: "promax", Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{plus, proMax}, false)
-	if got := p.candidate("", nil, AccountTypeCodex, "pro", ""); got == nil || got.ID != "promax" {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), RequiredPlan: "pro"}).Account; got == nil || got.ID != "promax" {
 		t.Fatalf("expected Pro Max account to serve a Pro-only request, got %+v", got)
 	}
 }
@@ -256,7 +258,7 @@ func TestCandidateUsesCodexProLiteAlongsidePro(t *testing.T) {
 	proLite := &Account{ID: "prolite", Type: AccountTypeCodex, PlanType: "prolite", Usage: UsageSnapshot{PrimaryUsedPercent: 0.1, SecondaryUsedPercent: 0.1}}
 	p := newPoolState([]*Account{pro, proLite}, false)
 
-	got := p.candidate("", nil, AccountTypeCodex, "pro", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), RequiredPlan: "pro"}).Account
 	if got == nil || got.ID != "prolite" {
 		t.Fatalf("expected lower-usage Pro Lite account to compete with Pro, got %+v", got)
 	}
@@ -268,7 +270,7 @@ func TestCandidateKeepsPinnedCodexProLite(t *testing.T) {
 	p := newPoolState([]*Account{pro, proLite}, false)
 	p.pin("conversation", proLite.ID)
 
-	got := p.candidate("conversation", nil, AccountTypeCodex, "pro", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "conversation", Provider: string(AccountTypeCodex), RequiredPlan: "pro"}).Account
 	if got == nil || got.ID != "prolite" {
 		t.Fatalf("expected pinned Pro Lite account to remain eligible, got %+v", got)
 	}
@@ -284,7 +286,7 @@ func TestCandidatePrefersClaudeMaxOverPro(t *testing.T) {
 	}}
 	p := newPoolState([]*Account{proAcc, maxAcc}, false)
 
-	got := p.candidate("", nil, AccountTypeClaude, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeClaude)}).Account
 	if got == nil || got.ID != "max1" {
 		t.Fatalf("expected max account preferred over pro even with worse usage, got %+v", got)
 	}
@@ -300,7 +302,7 @@ func TestCandidateFallsBackToClaudeProWhenMaxExhausted(t *testing.T) {
 	}}
 	p := newPoolState([]*Account{proAcc, maxAcc}, false)
 
-	got := p.candidate("", nil, AccountTypeClaude, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeClaude)}).Account
 	if got == nil || got.ID != "pro1" {
 		t.Fatalf("expected pro fallback when max exhausted, got %+v", got)
 	}
@@ -312,7 +314,7 @@ func TestCandidateRequiredPlanOverridesPinnedConversation(t *testing.T) {
 	p := newPoolState([]*Account{plus, pro}, false)
 	p.pin("c1", "plus")
 
-	got := p.candidate("c1", nil, AccountTypeCodex, "pro", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "c1", Provider: string(AccountTypeCodex), RequiredPlan: "pro"}).Account
 	if got == nil || got.ID != "pro" {
 		t.Fatalf("expected pinned plus to be bypassed for required plan, got %+v", got)
 	}
@@ -324,7 +326,7 @@ func TestCandidateBypassesPinnedNonProCodex(t *testing.T) {
 	p := newPoolState([]*Account{plus, pro}, false)
 	p.pin("c1", "plus")
 
-	got := p.candidate("c1", nil, AccountTypeCodex, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), ConversationID: "c1", Provider: string(AccountTypeCodex)}).Account
 	if got == nil || got.ID != "pro" {
 		t.Fatalf("expected codex pro to bypass pinned non-pro account, got %+v", got)
 	}
@@ -335,7 +337,7 @@ func TestCandidatePrefersCodexProEvenWhenTierTwoScoresBetter(t *testing.T) {
 	pro := &Account{ID: "pro", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.8, SecondaryUsedPercent: 0.8}}
 	p := newPoolState([]*Account{plus, pro}, false)
 
-	got := p.candidate("", nil, AccountTypeCodex, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account
 	if got == nil || got.ID != "pro" {
 		t.Fatalf("expected codex pro to stay preferred, got %+v", got)
 	}
@@ -346,11 +348,11 @@ func TestCandidateWithCyberAccessOnlyReturnsMarkedAccounts(t *testing.T) {
 	cyber := &Account{ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2, SecondaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{ordinary, cyber}, false)
 
-	got := p.candidateWithCyberAccess(nil, AccountTypeCodex, "", "")
+	got := p.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, Provider: string(AccountTypeCodex)}).Account
 	if got == nil || got.ID != "cyber" {
 		t.Fatalf("expected cyber access account, got %+v", got)
 	}
-	if got := p.candidateWithCyberAccess(map[string]bool{"cyber": true}, AccountTypeCodex, "", ""); got != nil {
+	if got := p.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, Exclude: map[string]bool{"cyber": true}, Provider: string(AccountTypeCodex)}).Account; got != nil {
 		t.Fatalf("expected no cyber access account after exclusion, got %+v", got)
 	}
 }
@@ -366,7 +368,7 @@ func TestCandidateSoftlyPrefersCyberAccessForOrdinaryTraffic(t *testing.T) {
 	}
 	pool := newPoolState([]*Account{ordinary, cyber}, false)
 
-	if got := pool.candidate("", nil, AccountTypeCodex, "", ""); got != cyber {
+	if got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account; got != cyber {
 		t.Fatalf("candidate = %v, want cyber account when quota health is competitive", got)
 	}
 }
@@ -381,7 +383,7 @@ func TestCandidateWeightsOrdinaryTrafficWithoutStarvingNonCyberAccounts(t *testi
 	pool := newPoolState(accounts, false)
 	counts := make(map[string]int)
 	for range 60 {
-		candidate := pool.candidate("", nil, AccountTypeCodex, "", "")
+		candidate := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account
 		if candidate == nil {
 			t.Fatal("expected a Codex candidate")
 		}
@@ -411,13 +413,13 @@ func TestCandidateDoesNotPreferBadlyDrainedCyberAccess(t *testing.T) {
 	}
 	pool := newPoolState([]*Account{ordinary, cyber}, false)
 
-	if got := pool.candidate("", nil, AccountTypeCodex, "", ""); got != ordinary {
+	if got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account; got != ordinary {
 		t.Fatalf("candidate = %v, want substantially healthier ordinary account", got)
 	}
 }
 
 // Regression: when the only cyber-access account has an expired access
-// token, candidateWithCyberAccess must still return it — the caller's
+// token, cyber access selection must still return it — the caller's
 // dial path will lazy-refresh. Excluding expired accounts here causes
 // cyber_policy errors to leak to the client when the only cyber account
 // has been idle long enough to expire.
@@ -429,7 +431,7 @@ func TestCandidateWithCyberAccessReturnsExpiredAccount(t *testing.T) {
 		Usage:       UsageSnapshot{PrimaryUsedPercent: 0.05, SecondaryUsedPercent: 0.05},
 	}
 	p := newPoolState([]*Account{expired}, false)
-	got := p.candidateWithCyberAccess(nil, AccountTypeCodex, "", "")
+	got := p.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, Provider: string(AccountTypeCodex)}).Account
 	if got == nil || got.ID != "cyber-expired" {
 		t.Fatalf("expected expired cyber account to still be picked, got %+v", got)
 	}
@@ -459,7 +461,7 @@ func TestCandidateDoesNotPileTrafficOntoHighWeeklyProLiteAccount(t *testing.T) {
 	}
 	pool := newPoolState([]*Account{proLite, pro}, false)
 
-	got := pool.candidate("", nil, AccountTypeCodex, "", "")
+	got := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex)}).Account
 	if got == nil {
 		t.Fatal("expected a Codex candidate")
 	}
@@ -473,7 +475,7 @@ func TestCandidateSkipsAccountWhenClientIPNotAllowed(t *testing.T) {
 	fallback := &Account{ID: "fallback", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{restricted, fallback}, false)
 
-	got := p.candidate("", nil, AccountTypeCodex, "", "203.0.113.10")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), ClientIP: "203.0.113.10"}).Account
 	if got == nil || got.ID != "fallback" {
 		t.Fatalf("expected unrestricted fallback, got %+v", got)
 	}
@@ -484,7 +486,7 @@ func TestCandidateAllowsRestrictedAccountWhenClientIPMatches(t *testing.T) {
 	fallback := &Account{ID: "fallback", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.4}}
 	p := newPoolState([]*Account{restricted, fallback}, false)
 
-	got := p.candidate("", nil, AccountTypeCodex, "", "199.45.144.95")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), ClientIP: "199.45.144.95"}).Account
 	if got == nil || got.ID != "restricted" {
 		t.Fatalf("expected restricted account for matching IP, got %+v", got)
 	}
@@ -610,10 +612,10 @@ func TestPoolConversationPinEvictionAndUnpinCleanup(t *testing.T) {
 	a2 := &Account{ID: "a2", Type: AccountTypeCodex, PlanType: "pro"}
 	p := newPoolState([]*Account{a1, a2}, false)
 
-	// 1. Pin to a1, then mark a1 rate-limited -> candidateForUser must unpin and remove from convPin/convOwner.
+	// 1. Pin to a1, then mark a1 rate-limited -> selection must unpin and remove from convPin/convOwner.
 	p.pinForUser("user1", "conv-rate-limited", "a1")
 	a1.RateLimitUntil = time.Now().Add(time.Minute)
-	got := p.candidateForUser("user1", "conv-rate-limited", nil, AccountTypeCodex, "", "")
+	got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: "user1", ConversationID: "conv-rate-limited", Provider: string(AccountTypeCodex)}).Account
 	if got == nil || got.ID != "a2" {
 		t.Fatalf("expected failover to a2, got %+v", got)
 	}

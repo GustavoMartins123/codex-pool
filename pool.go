@@ -6,13 +6,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"codex-pool-proxy/internal/accountstate"
+	"codex-pool-proxy/internal/routing"
 )
 
 // AccountType distinguishes between different API backends.
@@ -33,13 +33,6 @@ const (
 	AccountTypeQwen        AccountType = "qwen"
 	AccountTypeAIStudio    AccountType = "aistudio"
 
-	// For ordinary Codex traffic, cyber-approved accounts receive twice the
-	// routing weight of non-cyber accounts when their quota health is
-	// competitive. Explicit cyber-policy retries use candidateWithCyberAccess
-	// and remain cyber-only.
-	cyberAccessRoutingWeight      = 2
-	ordinaryRoutingWeight         = 1
-	competitiveRoutingScoreWindow = 0.15
 )
 
 type Account struct {
@@ -500,7 +493,7 @@ type poolState struct {
 	convUpdatedAt    map[string]time.Time
 	routing          routingPolicySet
 	routingTelemetry map[string]routingTelemetry
-	circuitBreakers  *CircuitBreakerManager
+	circuitBreakers  *routing.CircuitBreakerManager
 	fallbackGraph    *FallbackGraph
 	debug            bool
 	rr               uint64
@@ -511,7 +504,7 @@ func newPoolState(accs []*Account, debug bool) *poolState {
 	return &poolState{
 		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, convUpdatedAt: map[string]time.Time{}, debug: debug, tierThreshold: 0.50,
 		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
-		circuitBreakers: newCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
+		circuitBreakers: routing.NewCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
 	}
 }
 
@@ -757,141 +750,6 @@ func (p *poolState) usageResetWithinBudget(accountType AccountType, budget time.
 	return known && nearest > 0 && nearest <= budget
 }
 
-// candidate selects the best account using tiered selection, optionally filtering by type.
-// If accountType is empty, all account types are considered.
-//
-// Selection strategy:
-//  1. Conversation pinning (stickiness) — only unpin at hard limits
-//  2. Split eligible accounts into Tier 1 and Tier 2
-//  3. If any Tier 1 account has secondary < tierThreshold → pick best Tier 1 below threshold
-//  4. Else if Tier 1 accounts exist above threshold → still prefer best Tier 1 by score
-//     (only fall to Tier 2 if it has significantly better score)
-//  5. Else pick best Tier 2 by threshold then score
-//  6. Within a tier, use score as tiebreaker (headroom, drain urgency, recency, inflight)
-//  7. If all non-codex candidates are rate-limited, pick the best rate-limited account as fallback
-//     to avoid hard 503 failures during transient exhaustion.
-func (p *poolState) candidateByID(id string, accountType AccountType, requiredPlan string, clientIP string) *Account {
-	return p.candidateByIDForUser("", id, accountType, requiredPlan, clientIP)
-}
-
-func (p *poolState) candidateByIDForUser(userID, id string, accountType AccountType, requiredPlan, clientIP string) *Account {
-	if p.accountExclusions(userID, nil)[id] {
-		return nil
-	}
-	if id == "" {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	a := p.getLocked(id)
-	if a == nil {
-		return nil
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	now := time.Now()
-	if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
-		return nil
-	}
-	if !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now) {
-		return nil
-	}
-	if primaryUsageBlocksRoutingLocked(a, accountPrimaryUsageLocked(a)) || accountSecondaryUsageLocked(a) >= secondaryHardExcludeThreshold {
-		return nil
-	}
-	return a
-}
-
-func (p *poolState) candidateWithCyberAccess(exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
-	return p.candidateWithCyberAccessForUser("", exclude, accountType, requiredPlan, clientIP)
-}
-
-func (p *poolState) candidateWithCyberAccessForUser(userID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP string) *Account {
-	exclude = p.accountExclusions(userID, exclude)
-	exclude = p.controlExclusions(userID, "", exclude)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	now := time.Now()
-	var best *Account
-	bestScore := -1e9
-	for _, a := range p.accounts {
-		if exclude != nil && exclude[a.ID] {
-			continue
-		}
-		a.mu.Lock()
-		if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || !a.CyberAccess || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
-			a.mu.Unlock()
-			continue
-		}
-		// Note: we deliberately do NOT skip accounts with an expired
-		// access_token here. The cyber-access pool is small (often a
-		// single account) and idle expirations are common; the
-		// caller's request flow will lazy-refresh the token before
-		// using it. Skipping expired accounts here would leak
-		// cyber_policy errors to the client when the only cyber
-		// account happens to have just expired.
-		primaryUsed := accountPrimaryUsageLocked(a)
-		secondaryUsed := accountSecondaryUsageLocked(a)
-		if primaryUsageBlocksRoutingLocked(a, primaryUsed) || secondaryUsed >= secondaryHardExcludeThreshold {
-			a.mu.Unlock()
-			continue
-		}
-		score := scoreAccountLocked(a, now)
-		a.mu.Unlock()
-		score -= float64(atomic.LoadInt64(&a.Inflight)) * 0.02
-		if best == nil || score > bestScore {
-			best = a
-			bestScore = score
-		}
-	}
-	if best != nil {
-		p.rr++
-	}
-	return best
-}
-
-func (p *poolState) candidateForModel(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) *Account {
-	return p.candidateForModelForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model)
-}
-
-func (p *poolState) candidateForModelForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan, clientIP, model string) *Account {
-	filtered := make(map[string]bool, len(exclude)+p.countByType(accountType))
-	for id, blocked := range exclude {
-		filtered[id] = blocked
-	}
-	if p.circuitBreakers != nil && model != "" {
-		for _, account := range p.allAccounts() {
-			if account != nil {
-				if allowed, _ := p.circuitBreakers.CanAllowAccountModel(account.ID, model); !allowed {
-					filtered[account.ID] = true
-				}
-			}
-		}
-	}
-	if p.discoveredModelRequiresEntitlement(accountType, model) {
-		for _, account := range p.allAccounts() {
-			if account.Type != accountType {
-				continue
-			}
-			account.mu.Lock()
-			_, supported := accountDiscoveredModel(account, model)
-			account.mu.Unlock()
-			if !supported {
-				filtered[account.ID] = true
-			}
-		}
-	}
-	acc := p.candidateForUser(userID, conversationID, filtered, accountType, requiredPlan, clientIP)
-	if acc != nil && p.circuitBreakers != nil && model != "" {
-		if allowed, _ := p.circuitBreakers.AllowAccountModel(acc.ID, model); !allowed {
-			return nil
-		}
-	}
-	return acc
-}
-
 func accountSupportsDiscoveredModel(account *Account, model string) bool {
 	if account == nil {
 		return false
@@ -949,307 +807,6 @@ func (p *poolState) discoveredModelRequiresEntitlement(accountType AccountType, 
 		}
 	}
 	return p.discoveredModelKnown(accountType, model)
-}
-
-func (p *poolState) candidate(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
-	return p.candidateForUser("", conversationID, exclude, accountType, requiredPlan, clientIP)
-}
-
-func (p *poolState) candidateForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string) *Account {
-	exclude = p.accountExclusions(userID, exclude)
-	exclude = p.controlExclusions(userID, conversationID, exclude)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	now := time.Now()
-
-	// Conversation pinning — keep using the same account unless at hard limits
-	if conversationID != "" {
-		if updated, ok := p.convUpdatedAt[conversationID]; ok && now.Sub(updated) > conversationPinTTL {
-			p.unpinLocked(conversationID)
-		}
-		owner := p.convOwner[conversationID]
-		if owner == "" || userID == "" || owner == userID {
-			if id, ok := p.convPin[conversationID]; ok {
-			if exclude != nil && exclude[id] {
-				// pinned excluded; fall through to selection
-			} else if a := p.getLocked(id); a != nil {
-				a.mu.Lock()
-				ok := !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) && (accountType == "" || a.Type == accountType) && planMatchesRequired(a.PlanType, requiredPlan) && accountAllowsClientIPLocked(a, clientIP)
-				if ok && a.Type == AccountTypeCodex && !isCodexProAccessPlan(a.PlanType) {
-					ok = false
-					if p.debug {
-						log.Printf("unpinning conversation %s from non-pro codex account %s", conversationID, id)
-					}
-				}
-				if ok && !a.RateLimitUntil.IsZero() && a.RateLimitUntil.After(now) {
-					ok = false
-					if p.debug {
-						log.Printf("unpinning conversation %s from rate-limited account %s (until %s)",
-							conversationID, id, a.RateLimitUntil.Format(time.RFC3339))
-					}
-				}
-				// Unpin at 95% secondary (raised from 90% for better stickiness)
-				secondaryUsed := accountSecondaryUsageLocked(a)
-				if ok && secondaryUsed >= secondaryHardExcludeThreshold {
-					ok = false
-					if p.debug {
-						log.Printf("unpinning conversation %s from exhausted account %s (%.0f%% secondary >= %.0f%%)",
-							conversationID, id, secondaryUsed*100, secondaryHardExcludeThreshold*100)
-					}
-				}
-				// Also unpin if primary usage is at/above 95% (hard limit).
-				// Grok monthly spend is display-only (see
-				// primaryUsageBlocksRoutingLocked) and never unpins.
-				primaryUsed := accountPrimaryUsageLocked(a)
-				if ok && primaryUsageBlocksRoutingLocked(a, primaryUsed) {
-					ok = false
-					if p.debug {
-						log.Printf("unpinning conversation %s from account %s (%.0f%% primary >= %.0f%%)",
-							conversationID, id, primaryUsed*100, primaryHardExcludeThreshold*100)
-					}
-				}
-				// Also unpin if token is expired - don't wait for a failed request
-				if ok && !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now) {
-					ok = false
-					if p.debug {
-						log.Printf("unpinning conversation %s from expired account %s",
-							conversationID, id)
-					}
-				}
-				a.mu.Unlock()
-				if ok && p.circuitBreakers != nil {
-					if allowed, _ := p.circuitBreakers.CanAllowProvider(string(a.Type)); !allowed {
-						ok = false
-					} else if allowed, _ := p.circuitBreakers.CanAllowAccount(a.ID); !allowed {
-						ok = false
-					} else {
-						_, _ = p.circuitBreakers.AllowProvider(string(a.Type))
-						_, _ = p.circuitBreakers.AllowAccount(a.ID)
-					}
-				}
-				if ok {
-					if p.convUpdatedAt == nil {
-						p.convUpdatedAt = make(map[string]time.Time)
-					}
-					p.convUpdatedAt[conversationID] = now
-					return a
-				}
-				p.unpinLocked(conversationID)
-			} else {
-				p.unpinLocked(conversationID)
-			}
-		}
-	}
-	}
-
-	n := len(p.accounts)
-	if n == 0 {
-		return nil
-	}
-
-	// Collect eligible accounts with their tier and score
-	type scoredAccount struct {
-		acc          *Account
-		tier         int
-		secondaryPct float64
-		score        float64
-	}
-	var eligible []scoredAccount
-	var rateLimited []scoredAccount
-
-	start := int(p.rr % uint64(n))
-	for i := 0; i < n; i++ {
-		a := p.accounts[(start+i)%n]
-		if exclude != nil && exclude[a.ID] {
-			continue
-		}
-		a.mu.Lock()
-		if a.Dead || a.Disabled || accountHealthBlockedLocked(a) || (accountType != "" && a.Type != accountType) || !planMatchesRequired(a.PlanType, requiredPlan) || !accountAllowsClientIPLocked(a, clientIP) {
-			a.mu.Unlock()
-			continue
-		}
-		if p.circuitBreakers != nil {
-			if allowed, _ := p.circuitBreakers.CanAllowProvider(string(a.Type)); !allowed {
-				a.mu.Unlock()
-				continue
-			}
-			if allowed, _ := p.circuitBreakers.CanAllowAccount(a.ID); !allowed {
-				a.mu.Unlock()
-				continue
-			}
-		}
-		if !a.RateLimitUntil.IsZero() && a.RateLimitUntil.After(now) {
-			secondaryUsed := accountSecondaryUsageLocked(a)
-			tier := accountTier(a.Type, a.PlanType)
-			score := scoreAccountLocked(a, now)
-			a.mu.Unlock()
-			// Prefer less-loaded accounts
-			score -= float64(atomic.LoadInt64(&a.Inflight)) * 0.02
-			rateLimited = append(rateLimited, scoredAccount{acc: a, tier: tier, secondaryPct: secondaryUsed, score: score})
-			if p.debug {
-				log.Printf("skipping account %s: rate limited until %s", a.ID, a.RateLimitUntil.Format(time.RFC3339))
-			}
-			continue
-		}
-		// Hard exclusion: >=95% primary usage (Grok monthly spend is
-		// display-only and exempt via primaryUsageBlocksRoutingLocked).
-		primaryUsed := accountPrimaryUsageLocked(a)
-		if primaryUsageBlocksRoutingLocked(a, primaryUsed) {
-			a.mu.Unlock()
-			if p.debug {
-				log.Printf("excluding account %s: primary usage %.1f%% >= %.0f%%", a.ID, primaryUsed*100, primaryHardExcludeThreshold*100)
-			}
-			continue
-		}
-		// Hard exclusion: >=99% secondary usage
-		secondaryUsed := accountSecondaryUsageLocked(a)
-		if secondaryUsed >= secondaryHardExcludeThreshold {
-			a.mu.Unlock()
-			if p.debug {
-				log.Printf("excluding account %s: secondary usage %.1f%% >= %.0f%%", a.ID, secondaryUsed*100, secondaryHardExcludeThreshold*100)
-			}
-			continue
-		}
-		tier := accountTier(a.Type, a.PlanType)
-		score := scoreAccountLocked(a, now)
-		a.mu.Unlock()
-		// Prefer less-loaded accounts
-		score -= float64(atomic.LoadInt64(&a.Inflight)) * 0.02
-		eligible = append(eligible, scoredAccount{acc: a, tier: tier, secondaryPct: secondaryUsed, score: score})
-	}
-
-	selectCandidate := func(accounts []scoredAccount) *Account {
-		threshold := p.tierThreshold
-		var tier1Below, tier1Any []*scoredAccount
-		var tier2Below, tier2Any []*scoredAccount
-		var tier3Below, tier3Any []*scoredAccount
-		for i := range accounts {
-			sa := &accounts[i]
-			switch sa.tier {
-			case 1:
-				tier1Any = append(tier1Any, sa)
-				if sa.secondaryPct < threshold {
-					tier1Below = append(tier1Below, sa)
-				}
-			case 2:
-				tier2Any = append(tier2Any, sa)
-				if sa.secondaryPct < threshold {
-					tier2Below = append(tier2Below, sa)
-				}
-			case 3:
-				tier3Any = append(tier3Any, sa)
-				if sa.secondaryPct < threshold {
-					tier3Below = append(tier3Below, sa)
-				}
-			}
-		}
-
-		best := func(candidates []*scoredAccount) *scoredAccount {
-			var selected *scoredAccount
-			for _, candidate := range candidates {
-				if selected == nil || candidate.score > selected.score {
-					selected = candidate
-				}
-			}
-			return selected
-		}
-
-		choose := func(candidates []*scoredAccount) *Account {
-			selected := best(candidates)
-			if selected == nil {
-				return nil
-			}
-			if accountType == AccountTypeCodex {
-				minimumCompetitiveScore := selected.score - competitiveRoutingScoreWindow
-				competitive := make([]*scoredAccount, 0, len(candidates))
-				for _, candidate := range candidates {
-					if candidate.score >= minimumCompetitiveScore {
-						competitive = append(competitive, candidate)
-					}
-				}
-				sort.Slice(competitive, func(i, j int) bool {
-					return competitive[i].acc.ID < competitive[j].acc.ID
-				})
-				totalWeight := 0
-				for _, candidate := range competitive {
-					if candidate.acc.CyberAccess {
-						totalWeight += cyberAccessRoutingWeight
-					} else {
-						totalWeight += ordinaryRoutingWeight
-					}
-				}
-				if totalWeight > 0 {
-					slot := int(p.rr % uint64(totalWeight))
-					for _, candidate := range competitive {
-						weight := ordinaryRoutingWeight
-						if candidate.acc.CyberAccess {
-							weight = cyberAccessRoutingWeight
-						}
-						if slot < weight {
-							selected = candidate
-							break
-						}
-						slot -= weight
-					}
-				}
-			}
-			p.rr++
-			if p.circuitBreakers != nil && selected.acc != nil {
-				_, _ = p.circuitBreakers.AllowProvider(string(selected.acc.Type))
-				_, _ = p.circuitBreakers.AllowAccount(selected.acc.ID)
-			}
-			return selected.acc
-		}
-
-		// Try Tier 1 accounts below threshold.
-		if len(tier1Below) > 0 {
-			return choose(tier1Below)
-		}
-
-		// If tier 1 accounts exist above threshold, prefer them over tier 2 below threshold.
-		// Only fall to tier 2 if no tier 1 accounts at all.
-		if len(tier1Any) > 0 {
-			// Tier 1 exists but all above threshold. Still prefer tier 1 by score
-			// unless a tier 2 below threshold has significantly better score.
-			bestTier1Any := best(tier1Any)
-			bestTier2Below := best(tier2Below)
-			if accountType != AccountTypeCodex && bestTier2Below != nil && bestTier2Below.score > bestTier1Any.score+0.3 {
-				return choose(tier2Below)
-			}
-			return choose(tier1Any)
-		}
-		if len(tier2Below) > 0 {
-			return choose(tier2Below)
-		}
-		if len(tier2Any) > 0 {
-			return choose(tier2Any)
-		}
-
-		// Tier 3: last resort (e.g. Claude pro accounts).
-		if len(tier3Below) > 0 {
-			return choose(tier3Below)
-		}
-		if len(tier3Any) > 0 {
-			return choose(tier3Any)
-		}
-
-		// Absolute fallback — use weighted fairness among competitive accounts.
-		all := make([]*scoredAccount, 0, len(accounts))
-		for i := range accounts {
-			all = append(all, &accounts[i])
-		}
-		return choose(all)
-	}
-
-	if len(eligible) == 0 {
-		if len(rateLimited) > 0 && p.debug {
-			log.Printf("no non-rate-limited %s accounts available; refusing to route to rate-limited accounts", accountType)
-		}
-		return nil
-	}
-
-	return selectCandidate(eligible)
 }
 
 func (p *poolState) excludeInflightWhenIdleAvailable(accountType AccountType, exclude map[string]bool) {
@@ -1312,35 +869,6 @@ func recordImageGenerationResult(account *Account, success bool) {
 	atomic.StoreInt64(&account.ImageGenerationRetryAt, time.Now().Add(10*time.Minute).Unix())
 }
 
-func (p *poolState) imageFanoutCandidate(index int, exclude map[string]bool, requiredPlan string, clientIP string) *Account {
-	if p == nil {
-		return nil
-	}
-	p.mu.RLock()
-	ids := make([]string, 0, len(p.accounts))
-	for _, account := range p.accounts {
-		if account != nil && account.Type == AccountTypeCodex && !exclude[account.ID] {
-			ids = append(ids, account.ID)
-		}
-	}
-	p.mu.RUnlock()
-	if len(ids) == 0 {
-		return nil
-	}
-	sort.Strings(ids)
-	start := index % len(ids)
-	if start < 0 {
-		start += len(ids)
-	}
-	for offset := 0; offset < len(ids); offset++ {
-		id := ids[(start+offset)%len(ids)]
-		if account := p.candidateByID(id, AccountTypeCodex, requiredPlan, clientIP); account != nil {
-			return account
-		}
-	}
-	return nil
-}
-
 func planMatchesRequired(planType, requiredPlan string) bool {
 	if requiredPlan == "" {
 		return true
@@ -1384,30 +912,7 @@ func scoreAccount(a *Account, now time.Time) float64 {
 	return scoreAccountLocked(a, now)
 }
 
-type scoreBreakdown struct {
-	Score              float64
-	PrimaryUsed        float64
-	SecondaryUsed      float64
-	PrimaryAvailable   bool
-	SecondaryAvailable bool
-	BaseWindow         string
-	BaseHeadroom       float64
-	DrainMultiplier    float64
-	PrimaryPaceBonus   float64
-	PrimaryPenalty     float64
-	ExpiryPenalty      float64
-	PenaltyRaw         float64
-	PenaltyFactor      float64
-	PenaltyApplied     float64
-	ClampedToFloor     bool
-	RecentUseBonus     float64
-	CreditBonus        float64
-	HeadroomPreCredit  float64
-}
-
-func scoreAccountBreakdownLocked(a *Account, now time.Time) scoreBreakdown {
-	var out scoreBreakdown
-
+func scoreAccountBreakdownLocked(a *Account, now time.Time) routing.QuotaScore {
 	decayPenaltyLocked(a, now)
 	primaryUsed := a.Usage.PrimaryUsedPercent
 	secondaryUsed := a.Usage.SecondaryUsedPercent
@@ -1417,142 +922,21 @@ func scoreAccountBreakdownLocked(a *Account, now time.Time) scoreBreakdown {
 	if secondaryUsed == 0 && a.Usage.SecondaryUsed > 0 {
 		secondaryUsed = a.Usage.SecondaryUsed
 	}
-	out.PrimaryUsed = primaryUsed
-	out.SecondaryUsed = secondaryUsed
-	out.PrimaryAvailable = usagePrimaryWindowAvailable(a.Usage)
-	out.SecondaryAvailable = usageSecondaryWindowAvailable(a.Usage)
-
-	// Prefer the weekly window as the long-term balancing signal. If OpenAI
-	// temporarily exposes only a five-hour window, use that instead of treating
-	// the missing weekly window as unlimited headroom.
-	headroom := 1.0
-	switch {
-	case out.SecondaryAvailable:
-		headroom = 1.0 - secondaryUsed
-		out.BaseWindow = "7d"
-	case out.PrimaryAvailable:
-		headroom = 1.0 - primaryUsed
-		out.BaseWindow = "5h"
-	default:
-		out.BaseWindow = "none"
-	}
-	out.BaseHeadroom = headroom
-	out.DrainMultiplier = 1.0
-
-	// Accounts closer to a weekly reset can absorb more traffic right now.
-	if out.SecondaryAvailable && !a.Usage.SecondaryResetAt.IsZero() && a.Usage.SecondaryResetAt.After(now) {
-		hoursRemaining := a.Usage.SecondaryResetAt.Sub(now).Hours()
-		totalHours := 168.0
-		if hoursRemaining > 1 && hoursRemaining < totalHours {
-			sustainableBurnRate := headroom / hoursRemaining
-			baselineBurnRate := 1.0 / totalHours
-			burnRateRatio := sustainableBurnRate / baselineBurnRate
-
-			maxMultiplier := 3.0
-			if hoursRemaining < 6 && headroom > 0.1 {
-				maxMultiplier = 8.0
-			}
-
-			if burnRateRatio > maxMultiplier {
-				burnRateRatio = maxMultiplier
-			} else if burnRateRatio < 0.3 {
-				burnRateRatio = 0.3
-			}
-
-			out.DrainMultiplier = burnRateRatio
-			headroom *= burnRateRatio
-		}
-	}
-
-	// Cap drain multiplier for accounts with no primary window data.
-	// Pro/Team plans lack a 5hr window; don't let phantom headroom inflate their score.
-	if !out.PrimaryAvailable {
-		if out.DrainMultiplier > 1.0 {
-			out.DrainMultiplier = 1.0
-			headroom = out.BaseHeadroom
-		}
-	}
-
-	// When both windows exist, use five-hour headroom as the burst signal on
-	// top of the weekly base. If five-hour is the only window, it is already the
-	// base and must not be counted twice. Grok's Primary slot is monthly API
-	// spend (display-only, not a burst window), so it neither bonuses nor
-	// penalizes the score; weekly credits drive it.
-	if a.Type != AccountTypeGrok && out.PrimaryAvailable && out.SecondaryAvailable {
-		if !a.Usage.PrimaryResetAt.IsZero() && a.Usage.PrimaryResetAt.After(now) {
-			hoursRemaining := a.Usage.PrimaryResetAt.Sub(now).Hours()
-			primaryHeadroom := 1.0 - primaryUsed
-			if hoursRemaining > 0.1 && hoursRemaining <= 5.0 && primaryHeadroom > 0.05 {
-				timeWeight := hoursRemaining / 3.0
-				if timeWeight > 1.0 {
-					timeWeight = 1.0
-				}
-				out.PrimaryPaceBonus = primaryHeadroom * 0.5 * timeWeight
-			}
-		} else if primaryUsed < 0.5 {
-			out.PrimaryPaceBonus = (1.0 - primaryUsed) * 0.15
-		}
-		headroom += out.PrimaryPaceBonus
-
-		if primaryUsed > 0.8 {
-			out.PrimaryPenalty = (primaryUsed - 0.8) * 2.0
-			headroom -= out.PrimaryPenalty
-		}
-	}
-
-	// Mild expiry penalty.
-	if !a.ExpiresAt.IsZero() {
-		ttl := a.ExpiresAt.Sub(now).Minutes()
-		if ttl < 0 {
-			out.ExpiryPenalty = 0.3
-		} else if ttl < 30 {
-			out.ExpiryPenalty = 0.2
-		} else if ttl < 60 {
-			out.ExpiryPenalty = 0.1
-		}
-	}
-	headroom -= out.ExpiryPenalty
-
-	out.PenaltyFactor = 1.0
-	if !a.Usage.SecondaryResetAt.IsZero() {
-		hoursRemaining := a.Usage.SecondaryResetAt.Sub(now).Hours()
-		secondaryHeadroom := 1.0 - secondaryUsed
-		if hoursRemaining > 0 && hoursRemaining < 6 && secondaryHeadroom > 0.1 {
-			out.PenaltyFactor = 0.3
-		}
-	}
-	out.PenaltyRaw = a.Penalty
-	out.PenaltyApplied = a.Penalty * out.PenaltyFactor
-	headroom -= out.PenaltyApplied
-
-	if headroom < 0.01 {
-		headroom = 0.01
-		out.ClampedToFloor = true
-	}
-
-	if !a.LastUsed.IsZero() && now.Sub(a.LastUsed) < 5*time.Minute {
-		out.RecentUseBonus = 0.1
-		headroom += out.RecentUseBonus
-	}
-
-	out.CreditBonus = 1.0
-	if a.Usage.CreditsUnlimited || a.Usage.HasCredits {
-		out.CreditBonus = 1.1
-	}
-
-	out.HeadroomPreCredit = headroom
-	out.Score = headroom * out.CreditBonus
-	if accountHealthBlockedLocked(a) {
-		out.Score = 0
-	}
-	return out
+	return routing.ScoreQuota(routing.QuotaSignals{
+		PrimaryUsed: primaryUsed, SecondaryUsed: secondaryUsed,
+		PrimaryAvailable: usagePrimaryWindowAvailable(a.Usage), SecondaryAvailable: usageSecondaryWindowAvailable(a.Usage),
+		PrimaryResetAt: a.Usage.PrimaryResetAt, SecondaryResetAt: a.Usage.SecondaryResetAt,
+		PrimaryBurst: a.Type != AccountTypeGrok, Penalty: a.Penalty,
+		ExpiresAt: a.ExpiresAt, LastUsed: a.LastUsed,
+		HasCredits: a.Usage.CreditsUnlimited || a.Usage.HasCredits, HealthBlocked: accountHealthBlockedLocked(a),
+	}, now)
 }
 
 func scoreAccountLocked(a *Account, now time.Time) float64 {
 	return scoreAccountBreakdownLocked(a, now).Score
 }
 
-func scoreTooltipFromBreakdownLocked(a *Account, now time.Time, breakdown scoreBreakdown) string {
+func scoreTooltipFromBreakdownLocked(a *Account, now time.Time, breakdown routing.QuotaScore) string {
 	if a.Disabled {
 		return "Not scored because this account is disabled."
 	}
@@ -2763,88 +2147,6 @@ func (p *poolState) debugf(format string, args ...any) {
 		return
 	}
 	log.Printf(format, args...)
-}
-
-func (p *poolState) candidateWithTrace(conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string, model string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	return p.candidateWithTraceForUser("", conversationID, exclude, accountType, requiredPlan, clientIP, model)
-}
-
-func (p *poolState) candidateWithTraceForUser(userID, conversationID string, exclude map[string]bool, accountType AccountType, requiredPlan string, clientIP string, model string) (*Account, string, []string, float64, []RouteAlternative, *ScoreBreakdownView) {
-	acc := p.candidateForModelForUser(userID, conversationID, exclude, accountType, requiredPlan, clientIP, model)
-	if acc == nil {
-		return nil, "none", nil, 0, nil, nil
-	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	now := time.Now()
-
-	policy := "balanced"
-	reasons := []string{"healthy"}
-
-	if conversationID != "" && p.convPin[conversationID] == acc.ID {
-		policy = "pinned"
-		reasons = append(reasons, "conversation_pin")
-	}
-
-	acc.mu.Lock()
-	sb := scoreAccountBreakdownLocked(acc, now)
-	inflight := atomic.LoadInt64(&acc.Inflight)
-	hadHealthError := accountHealthBlockedLocked(acc)
-	acc.mu.Unlock()
-
-	score := sb.Score - float64(inflight)*0.02
-
-	if sb.BaseWindow == "7d" {
-		reasons = append(reasons, "weekly_headroom")
-	} else if sb.BaseWindow == "5h" {
-		reasons = append(reasons, "five_hour_headroom")
-	}
-	if sb.PrimaryPaceBonus > 0 {
-		reasons = append(reasons, "primary_pace")
-	}
-	if sb.RecentUseBonus > 0 {
-		reasons = append(reasons, "recent_success")
-	}
-	if sb.CreditBonus > 1.0 {
-		reasons = append(reasons, "credit_bonus")
-	}
-
-	breakdownView := newScoreBreakdownView(sb, inflight, hadHealthError)
-
-	var alternatives []RouteAlternative
-	for _, a := range p.accounts {
-		if a == nil || a.ID == acc.ID || (accountType != "" && a.Type != accountType) || a.Dead || a.Disabled {
-			continue
-		}
-		a.mu.Lock()
-		if accountHealthBlockedLocked(a) {
-			a.mu.Unlock()
-			continue
-		}
-		altSB := scoreAccountBreakdownLocked(a, now)
-		altInflight := atomic.LoadInt64(&a.Inflight)
-		altHealthErr := accountHealthBlockedLocked(a)
-		a.mu.Unlock()
-
-		altScore := altSB.Score - float64(altInflight)*0.02
-		altReasons := []string{"healthy"}
-		if altSB.BaseWindow == "7d" {
-			altReasons = append(altReasons, "weekly_headroom")
-		}
-		altView := newScoreBreakdownView(altSB, altInflight, altHealthErr)
-
-		alternatives = append(alternatives, RouteAlternative{
-			Provider:       string(a.Type),
-			Model:          model,
-			Score:          altScore,
-			Reasons:        altReasons,
-			AccountID:      a.ID,
-			ScoreBreakdown: altView,
-		})
-	}
-
-	return acc, policy, reasons, score, alternatives, breakdownView
 }
 
 func (p *poolState) accountsForType(accountType AccountType) []*Account {

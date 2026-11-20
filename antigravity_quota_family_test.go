@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 // The Gemini weekly bucket omits remainingFraction: proto3 drops zero values.
@@ -90,10 +92,12 @@ func TestAntigravityFamilyQuotaGatesOnlyItsOwnModels(t *testing.T) {
 	}
 
 	pool := newPoolState([]*Account{account}, false)
-	if got := pool.smartCandidateForModelForUser("", "", nil, AccountTypeAntigravity, "", "", "claude-opus-4-6-thinking", RoutingBalanced); got.Account != account {
+	req := routing.Request{Provider: string(AccountTypeAntigravity), Model: "claude-opus-4-6-thinking", Profile: string(RoutingBalanced)}
+	if got := pool.selectRoute(req); got.Account != account {
 		t.Fatalf("claude request was not routed to the account with claude quota: %#v", got)
 	}
-	if got := pool.smartCandidateForModelForUser("", "", nil, AccountTypeAntigravity, "", "", "gemini-3.8-flash-high", RoutingBalanced); got.Account != nil {
+	req.Model = "gemini-3.8-flash-high"
+	if got := pool.selectRoute(req); got.Account != nil {
 		t.Fatalf("gemini request routed to an account with an exhausted gemini week: %s", got.Account.ID)
 	}
 

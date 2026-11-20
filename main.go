@@ -27,6 +27,7 @@ import (
 	"codex-pool-proxy/internal/httpapi"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/ratelimit"
+	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/transport"
 	"codex-pool-proxy/internal/wire"
 	"github.com/coder/websocket"
@@ -988,7 +989,7 @@ type proxyHandler struct {
 	routeTracesOnce      sync.Once
 	experiments          *experimentTracker
 	trafficShadow        *trafficShadowRuntime
-	circuitBreakers      *CircuitBreakerManager
+	circuitBreakers      *routing.CircuitBreakerManager
 	fallbackGraph        *FallbackGraph
 	poolAuto             *PoolAutoOrchestrator
 	recent               *recentErrors
@@ -1044,7 +1045,7 @@ func (h *proxyHandler) getRouteTraces() *routeTraceStore {
 	return h.routeTraces
 }
 
-func (h *proxyHandler) getCircuitBreakers() *CircuitBreakerManager {
+func (h *proxyHandler) getCircuitBreakers() *routing.CircuitBreakerManager {
 	if h == nil {
 		return nil
 	}
@@ -1052,7 +1053,7 @@ func (h *proxyHandler) getCircuitBreakers() *CircuitBreakerManager {
 		return h.pool.circuitBreakers
 	}
 	if h.circuitBreakers == nil {
-		h.circuitBreakers = newCircuitBreakerManager()
+		h.circuitBreakers = routing.NewCircuitBreakerManager()
 	}
 	return h.circuitBreakers
 }
@@ -1501,7 +1502,10 @@ func (h *proxyHandler) pinConversationToCyberAccess(conversationID string, accou
 	if currentAccountID != "" {
 		exclude[currentAccountID] = true
 	}
-	acc := h.pool.candidateWithCyberAccess(exclude, accountType, requiredPlan, clientIP)
+	acc := h.pool.selectRoute(routing.Request{
+		Mode: routing.MatchCyberAccess, Exclude: exclude, Provider: string(accountType),
+		RequiredPlan: requiredPlan, ClientIP: clientIP,
+	}).Account
 	if acc == nil {
 		if h.cfg.debug.Load() {
 			log.Printf("[%s] cyber_policy seen for conversation %s, but no cyber_access account is available", reqID, conversationID)
@@ -3100,32 +3104,42 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 		}
 		if imageGenerationRequest && attempt == 1 && !imageFanoutChild {
-			acc = h.pool.candidateByIDForUser(userID, preferredImageCodexAccountID, accountType, requiredPlan, originIP)
+			acc = h.pool.selectRoute(routing.Request{
+				Mode: routing.MatchAccountID, AccountID: preferredImageCodexAccountID, UserID: userID,
+				Provider: string(accountType), RequiredPlan: requiredPlan, ClientIP: originIP,
+			}).Account
 			if acc != nil && h.cfg.debug.Load() {
 				log.Printf("[%s] routing image generation request to codex account %s", reqID, acc.ID)
 			}
 		}
 		if imageGenerationRequest && imageFanoutChild && attempt == 1 {
-			acc = h.pool.imageFanoutCandidate(imageFanoutIndex, candidateExclude, requiredPlan, originIP)
+			acc = h.pool.selectRoute(routing.Request{
+				Mode: routing.MatchImageFanout, Index: imageFanoutIndex, Exclude: candidateExclude,
+				RequiredPlan: requiredPlan, ClientIP: originIP,
+			}).Account
 		}
 		if acc == nil && cyberAccessRetry {
-			acc = h.pool.candidateWithCyberAccessForUser(userID, candidateExclude, accountType, requiredPlan, originIP)
+			acc = h.pool.selectRoute(routing.Request{
+				Mode: routing.MatchCyberAccess, UserID: userID, Exclude: candidateExclude,
+				Provider: string(accountType), RequiredPlan: requiredPlan, ClientIP: originIP,
+			}).Account
 			if acc != nil && h.cfg.debug.Load() {
 				log.Printf("[%s] routing cyber_policy retry to %s account %s", reqID, accountType, acc.ID)
 			}
 		}
-		var policy string = "balanced"
-		var reasons []string
-		var score float64
-		var alternatives []RouteAlternative
-		var breakdownView *ScoreBreakdownView
+		selection := routeSelection{Policy: "balanced"}
 
 		if acc == nil && !cyberAccessRetry {
 			candidateConversationID := conversationID
 			if imageGenerationRequest {
 				candidateConversationID = ""
 			}
-			acc, policy, reasons, score, alternatives, breakdownView = h.pool.candidateWithRoutingTraceForUser(userID, candidateConversationID, candidateExclude, accountType, requiredPlan, originIP, requestedModel, routingProfile)
+			selection = h.pool.selectRoute(routing.Request{
+				UserID: userID, ConversationID: candidateConversationID, Exclude: candidateExclude,
+				Provider: string(accountType), RequiredPlan: requiredPlan, ClientIP: originIP,
+				Model: requestedModel, Profile: string(routingProfile), Trace: true,
+			})
+			acc = selection.Account
 		}
 		if acc == nil {
 			if err := h.checkAccountRoutingAccess(userID, accountType, requestedModel); err != nil {
@@ -3292,33 +3306,33 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		exclude[acc.ID] = true
 
 		primaryReason := "balanced"
-		if len(reasons) > 0 {
-			primaryReason = reasons[len(reasons)-1]
+		if len(selection.Reasons) > 0 {
+			primaryReason = selection.Reasons[len(selection.Reasons)-1]
 		}
 
 		if autoDecisionInfo != nil {
-			policy = "pool_auto:" + autoDecisionInfo.Profile
-			reasons = append(autoDecisionInfo.Explanation, reasons...)
-			score = autoDecisionInfo.Score
+			selection.Policy = "pool_auto:" + autoDecisionInfo.Profile
+			selection.Reasons = append(autoDecisionInfo.Explanation, selection.Reasons...)
+			selection.Score = autoDecisionInfo.Score
 		}
 		if fallbackApplied {
-			reasons = append(reasons, fallbackReasonApplied)
+			selection.Reasons = append(selection.Reasons, fallbackReasonApplied)
 		}
-		circuitState := string(h.getCircuitBreakers().State(providerKey(string(accountType))))
+		circuitState := string(h.getCircuitBreakers().State(routing.ProviderKey(string(accountType))))
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Transition:     h.transitionForTrace(userID, conversationID, accountType, w.Header()),
 			Timestamp:      time.Now().UTC(),
-			Policy:         policy,
+			Policy:         selection.Policy,
 			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
-			Score:          score,
-			Reasons:        reasons,
-			Alternatives:   alternatives,
+			Score:          selection.Score,
+			Reasons:        selection.Reasons,
+			Alternatives:   selection.Alternatives,
 			FallbackFrom:   fallbackFromModel,
 			FallbackReason: fallbackReasonApplied,
 			CircuitState:   circuitState,
 			AccountID:      acc.ID,
-			ScoreBreakdown: breakdownView,
+			ScoreBreakdown: selection.Breakdown,
 			ClientIP:       h.traceClientIP(originIP),
 			UserID:         userID,
 			Attempts:       attempt,
@@ -3328,7 +3342,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			trace.Variant = experiment.Variant
 		}
 		h.getRouteTraces().Record(trace)
-		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, policy, primaryReason, attempt, reqID)
+		setPoolRouteHeaders(w.Header(), string(accountType), requestedModel, selection.Policy, primaryReason, attempt, reqID)
 		if fallbackApplied {
 			w.Header().Set("X-Pool-Fallback", fmt.Sprintf("%s->%s", fallbackFromModel, requestedModel))
 		}
@@ -3378,7 +3392,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if ctx.Err() != nil || isContextError(err) {
 				errClass = ErrorClassNone
 			}
-			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass)
+			h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass.Retryable())
 			if isContextError(err) {
 				writeContextError(w, err)
 				return
@@ -3418,7 +3432,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 			if recordClass != ErrorClassNone {
-				h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass)
+				h.getCircuitBreakers().RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass.Retryable())
 			}
 			if resp.StatusCode == http.StatusTooManyRequests {
 				providerErr := classifyAntigravityError(resp.StatusCode, errBody)
@@ -4260,16 +4274,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		}
 		selectionConversationID = "cyber-fallback:" + fallbackID
 	}
-	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTraceForUser(
-		userID,
-		selectionConversationID,
-		map[string]bool{},
-		accountType,
-		requiredPlan,
-		clientIP,
-		"",
-		routingProfile,
-	)
+	acc := h.pool.selectRoute(routing.Request{
+		UserID: userID, ConversationID: selectionConversationID, Provider: string(accountType),
+		RequiredPlan: requiredPlan, ClientIP: clientIP, Profile: string(routingProfile),
+	}).Account
 	if acc == nil {
 		if err := h.checkAccountRoutingAccess(userID, accountType, ""); err != nil {
 			respondPolicyError(w, err)
@@ -4898,7 +4906,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		http.Error(w, fmt.Sprintf("unknown routing profile %q", r.Header.Get("X-Pool-Routing")), http.StatusBadRequest)
 		return
 	}
-	acc, _, _, _, _, _ := h.pool.candidateWithRoutingTraceForUser(userID, contextSession, map[string]bool{}, accountType, requiredPlan, clientIP, requestedModel, routingProfile)
+	acc := h.pool.selectRoute(routing.Request{
+		UserID: userID, ConversationID: contextSession, Provider: string(accountType),
+		RequiredPlan: requiredPlan, ClientIP: clientIP, Model: requestedModel, Profile: string(routingProfile),
+	}).Account
 	if acc == nil {
 		if err := h.checkAccountRoutingAccess(userID, accountType, requestedModel); err != nil {
 			respondPolicyError(w, err)

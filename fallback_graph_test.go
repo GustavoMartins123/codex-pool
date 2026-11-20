@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestFallbackGraphOn429AndUnavailable(t *testing.T) {
@@ -18,7 +20,7 @@ func TestFallbackGraphOn429AndUnavailable(t *testing.T) {
 		{ID: "claude_1", Type: AccountTypeClaude, PlanType: "pro"},
 	}, false)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 
 	// 1. Fallback on 429 for gpt-6-astra -> gpt-5.6-sol
 	target, reason, ok := fg.ResolveFallback("gpt-6-astra", Trigger429, caps, pool, cb)
@@ -47,7 +49,7 @@ func TestFallbackGraphCompatibilityFilterRejectsIncompatible(t *testing.T) {
 		{ID: "claude_1", Type: AccountTypeClaude, PlanType: "pro"},
 	}, false)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 
 	// Configure a test route where first fallback does NOT support image (e.g. MiniMax-M2.7 text-only),
 	// second fallback supports image (e.g. claude-sonnet-5).
@@ -74,11 +76,11 @@ func TestFallbackGraphBypassesCircuitOpenProvider(t *testing.T) {
 		{ID: "claude_1", Type: AccountTypeClaude, PlanType: "pro"},
 	}, false)
 
-	cb := newCircuitBreakerManager()
+	cb := routing.NewCircuitBreakerManager()
 
 	// Trip Codex provider circuit
 	for i := 0; i < 5; i++ {
-		cb.RecordFailure("codex", "", "", nil, ErrorClassTransient)
+		cb.RecordFailure("codex", "", "", nil, ErrorClassTransient.Retryable())
 	}
 
 	// gpt-6-astra fallback on 429 has gpt-5.6-sol (codex) first, then claude-sonnet-5

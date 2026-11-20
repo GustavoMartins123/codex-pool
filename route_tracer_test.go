@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestRouteTraceRecordingAndRedaction(t *testing.T) {
@@ -302,9 +304,9 @@ func TestRouteTraceFallbackAndCircuitState(t *testing.T) {
 }
 
 func TestCircuitBreakersEndpoint(t *testing.T) {
-	cb := newCircuitBreakerManager()
-	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit)
-	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit)
+	cb := routing.NewCircuitBreakerManager()
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit.Retryable())
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit.Retryable())
 
 	h := &proxyHandler{
 		cfg:             &config{adminToken: "operator-pass"},
@@ -321,16 +323,16 @@ func TestCircuitBreakersEndpoint(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
 
-	var snapshot map[string]CircuitStateInfo
+	var snapshot map[string]routing.CircuitStateInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
 		t.Fatalf("failed to decode circuit breakers JSON: %v", err)
 	}
 
-	info, exists := snapshot[accountModelKey("acc_1", "gpt-6-astra")]
+	info, exists := snapshot[routing.AccountModelKey("acc_1", "gpt-6-astra")]
 	if !exists {
 		t.Fatalf("expected snapshot to contain key for acc_1:gpt-6-astra")
 	}
-	if info.State != StateOpen {
+	if info.State != routing.StateOpen {
 		t.Errorf("expected state OPEN, got %s", info.State)
 	}
 }

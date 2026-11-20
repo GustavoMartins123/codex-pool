@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/routing"
 )
 
 func qwenTestHandler(t *testing.T, transport http.RoundTripper, accounts ...*Account) *proxyHandler {
@@ -91,7 +92,7 @@ func TestQwenDiscoveryFailureClearsCatalogAndRecovers(t *testing.T) {
 	if syncProviderModels(context.Background(), failed, h.registry, account) == nil || len(account.Models) != 0 || account.HealthError == "" {
 		t.Fatal("failed discovery kept a usable Qwen catalog")
 	}
-	if h.pool.candidateForModel("", nil, AccountTypeQwen, "", "", "qwen-old") != nil {
+	if h.pool.selectRoute(routing.Request{Provider: string(AccountTypeQwen), Model: "qwen-old", Profile: string(RoutingLegacy)}).Account != nil {
 		t.Fatal("an undiscovered Qwen model remained routable")
 	}
 	good := roundTripFunc(func(*http.Request) (*http.Response, error) {

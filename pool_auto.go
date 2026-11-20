@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"sync"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 // PoolAutoProfileWeights defines the signal weights for model orchestration.
@@ -137,7 +139,7 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 	caps RequestCapabilities,
 	conversationID string,
 	pool *poolState,
-	cb *CircuitBreakerManager,
+	cb *routing.CircuitBreakerManager,
 	pricing *PricingData,
 	metrics *metrics,
 ) (AutoDecision, error) {
@@ -149,7 +151,7 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 	caps RequestCapabilities,
 	conversationID string,
 	pool *poolState,
-	cb *CircuitBreakerManager,
+	cb *routing.CircuitBreakerManager,
 	pricing *PricingData,
 	metrics *metrics,
 	conversation *ConversationState,
@@ -192,18 +194,18 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 		// SIGNAL 1: Health & Reliability (20%)
 		healthScore := 1.0
 		if cb != nil {
-			provState := cb.State(providerKey(string(meta.Provider)))
+			provState := cb.State(routing.ProviderKey(string(meta.Provider)))
 			switch provState {
-			case StateOpen:
+			case routing.StateOpen:
 				healthScore = 0.0
-			case StateHalfOpen:
+			case routing.StateHalfOpen:
 				healthScore = 0.5
-			case StateClosed:
+			case routing.StateClosed:
 				healthScore = 1.0
 			}
 			if healthScore > 0 {
-				modelState := cb.State(accountModelKey("", candID))
-				if modelState == StateOpen {
+				modelState := cb.State(routing.AccountModelKey("", candID))
+				if modelState == routing.StateOpen {
 					healthScore *= 0.2
 				}
 			}

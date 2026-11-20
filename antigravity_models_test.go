@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestParseAntigravityModelSnapshotKeepsFullInventoryAndCapabilities(t *testing.T) {
@@ -196,7 +198,7 @@ func TestAntigravityModelSelectionSkipsVerificationBlockedAccount(t *testing.T) 
 	for _, account := range []*Account{blocked, healthy} {
 		antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{model: {ID: model}}})
 	}
-	if got := pool.candidateForAntigravityModel("", nil, model, ""); got != healthy {
+	if got := pool.selectRoute(routing.Request{Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity), Model: model, Profile: string(RoutingLegacy)}).Account; got != healthy {
 		t.Fatalf("selected %v, want healthy account", got)
 	}
 }
@@ -205,10 +207,12 @@ func TestAntigravityModelCooldownDoesNotBlockAnotherModel(t *testing.T) {
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", ModelRateLimits: map[string]time.Time{"gemini-a": time.Now().Add(time.Hour)}}
 	pool := newPoolState([]*Account{account}, false)
 	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-a": {ID: "gemini-a"}, "gemini-b": {ID: "gemini-b"}}})
-	if got := pool.candidateForAntigravityModel("", nil, "gemini-a", ""); got != nil {
+	req := routing.Request{Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity), Model: "gemini-a", Profile: string(RoutingLegacy)}
+	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatalf("cooling model selected account %#v", got)
 	}
-	if got := pool.candidateForAntigravityModel("", nil, "gemini-b", ""); got != account {
+	req.Model = "gemini-b"
+	if got := pool.selectRoute(req).Account; got != account {
 		t.Fatalf("unlimited model should use the account, got %#v", got)
 	}
 }

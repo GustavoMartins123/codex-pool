@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 const (
@@ -881,7 +883,10 @@ func (h *proxyHandler) handleAntigravityModelVerify(w http.ResponseWriter, r *ht
 			continue
 		}
 		entry := verification{Model: model.ID}
-		account := h.pool.candidateForAntigravityModel("", nil, model.ID, getClientIP(r))
+		account := h.pool.selectRoute(routing.Request{
+			Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity),
+			Model: model.ID, ClientIP: getClientIP(r), Profile: string(RoutingLegacy),
+		}).Account
 		if account == nil {
 			entry.Error = "no available account supports this model"
 			results = append(results, entry)

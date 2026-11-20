@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func routingTestAccount(id string, used float64, resetAt time.Time) *Account {
@@ -26,11 +28,11 @@ func TestDefaultRoutingProfileWeights(t *testing.T) {
 	profiles := defaultRoutingProfiles()
 	tests := []struct {
 		profile RoutingProfile
-		want    RoutingProfileWeights
+		want    routing.Weights
 	}{
 		{
 			profile: RoutingBalanced,
-			want: RoutingProfileWeights{
+			want: routing.Weights{
 				QuotaHeadroom: 0.25, ResetUrgency: 0.15, Health: 0.20,
 				TTFT: 0.10, Throughput: 0.10, Affinity: 0.10,
 				Inflight: 0.05, RecentFailure: 0.05,
@@ -38,21 +40,21 @@ func TestDefaultRoutingProfileWeights(t *testing.T) {
 		},
 		{
 			profile: RoutingFast,
-			want: RoutingProfileWeights{
+			want: routing.Weights{
 				TTFT: 0.35, Throughput: 0.25, Health: 0.15,
 				Inflight: 0.10, QuotaHeadroom: 0.10, Affinity: 0.05,
 			},
 		},
 		{
 			profile: RoutingQuotaSaver,
-			want: RoutingProfileWeights{
+			want: routing.Weights{
 				QuotaHeadroom: 0.35, ProjectedQuota: 0.25, ResetTiming: 0.15,
 				Health: 0.10, Affinity: 0.10, Performance: 0.05,
 			},
 		},
 		{
 			profile: RoutingDrain,
-			want: RoutingProfileWeights{
+			want: routing.Weights{
 				ResetProximity: 0.35, RemainingQuota: 0.30, Health: 0.15,
 				Throughput: 0.10, Inflight: 0.10,
 			},
@@ -64,8 +66,8 @@ func TestDefaultRoutingProfileWeights(t *testing.T) {
 			if got != test.want {
 				t.Fatalf("weights = %+v, want %+v", got, test.want)
 			}
-			if math.Abs(got.total()-1) > 1e-9 {
-				t.Fatalf("weight total = %.6f, want 1", got.total())
+			if math.Abs(got.Total()-1) > 1e-9 {
+				t.Fatalf("weight total = %.6f, want 1", got.Total())
 			}
 		})
 	}
@@ -102,15 +104,15 @@ func TestSmartRouterProfilesSelectDeterministically(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(string(test.profile), func(t *testing.T) {
-			decision := pool.smartCandidateForModel(test.convID, nil, AccountTypeCodex, "pro", "", "gpt-5.5", test.profile)
+			decision := pool.selectRoute(routing.Request{ConversationID: test.convID, Provider: string(AccountTypeCodex), RequiredPlan: "pro", Model: "gpt-5.5", Profile: string(test.profile)})
 			if decision.Account == nil {
 				t.Fatal("no account selected")
 			}
 			if decision.Account.ID != test.want {
-				t.Fatalf("selected %q, want %q (score=%f reasons=%v)", decision.Account.ID, test.want, decision.Score.Score, decision.Reasons)
+				t.Fatalf("selected %q, want %q (score=%f reasons=%v)", decision.Account.ID, test.want, decision.Score, decision.Reasons)
 			}
-			if decision.Score.Profile != test.profile {
-				t.Fatalf("score profile = %q, want %q", decision.Score.Profile, test.profile)
+			if decision.Policy != string(test.profile) {
+				t.Fatalf("routing policy = %q, want %q", decision.Policy, test.profile)
 			}
 		})
 	}
@@ -123,7 +125,7 @@ func TestSmartRouterSkipsHealthBlockedAccounts(t *testing.T) {
 	healthy := routingTestAccount("healthy", 0.80, now.Add(6*24*time.Hour))
 	pool := newPoolState([]*Account{blocked, healthy}, false)
 
-	decision := pool.smartCandidateForModel("", nil, AccountTypeCodex, "pro", "", "gpt-5.5", RoutingBalanced)
+	decision := pool.selectRoute(routing.Request{Provider: string(AccountTypeCodex), RequiredPlan: "pro", Model: "gpt-5.5", Profile: string(RoutingBalanced)})
 	if decision.Account != healthy {
 		t.Fatalf("selected %v, want healthy account", decision.Account)
 	}
@@ -133,7 +135,7 @@ func TestSmartRouterConfigurationAndAliases(t *testing.T) {
 	cfg := RoutingConfigFile{
 		DefaultProfile: "fast",
 		DefaultModel:   "gpt-test",
-		Profiles: map[string]RoutingProfileWeights{
+		Profiles: map[string]routing.Weights{
 			"fast": {TTFT: 0.70, Throughput: 0.30},
 		},
 	}
@@ -150,7 +152,7 @@ func TestSmartRouterConfigurationAndAliases(t *testing.T) {
 		t.Fatalf("override was not applied: %+v", weights)
 	}
 	onlyHealth := newRoutingPolicySet(RoutingConfigFile{
-		Profiles: map[string]RoutingProfileWeights{"balanced": {Health: 1}},
+		Profiles: map[string]routing.Weights{"balanced": {Health: 1}},
 	})
 	weights, _ = onlyHealth.weights(RoutingBalanced)
 	if weights.Health != 1 || weights.QuotaHeadroom != 0 {
@@ -199,8 +201,8 @@ func TestSmartRouterConfigurationAndAliases(t *testing.T) {
 
 	bad := []RoutingConfigFile{
 		{DefaultProfile: "random"},
-		{Profiles: map[string]RoutingProfileWeights{"random": {Health: 1}}},
-		{Profiles: map[string]RoutingProfileWeights{"fast": {TTFT: -1}}},
+		{Profiles: map[string]routing.Weights{"random": {Health: 1}}},
+		{Profiles: map[string]routing.Weights{"fast": {TTFT: -1}}},
 	}
 	for _, invalid := range bad {
 		if err := validateRoutingConfig(invalid); err == nil {
@@ -216,22 +218,24 @@ func TestSmartRouterExplainabilityAndLegacyMode(t *testing.T) {
 		Samples: 4, SuccessEWMA: 0.9, TTFTMsEWMA: 120, ThroughputEWMA: 75,
 	}
 
-	selected, policy, reasons, score, _, breakdown := pool.candidateWithRoutingTrace(
-		"conversation", nil, AccountTypeCodex, "pro", "", "gpt-5.5", RoutingBalanced,
-	)
-	if selected != account || policy != "balanced" || score <= 0 {
-		t.Fatalf("selection = (%v, %q, %.3f)", selected, policy, score)
+	decision := pool.selectRoute(routing.Request{
+		ConversationID: "conversation", Provider: string(AccountTypeCodex), RequiredPlan: "pro",
+		Model: "gpt-5.5", Profile: string(RoutingBalanced), Trace: true,
+	})
+	if decision.Account != account || decision.Policy != "balanced" || decision.Score <= 0 {
+		t.Fatalf("selection = (%v, %q, %.3f)", decision.Account, decision.Policy, decision.Score)
 	}
-	if len(reasons) < 2 || breakdown == nil || breakdown.Weights == nil {
-		t.Fatalf("missing explanation: reasons=%v breakdown=%+v", reasons, breakdown)
+	breakdown := decision.Breakdown
+	if len(decision.Reasons) < 2 || breakdown == nil || breakdown.Weights == nil {
+		t.Fatalf("missing explanation: reasons=%v breakdown=%+v", decision.Reasons, breakdown)
 	}
 	if breakdown.Profile != "balanced" || breakdown.QuotaScore <= 0 || breakdown.HealthScore <= 0 {
 		t.Fatalf("incomplete breakdown: %+v", breakdown)
 	}
 
-	legacy, _, _, _, _, _ := pool.candidateWithRoutingTrace(
-		"", nil, AccountTypeCodex, "pro", "", "gpt-5.5", RoutingLegacy,
-	)
+	legacy := pool.selectRoute(routing.Request{
+		Provider: string(AccountTypeCodex), RequiredPlan: "pro", Model: "gpt-5.5", Profile: string(RoutingLegacy),
+	}).Account
 	if legacy != account {
 		t.Fatalf("legacy selected %v, want %v", legacy, account)
 	}
@@ -261,20 +265,24 @@ func BenchmarkSmartRouterProfiles(b *testing.B) {
 	}
 	for _, profile := range profiles {
 		b.Run(string(profile), func(b *testing.B) {
-			var decision smartRouteDecision
+			req := routing.Request{
+				Provider: string(AccountTypeCodex), RequiredPlan: "pro", Model: "gpt-5.5", Profile: string(profile),
+			}
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				decision = pool.smartCandidateForModel("", nil, AccountTypeCodex, "pro", "", "gpt-5.5", profile)
+				decision := pool.selectRoute(req)
 				if decision.Account == nil {
 					b.Fatal("no account selected")
 				}
 			}
 			b.StopTimer()
-			b.ReportMetric(decision.Score.Score, "route_score")
-			b.ReportMetric(decision.Score.Signals.Health, "health")
-			b.ReportMetric(decision.Score.Signals.QuotaHeadroom, "quota")
-			b.ReportMetric(decision.Score.Signals.TTFT, "ttft")
-			b.ReportMetric(decision.Score.Signals.Throughput, "throughput")
+			req.Trace = true
+			decision := pool.selectRoute(req)
+			b.ReportMetric(decision.Score, "route_score")
+			b.ReportMetric(decision.Breakdown.HealthScore, "health")
+			b.ReportMetric(decision.Breakdown.QuotaScore, "quota")
+			b.ReportMetric(decision.Breakdown.LatencyScore, "ttft")
+			b.ReportMetric(decision.Breakdown.ThroughputScore, "throughput")
 		})
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 // RouteTrace records the routing decision made for a single request.
@@ -56,27 +58,27 @@ type RouteAlternative struct {
 
 // ScoreBreakdownView exposes the explainable breakdown of account scoring.
 type ScoreBreakdownView struct {
-	Score                float64                `json:"score"`
-	Profile              string                 `json:"profile,omitempty"`
-	QuotaScore           float64                `json:"quota_score"`
-	ProjectedQuotaScore  float64                `json:"projected_quota_score,omitempty"`
-	RemainingQuotaScore  float64                `json:"remaining_quota_score,omitempty"`
-	ResetUrgency         float64                `json:"reset_urgency"`
-	ResetProximityScore  float64                `json:"reset_proximity_score,omitempty"`
-	InflightPenalty      float64                `json:"inflight_penalty"`
-	InflightScore        float64                `json:"inflight_score,omitempty"`
-	LatencyScore         float64                `json:"latency_score"`
-	ThroughputScore      float64                `json:"throughput_score,omitempty"`
-	AffinityScore        float64                `json:"affinity_score,omitempty"`
-	HealthScore          float64                `json:"health_score"`
-	RecentFailurePenalty float64                `json:"recent_failure_penalty"`
-	RecentFailureScore   float64                `json:"recent_failure_score,omitempty"`
-	Weights              *RoutingProfileWeights `json:"weights,omitempty"`
-	BaseWindow           string                 `json:"base_window,omitempty"`
-	PrimaryUsed          float64                `json:"primary_used,omitempty"`
-	SecondaryUsed        float64                `json:"secondary_used,omitempty"`
-	PrimaryPaceBonus     float64                `json:"primary_pace_bonus,omitempty"`
-	CreditBonus          float64                `json:"credit_bonus,omitempty"`
+	Score                float64          `json:"score"`
+	Profile              string           `json:"profile,omitempty"`
+	QuotaScore           float64          `json:"quota_score"`
+	ProjectedQuotaScore  float64          `json:"projected_quota_score,omitempty"`
+	RemainingQuotaScore  float64          `json:"remaining_quota_score,omitempty"`
+	ResetUrgency         float64          `json:"reset_urgency"`
+	ResetProximityScore  float64          `json:"reset_proximity_score,omitempty"`
+	InflightPenalty      float64          `json:"inflight_penalty"`
+	InflightScore        float64          `json:"inflight_score,omitempty"`
+	LatencyScore         float64          `json:"latency_score"`
+	ThroughputScore      float64          `json:"throughput_score,omitempty"`
+	AffinityScore        float64          `json:"affinity_score,omitempty"`
+	HealthScore          float64          `json:"health_score"`
+	RecentFailurePenalty float64          `json:"recent_failure_penalty"`
+	RecentFailureScore   float64          `json:"recent_failure_score,omitempty"`
+	Weights              *routing.Weights `json:"weights,omitempty"`
+	BaseWindow           string           `json:"base_window,omitempty"`
+	PrimaryUsed          float64          `json:"primary_used,omitempty"`
+	SecondaryUsed        float64          `json:"secondary_used,omitempty"`
+	PrimaryPaceBonus     float64          `json:"primary_pace_bonus,omitempty"`
+	CreditBonus          float64          `json:"credit_bonus,omitempty"`
 }
 
 func newRoutingBreakdownView(score routingScore) *ScoreBreakdownView {
@@ -181,7 +183,7 @@ func (s *routeTraceStore) SanitizeForClient(trace *RouteTrace) *RouteTrace {
 	return &clean
 }
 
-func newScoreBreakdownView(sb scoreBreakdown, inflight int64, healthError bool) *ScoreBreakdownView {
+func newScoreBreakdownView(sb routing.QuotaScore, inflight int64, healthError bool) *ScoreBreakdownView {
 	inflightPen := float64(inflight) * 0.02
 	healthScore := 1.0
 	if healthError {

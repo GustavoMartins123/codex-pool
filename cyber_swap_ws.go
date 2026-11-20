@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
 
@@ -125,7 +126,11 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 			if attempt+1 >= h.cfg.maxAttempts {
 				break
 			}
-			next := h.pool.candidateForUser(opts.UserID, opts.ConversationID, excluded, AccountTypeCodex, opts.RequiredPlan, opts.ClientIP)
+			next := h.pool.selectRoute(routing.Request{
+				UserID: opts.UserID, ConversationID: opts.ConversationID, Exclude: excluded,
+				Provider: string(AccountTypeCodex), RequiredPlan: opts.RequiredPlan, ClientIP: opts.ClientIP,
+				Profile: string(RoutingLegacy),
+			}).Account
 			if next == nil {
 				break
 			}
@@ -742,16 +747,11 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("cannot change websocket account while responses are pending")
 		}
 		exclude := map[string]bool{s.activeAccount.ID: true}
-		next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTraceForUser(
-			s.opts.UserID,
-			conversationID,
-			exclude,
-			AccountTypeCodex,
-			s.opts.RequiredPlan,
-			s.opts.ClientIP,
-			model,
-			s.opts.RoutingProfile,
-		)
+		next := s.h.pool.selectRoute(routing.Request{
+			UserID: s.opts.UserID, ConversationID: conversationID, Exclude: exclude,
+			Provider: string(AccountTypeCodex), RequiredPlan: s.opts.RequiredPlan, ClientIP: s.opts.ClientIP,
+			Model: model, Profile: string(s.opts.RoutingProfile),
+		}).Account
 		if next == nil {
 			s.finishTurn(turn)
 			return nil, fmt.Errorf("no Codex account is entitled to websocket model %q", model)
@@ -1044,7 +1044,10 @@ func (s *codexRelayState) pickCyberAccessCandidate() *Account {
 	if s.activeAccount != nil {
 		exclude[s.activeAccount.ID] = true
 	}
-	return s.h.pool.candidateWithCyberAccessForUser(s.opts.UserID, exclude, AccountTypeCodex, s.opts.RequiredPlan, s.opts.ClientIP)
+	return s.h.pool.selectRoute(routing.Request{
+		Mode: routing.MatchCyberAccess, UserID: s.opts.UserID, Exclude: exclude,
+		Provider: string(AccountTypeCodex), RequiredPlan: s.opts.RequiredPlan, ClientIP: s.opts.ClientIP,
+	}).Account
 }
 
 // pickQuotaSwapCandidate returns any other routing-eligible Codex account
@@ -1059,17 +1062,11 @@ func (s *codexRelayState) pickQuotaSwapCandidate(model string) *Account {
 	if s.activeAccount != nil {
 		exclude[s.activeAccount.ID] = true
 	}
-	next, _, _, _, _, _ := s.h.pool.candidateWithRoutingTraceForUser(
-		s.opts.UserID,
-		s.activeConversationID,
-		exclude,
-		AccountTypeCodex,
-		s.opts.RequiredPlan,
-		s.opts.ClientIP,
-		model,
-		s.opts.RoutingProfile,
-	)
-	return next
+	return s.h.pool.selectRoute(routing.Request{
+		UserID: s.opts.UserID, ConversationID: s.activeConversationID, Exclude: exclude,
+		Provider: string(AccountTypeCodex), RequiredPlan: s.opts.RequiredPlan, ClientIP: s.opts.ClientIP,
+		Model: model, Profile: string(s.opts.RoutingProfile),
+	}).Account
 }
 
 // activeAccountUsageBlocksRouting reports whether the account currently

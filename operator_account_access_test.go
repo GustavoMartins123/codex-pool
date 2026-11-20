@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/routing"
 	"go.etcd.io/bbolt"
 )
 
@@ -42,13 +43,14 @@ func TestOperatorAccountAccessIsPersonalAndDoesNotTransferManagement(t *testing.
 	if _, err := p.accountGrantForUse(identity, a, "gpt-5.5"); err != nil {
 		t.Fatal(err)
 	}
-	if pool.candidateByIDForUser(identity, a.ID, a.Type, "", "") == nil || len(pool.visiblePool("bob").allAccounts()) != 2 {
+	req := routing.Request{Mode: routing.MatchAccountID, UserID: identity, AccountID: a.ID, Provider: string(a.Type)}
+	if pool.selectRoute(req).Account == nil || len(pool.visiblePool("bob").allAccounts()) != 2 {
 		t.Fatal("activation was not applied to selectors and catalog")
 	}
 	if err := p.setOperatorAccountAccess("bob", a.Type, a.ID, 2, false, "Investigation completed"); err != nil {
 		t.Fatal(err)
 	}
-	if p.authorizeAccount(identity, a, "use") == nil || pool.candidateByIDForUser(identity, a.ID, a.Type, "", "") != nil {
+	if p.authorizeAccount(identity, a, "use") == nil || pool.selectRoute(req).Account != nil {
 		t.Fatal("deactivation retained access")
 	}
 	if _, err := p.accountGrantForUse(identity, a, "gpt-5.5"); err == nil {

@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"codex-pool-proxy/internal/routing"
 )
 
 func TestMyAccountsWithdrawalIsPrivateAndDurable(t *testing.T) {
@@ -46,7 +48,9 @@ func TestMyAccountsWithdrawalIsPrivateAndDurable(t *testing.T) {
 	if withdrawn.Code != 200 {
 		t.Fatalf("withdraw: %d %s", withdrawn.Code, withdrawn.Body.String())
 	}
-	if h.pool.candidateForUser("alice", "conversation", nil, AccountTypeKimi, "", "") != nil {
+	if h.pool.selectRoute(routing.Request{
+		UserID: "alice", ConversationID: "conversation", Provider: string(AccountTypeKimi), Profile: string(RoutingLegacy),
+	}).Account != nil {
 		t.Fatal("withdrawn account admitted")
 	}
 	reloaded, err := newPassportStore(h.passport.db)

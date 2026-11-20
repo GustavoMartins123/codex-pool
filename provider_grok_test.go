@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -706,7 +707,7 @@ func TestGrokWeeklyCreditsStillExcludeWhenExhausted(t *testing.T) {
 		t.Fatal("grok account at 99% weekly credits should be exhausted")
 	}
 	p := newPoolState([]*Account{grok}, false)
-	if got := p.candidate("", nil, AccountTypeGrok, "", ""); got != nil {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeGrok)}).Account; got != nil {
 		t.Fatalf("exhausted grok account still routable, got %+v", got)
 	}
 }
@@ -763,13 +764,13 @@ func TestGrokMonthlySpendDoesNotBlockRouting(t *testing.T) {
 	}
 
 	p := newPoolState([]*Account{grok}, false)
-	if got := p.candidate("", nil, AccountTypeGrok, "", ""); got == nil || got.ID != "pp-grok" {
+	if got := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeGrok)}).Account; got == nil || got.ID != "pp-grok" {
 		t.Fatalf("grok account not routable despite fresh weekly quota, got %+v", got)
 	}
-	if got := p.candidateByID("pp-grok", AccountTypeGrok, "", ""); got == nil {
-		t.Fatal("candidateByID refused grok account pinned by conversation")
+	if got := p.selectRoute(routing.Request{Mode: routing.MatchAccountID, AccountID: "pp-grok", Provider: string(AccountTypeGrok)}).Account; got == nil {
+		t.Fatal("exact account selection refused pinned Grok account")
 	}
-	if got := p.smartCandidateForModelForUser("", "", nil, AccountTypeGrok, "", "", "grok-4.6", RoutingBalanced); got.Account != grok {
+	if got := p.selectRoute(routing.Request{Provider: string(AccountTypeGrok), Model: "grok-4.6", Profile: string(RoutingBalanced)}); got.Account != grok {
 		t.Fatalf("smart routing refused grok account over monthly spend: %#v", got)
 	}
 	if !p.hasRoutableAccountOfType(AccountTypeGrok, nil) {

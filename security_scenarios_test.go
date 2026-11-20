@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/routing"
+
 	"go.etcd.io/bbolt"
 )
 
@@ -430,7 +432,7 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 	// Attacker sends X-Forwarded-For: 198.51.100.77, but getClientIP returns real IP 203.0.113.50
 	req.Header.Set("X-Forwarded-For", "198.51.100.77")
 	clientIP := getClientIP(req)
-	cand := p.candidate("", nil, AccountTypeCodex, "", clientIP)
+	cand := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), ClientIP: clientIP}).Account
 	if cand == nil || cand.ID != "public-fallback-account" {
 		t.Fatalf("untrusted client should not access restricted account via spoofed header, got %+v", cand)
 	}
@@ -621,7 +623,7 @@ func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
 	pool.pinForUser(userA, sharedConvID, acc1.ID)
 
 	// User A's subsequent requests route to the pinned account acc-pinned-1
-	candA := pool.candidateForUser(userA, sharedConvID, nil, AccountTypeCodex, "", "198.51.100.1")
+	candA := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: userA, ConversationID: sharedConvID, Provider: string(AccountTypeCodex), ClientIP: "198.51.100.1"}).Account
 	if candA == nil || candA.ID != "acc-pinned-1" {
 		t.Fatalf("User A should route to pinned account acc-pinned-1, got %+v", candA)
 	}
@@ -635,7 +637,7 @@ func TestSecurityConversationPinningCrossUserInterference(t *testing.T) {
 	}
 
 	// User B does NOT get forced onto User A's heavily used acc-pinned-1 (0.9 vs 0.1)
-	candB := pool.candidateForUser(userB, extractedB, nil, AccountTypeCodex, "", "198.51.100.2")
+	candB := pool.selectRoute(routing.Request{Profile: string(RoutingLegacy), UserID: userB, ConversationID: extractedB, Provider: string(AccountTypeCodex), ClientIP: "198.51.100.2"}).Account
 	if candB == nil || candB.ID != "acc-pinned-2" {
 		t.Fatalf("User B should route to best available account (acc-pinned-2), not User A's pinned account, got %+v", candB)
 	}
