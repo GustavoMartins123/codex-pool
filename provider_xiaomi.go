@@ -18,6 +18,10 @@ func NewXiaomiProvider(xiaomiBase *url.URL) *XiaomiProvider {
 	return &XiaomiProvider{apiKeyUpstream: apiKeyUpstream{base: xiaomiBase}}
 }
 
+func (*XiaomiProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{streamOnModelRoute: true}
+}
+
 func (p *XiaomiProvider) Type() AccountType {
 	return AccountTypeXiaomi
 }

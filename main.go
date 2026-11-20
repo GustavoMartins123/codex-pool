@@ -2309,13 +2309,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			return
 		}
 		accountType = provider.Type()
-		streamBody = streamBody || accountType == AccountTypeXiaomi
+		streamBody = streamBody || requestPreparationFor(provider).streamOnModelRoute
 	}
+	preparation := requestPreparationFor(provider)
 	// Codex-shaped Responses paths need rewriting and hosted-MCP filtering, but
 	// large prompts must not be decoded into map[string]any. Spool token-by-token,
 	// then model-route: Grok/Kimi/MiniMax/ZAI/Xiaomi/Adverserial must not inherit
 	// the path-selected Codex upstream (especially /backend-api/codex/responses).
-	if isCodexResponsesPath(r.URL.Path) && accountType != AccountTypeClaude && accountType != AccountTypeQwen {
+	if isCodexResponsesPath(r.URL.Path) && !preparation.bufferResponses {
 		largeOrChunked := r.ContentLength < 0 || r.ContentLength > h.cfg.maxInMemoryBodyBytes
 		encoding := strings.TrimSpace(strings.ToLower(r.Header.Get("Content-Encoding")))
 		uncompressedJSON := encoding == "" || encoding == "identity"
@@ -2368,18 +2369,18 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					if h.cfg.debug.Load() {
 						log.Printf("[%s] oversized Responses model-route: model=%s provider=%s", reqID, spooled.Model, accountType)
 					}
-				} else if accountType == AccountTypeCodex && !isOpenAIModel(spooled.Model) {
+				} else if provider.WireFormat() == WireResponses && !isOpenAIModel(spooled.Model) {
 					http.Error(w, fmt.Sprintf("oversized Responses model %q has no routable provider", spooled.Model), http.StatusBadRequest)
 					return
 				}
 			}
-			if accountType == AccountTypeGrok {
-				if err := sanitizeSpooledGrokRequest(spooled); err != nil {
-					http.Error(w, "grok request sanitizing error: "+err.Error(), http.StatusBadRequest)
+			if sanitize := requestPreparationFor(provider).sanitizeSpooled; sanitize != nil {
+				if err := sanitize(spooled); err != nil {
+					http.Error(w, fmt.Sprintf("%s request sanitizing error: %v", accountType, err), http.StatusBadRequest)
 					return
 				}
 			}
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				r = r.WithContext(context.WithValue(r.Context(), contextSpoolKey{}, spooled))
 			}
 			r.Body = spooled.File
@@ -2393,20 +2394,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase)
 			return
 		}
-		if accountType == AccountTypeCodex {
+		if provider.WireFormat() == WireResponses {
 			streamBody = false
 		}
 	}
-	// Adverserial rejects any effort outside low/high/max with a 400, and the
-	// streamed path rewrites only the model name. Buffer the body so the effort
-	// clamp runs for chunked and oversized requests too; otherwise the clamp is
-	// advisory and a large request fails upstream instead.
-	if accountType == AccountTypeAdverserial || accountType == AccountTypeGrok {
-		streamBody = false
-	}
-	// Claude needs the Responses envelope translated to Messages, including
-	// chunked requests. Keep this on the bounded replay/translation path.
-	if (accountType == AccountTypeClaude || accountType == AccountTypeQwen) && isCodexResponsesPath(r.URL.Path) {
+	if preparation.bufferBody || preparation.bufferResponses && isCodexResponsesPath(r.URL.Path) {
 		streamBody = false
 	}
 	if streamBody {
@@ -2441,7 +2433,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		r.Header.Del("Content-Length")
 		r.ContentLength = int64(len(bodyBytes))
 	}
-	if accountType == AccountTypeCodex && isCodexLegacyLivePath(r.URL.Path) {
+	if provider.WireFormat() == WireResponses && isCodexLegacyLivePath(r.URL.Path) {
 		bodyBytes, err = rewriteCodexLiveCall(bodyBytes, r.Header.Get("Content-Type"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2691,11 +2683,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 
-	// OpenCode Go's router rejects requests missing x-opencode-session (HTTP 400
-	// "MissingSessionID"). Stamp it on the incoming request so every outbound
-	// attempt — streamed or buffered — carries a stable per-conversation value.
-	if accountType == AccountTypeOpencodeGo {
-		r.Header.Set("x-opencode-session", opencodeGoSessionHeader(r, conversationID, userID))
+	preparation = requestPreparationFor(provider)
+	if setConversationHeaders := preparation.conversationHeaders; setConversationHeaders != nil {
+		setConversationHeaders(r, conversationID, userID)
 	}
 
 	transitionSourceBody := append([]byte(nil), bodyBytes...)
@@ -2737,7 +2727,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if sourceFormat != wire.FormatUnknown && targetFormat != wire.FormatUnknown && sourceFormat != targetFormat {
 		if sourceFormat == wire.FormatClaude && targetFormat == wire.FormatOpenAI {
 			// Codex backend uses Responses API, not Chat Completions
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				translateDir = wire.TranslateClaudeToResponses
 			} else {
 				translateDir = wire.TranslateClaudeToOAI
@@ -2752,11 +2742,11 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// Codex always requires streaming, so we track whether the client originally wanted non-streaming.
 	clientWantsNonStreaming := originalJSONErr == nil && !originalStream
 	imagesResponseFormat := ""
-	if translateDir == wire.TranslateNone && accountType == AccountTypeCodex && (strings.HasPrefix(r.URL.Path, "/v1/images/generations") || strings.HasPrefix(r.URL.Path, "/v1/images/edits")) {
+	if translateDir == wire.TranslateNone && provider.WireFormat() == WireResponses && (strings.HasPrefix(r.URL.Path, "/v1/images/generations") || strings.HasPrefix(r.URL.Path, "/v1/images/edits")) {
 		translateDir = wire.TranslateImagesToResponses
 		clientWantsNonStreaming = true
 	}
-	if translateDir == wire.TranslateNone && sourceFormat == wire.FormatOpenAI && accountType == AccountTypeCodex {
+	if translateDir == wire.TranslateNone && sourceFormat == wire.FormatOpenAI && provider.WireFormat() == WireResponses {
 		if strings.HasPrefix(r.URL.Path, "/v1/completions") && !strings.HasPrefix(r.URL.Path, "/v1/chat/completions") {
 			translateDir = wire.TranslateCompletionsToResponses
 		} else {
@@ -2830,8 +2820,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 	}
 	imageGenerationRequest := false
-	compactRequest := accountType == AccountTypeCodex && r.Method == http.MethodPost && isCompactPath(r.URL.Path)
-	if accountType == AccountTypeCodex {
+	compactRequest := provider.WireFormat() == WireResponses && r.Method == http.MethodPost && isCompactPath(r.URL.Path)
+	if provider.WireFormat() == WireResponses {
 		// Byte-oriented translators retain their contracts. Reuse the original
 		// tree only when none of them changed the body; decode changed bytes once.
 		upstreamObject := originalObject
@@ -2873,15 +2863,12 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	bodyBytes = wire.NormalizeResponsesSchemaBody(bodyBytes)
-	if accountType == AccountTypeQwen && r.URL.Path == "/v1/chat/completions" {
-		bodyBytes, err = prepareQwenChatRequest(bodyBytes)
+	if prepare := preparation.prepareBody; prepare != nil {
+		bodyBytes, err = prepare(r.URL.Path, requestedModel, bodyBytes)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-	}
-	if accountType == AccountTypeGrok {
-		bodyBytes = rewriteAndSanitizeGrokRequestBody(bodyBytes, requestedModel)
 	}
 
 	if h.cfg.debug.Load() {
@@ -2903,9 +2890,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			log.Printf("[%s] requested model=%s", reqID, requestedModel)
 		}
 	}
-	if h.cfg.logBodies && len(bodySample) > 0 && !(accountType == AccountTypeCodex && mayHaveContext(bodyBytes)) {
+	if h.cfg.logBodies && len(bodySample) > 0 && !(provider.WireFormat() == WireResponses && mayHaveContext(bodyBytes)) {
 		logSample := bodySample
-		if accountType == AccountTypeCodex && isCodexResponsesPath(r.URL.Path) {
+		if provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) {
 			logSample = bodyBytes
 			if h.cfg.bodyLogLimit > 0 && int64(len(logSample)) > h.cfg.bodyLogLimit {
 				logSample = logSample[:h.cfg.bodyLogLimit]
@@ -3304,7 +3291,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			resp.Body.Close()
 			errBody = bodyForInspection(nil, errBody)
 			errBodyStr := string(errBody)
-			if accountType == AccountTypeCodex && resp.StatusCode == http.StatusNotFound && isCodexItemReferenceError(errBody) {
+			if provider.WireFormat() == WireResponses && resp.StatusCode == http.StatusNotFound && isCodexItemReferenceError(errBody) {
 				errClass = ErrorClassInvalid
 				recordClass = ErrorClassNone
 				if h.cfg.debug.Load() {
@@ -3323,7 +3310,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 
-			if accountType == AccountTypeCodex && isCyberPolicyError(errBody) && !acc.codex.CyberAccess {
+			if provider.WireFormat() == WireResponses && isCyberPolicyError(errBody) && !acc.codex.CyberAccess {
 				cyberAccessRetry = true
 				lastErr = fmt.Errorf("upstream %s from non-cyber-access account %s: %s", resp.Status, acc.ID, safeText(errBody))
 				h.recent.add(lastErr.Error())
@@ -3337,7 +3324,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 
 			// Refine classification with body content.
-			if acc.Type == AccountTypeCodex && errClass == ErrorClassInvalid && isCodexModelUnavailableError(errBody) {
+			if provider.WireFormat() == WireResponses && errClass == ErrorClassInvalid && isCodexModelUnavailableError(errBody) {
 				errClass = ErrorClassNotFound
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] reclassified codex 400 as model/account mismatch for account %s", reqID, acc.ID)
@@ -3350,7 +3337,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				continue
 			}
 
-			if acc.Type == AccountTypeCodex && isCodexVoiceAccessDenied(errBody) {
+			if provider.WireFormat() == WireResponses && isCodexVoiceAccessDenied(errBody) {
 				// AVAS voice entitlement is account-independent for this pool. Retrying
 				// every account only delays the same terminal response and leaves the
 				// caller holding a Location header without a valid SDP answer.
@@ -3512,7 +3499,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				isSSE = false
 			}
 		}
-		if accountType == AccountTypeCodex && isCodexResponsesPath(r.URL.Path) && !isSSE {
+		if provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) && !isSSE {
 			if err := filterHostedMCPNonStreamingResponse(resp); err != nil {
 				resp.Body.Close()
 				http.Error(w, err.Error(), http.StatusBadGateway)
@@ -3555,7 +3542,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 				return
 			}
-		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateNone && accountType == AccountTypeCodex && strings.HasPrefix(r.URL.Path, "/v1/responses") {
+		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateNone && provider.WireFormat() == WireResponses && strings.HasPrefix(r.URL.Path, "/v1/responses") {
 			w.Header().Del("Content-Length")
 			w.Header().Set("Content-Type", "application/json")
 
@@ -3584,7 +3571,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3609,7 +3596,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			bufWriter := wire.NewResponsesToAnthropicBuffer(requestedModel, wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
 			}
 
@@ -3635,7 +3622,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			bufWriter := wire.NewResponsesBuffer(requestedModel)
 			inspectWriter := h.wrapBufferedSSEWithCyberDetector(bufWriter, accountType, acc, conversationID, requiredPlan, originIP, reqID, &cyberPinned)
 			var rawImageStream bytes.Buffer
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				inspectWriter = &hostedMCPResponseFilterWriter{w: io.MultiWriter(inspectWriter, &rawImageStream)}
 			} else {
 				inspectWriter = io.MultiWriter(inspectWriter, &rawImageStream)
@@ -3669,7 +3656,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3694,7 +3681,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			bufWriter := wire.NewResponsesToOpenAICompletionsBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
 			}
 
@@ -3721,7 +3708,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3746,7 +3733,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 			bufWriter := wire.NewResponsesToOpenAIChatBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: reqID})
 			var responseWriter io.Writer = bufWriter
-			if accountType == AccountTypeCodex {
+			if provider.WireFormat() == WireResponses {
 				responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
 			}
 
@@ -3886,7 +3873,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			var claudeAccum *RequestUsage
 
 			usageCallback := func(data []byte) {
-				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
@@ -3966,14 +3953,14 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					writer = wire.NewAnthropicToChatStream(writer)
 				} else if translateDir == wire.TranslateClaudeToOAI {
 					writer = wire.NewChatToAnthropicStream(writer)
-				} else if accountType == AccountTypeCodex && !acc.codex.CyberAccess {
+				} else if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess {
 					suppressor := &cyberPolicyHTTPSuppressor{
 						h: h, reqID: reqID, conversationID: conversationID,
 						requiredPlan: requiredPlan, clientIP: originIP, accountID: acc.ID, pinned: &cyberPinned,
 					}
 					writer = &sseInterceptWriter{w: writer, onEvent: suppressor.onEvent}
 				}
-				if accountType == AccountTypeCodex {
+				if provider.WireFormat() == WireResponses {
 					writer = &hostedMCPResponseFilterWriter{w: writer}
 				}
 				// Inspect received bytes even if translation or filtering stops on a write error.
@@ -4040,7 +4027,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				respSample = sampleBuf.Bytes()
 			}
 			if h.cfg.logBodies && len(respSample) > 0 {
-				if accountType == AccountTypeCodex {
+				if provider.WireFormat() == WireResponses {
 					respSample = filterHostedMCPResponseSample(respSample, isSSE)
 				}
 				log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
@@ -4125,7 +4112,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	if conversationID == "" {
 		conversationID = extractConversationIDFromHeaders(r.Header)
 	}
-	if conversationID == "" && accountType == AccountTypeCodex {
+	if conversationID == "" && provider.WireFormat() == WireResponses {
 		conversationID = codexRealtimeCallPinKey(codexRealtimeCallIDFromRequest(r.URL.Path, r.URL.Query()))
 	}
 	// Use Claude Code session ID as fallback for conversation stickiness
@@ -4146,7 +4133,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		return
 	}
 	selectionConversationID := conversationID
-	if selectionConversationID == "" && accountType == AccountTypeCodex {
+	if selectionConversationID == "" && provider.WireFormat() == WireResponses {
 		fallbackID := userID
 		if fallbackID == "" {
 			fallbackID = originID
@@ -4234,7 +4221,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	// Use a temporary request to set provider auth headers.
 	tmpReq := &http.Request{Header: upstreamHeaders}
 	authAccount := acc
-	if accountType == AccountTypeCodex {
+	if provider.WireFormat() == WireResponses {
 		authAccount = contextAuthSnapshot(acc)
 	}
 	provider.SetAuthHeaders(tmpReq, authAccount)
@@ -4243,7 +4230,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	// The Codex Responses relay still uses its websocket beta header, but the
 	// GA Realtime API explicitly rejects that legacy beta shape. Preserve the
 	// client-provided Realtime headers (for example openai-alpha) instead.
-	if accountType == AccountTypeCodex && isCodexRealtimePath(r.URL.Path) {
+	if provider.WireFormat() == WireResponses && isCodexRealtimePath(r.URL.Path) {
 		upstreamHeaders.Del("OpenAI-Beta")
 	}
 
@@ -4255,7 +4242,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	relayLabel := fmt.Sprintf("%s account=%s", reqID, acc.ID)
 	readLimit := effectiveWebSocketReadLimit(accountType, h.cfg.websocketReadLimit)
 	downstreamHeartbeatInterval := time.Duration(0)
-	if accountType == AccountTypeCodex {
+	if provider.WireFormat() == WireResponses {
 		downstreamHeartbeatInterval = h.cfg.websocketHeartbeatInterval
 	}
 
@@ -4263,7 +4250,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	// universally suppress cyber_policy frames before they reach the
 	// client. Non-cyber accounts additionally get a one-shot hot-swap to
 	// a cyber_access account on the first cyber_policy hit.
-	if accountType == AccountTypeCodex {
+	if provider.WireFormat() == WireResponses {
 		swap := h.relayCodexWithCyberSwap(w, r, codexCyberSwapOptions{
 			ReqID:                       reqID,
 			RequestPath:                 r.URL.Path,
@@ -4997,7 +4984,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	// upstream 401 headers, which would otherwise read to the client as a
 	// rejection of its own pool token.
 	if resp.StatusCode == http.StatusUnauthorized {
-		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
+		if provider.WireFormat() == WireResponses && upstreamTokenRevoked(resp) {
 			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
 		}
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
@@ -5057,7 +5044,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	// when the upstream returns a non-SSE JSON response.
 	respContentType := resp.Header.Get("Content-Type")
 	isSSE := provider.DetectsSSE(r.URL.Path, respContentType)
-	if !isSSE && accountType == AccountTypeCodex && isCodexResponsesPath(r.URL.Path) {
+	if !isSSE && provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) {
 		if err := filterHostedMCPNonStreamingResponse(resp); err != nil {
 			http.Error(w, "hosted MCP response filtering error", http.StatusBadGateway)
 			return
@@ -5123,7 +5110,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		interceptWriter := &sseInterceptWriter{
 			w: writer,
 			callback: func(data []byte) {
-				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, clientIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
@@ -5183,7 +5170,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 				usageWriter.add(*ru)
 			},
 		}
-		if accountType == AccountTypeCodex && !acc.codex.CyberAccess {
+		if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess {
 			suppressor := &cyberPolicyHTTPSuppressor{
 				h:              h,
 				reqID:          reqID,
@@ -5195,7 +5182,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			}
 			writer = &sseInterceptWriter{w: writer, onEvent: suppressor.onEvent}
 		}
-		if accountType == AccountTypeCodex {
+		if provider.WireFormat() == WireResponses {
 			writer = &hostedMCPResponseFilterWriter{w: writer}
 		}
 		interceptWriter.w = writer
@@ -5259,7 +5246,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	respSample := sampleBuf.Bytes()
 	if h.cfg.logBodies && len(respSample) > 0 {
-		if accountType == AccountTypeCodex {
+		if provider.WireFormat() == WireResponses {
 			respSample = filterHostedMCPResponseSample(respSample, isSSE)
 		}
 		log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
@@ -6136,8 +6123,9 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	if provider.Type() == AccountTypeClaude && h.cfg.claudeTraceEnabled() {
 		rawIncomingBody = append([]byte(nil), bodyBytes...)
 	}
-	if provider.Type() == AccountTypeGrok {
-		bodyBytes = rewriteAndSanitizeGrokRequestBody(bodyBytes, requestedModel)
+	preparation := requestPreparationFor(provider)
+	if rewrite := preparation.prepareAttemptBody; rewrite != nil {
+		bodyBytes = rewrite(bodyBytes, requestedModel)
 	}
 
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
@@ -6157,7 +6145,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	outURL.Host = targetBase.Host
 	// Use provider's NormalizePath method for path handling
 	outURL.Path = singleJoin(targetBase.Path, provider.NormalizePath(in.URL.Path))
-	if provider.Type() == AccountTypeCodex && isCodexLegacyLivePath(in.URL.Path) {
+	if provider.WireFormat() == WireResponses && isCodexLegacyLivePath(in.URL.Path) {
 		q := outURL.Query()
 		q.Set("intent", "quicksilver")
 		q.Set("architecture", "avas")
@@ -6180,7 +6168,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			return nil, err
 		}
 		authAccount := acc
-		if provider.Type() == AccountTypeCodex && isCodexResponsesPath(in.URL.Path) {
+		if provider.WireFormat() == WireResponses && isCodexResponsesPath(in.URL.Path) {
 			authAccount = contextAuthSnapshot(acc)
 			bodyBytes = contextBody
 			if contextObject != nil {
@@ -6239,16 +6227,11 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		provider.SetAuthHeaders(outReq, authAccount)
 		// Native Realtime and GPT Live reject the Codex Responses websocket beta
 		// header. Keep it only on the Responses transport that requires it.
-		if provider.Type() == AccountTypeCodex && isCodexRealtimePath(in.URL.Path) {
+		if provider.WireFormat() == WireResponses && isCodexRealtimePath(in.URL.Path) {
 			outReq.Header.Del("OpenAI-Beta")
 		}
-		if provider.Type() == AccountTypeGrok {
-			outReq.Header.Set("x-grok-model-override", grokCanonicalModel(requestedModel))
-			outReq.Header.Set("x-grok-context-window", strconv.Itoa(grokModelContextWindow(requestedModel)))
-			outReq.Header.Set("x-grok-max-completion-tokens", strconv.Itoa(grokModelMaxCompletionTokens(requestedModel)))
-			if conversationID != "" {
-				outReq.Header.Set("x-grok-conv-id", conversationID)
-			}
+		if setAttemptHeaders := preparation.attemptHeaders; setAttemptHeaders != nil {
+			setAttemptHeaders(outReq.Header, requestedModel, conversationID)
 		}
 
 		if provider.Type() == AccountTypeClaude && translateDir == wire.TranslateNone && strings.HasPrefix(access, "sk-ant-oat") {
@@ -6474,7 +6457,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 
 	// If we got a 401/403, try to refresh and retry on the *same* account once.
 	if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && !h.cfg.disableRefresh {
-		if provider.Type() == AccountTypeCodex && upstreamTokenRevoked(resp) {
+		if provider.WireFormat() == WireResponses && upstreamTokenRevoked(resp) {
 			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
 			refreshFailed = true
 		}
@@ -6554,7 +6537,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 	}
 
-	if provider.Type() == AccountTypeCodex && isCodexRealtimeCallCreatePath(in.URL.Path) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	if provider.WireFormat() == WireResponses && isCodexRealtimeCallCreatePath(in.URL.Path) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if callID := codexRealtimeCallIDFromLocation(resp.Header.Get("Location")); callID != "" {
 			h.pool.pin(codexRealtimeCallPinKey(callID), acc.ID)
 			// OpenAI currently returns 201 with text/plain even though the body is

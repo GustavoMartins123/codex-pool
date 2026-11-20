@@ -41,6 +41,10 @@ func (p *ClaudeProvider) SetModelDiscoveryHeaders(req *http.Request) {
 
 func (*ClaudeProvider) WireFormat() WireFormat { return WireAnthropic }
 
+func (*ClaudeProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{bufferResponses: true}
+}
+
 func (p *ClaudeProvider) Type() AccountType {
 	return AccountTypeClaude
 }

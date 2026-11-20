@@ -33,6 +33,18 @@ func (p *QwenProvider) ModelDiscoveryURL() *url.URL {
 
 func (*QwenProvider) WireFormat() WireFormat { return WireOpenAI }
 
+func (*QwenProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{
+		bufferResponses: true,
+		prepareBody: func(path, _ string, body []byte) ([]byte, error) {
+			if path == "/v1/chat/completions" {
+				return prepareQwenChatRequest(body)
+			}
+			return body, nil
+		},
+	}
+}
+
 func (p *QwenProvider) Type() AccountType { return AccountTypeQwen }
 
 type QwenAuthJSON struct {

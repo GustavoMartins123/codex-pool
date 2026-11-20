@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,25 @@ func (p *GrokProvider) ModelDiscoveryURL() *url.URL {
 }
 
 func (*GrokProvider) WireFormat() WireFormat { return WireUnknown }
+
+func (*GrokProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{
+		bufferBody:      true,
+		sanitizeSpooled: sanitizeSpooledGrokRequest,
+		prepareBody: func(_, model string, body []byte) ([]byte, error) {
+			return rewriteAndSanitizeGrokRequestBody(body, model), nil
+		},
+		prepareAttemptBody: rewriteAndSanitizeGrokRequestBody,
+		attemptHeaders: func(headers http.Header, model, conversationID string) {
+			headers.Set("x-grok-model-override", grokCanonicalModel(model))
+			headers.Set("x-grok-context-window", strconv.Itoa(grokModelContextWindow(model)))
+			headers.Set("x-grok-max-completion-tokens", strconv.Itoa(grokModelMaxCompletionTokens(model)))
+			if conversationID != "" {
+				headers.Set("x-grok-conv-id", conversationID)
+			}
+		},
+	}
+}
 
 func (p *GrokProvider) Type() AccountType {
 	return AccountTypeGrok

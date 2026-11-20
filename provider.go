@@ -45,6 +45,29 @@ type ProviderDriver interface {
 	Codec
 }
 
+// RequestAdapter is implemented by providers that need request-specific processing.
+type RequestAdapter interface {
+	RequestPreparation() requestPreparation
+}
+
+type requestPreparation struct {
+	streamOnModelRoute  bool
+	bufferBody          bool
+	bufferResponses     bool
+	sanitizeSpooled     func(*streamedResponsesRequest) error
+	prepareBody         func(path, model string, body []byte) ([]byte, error)
+	prepareAttemptBody  func([]byte, string) []byte
+	conversationHeaders func(*http.Request, string, string)
+	attemptHeaders      func(http.Header, string, string)
+}
+
+func requestPreparationFor(provider Provider) requestPreparation {
+	if adapter, ok := provider.(RequestAdapter); ok {
+		return adapter.RequestPreparation()
+	}
+	return requestPreparation{}
+}
+
 // ModelResolver routes a configured model name to its upstream model ID.
 type ModelResolver interface {
 	ResolveModel(model string) (string, bool)
