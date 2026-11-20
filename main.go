@@ -450,15 +450,12 @@ type proxyHandler struct {
 	// deliberately serializes only those requests on a small production host.
 	largeReplayBodies chan struct{}
 
-	// Rate limiting for token refresh operations
-	refreshMu       sync.Mutex
-	lastRefreshTime time.Time
-	refreshCallsMu  sync.Mutex
-	refreshCalls    map[string]*refreshCall
-	usagePollMu     sync.Mutex
-	quotaIntelMu    sync.RWMutex
-	quotaIntelBusy  bool
-	quotaIntel      quotaIntelligenceSnapshot
+	refreshCoordinator accountRefreshCoordinator
+
+	usagePollMu    sync.Mutex
+	quotaIntelMu   sync.RWMutex
+	quotaIntelBusy bool
+	quotaIntel     quotaIntelligenceSnapshot
 
 	// turnStateOrigins tracks which Codex account minted the
 	// x-codex-turn-state blob each downstream session currently holds, so
@@ -470,11 +467,6 @@ type proxyHandler struct {
 
 	fanoutTokenMu sync.Mutex
 	fanoutToken   string
-}
-
-type refreshCall struct {
-	done chan struct{}
-	err  error
 }
 
 const largeReplayBodyThreshold = 8 * 1024 * 1024
@@ -5946,9 +5938,6 @@ func (h *proxyHandler) needsRefresh(a *Account) bool {
 	return false
 }
 
-// refreshMinInterval is the minimum time between ANY refresh attempts globally
-const refreshMinInterval = 5 * time.Second
-
 // codexRefreshHeadroom is how soon before access-token expiry the poller
 // should rotate. Codex access JWTs carry an `exp` claim of about ten days.
 const codexRefreshHeadroom = 6 * time.Hour
@@ -5957,67 +5946,6 @@ const codexRefreshHeadroom = 6 * time.Hour
 // This is persisted to disk and survives restarts, preventing hammering OAuth endpoints
 // 15 minutes balances between preventing hammering and allowing recovery from expired tokens
 const refreshPerAccountInterval = 15 * time.Minute
-
-func (h *proxyHandler) refreshAccount(ctx context.Context, a *Account) error {
-	if a == nil {
-		return errors.New("nil account")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	key := fmt.Sprintf("%s:%s", a.Type, a.ID)
-
-	h.refreshCallsMu.Lock()
-	if h.refreshCalls == nil {
-		h.refreshCalls = map[string]*refreshCall{}
-	}
-	if existing, ok := h.refreshCalls[key]; ok {
-		h.refreshCallsMu.Unlock()
-		select {
-		case <-existing.done:
-			return existing.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	call := &refreshCall{done: make(chan struct{})}
-	h.refreshCalls[key] = call
-	h.refreshCallsMu.Unlock()
-
-	go func() {
-		defer func() {
-			h.refreshCallsMu.Lock()
-			delete(h.refreshCalls, key)
-			h.refreshCallsMu.Unlock()
-			close(call.done)
-		}()
-
-		refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		err := h.refreshAccountOnce(refreshCtx, a)
-		if err == nil {
-			a.mu.Lock()
-			a.RefreshBlocked = false
-			a.mu.Unlock()
-		} else if !isPermanentRefreshTokenError(err) && !isRateLimitError(err) && !errors.Is(err, context.Canceled) {
-			// A transport or upstream availability failure says nothing about the
-			// current access token. Keep using it until an authenticated request
-			// proves that it no longer works.
-			a.mu.Lock()
-			a.RefreshBlocked = true
-			a.mu.Unlock()
-		}
-		call.err = err
-	}()
-
-	select {
-	case <-call.done:
-		return call.err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
 
 func (h *proxyHandler) refreshAccountAfterAuthFailure(ctx context.Context, a *Account) error {
 	if a == nil {
@@ -6050,7 +5978,7 @@ func (h *proxyHandler) refreshAccountOnce(ctx context.Context, a *Account) error
 	accType := a.Type
 	a.mu.Unlock()
 
-	if err := h.waitForRefreshSlot(ctx); err != nil {
+	if err := h.refreshCoordinator.waitForSlot(ctx); err != nil {
 		return err
 	}
 
@@ -6075,27 +6003,6 @@ func (h *proxyHandler) refreshAccountOnce(ctx context.Context, a *Account) error
 	}
 
 	return err
-}
-
-func (h *proxyHandler) waitForRefreshSlot(ctx context.Context) error {
-	for {
-		h.refreshMu.Lock()
-		wait := refreshMinInterval - time.Since(h.lastRefreshTime)
-		if h.lastRefreshTime.IsZero() || wait <= 0 {
-			h.lastRefreshTime = time.Now()
-			h.refreshMu.Unlock()
-			return nil
-		}
-		h.refreshMu.Unlock()
-
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
 }
 
 func (h *proxyHandler) updateUsageFromBody(a *Account, sample []byte, userID, originID string, admissions ...*policyAdmission) {
