@@ -342,7 +342,7 @@ func trafficShadowFromRequest(r *http.Request) (trafficShadowIdentity, bool) {
 	return shadow, ok
 }
 
-func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
+func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt proxyRuntime) {
 	_, internalShadow := trafficShadowFromRequest(r)
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
 		internalShadow {
@@ -352,7 +352,7 @@ func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment
 		if !shadowSafeRequest(r, body) {
 			return
 		}
-		h.startTrafficShadow(r, body, assignment, principal, reqID)
+		h.startTrafficShadow(r, body, assignment, principal, reqID, rt)
 		return
 	}
 	h.recordRoutingShadow(r, assignment)
@@ -533,7 +533,7 @@ func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool, acco
 // principal allowlists, daily budget, inflight cap, its own deadline, a
 // "-traffic-shadow" request id for separate accounting, and — unless
 // detach_from_client is set — cancellation together with the client request.
-func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string) {
+func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt proxyRuntime) {
 	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
 	if shadowBody == nil {
 		return
@@ -565,7 +565,7 @@ func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignme
 		defer h.trafficShadow.end()
 		started := time.Now()
 		writer := &shadowResponseWriter{}
-		h.proxyRequest(writer, request, reqID+"-traffic-shadow")
+		h.proxyRequest(writer, request, reqID+"-traffic-shadow", rt)
 		status := writer.status
 		if status == 0 {
 			status = http.StatusServiceUnavailable

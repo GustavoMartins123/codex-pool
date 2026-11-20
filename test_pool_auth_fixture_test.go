@@ -43,7 +43,7 @@ func testPoolProxyRequest(t *testing.T, h *proxyHandler, w http.ResponseWriter, 
 	if err := prepareTestPoolCredential(t, h, r); err != nil {
 		t.Fatal(err)
 	}
-	h.proxyRequest(w, r, requestID)
+	h.proxyRequest(w, r, requestID, systemProxyRuntime())
 }
 
 func ensureTestPassport(t *testing.T, h *proxyHandler) error {

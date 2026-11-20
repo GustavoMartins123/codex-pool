@@ -89,7 +89,10 @@ func TestPreflightAdmissionCancellation(t *testing.T) {
 	req.ContentLength = -1
 	req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("preflight-secret", "preflight-user"))
 	done := make(chan struct{})
-	go func() { defer close(done); h.proxyRequest(httptest.NewRecorder(), req, "cancel-admission") }()
+	go func() {
+		defer close(done)
+		h.proxyRequest(httptest.NewRecorder(), req, "cancel-admission", systemProxyRuntime())
+	}()
 	defer func() { <-h.largeReplayBodies; <-done }()
 	cancel()
 	select {
@@ -254,6 +257,7 @@ func BenchmarkProxyRequestPreflight(b *testing.B) {
 				reply.Body = io.NopCloser(strings.NewReader(response))
 				return reply, nil
 			}))
+			rt := systemProxyRuntime()
 			b.ReportAllocs()
 			b.SetBytes(int64(len(body)))
 			b.ResetTimer()
@@ -262,7 +266,7 @@ func BenchmarkProxyRequestPreflight(b *testing.B) {
 				req.Header.Set("Authorization", "Bearer "+token)
 				req.Header.Set("Content-Type", "application/json")
 				rr := httptest.NewRecorder()
-				h.proxyRequest(rr, req, "preflight-bench")
+				h.proxyRequest(rr, req, "preflight-bench", rt)
 				if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "response.completed") {
 					b.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 				}

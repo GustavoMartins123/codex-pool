@@ -19,6 +19,7 @@ import (
 // codexCyberSwapOptions configures the cyber-aware Codex websocket relay.
 type codexCyberSwapOptions struct {
 	ReqID                       string
+	Runtime                     proxyRuntime
 	RequestPath                 string
 	Provider                    Provider
 	InitialAccount              *Account
