@@ -58,7 +58,7 @@ func TestAntigravityAddBuildsRealGoogleAuthorizationURL(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/antigravity/add", strings.NewReader("{}"))
 	request.Header.Set("Origin", "https://pool.example.test")
 	recorder := httptest.NewRecorder()
-	h := &proxyHandler{}
+	h := &proxyHandler{cfg: &config{}}
 	attachContributionFixture(t, h, "alice")
 	h.handleAntigravityAdd(recorder, contributionRequestActor(request, "alice"))
 	if recorder.Code != http.StatusOK {

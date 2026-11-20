@@ -32,6 +32,7 @@ func TestCodexUsagePersistsUpgradedPlan(t *testing.T) {
 	if err != nil || account.PlanType != "plus" {
 		t.Fatalf("loaded plan = %v, %v", account, err)
 	}
+	account.vault = plainTestVault()
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
 	h := &proxyHandler{cfg: &config{whamBase: base, disableRefresh: true}, transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -64,6 +65,7 @@ func TestClaudePlanCheckPersistsUpgradedPlan(t *testing.T) {
 	if err != nil || account.PlanType != "pro" {
 		t.Fatalf("loaded plan = %v, %v", account, err)
 	}
+	account.vault = plainTestVault()
 	h := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != ClaudeOAuthProfileURL || req.Header.Get("Authorization") != "Bearer sk-ant-oat01-test" {
 			t.Fatalf("unexpected profile request %s", req.URL)
@@ -105,6 +107,7 @@ func TestAntigravityPlanCheckPersistsUpgradedTier(t *testing.T) {
 	if err != nil || account.PlanType != "g1-pro-tier" {
 		t.Fatalf("loaded plan = %v, %v", account, err)
 	}
+	account.vault = plainTestVault()
 	body := `{"currentTier":{"id":"standard-tier"},"paidTier":{"id":"g1-ultra-tier"}}`
 	h := &proxyHandler{cfg: &config{antigravityProdBase: mustParse("https://cloudcode.test")}, transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.URL.String() != "https://cloudcode.test/v1internal:loadCodeAssist" || req.Header.Get("Authorization") != "Bearer ya29.test" {
