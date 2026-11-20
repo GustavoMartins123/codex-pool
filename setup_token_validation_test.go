@@ -71,7 +71,7 @@ func TestSetupScriptsRejectHostileTokens(t *testing.T) {
 func TestConfigDownloadRejectsHostileTokens(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-hostile-token")
 	passport, _ := newNonceTestPassport(t)
-	handler := &proxyHandler{cfg: &config{}, passport: passport}
+	handler := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 	for _, token := range hostileSetupTokens {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
 		req.URL.Path = "/config/codex/" + token
@@ -110,7 +110,7 @@ func TestInvalidSetupOriginDoesNotConsumeCredentials(t *testing.T) {
 	t.Setenv("PUBLIC_URL", "")
 	t.Setenv("POOL_JWT_SECRET", "synthetic-invalid-origin-secret")
 	passport, client := newNonceTestPassport(t)
-	h := &proxyHandler{cfg: &config{}, passport: passport}
+	h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 	routes := map[string]func(http.ResponseWriter, *http.Request){
 		"/setup/codex/":        h.serveCodexSetupScript,
 		"/setup/gemini/":       h.serveGeminiSetupScript,
@@ -171,7 +171,6 @@ func TestInvalidSetupOriginDoesNotConsumeCredentials(t *testing.T) {
 }
 
 func TestPublicOriginUsesConfiguredURLOrValidRequestTransport(t *testing.T) {
-	t.Setenv("PUBLIC_URL", "")
 	h := &proxyHandler{}
 	req := httptest.NewRequest(http.MethodGet, "https://pool.example/", nil)
 	if got, err := h.getEffectivePublicURL(req); err != nil || got != "https://pool.example" {
@@ -186,9 +185,9 @@ func TestPublicOriginUsesConfiguredURLOrValidRequestTransport(t *testing.T) {
 	if _, err := antigravityOAuthTargetOrigin(req, h); err == nil {
 		t.Fatal("invalid explicit Origin was replaced with the request origin")
 	}
-	t.Setenv("PUBLIC_URL", "https://configured.example")
+	configured := &proxyHandler{passportConfig: passportConfig{publicURL: "https://configured.example"}}
 	req.Host = "$(id)"
-	if got, err := h.getEffectivePublicURL(req); err != nil || got != "https://configured.example" {
+	if got, err := configured.getEffectivePublicURL(req); err != nil || got != "https://configured.example" {
 		t.Fatalf("configured origin=%q, %v", got, err)
 	}
 }

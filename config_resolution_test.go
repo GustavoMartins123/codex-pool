@@ -44,3 +44,28 @@ func TestConfigFilePathSingleResolution(t *testing.T) {
 		t.Fatalf("override config path = %q", got)
 	}
 }
+
+func TestResolvePassportConfig(t *testing.T) {
+	t.Setenv("POOL_JWT_SECRET", "")
+	t.Setenv("PUBLIC_URL", "")
+	t.Setenv("POOL_USERS_PATH", "")
+	if got := resolvePassportConfig(ConfigFile{}); got != (passportConfig{legacyUsersPath: "./data/pool_users.json"}) {
+		t.Fatalf("default Passport configuration = %+v", got)
+	}
+
+	file := ConfigFile{
+		PublicURL: "https://file.example/",
+		PoolUsers: PoolUsersConfig{JWTSecret: "file-signing-secret", StoragePath: "file-users.json"},
+	}
+	fromFile := resolvePassportConfig(file)
+	if fromFile != (passportConfig{jwtSecret: "file-signing-secret", publicURL: "https://file.example", legacyUsersPath: "file-users.json"}) {
+		t.Fatalf("Passport configuration from TOML = %+v", fromFile)
+	}
+
+	t.Setenv("POOL_JWT_SECRET", "environment-signing-secret")
+	t.Setenv("PUBLIC_URL", "https://env.example/")
+	t.Setenv("POOL_USERS_PATH", "env-users.json")
+	if got := resolvePassportConfig(file); got != (passportConfig{jwtSecret: "environment-signing-secret", publicURL: "https://env.example", legacyUsersPath: "env-users.json"}) {
+		t.Fatalf("Passport configuration with environment overrides = %+v", got)
+	}
+}

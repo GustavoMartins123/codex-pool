@@ -82,7 +82,7 @@ func TestPassportRetirementIsIdempotentAndSealsCredentials(t *testing.T) {
 
 func TestRetirementRevokesOrphanLegacyClientsAndMarksWithoutFile(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-retirement")
+	const secret = "test-jwt-secret-retirement"
 	s := testUsageStore(t)
 	p, err := newPassportStore(s.db)
 	if err != nil {
@@ -107,11 +107,11 @@ func TestRetirementRevokesOrphanLegacyClientsAndMarksWithoutFile(t *testing.T) {
 
 	identity := principal.ID + "-c-" + orphan.ID
 	oldUser := &PoolUser{ID: identity, Email: "orphan@pool.local", PlanType: "pro", CreatedAt: time.Now()}
-	oldClaude, err := generateClaudeAuth(getPoolJWTSecret(), oldUser)
+	oldClaude, err := generateClaudeAuth(secret, oldUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsedIdentity, issuedAt, ok := parseClaudePoolCredential(getPoolJWTSecret(), oldClaude.AccessToken)
+	parsedIdentity, issuedAt, ok := parseClaudePoolCredential(secret, oldClaude.AccessToken)
 	if !ok {
 		t.Fatal("pre-retirement credential did not parse")
 	}

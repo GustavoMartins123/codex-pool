@@ -155,13 +155,13 @@ func TestServeHTTPRejectsDeniedIP(t *testing.T) {
 }
 
 func TestBaselineCSPAndHSTSFollowTransport(t *testing.T) {
-	t.Setenv("PUBLIC_URL", "")
-	headers := func(r *http.Request) http.Header {
+	h := &proxyHandler{}
+	headers := func(h *proxyHandler, r *http.Request) http.Header {
 		w := httptest.NewRecorder()
-		applySecurityHeaders(w, r)
+		h.applySecurityHeaders(w, r)
 		return w.Header()
 	}
-	plain := headers(httptest.NewRequest(http.MethodGet, "http://pool.example/api/x", nil))
+	plain := headers(h, httptest.NewRequest(http.MethodGet, "http://pool.example/api/x", nil))
 	if plain.Get("Content-Security-Policy") != baselineCSP {
 		t.Fatalf("baseline CSP = %q", plain.Get("Content-Security-Policy"))
 	}
@@ -170,18 +170,17 @@ func TestBaselineCSPAndHSTSFollowTransport(t *testing.T) {
 	}
 	forwarded := httptest.NewRequest(http.MethodGet, "http://pool.example/api/x", nil)
 	forwarded.Header.Set("X-Forwarded-Proto", "https")
-	if headers(forwarded).Get("Strict-Transport-Security") != hstsPolicy {
+	if headers(h, forwarded).Get("Strict-Transport-Security") != hstsPolicy {
 		t.Fatal("HSTS missing behind a TLS-terminating proxy")
 	}
-	t.Setenv("PUBLIC_URL", "https://pool.example")
-	if headers(httptest.NewRequest(http.MethodGet, "http://pool.example/healthz", nil)).Get("Strict-Transport-Security") != hstsPolicy {
+	configured := &proxyHandler{passportConfig: passportConfig{publicURL: "https://pool.example"}}
+	if headers(configured, httptest.NewRequest(http.MethodGet, "http://pool.example/healthz", nil)).Get("Strict-Transport-Security") != hstsPolicy {
 		t.Fatal("HSTS missing for an HTTPS public URL")
 	}
 }
 
 func TestHTMLSurfacesDeclareNarrowPolicies(t *testing.T) {
-	t.Setenv("PUBLIC_URL", "https://pool.example")
-	h := &proxyHandler{cfg: &config{adminToken: "status-admin-token"}, pool: newPoolState(nil, false), metrics: newMetrics()}
+	h := &proxyHandler{passportConfig: passportConfig{publicURL: "https://pool.example"}, cfg: &config{adminToken: "status-admin-token"}, pool: newPoolState(nil, false), metrics: newMetrics()}
 
 	landing := httptest.NewRecorder()
 	h.ServeHTTP(landing, httptest.NewRequest(http.MethodGet, "/cute-code", nil))

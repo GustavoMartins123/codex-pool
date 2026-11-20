@@ -10,19 +10,19 @@ import (
 // stricter policy (Header.Set replaces the baseline wholesale); fingerprinted
 // assets keep their immutable cache headers because requiresNoStore excludes
 // them.
-func applySecurityHeaders(w http.ResponseWriter, r *http.Request) {
-	h := w.Header()
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-	if h.Get("Content-Security-Policy") == "" {
-		h.Set("Content-Security-Policy", baselineCSP)
+func (h *proxyHandler) applySecurityHeaders(w http.ResponseWriter, r *http.Request) {
+	headers := w.Header()
+	headers.Set("X-Content-Type-Options", "nosniff")
+	headers.Set("Referrer-Policy", "no-referrer")
+	headers.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+	if headers.Get("Content-Security-Policy") == "" {
+		headers.Set("Content-Security-Policy", baselineCSP)
 	}
-	if requestUsesHTTPS(r) {
-		h.Set("Strict-Transport-Security", hstsPolicy)
+	if requestUsesHTTPS(r, h.passportConfig.publicURL) {
+		headers.Set("Strict-Transport-Security", hstsPolicy)
 	}
 	if requiresNoStore(r.URL.Path) {
-		h.Set("Cache-Control", "no-store")
+		headers.Set("Cache-Control", "no-store")
 	}
 }
 
@@ -36,8 +36,8 @@ const hstsPolicy = "max-age=31536000; includeSubDomains"
 // requestUsesHTTPS reports whether the client reached the pool over HTTPS,
 // directly or through a TLS-terminating proxy. Browsers ignore HSTS sent
 // over plain HTTP, so a spoofed signal cannot pin an HTTP-only pool.
-func requestUsesHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") || strings.HasPrefix(getPublicURL(), "https://")
+func requestUsesHTTPS(r *http.Request, publicURL string) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") || strings.HasPrefix(publicURL, "https://")
 }
 
 // requiresNoStore reports whether the path serves authenticated or

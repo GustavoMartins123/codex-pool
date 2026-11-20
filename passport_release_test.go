@@ -16,13 +16,9 @@ func TestReleaseCredentialReplay(t *testing.T) {
 	var passport *PassportStore
 	if source := os.Getenv("POOL_RELEASE_REPLAY_DB"); source != "" {
 		if configPath := os.Getenv("POOL_RELEASE_REPLAY_CONFIG"); configPath != "" {
-			config, err := loadConfigFile(configPath)
-			if err != nil {
+			if _, err := loadConfigFile(configPath); err != nil {
 				t.Fatal("release configuration cannot be loaded")
 			}
-			previous := globalConfigFile
-			globalConfigFile = config
-			t.Cleanup(func() { globalConfigFile = previous })
 		}
 		copyPath := filepath.Join(t.TempDir(), "proxy.db")
 		if err := copyFile(source, copyPath, 0o600); err != nil {

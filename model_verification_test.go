@@ -93,8 +93,8 @@ func TestModelVerificationTargetAndBearerAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("POOL_JWT_SECRET", "verification-test-secret")
-	token := generateClaudePoolToken(getPoolJWTSecret(), operator+"-c-"+client.ID)
+	h.passportConfig.jwtSecret = "verification-test-secret"
+	token := generateClaudePoolToken(h.passportConfig.jwtSecret, operator+"-c-"+client.ID)
 	request := func(method, path, bearer string, payload any) *httptest.ResponseRecorder {
 		raw, _ := json.Marshal(payload)
 		r := httptest.NewRequest(method, path, strings.NewReader(string(raw)))

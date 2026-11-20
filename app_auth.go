@@ -123,7 +123,7 @@ func (h *proxyHandler) authenticateAppRequest(r *http.Request) (*Principal, *Cli
 		return nil, nil
 	}
 	header := r.Header.Get("Authorization")
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" || !strings.HasPrefix(header, "Bearer ") {
 		return nil, nil
 	}
@@ -171,7 +171,7 @@ func (h *proxyHandler) handleAppToken(w http.ResponseWriter, r *http.Request) {
 	noStore(w)
 	switch r.Method {
 	case http.MethodPost:
-		secret := getPoolJWTSecret()
+		secret := h.passportConfig.jwtSecret
 		if secret == "" {
 			respondJSONError(w, http.StatusServiceUnavailable, "app token signing unavailable")
 			return

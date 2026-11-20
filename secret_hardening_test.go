@@ -31,16 +31,12 @@ func TestSecureSecretEquals(t *testing.T) {
 }
 
 func TestValidateSecretStrength(t *testing.T) {
-	previous := globalConfigFile
-	globalConfigFile = nil
-	t.Cleanup(func() { globalConfigFile = previous })
-
 	strong := strings.Repeat("s", 32)
 
 	t.Run("strong secrets accepted", func(t *testing.T) {
 		t.Setenv("POOL_JWT_SECRET", strong)
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", strong)
-		if err := validateSecretStrength(&config{adminToken: strings.Repeat("a", 16)}); err != nil {
+		if err := validateSecretStrength(&config{passport: resolvePassportConfig(ConfigFile{}), adminToken: strings.Repeat("a", 16)}); err != nil {
 			t.Fatalf("strong secrets rejected: %v", err)
 		}
 	})
@@ -48,7 +44,7 @@ func TestValidateSecretStrength(t *testing.T) {
 	t.Run("weak jwt secret rejected", func(t *testing.T) {
 		t.Setenv("POOL_JWT_SECRET", "bigfarts")
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "")
-		if err := validateSecretStrength(&config{}); err == nil {
+		if err := validateSecretStrength(&config{passport: resolvePassportConfig(ConfigFile{})}); err == nil {
 			t.Fatal("short POOL_JWT_SECRET must refuse startup")
 		}
 	})
@@ -56,7 +52,7 @@ func TestValidateSecretStrength(t *testing.T) {
 	t.Run("weak encryption key rejected", func(t *testing.T) {
 		t.Setenv("POOL_JWT_SECRET", "")
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "short-key")
-		if err := validateSecretStrength(&config{}); err == nil {
+		if err := validateSecretStrength(&config{passport: resolvePassportConfig(ConfigFile{})}); err == nil {
 			t.Fatal("short POOL_AUTH_ENCRYPTION_KEY must refuse startup")
 		}
 	})
@@ -64,7 +60,7 @@ func TestValidateSecretStrength(t *testing.T) {
 	t.Run("weak admin token rejected", func(t *testing.T) {
 		t.Setenv("POOL_JWT_SECRET", "")
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "")
-		if err := validateSecretStrength(&config{adminToken: "admin"}); err == nil {
+		if err := validateSecretStrength(&config{passport: resolvePassportConfig(ConfigFile{}), adminToken: "admin"}); err == nil {
 			t.Fatal("short ADMIN_TOKEN must refuse startup")
 		}
 	})
@@ -72,7 +68,7 @@ func TestValidateSecretStrength(t *testing.T) {
 	t.Run("unset secrets accepted", func(t *testing.T) {
 		t.Setenv("POOL_JWT_SECRET", "")
 		t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "")
-		if err := validateSecretStrength(&config{}); err != nil {
+		if err := validateSecretStrength(&config{passport: resolvePassportConfig(ConfigFile{})}); err != nil {
 			t.Fatalf("unset secrets rejected: %v", err)
 		}
 	})

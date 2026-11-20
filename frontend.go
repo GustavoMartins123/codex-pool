@@ -92,7 +92,7 @@ func (h *proxyHandler) serveHeroImage(w http.ResponseWriter, r *http.Request) {
 var errInvalidPublicHost = errors.New("invalid request Host; configure PUBLIC_URL or send a valid Host header")
 
 func (h *proxyHandler) getEffectivePublicURL(r *http.Request) (string, error) {
-	if u := getPublicURL(); u != "" {
+	if u := h.passportConfig.publicURL; u != "" {
 		return u, nil
 	}
 	// Infer from request
@@ -200,7 +200,7 @@ func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Re
 	if err != nil {
 		return nil, err
 	}
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		return nil, fmt.Errorf("JWT secret not configured")
 	}
@@ -1225,7 +1225,7 @@ func (h *proxyHandler) serveGeminiSetupScript(w http.ResponseWriter, r *http.Req
 	}
 
 	// Generate pool OAuth credentials for this user
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		http.Error(w, "JWT secret not configured", http.StatusServiceUnavailable)
 		return
@@ -1397,7 +1397,7 @@ func (h *proxyHandler) serveAntigravitySetupScript(w http.ResponseWriter, r *htt
 		return
 	}
 
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		http.Error(w, "JWT secret not configured", http.StatusServiceUnavailable)
 		return
@@ -1686,7 +1686,7 @@ func (h *proxyHandler) serveClaudeSetupScript(w http.ResponseWriter, r *http.Req
 	}
 
 	// Generate Claude API key (JWT)
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		http.Error(w, "JWT secret not configured", http.StatusServiceUnavailable)
 		return
@@ -2703,7 +2703,7 @@ func (h *proxyHandler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	var userType string
 	originID := hashRequestOrigin(r, h.originHashSalt())
 	if h.passport != nil {
-		identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, getPoolJWTSecret())
+		identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, h.passportConfig.jwtSecret)
 		if parsed {
 			if _, _, allowed := h.passport.authorizeIssuedCredential(identity, issuedAt); allowed {
 				userID = identity

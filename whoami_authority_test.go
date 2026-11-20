@@ -21,7 +21,7 @@ func TestWhoamiUsesLivePassportCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := principal.ID + "-c-" + client.ID
-	h := &proxyHandler{cfg: &config{}, passport: passport}
+	h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 	check := func(token, want string) {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodGet, "/api/pool/whoami", nil)
@@ -38,7 +38,7 @@ func TestWhoamiUsesLivePassportCredential(t *testing.T) {
 			t.Fatalf("whoami type = %q, want %q", body.Type, want)
 		}
 	}
-	active := generateClaudePoolTokenAt(getPoolJWTSecret(), identity, time.Now().Add(-time.Minute))
+	active := generateClaudePoolTokenAt(h.passportConfig.jwtSecret, identity, time.Now().Add(-time.Minute))
 	check(active, "pool_user")
 	if err := passport.revokeClient("operator", principal.ID, client.ID); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestWhoamiUsesLivePassportCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondIdentity := principal.ID + "-c-" + second.ID
-	preCutoff := generateClaudePoolTokenAt(getPoolJWTSecret(), secondIdentity, time.Now().Add(-time.Minute))
+	preCutoff := generateClaudePoolTokenAt(h.passportConfig.jwtSecret, secondIdentity, time.Now().Add(-time.Minute))
 	check(preCutoff, "pool_user")
 	if _, err := passport.setPrincipalStatus("operator", principal.ID, PrincipalSuspended); err != nil {
 		t.Fatal(err)
