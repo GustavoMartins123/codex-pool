@@ -237,7 +237,7 @@ func (s *codexRelayState) runProviderBridge(turn *codexRelayTurn, body []byte) {
 		return
 	}
 	writer := &codexBridgeWriter{header: make(http.Header), onEvent: handle}
-	s.h.proxyRequest(writer, req, s.opts.ReqID+"-bridge")
+	s.h.proxyRequest(writer, req, s.opts.ReqID+"-bridge", s.opts.Runtime)
 	if writer.status == 0 {
 		writer.WriteHeader(http.StatusBadGateway)
 	}
