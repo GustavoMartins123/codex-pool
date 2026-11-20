@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestAuditFreshDirectoryStartupCreatesStorage
@@ -47,19 +48,23 @@ func TestAuditFreshDirectoryStartupCreatesStorage(t *testing.T) {
 	}
 }
 
-// TestAuditAnalyticsDBPathFollowsUsageStore verifies the analytics database
-// resolves next to the configured usage store (custom PROXY_DB_PATH keeps
-// all databases together) and honors ANALYTICS_DB_PATH as an override.
-func TestAuditAnalyticsDBPathFollowsUsageStore(t *testing.T) {
-	t.Setenv("ANALYTICS_DB_PATH", "")
-	if got := analyticsDBPathFor("./data/proxy.db"); got != filepath.Join("data", "analytics.db") {
-		t.Fatalf("default analytics path = %q, want data/analytics.db", got)
+func TestAuditFreshStartupSkipsAbsentLegacyCostDatabase(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "proxy.db")
+	store, err := newUsageStore(storePath, 30)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, want := analyticsDBPathFor("/srv/pool/proxy.db"), filepath.Join("/srv/pool", "analytics.db"); got != want {
-		t.Fatalf("custom store analytics path = %q, want %q", got, want)
+	t.Cleanup(func() { _ = store.Close() })
+	duck := testDuckCosts(t, store)
+	if err := duck.migrateSQLiteCosts(t.Context(), storePath, "", time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("ANALYTICS_DB_PATH", "/elsewhere/analytics.db")
-	if got := analyticsDBPathFor("./data/proxy.db"); got != "/elsewhere/analytics.db" {
-		t.Fatalf("override analytics path = %q", got)
+	if _, err := os.Stat(filepath.Join(dir, "analytics.db")); !os.IsNotExist(err) {
+		t.Fatalf("fresh startup created a SQLite database: %v", err)
+	}
+	costs, err := duck.getCostByAccount(30)
+	if err != nil || len(costs) != 0 {
+		t.Fatalf("new DuckDB history = %v, %v", costs, err)
 	}
 }

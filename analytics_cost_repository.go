@@ -17,17 +17,54 @@ type costAnalyticsRepository interface {
 	getAllTimeAccountCostStats() (map[string]AccountCostStats, error)
 }
 
-type legacyCostAnalyticsRepository interface {
-	costAnalyticsRepository
-	recordRequest(RequestUsage, float64) error
+var _ costAnalyticsRepository = (*DuckAnalytics)(nil)
+
+// DailyCostEntry represents one day of cost data for a provider.
+type DailyCostEntry struct {
+	Date         string  `json:"date"`
+	AccountType  string  `json:"account_type"`
+	CostUSD      float64 `json:"cost_usd"`
+	RequestCount int64   `json:"request_count"`
 }
 
-var _ costAnalyticsRepository = (*DuckAnalytics)(nil)
+// ModelDailyUsageEntry holds the daily token and cost totals for one model.
+type ModelDailyUsageEntry struct {
+	Date                string  `json:"date"`
+	AccountType         string  `json:"account_type"`
+	Model               string  `json:"model"`
+	InputTokens         int64   `json:"input_tokens"`
+	CachedTokens        int64   `json:"cached_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	ReasoningTokens     int64   `json:"reasoning_tokens"`
+	RequestCount        int64   `json:"request_count"`
+	CostUSD             float64 `json:"cost_usd"`
+}
+
+type signalEconomicsSnapshot struct {
+	dailyCosts []DailyCostEntry
+	firstSeen  map[string]time.Time
+}
+
+// AccountCostStats pairs the total cost with the start of its measurement period.
+type AccountCostStats struct {
+	CostUSD   float64
+	FirstSeen time.Time
+}
+
+// ProviderCostSummary holds aggregated cost and subscription spend for a provider.
+type ProviderCostSummary struct {
+	APICost                 float64 `json:"api_cost"`
+	SubscriptionCost        float64 `json:"subscription_cost"`
+	MonthlySubscriptionCost float64 `json:"monthly_subscription_cost"`
+	AccountCount            int     `json:"account_count"`
+	ROI                     float64 `json:"roi"`
+}
 
 func (a *DuckAnalytics) getCostByAccount(days int) (map[string]float64, error) {
 	a.queryMu.RLock()
 	defer a.queryMu.RUnlock()
-	since := time.Now().AddDate(0, 0, -days).Format(time.DateOnly)
+	since := time.Now().UTC().AddDate(0, 0, -days).Format(time.DateOnly)
 	rows, err := a.db.Query(`
         SELECT account_id, SUM(cost_usd) FROM cost_activity
         WHERE day >= CAST(? AS DATE) GROUP BY account_id`, since)

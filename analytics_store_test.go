@@ -1,7 +1,6 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,73 +8,15 @@ import (
 	"time"
 )
 
-func TestAnalyticsSchemaAddsCacheCreationColumnsToExistingDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "analytics.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`
-		CREATE TABLE request_costs (id INTEGER PRIMARY KEY, timestamp TEXT, account_id TEXT, account_type TEXT, cached_tokens INTEGER);
-		CREATE TABLE daily_costs (date TEXT, account_id TEXT, account_type TEXT, model TEXT NOT NULL DEFAULT '', input_tokens INTEGER DEFAULT 0, cached_tokens INTEGER, output_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0, request_count INTEGER DEFAULT 0, cost_usd REAL DEFAULT 0, PRIMARY KEY(date, account_id, model));
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := newAnalyticsStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	for _, table := range []string{"request_costs", "daily_costs"} {
-		var found int
-		rows, err := store.db.Query("PRAGMA table_info(" + table + ")")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for rows.Next() {
-			var cid, notNull, primaryKey int
-			var name, columnType string
-			var defaultValue any
-			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-				t.Fatal(err)
-			}
-			if name == "cache_creation_tokens" {
-				found++
-			}
-		}
-		rows.Close()
-		if found != 1 {
-			t.Fatalf("%s cache_creation_tokens columns = %d, want 1", table, found)
-		}
-	}
-}
-
 func TestAllTimeAccountCostStatsIncludesMeasurementStart(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.db.Close()
-
-	firstDate := time.Now().UTC().AddDate(0, 0, -45).Format("2006-01-02")
-	if _, err := store.db.Exec(`
-		INSERT INTO daily_costs (date, account_id, account_type, model, request_count, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?)`, firstDate, "account", string(AccountTypeCodex), "gpt-5.6-sol", 1, 10.0); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.recordRequest(RequestUsage{
-		Timestamp:   time.Now().UTC(),
-		AccountID:   "account",
-		AccountType: AccountTypeCodex,
-		Model:       "gpt-5.6-sol",
-	}, 2.5); err != nil {
-		t.Fatal(err)
-	}
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
+	first := time.Now().UTC().AddDate(0, 0, -45)
+	request := RequestUsage{Timestamp: first, AccountID: "account", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}
+	recordTestCost(t, usage, request, 10)
+	request.Timestamp = time.Now().UTC()
+	recordTestCost(t, usage, request, 2.5)
+	drainTestCosts(t, store)
 
 	stats, err := store.getAllTimeAccountCostStats()
 	if err != nil {
@@ -85,32 +26,18 @@ func TestAllTimeAccountCostStatsIncludesMeasurementStart(t *testing.T) {
 	if got.CostUSD != 12.5 {
 		t.Fatalf("cost = %v, want 12.5", got.CostUSD)
 	}
-	if got.FirstSeen.Format("2006-01-02") != firstDate {
-		t.Fatalf("first seen = %v, want %s", got.FirstSeen, firstDate)
+	if got.FirstSeen.Format(time.DateOnly) != first.Format(time.DateOnly) {
+		t.Fatalf("first seen = %v, want %s", got.FirstSeen, first.Format(time.DateOnly))
 	}
 }
 
 func TestPoolStatsROIUsesCumulativeSubscriptionSpendForCurrentAccounts(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.db.Close()
-
-	firstDate := time.Now().UTC().AddDate(0, 0, -45).Format("2006-01-02")
-	for _, row := range []struct {
-		accountID string
-		cost      float64
-	}{
-		{accountID: "current", cost: 1000},
-		{accountID: "removed", cost: 9000},
-	} {
-		if _, err := store.db.Exec(`
-			INSERT INTO daily_costs (date, account_id, account_type, model, request_count, cost_usd)
-			VALUES (?, ?, ?, ?, ?, ?)`, firstDate, row.accountID, string(AccountTypeCodex), "gpt-5.6-sol", 1, row.cost); err != nil {
-			t.Fatal(err)
-		}
-	}
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
+	first := time.Now().UTC().AddDate(0, 0, -45)
+	recordTestCost(t, usage, RequestUsage{Timestamp: first, AccountID: "current", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}, 1000)
+	recordTestCost(t, usage, RequestUsage{Timestamp: first, AccountID: "removed", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}, 9000)
+	drainTestCosts(t, store)
 
 	h := &proxyHandler{
 		cfg:            &config{},
@@ -165,18 +92,11 @@ func TestQuotaPaceRatioSignalsEarlyExhaustion(t *testing.T) {
 }
 
 func TestPoolStatsROIUsesAccountAdmissionDate(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-
-	firstUsage := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
-	if _, err := store.db.Exec(`
-		INSERT INTO daily_costs (date, account_id, account_type, model, request_count, cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?)`, firstUsage, "current", string(AccountTypeCodex), "gpt-5.6-sol", 1, 1000); err != nil {
-		t.Fatal(err)
-	}
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
+	first := time.Now().UTC().AddDate(0, 0, -2)
+	recordTestCost(t, usage, RequestUsage{Timestamp: first, AccountID: "current", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}, 1000)
+	drainTestCosts(t, store)
 
 	h := &proxyHandler{
 		cfg:            &config{},
@@ -230,73 +150,5 @@ func TestPoolStatsLast24hUsesProcessedThroughput(t *testing.T) {
 	const want = int64(3250610)
 	if stats.Last24hTokens != want {
 		t.Fatalf("last 24h throughput = %d, want %d", stats.Last24hTokens, want)
-	}
-}
-
-func TestDailyRollupIsIdempotent(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.db.Close()
-
-	yesterday := time.Now().UTC().AddDate(0, 0, -1)
-	if err := store.recordRequest(RequestUsage{
-		Timestamp:      yesterday,
-		AccountID:      "account",
-		AccountType:    AccountTypeCodex,
-		Model:          "gpt-5.6-sol",
-		InputTokens:    10,
-		OutputTokens:   5,
-		BillableTokens: 15,
-	}, 1.25); err != nil {
-		t.Fatal(err)
-	}
-
-	store.runDailyRollup()
-	store.runDailyRollup()
-
-	var requests int
-	var cost float64
-	err = store.db.QueryRow(
-		`SELECT request_count, cost_usd FROM daily_costs WHERE date = ? AND account_id = ? AND model = ?`,
-		yesterday.Format("2006-01-02"),
-		"account",
-		"gpt-5.6-sol",
-	).Scan(&requests, &cost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if requests != 1 || cost != 1.25 {
-		t.Fatalf("rollup duplicated data: requests=%d cost=%f", requests, cost)
-	}
-}
-
-func TestAsyncAnalyticsWritesDrainOnClose(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "analytics.db")
-	store, err := newAnalyticsStore(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.enableAsyncWrites()
-	for i := 0; i < 1000; i++ {
-		if err := store.recordRequest(RequestUsage{Timestamp: time.Now(), AccountID: "a", AccountType: AccountTypeCodex, Model: "m"}, 1); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM request_costs").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1000 {
-		t.Fatalf("count=%d", count)
 	}
 }

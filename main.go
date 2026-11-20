@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -393,17 +392,6 @@ func buildConfig() *config {
 	return cfg
 }
 
-// analyticsDBPathFor resolves the legacy SQLite analytics database location:
-// next to the usage store (so a custom PROXY_DB_PATH keeps all databases in
-// one place), unless ANALYTICS_DB_PATH overrides it. The previous hardcoded
-// "./data/analytics.db" scattered databases when operators moved proxy.db.
-func analyticsDBPathFor(storePath string) string {
-	if v := os.Getenv("ANALYTICS_DB_PATH"); v != "" {
-		return v
-	}
-	return filepath.Join(filepath.Dir(storePath), "analytics.db")
-}
-
 func main() {
 	// Before anything can log: the pool has hundreds of log call sites and the
 	// stdlib logger offers no per-call redaction hook, so the output stream
@@ -713,32 +701,15 @@ func main() {
 		log.Fatalf("initialize pricing: %v", err)
 	}
 
-	// Initialize canonical DuckDB analytics. SQLite remains during migration.
-	duckAnalytics, duckErr := newDuckAnalytics(duckPath, store.db)
-	if duckErr != nil {
-		log.Printf("warning: failed to open DuckDB analytics: %v (durable outbox will accumulate)", duckErr)
-	} else {
-		defer duckAnalytics.Close()
-		log.Printf("DuckDB analytics initialized")
-	}
-
-	// Initialize legacy analytics store (SQLite)
-	var costRepository legacyCostAnalyticsRepository
-	analyticsStore, err := newAnalyticsStore(analyticsDBPathFor(cfg.storePath))
+	duckAnalytics, err := newDuckAnalytics(duckPath, store.db)
 	if err != nil {
-		log.Printf("warning: failed to open analytics store: %v (cost tracking disabled)", err)
-	} else {
-		defer analyticsStore.Close()
-		costRepository = analyticsStore
-		analyticsStore.enableAsyncWrites()
-		go func() {
-			if err := analyticsStore.rebuildPricingFromBoltDB(store, pricing); err != nil {
-				log.Printf("warning: failed to rebuild analytics pricing: %v", err)
-			}
-		}()
-		analyticsStore.startDailyRollup(shutdownCtx)
-		log.Printf("analytics store initialized at %s", analyticsDBPathFor(cfg.storePath))
+		log.Fatalf("open DuckDB analytics: %v", err)
 	}
+	defer duckAnalytics.Close()
+	if err := duckAnalytics.migrateSQLiteCosts(shutdownCtx, cfg.storePath, os.Getenv("ANALYTICS_DB_PATH"), time.Now()); err != nil {
+		log.Fatalf("migrate cost history: %v", err)
+	}
+	log.Print("DuckDB analytics initialized")
 
 	var aliasesCfg map[string]string
 	var effortByUser, effortByOrigin map[string]string
@@ -776,7 +747,7 @@ func main() {
 		passport:             passport,
 		registry:             registry,
 		store:                store,
-		analyticsStore:       costRepository,
+		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
 		pricing:              pricing,
 		aliases:              newModelAliases(aliasesCfg),
@@ -947,7 +918,7 @@ type proxyHandler struct {
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions
 
-	requestQueue *fairQueue
+	requestQueue         *fairQueue
 	cfg                  *config
 	transport            http.RoundTripper
 	antigravityTransport http.RoundTripper
@@ -958,7 +929,7 @@ type proxyHandler struct {
 	store                *usageStore
 	nativeContext        *nativeContext
 	contextHandoff       *conversationHandoffStore
-	analyticsStore       legacyCostAnalyticsRepository
+	analyticsStore       costAnalyticsRepository
 	duckAnalytics        *DuckAnalytics
 	pricing              *PricingData
 	aliases              *modelAliases
@@ -3962,7 +3933,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		return
 	}
 
-	if err := h.checkWebSocketGrant(userID, acc); err != nil { respondPolicyError(w, err); return }
+	if err := h.checkWebSocketGrant(userID, acc); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	releaseAccount, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), acc)
 	if err != nil {
 		respondPolicyError(w, err)
@@ -4597,7 +4571,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil { respondPolicyError(w, err); return }
+	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	prepared, releaseAccount, err := h.acquireGovernedAccount(r, userID, contextSession, acc, requestedModel)
 	if err != nil {
 		respondPolicyError(w, err)
@@ -4747,7 +4724,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	captureCodexResponseState(acc, resp, reqID)
 	if err != nil {
 		var blocked *policyError
-		if errors.As(err, &blocked) { respondPolicyError(w, err); return }
+		if errors.As(err, &blocked) {
+			respondPolicyError(w, err)
+			return
+		}
 		acc.mu.Lock()
 		acc.Penalty += 0.2
 		acc.mu.Unlock()

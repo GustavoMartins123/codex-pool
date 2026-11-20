@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -53,12 +52,13 @@ func TestAuditWebSocketHandshakeStatus(t *testing.T) {
 }
 
 func TestAuditWebSocketTurnAttribution(t *testing.T) {
-	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
+	usage := testUsageStore(t)
+	analytics := testDuckCosts(t, usage)
+	s := &codexRelayState{
+		h:             &proxyHandler{cfg: &config{}, store: usage, duckAnalytics: analytics},
+		opts:          codexCyberSwapOptions{Provider: &CodexProvider{}},
+		activeAccount: &Account{ID: "audit", Type: AccountTypeCodex},
 	}
-	defer analytics.Close()
-	s := &codexRelayState{h: &proxyHandler{cfg: &config{}, analyticsStore: analytics}, opts: codexCyberSwapOptions{Provider: &CodexProvider{}}, activeAccount: &Account{ID: "audit", Type: AccountTypeCodex}}
 	for _, frame := range []string{`{"type":"response.create","model":"gpt-5.4"}`, `{"type":"response.create","model":"gpt-5.5"}`} {
 		if _, err := s.inspectClient([]byte(frame)); err != nil {
 			t.Fatal(err)
@@ -69,8 +69,9 @@ func TestAuditWebSocketTurnAttribution(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	drainTestCosts(t, analytics)
 	var count int
-	if err := analytics.db.QueryRow(`SELECT COUNT(*) FROM request_costs WHERE model = 'gpt-5.4'`).Scan(&count); err != nil {
+	if err := analytics.db.QueryRow(`SELECT COUNT(*) FROM usage_events WHERE model_normalized = 'gpt-5.4'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
@@ -118,11 +119,8 @@ func TestAuditWebSocketRejectionRelay(t *testing.T) {
 
 func TestAuditWebSocketOverlappingTurns(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
-	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer analytics.Close()
+	usage := testUsageStore(t)
+	analytics := testDuckCosts(t, usage)
 	upstream := newFakeCodexUpstream(t)
 	upstream.on("acct_overlap", func(ctx context.Context, conn *websocket.Conn) {
 		for _, id := range []string{"first", "second"} {
@@ -143,7 +141,8 @@ func TestAuditWebSocketOverlappingTurns(t *testing.T) {
 	base, _ := url.Parse(upstream.server.URL)
 	account := &Account{ID: "overlap", Type: AccountTypeCodex, codex: codexAccountState{AccountID: "acct_overlap"}, AccessToken: "token", PlanType: "pro"}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
-	fx.handler.analyticsStore = analytics
+	fx.handler.store = usage
+	fx.handler.duckAnalytics = analytics
 	conn := dialClientWS(t, fx, http.Header{"Authorization": {"Bearer " + generateClaudePoolToken("test-secret", "ws-user")}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -157,9 +156,10 @@ func TestAuditWebSocketOverlappingTurns(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	drainTestCosts(t, analytics)
 	for _, model := range []string{"gpt-5.4", "gpt-5.5"} {
 		var count int
-		if err := analytics.db.QueryRow("SELECT COUNT(*) FROM request_costs WHERE model = ? AND account_id = ?", model, account.ID).Scan(&count); err != nil {
+		if err := analytics.db.QueryRow("SELECT COUNT(*) FROM usage_events WHERE model_normalized = ? AND account_id = ?", model, account.ID).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {

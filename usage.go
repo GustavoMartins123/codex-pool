@@ -365,12 +365,7 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 			log.Printf("passport policy: record token usage: %v", err)
 		}
 	}
-	// Keep the legacy SQLite store during migration only; DuckDB is canonical.
-	if h.analyticsStore != nil {
-		_ = h.analyticsStore.recordRequest(ru, costUSD)
-	}
-
-	if h != nil && h.cfg != nil && h.cfg.debug.Load() {
+	if h.cfg != nil && h.cfg.debug.Load() {
 		log.Printf("token_count: account=%s plan=%s user=%s origin=%s model=%s in=%d cached=%d out=%d reasoning=%d billable=%d cost=$%.6f primary=%.1f%% secondary=%.1f%%",
 			ru.AccountID, ru.PlanType, ru.UserID, ru.OriginID, ru.Model, ru.InputTokens, ru.CachedInputTokens, ru.OutputTokens, ru.ReasoningTokens, ru.BillableTokens,
 			costUSD, ru.PrimaryUsedPct*100, ru.SecondaryUsedPct*100)
