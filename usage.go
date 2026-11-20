@@ -372,6 +372,24 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 	}
 }
 
+func (h *proxyHandler) recordCodexJSONUsage(a *Account, provider UsageParser, response map[string]any, requestID, userID, originID string, admission *policyAdmission) {
+	if rateLimit, ok := response["rate_limit"].(map[string]any); ok {
+		a.applyRateLimitObject(rateLimit)
+	}
+	usage := provider.ParseUsage(response)
+	if usage == nil {
+		return
+	}
+	usage.AccountID, usage.AccountType = a.ID, a.Type
+	usage.UserID, usage.OriginID = userID, originID
+	usage.ProxyRequestID = requestID
+	usage.RequestID, _ = response["id"].(string)
+	a.mu.Lock()
+	usage.PlanType = a.PlanType
+	a.mu.Unlock()
+	h.recordUsage(a, *usage, admission)
+}
+
 func parseRequestUsage(obj map[string]any) *RequestUsage {
 	usageMap, ok := obj["usage"].(map[string]any)
 	if !ok {

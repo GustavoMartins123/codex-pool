@@ -2764,11 +2764,17 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				isSSE = false
 			}
 		}
+		var codexJSON bool
 		if provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) && !isSSE {
-			if err := filterHostedMCPNonStreamingResponse(resp); err != nil {
+			response, err := filterHostedMCPNonStreamingResponse(resp)
+			if err != nil {
 				resp.Body.Close()
 				http.Error(w, err.Error(), http.StatusBadGateway)
 				return
+			}
+			codexJSON = accountType == AccountTypeCodex && resp.StatusCode >= 200 && resp.StatusCode < 300
+			if codexJSON {
+				h.recordCodexJSONUsage(acc, provider, response, reqID, userID, originID, admission)
 			}
 			w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
 		}
@@ -2826,6 +2832,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				continue
 			}
 
+			if accountType == AccountTypeCodex && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				h.recordCodexJSONUsage(acc, provider, bufWriter.FinalUsage(), reqID, userID, originID, admission)
+			}
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
 		} else if clientWantsNonStreaming && isSSE && translateDir == wire.TranslateClaudeToResponses {
@@ -3037,7 +3046,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			if sampleBuf != nil {
 				sampleBuf.Write(respBody)
 			}
-			h.updateUsageFromBody(acc, respBody, userID, originID, admission)
+			if !codexJSON {
+				h.updateUsageFromBody(acc, respBody, userID, originID, admission)
+			}
 
 			var translated []byte
 			if responseDir != wire.TranslateNone {
@@ -3297,7 +3308,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 				log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
 			}
-			if !isSSE && len(respSample) > 0 {
+			if !codexJSON && !isSSE && len(respSample) > 0 {
 				h.updateUsageFromBody(acc, respSample, userID, originID, admission)
 			}
 		}
@@ -3706,7 +3717,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	}
 	if providerType == AccountTypeCodex {
 		relayOpts.TransformUpstreamMessage = func(data []byte) ([]byte, error) {
-			filtered, drop, _ := filterHostedMCPResponseJSON(data)
+			filtered, _, drop, _ := filterHostedMCPResponseJSON(data)
 			if drop {
 				return []byte{}, nil
 			}
@@ -4331,10 +4342,16 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	// when the upstream returns a non-SSE JSON response.
 	respContentType := resp.Header.Get("Content-Type")
 	isSSE := provider.DetectsSSE(r.URL.Path, respContentType)
+	var codexJSON bool
 	if !isSSE && provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) {
-		if err := filterHostedMCPNonStreamingResponse(resp); err != nil {
+		response, err := filterHostedMCPNonStreamingResponse(resp)
+		if err != nil {
 			http.Error(w, "hosted MCP response filtering error", http.StatusBadGateway)
 			return
+		}
+		codexJSON = accountType == AccountTypeCodex && resp.StatusCode >= 200 && resp.StatusCode < 300
+		if codexJSON {
+			h.recordCodexJSONUsage(acc, provider, response, reqID, userID, originID, admission)
 		}
 	}
 
@@ -4538,7 +4555,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		}
 		log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
 	}
-	if !isSSE && len(respSample) > 0 {
+	if !codexJSON && !isSSE && len(respSample) > 0 {
 		h.updateUsageFromBody(acc, respSample, userID, originID)
 	}
 
@@ -5087,7 +5104,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		isSSE = false
 	}
 	if providerType == AccountTypeCodex && isCodexResponsesPath(r.URL.Path) && !isSSE {
-		if err := filterHostedMCPNonStreamingResponse(resp); err != nil {
+		if _, err := filterHostedMCPNonStreamingResponse(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
