@@ -171,7 +171,6 @@ func TestIdleWebSocketDoesNotHoldFairQueueCapacity(t *testing.T) {
 	q.perPrincipal = 1
 	q.wait = 50 * time.Millisecond
 	h := &proxyHandler{cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, pool: newPoolState([]*Account{{ID: "codex", Type: AccountTypeCodex, AccessToken: "token", codex: codexAccountState{AccountID: "acct"}, PlanType: "pro"}}, false), registry: NewProviderRegistry(NewCodexProviderWithRealtime(base, base, base, base), nil, nil), transport: http.DefaultTransport, metrics: newMetrics(), recent: newRecentErrors(5), requestQueue: q}
-	h.queueOnce.Do(func() {})
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -220,7 +219,6 @@ func TestFairQueueRevalidatesRevokedCredentials(t *testing.T) {
 	q := newFairQueue()
 	q.capacity = 1
 	h := &proxyHandler{passport: p, metrics: newMetrics(), requestQueue: q}
-	h.queueOnce.Do(func() {})
 	release, _ := q.Acquire(context.Background(), "occupant")
 	result := make(chan error, 1)
 	go func() {

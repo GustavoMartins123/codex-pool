@@ -17,14 +17,21 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+func installTestSessionBroker(t *testing.T, h *proxyHandler) *sessionBroker {
+	t.Helper()
+	broker, err := newSessionBroker(h.passport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.runnerBroker = broker
+	return broker
+}
+
 func brokerFixture(t *testing.T) (*proxyHandler, *sessionBroker, *appLoginResponse, string) {
 	t.Helper()
 	h := appAuthHandler(t)
 	login := appSignIn(t, h)
-	b, err := h.sessionBroker()
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := installTestSessionBroker(t, h)
 	pr := h.passport.byLogin("brute@example.com")
 	return h, b, &login, pr.ID
 }
@@ -285,6 +292,7 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b := installTestSessionBroker(t, h)
 	create := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","workspace":{"mode":"ephemeral"},"permission_mode":"gated"}`)
 	if create.Code != 201 {
 		t.Fatalf("create=%d %s", create.Code, create.Body.String())
@@ -303,7 +311,6 @@ func TestSessionHTTPAndRunnerWebSocketRelay(t *testing.T) {
 	}
 	server := httptest.NewServer(h)
 	defer server.Close()
-	b, _ := h.sessionBroker()
 	credential := pairedRunner(t, b, principal)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

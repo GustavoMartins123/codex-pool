@@ -8,8 +8,8 @@ import (
 )
 
 func TestTransitionDiagnosticsRedactNativeState(t *testing.T) {
-	h := &proxyHandler{cfg: &config{adminToken: "operator-token"}}
-	store := h.getContextHandoff()
+	h := &proxyHandler{contextHandoff: newConversationHandoffStore(), cfg: &config{adminToken: "operator-token"}}
+	store := h.contextHandoff
 	if _, _, err := store.Prepare(conversationScopedKey("user", "conversation-1"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
 		t.Fatal(err)
 	}

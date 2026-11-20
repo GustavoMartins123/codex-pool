@@ -197,7 +197,11 @@ func (h *proxyHandler) servePoolPerformance(w http.ResponseWriter) {
 }
 
 func (h *proxyHandler) servePoolCircuitBreakers(w http.ResponseWriter) {
-	respondJSON(w, h.getCircuitBreakers().Snapshot())
+	if h.pool == nil || h.pool.circuitBreakers == nil {
+		respondJSONError(w, http.StatusServiceUnavailable, "circuit breakers are not initialized")
+		return
+	}
+	respondJSON(w, h.pool.circuitBreakers.Snapshot())
 }
 
 func (h *proxyHandler) handlePoolUserRoute(w http.ResponseWriter, r *http.Request) {

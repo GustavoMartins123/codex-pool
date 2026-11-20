@@ -35,8 +35,6 @@ type GenericProviderModelConfig struct {
 	Reasoning       bool     `toml:"reasoning"`
 	WebSearch       bool     `toml:"web_search"`
 	Modalities      []string `toml:"modalities"`
-	Fallbacks       []string `toml:"fallbacks"`
-	FallbackFor     []string `toml:"fallback_for"`
 }
 
 type GenericProviderConfig struct {

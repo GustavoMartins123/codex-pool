@@ -15,11 +15,11 @@ func TestInferQuotaIntelligenceAccumulatesRoundedIntervals(t *testing.T) {
 		{Timestamp: start.Add(3 * time.Hour), AccountID: "acct", AccountType: AccountTypeCodex, PlanType: "pro", Model: "rich", InputTokens: 100, SecondaryUsedPct: .12},
 		{Timestamp: start.Add(4 * time.Hour), AccountID: "acct", AccountType: AccountTypeCodex, PlanType: "pro", Model: "rich", InputTokens: 100, SecondaryUsedPct: .14},
 	}
-	cost := func(row RequestUsage) float64 {
+	cost := func(row RequestUsage) (float64, error) {
 		if row.Model == "rich" {
-			return 4
+			return 4, nil
 		}
-		return 1
+		return 1, nil
 	}
 	capacity, models, resets := inferQuotaIntelligence(rows, nil, cost)
 	if len(capacity) != 1 {

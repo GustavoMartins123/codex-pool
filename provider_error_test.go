@@ -59,6 +59,7 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 			prod, _ := url.Parse("https://prod.example")
 			provider := NewAntigravityProvider(daily, prod)
 			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
+			registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
 			h := &proxyHandler{
 				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
 				pool:     newPoolState([]*Account{account}, false),
@@ -168,6 +169,7 @@ func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")
 	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
+	registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
 	calls := 0
 	var requestSizes []int
 	h := &proxyHandler{

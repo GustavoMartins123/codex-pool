@@ -9,7 +9,7 @@ import (
 
 func TestMetricsCredentialOnlyAuthorizesMetricsAndFailsClosed(t *testing.T) {
 	token := strings.Repeat("a", 64)
-	h := &proxyHandler{cfg: &config{metricsToken: token, adminToken: strings.Repeat("b", 32)}, metrics: newMetrics(), pool: newPoolState(nil, false)}
+	h := &proxyHandler{cfg: &config{metricsToken: token, adminToken: strings.Repeat("b", 32)}, metrics: newMetrics(), requestQueue: newFairQueue(), pool: newPoolState(nil, false)}
 	for _, test := range []struct {
 		path, method, token string
 		status              int
@@ -47,7 +47,7 @@ func TestMetricsCredentialOnlyAuthorizesMetricsAndFailsClosed(t *testing.T) {
 func TestMetricsCredentialGuessesAreBanned(t *testing.T) {
 	token := strings.Repeat("a", 64)
 	tracker := newTestBruteForceTracker(t)
-	h := &proxyHandler{cfg: &config{metricsToken: token}, metrics: newMetrics(), pool: newPoolState(nil, false), bruteForce: tracker}
+	h := &proxyHandler{cfg: &config{metricsToken: token}, metrics: newMetrics(), requestQueue: newFairQueue(), pool: newPoolState(nil, false), bruteForce: tracker}
 	scrape := func(credential string) int {
 		r := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 		r.Header.Set("Authorization", "Bearer "+credential)

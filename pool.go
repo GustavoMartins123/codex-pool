@@ -480,7 +480,6 @@ type poolState struct {
 	routing              routingPolicySet
 	routingTelemetry     map[string]routingTelemetry
 	circuitBreakers      *routing.CircuitBreakerManager
-	fallbackGraph        *FallbackGraph
 	debug                bool
 	rr                   uint64
 	tierThreshold        float64 // secondary usage % at which we stop preferring a tier (default 0.50)
@@ -490,7 +489,7 @@ func newPoolState(accs []*Account, debug bool) *poolState {
 	return &poolState{
 		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, convUpdatedAt: map[string]time.Time{}, debug: debug, tierThreshold: 0.50,
 		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
-		circuitBreakers: routing.NewCircuitBreakerManager(), fallbackGraph: newFallbackGraph(),
+		circuitBreakers: routing.NewCircuitBreakerManager(),
 	}
 }
 

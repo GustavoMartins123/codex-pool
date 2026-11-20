@@ -18,11 +18,13 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 	prod, _ := url.Parse("https://prod.example")
 	provider := NewAntigravityProvider(daily, prod)
 	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
+	registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
 	var upstream []map[string]any
 	h := &proxyHandler{
-		cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
-		pool:     newPoolState([]*Account{account}, false),
-		registry: NewProviderRegistry(nil, nil, nil, provider),
+		contextHandoff: newConversationHandoffStore(),
+		cfg:            &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
+		pool:           newPoolState([]*Account{account}, false),
+		registry:       NewProviderRegistry(nil, nil, nil, provider),
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body, _ := io.ReadAll(req.Body)
 			var envelope map[string]any
@@ -38,7 +40,7 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
 		}),
 	}
-	store := h.getContextHandoff()
+	store := h.contextHandoff
 	conversationID := "fresh-entry-conversation"
 	sendAnti := func(text string, foreign bool) {
 		t.Helper()

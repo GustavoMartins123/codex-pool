@@ -105,6 +105,7 @@ func TestInitialInputValidationAndUnsignedSubmission(t *testing.T) {
 			t.Fatal("invalid draft accepted")
 		}
 	}
+	b := installTestSessionBroker(t, h)
 	created := appAuthRequest(h, "POST", "/api/sessions", login.Token, `{"agent":"codex","model":"gpt-5.6-sol","permission_mode":"gated","workspace":{"mode":"ephemeral"},"initial_input":"stored, not authorized"}`)
 	if created.Code != 201 {
 		t.Fatalf("create: %d %s", created.Code, created.Body.String())
@@ -119,10 +120,6 @@ func TestInitialInputValidationAndUnsignedSubmission(t *testing.T) {
 	response := appAuthRequest(h, "POST", "/api/sessions/"+s.ID+"/turns", login.Token, `{"input":"stored, not authorized","pending_input_id":"`+s.PendingInput.ID+`"}`)
 	if response.Code != 400 {
 		t.Fatal("unsigned draft submission accepted")
-	}
-	b, err := h.sessionBroker()
-	if err != nil {
-		t.Fatal(err)
 	}
 	state, err := b.session(principal, s.ID)
 	if err != nil || state.PendingInput == nil || state.TurnID != "" {

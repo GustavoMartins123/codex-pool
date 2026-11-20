@@ -38,10 +38,7 @@ func TestRunnerCatalogBuildsProtocolSpecificNativeModels(t *testing.T) {
 func TestRunnerCatalogRequiresAnActiveRunnerCredential(t *testing.T) {
 	h, principal, _, _, _, _ := memberQuotaFixture(t)
 	saveQuotaPolicy(t, h, principal, ClientPolicy{Providers: PolicySelector{Allow: []string{"claude"}}})
-	b, err := h.sessionBroker()
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := installTestSessionBroker(t, h)
 	credential := pairedRunner(t, b, principal)
 	for _, token := range []string{"", "invalid", credential.Token} {
 		r := httptest.NewRequest(http.MethodGet, "/api/runner/catalog", nil)

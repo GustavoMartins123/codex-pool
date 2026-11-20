@@ -97,7 +97,6 @@ func TestProxyHoldsRequestForUsageWindowReset(t *testing.T) {
 	account := exhaustedCodexAccount("acct_ex", 0.96, time.Second)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.exhaustionWait = 2 * time.Second
-	fx.handler.cfg.exhaustionPreferWait = true
 	fx.handler.aliases = newModelAliases(nil)
 
 	// Simulate the periodic usage poll observing the window reset shortly
@@ -180,11 +179,8 @@ func TestUsageResetWithinBudget(t *testing.T) {
 	}
 }
 
-// newExhaustedFallbackHandler builds a handler with usage-exhausted codex
-// accounts, one live antigravity account, and a fallback route to a model
-// that antigravity declines to serve. The transport distinguishes upstreams
-// so tests can prove which provider answered.
-func newExhaustedFallbackHandler(t *testing.T, preferWait bool, codexAccounts ...*Account) *proxyHandler {
+// newExhaustedCodexHandler builds a pool with exhausted Codex accounts and a live Antigravity account.
+func newExhaustedCodexHandler(t *testing.T, codexAccounts ...*Account) *proxyHandler {
 	t.Helper()
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
@@ -215,7 +211,6 @@ func newExhaustedFallbackHandler(t *testing.T, preferWait bool, codexAccounts ..
 			maxInMemoryBodyBytes: 4 << 20,
 			maxAttempts:          1,
 			exhaustionWait:       2 * time.Second,
-			exhaustionPreferWait: preferWait,
 		},
 		transport: transport,
 		pool:      newPoolState(accounts, false),
@@ -241,15 +236,10 @@ func recoverExhaustedAccountAfter(t *testing.T, acc *Account, delay time.Duratio
 	}()
 }
 
-// When the original provider's window resets inside the hold budget, the
-// request must stay on that provider instead of switching to a fallback
-// model mid-conversation.
-func TestProxyPrefersWaitingOverFallbackWhenResetIsClose(t *testing.T) {
+// A reset within the configured wait can restore the requested provider's capacity.
+func TestProxyWaitsForRequestedProvidersReset(t *testing.T) {
 	account := exhaustedCodexAccount("acct_ex", 0.96, 400*time.Millisecond)
-	h := newExhaustedFallbackHandler(t, true, account)
-	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
-		OnUnavailable: []string{"gemini-custom-unknown"},
-	})
+	h := newExhaustedCodexHandler(t, account)
 	recoverExhaustedAccountAfter(t, account, 120*time.Millisecond)
 
 	start := time.Now()
@@ -265,12 +255,9 @@ func TestProxyPrefersWaitingOverFallbackWhenResetIsClose(t *testing.T) {
 	}
 }
 
-func TestProxyRejectsDistantResetBeforeModelFallback(t *testing.T) {
+func TestProxyRejectsDistantReset(t *testing.T) {
 	account := exhaustedCodexAccount("acct_ex", 0.96, time.Hour)
-	h := newExhaustedFallbackHandler(t, false, account)
-	h.pool.fallbackGraph.SetRoute("gpt-5.6-sol", FallbackRule{
-		OnUnavailable: []string{"gemini-custom-unknown"},
-	})
+	h := newExhaustedCodexHandler(t, account)
 	start := time.Now()
 	w := postCodexModelRequest(t, h, "gpt-5.6-sol")
 	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "provider_quota_exhausted") {

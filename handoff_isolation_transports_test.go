@@ -128,6 +128,7 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 		transport: http.DefaultTransport, antigravityTransport: http.DefaultTransport,
 		metrics: newMetrics(), recent: newRecentErrors(5),
 	}
+	registerTestAntigravityModels(t, "anti", "gemini-3.8-flash-high")
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 	models := []string{"gpt-5.6-sol", "claude-opus-4-6", "antigravity/gemini-3.8-flash-high", "gpt-5.6-sol"}
@@ -209,7 +210,7 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 			}
 			key := conversationScopedKey(testPoolIdentity(t, h, owner), "shared-transport-id")
 			if !auditWaitFor(t, time.Second, func() bool {
-				state, ok := h.getContextHandoff().State(key)
+				state, ok := h.contextHandoff.State(key)
 				encoded, _ := json.Marshal(state.Messages)
 				return ok && strings.Contains(string(encoded), fmt.Sprintf("%s_private_answer_%d", owner, step))
 			}) {

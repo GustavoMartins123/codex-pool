@@ -193,7 +193,6 @@ func TestMemberQuotaSnapshotAntigravityRequiresAccountDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.pool.replace([]*Account{account})
-	antigravityModels.MarkAccount(account.ID)
 	if rows := quotaHTTP(t, h, session); len(rows) != 0 {
 		t.Fatal("cold-start catalog substitute established model access")
 	}
