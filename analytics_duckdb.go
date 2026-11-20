@@ -26,6 +26,10 @@ const (
 	analyticsAckKey       = "acknowledged_sequence"
 )
 
+const analyticsEventColumns = `event_id,proxy_request_id,usage_sequence,upstream_request_id,attempt_number,observed_at,principal_id,client_credential_id,origin_id,account_id,account_type,plan_type,model_reported,model_normalized,normalization_version,input_tokens,cache_read_tokens,cache_creation_tokens,output_tokens,reasoning_tokens,billable_tokens,api_equivalent_cost_usd,pricing_version,usage_completeness,source,source_grain`
+const insertLegacyAnalyticsFact = `INSERT OR IGNORE INTO usage_events (` + analyticsEventColumns + `) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+const insertDeliveredAnalyticsFact = `INSERT OR IGNORE INTO usage_events (` + analyticsEventColumns + `,delivery_sequence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+
 type AnalyticsFact struct {
 	EventID              string    `json:"event_id"`
 	ProxyRequestID       string    `json:"proxy_request_id"`
@@ -159,7 +163,8 @@ CREATE TABLE IF NOT EXISTS usage_events (
  api_equivalent_cost_usd DECIMAL(18,9) NOT NULL, pricing_version VARCHAR NOT NULL,
  usage_completeness VARCHAR NOT NULL, source VARCHAR NOT NULL, source_grain VARCHAR NOT NULL
 );`
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + `
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS delivery_sequence UBIGINT;` + costHistorySchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create duckdb schema: %w", err)
 	}
@@ -195,7 +200,7 @@ func (a *DuckAnalytics) importLegacyBolt() error {
 	if err != nil {
 		return err
 	}
-	stmt, err := duckTx.Prepare(`INSERT OR IGNORE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	stmt, err := duckTx.Prepare(insertLegacyAnalyticsFact)
 	if err != nil {
 		_ = duckTx.Rollback()
 		return err
@@ -361,7 +366,7 @@ func (a *DuckAnalytics) drain(limit int) error {
 		a.setFault(err)
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO usage_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(insertDeliveredAnalyticsFact)
 	if err != nil {
 		_ = tx.Rollback()
 		a.queryMu.Unlock()
@@ -374,7 +379,7 @@ func (a *DuckAnalytics) drain(limit int) error {
 			f.PrincipalID, f.ClientCredentialID, f.OriginID, f.AccountID, f.AccountType, f.PlanType, f.ModelReported,
 			f.ModelNormalized, f.NormalizationVersion, f.InputTokens, f.CacheReadTokens, f.CacheCreationTokens,
 			f.OutputTokens, f.ReasoningTokens, f.BillableTokens, f.APIEquivalentCostUSD, f.PricingVersion,
-			f.UsageCompleteness, f.Source, f.SourceGrain)
+			f.UsageCompleteness, f.Source, f.SourceGrain, r.seq)
 		if err != nil {
 			break
 		}
