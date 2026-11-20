@@ -63,7 +63,7 @@ func TestSyncCodexModelsSetsCyberFromDaybreak(t *testing.T) {
 	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
-	if !account.CyberAccess {
+	if !account.codex.CyberAccess {
 		t.Fatal("daybreak entitlement should mark the account cyber")
 	}
 
@@ -77,7 +77,7 @@ func TestSyncCodexModelsSetsCyberFromDaybreak(t *testing.T) {
 	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
-	if account.CyberAccess {
+	if account.codex.CyberAccess {
 		t.Fatal("losing daybreak should clear cyber")
 	}
 }

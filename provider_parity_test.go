@@ -101,11 +101,49 @@ func runProviderLoadParity(t *testing.T, providers map[string]ProviderDriver, tc
 	if account != nil {
 		account.Usage.RetrievedAt = time.Time{}
 	}
-	got.Output = providerParityJSON(t, account)
+	got.Output = providerLoadedAccountView(t, account)
 	if err != nil {
 		got.Err = err.Error()
 	}
 	return got
+}
+
+func providerLoadedAccountView(t *testing.T, account *Account) string {
+	t.Helper()
+	if account == nil {
+		return "null"
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(providerParityJSON(t, account)), &fields); err != nil {
+		t.Fatal(err)
+	}
+	accountID := account.codex.AccountID
+	if account.Type == AccountTypeGrok {
+		accountID = account.grok.TokenEndpoint
+	}
+	providerFields := map[string]any{
+		"AccountID":               accountID,
+		"IDTokenChatGPTAccountID": account.codex.IDTokenChatGPTAccountID,
+		"ImageGenerationSupport":  account.codex.ImageGenerationSupport,
+		"ImageGenerationFailures": account.codex.ImageGenerationFailures,
+		"ImageGenerationRetryAt":  account.codex.ImageGenerationRetryAt,
+		"AccountUUID":             account.claude.UUID,
+		"CyberAccess":             account.codex.CyberAccess,
+		"CodexCookies":            account.codex.Cookies,
+		"RateLimitResetCredits":   account.codex.RateLimitResetCredits,
+		"ResetCreditsAvailable":   account.codex.ResetCreditsAvailable,
+		"ResetCreditsRetrievedAt": account.codex.ResetCreditsRetrievedAt,
+		"ResetCreditRedeeming":    account.codex.ResetCreditRedeeming,
+		"ProjectID":               account.google.ProjectID,
+		"ModelRateLimits":         account.google.ModelRateLimits,
+		"QwenTokenPlan":           account.qwen.TokenPlan,
+		"QwenCredits":             account.qwen.Credits,
+		"QwenCreditsError":        account.qwen.CreditsError,
+	}
+	for name, value := range providerFields {
+		fields[name] = json.RawMessage(providerParityJSON(t, value))
+	}
+	return providerParityJSON(t, fields)
 }
 
 func runProviderAuthParity(t *testing.T, providers map[string]ProviderDriver, tc providerAuthParityCase) providerAuthParityCase {
@@ -154,6 +192,11 @@ func TestProviderSharedBehaviorParity(t *testing.T) {
 	}
 	for i, tc := range fixture.Load {
 		t.Run(fmt.Sprintf("load/%s/%d", tc.Provider, i), func(t *testing.T) {
+			var expected map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.Output), &expected); err != nil {
+				t.Fatal(err)
+			}
+			tc.Output = providerParityJSON(t, expected)
 			if got := runProviderLoadParity(t, providers, tc); got != tc {
 				t.Fatalf("got  %+v\nwant %+v", got, tc)
 			}

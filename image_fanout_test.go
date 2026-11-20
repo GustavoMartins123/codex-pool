@@ -54,7 +54,7 @@ func TestImageFanoutAllowsBusyAccountsWhenAllCapacityIsBusy(t *testing.T) {
 func TestImageCapabilityLearnsAfterRepeatedFailures(t *testing.T) {
 	account := &Account{ID: "unsupported", Type: AccountTypeCodex}
 	recordImageGenerationResult(account, false)
-	if got := atomic.LoadInt32(&account.ImageGenerationSupport); got != -1 {
+	if got := atomic.LoadInt32(&account.codex.ImageGenerationSupport); got != -1 {
 		t.Fatalf("support after one failure = %d", got)
 	}
 
@@ -66,7 +66,7 @@ func TestImageCapabilityLearnsAfterRepeatedFailures(t *testing.T) {
 	}
 
 	recordImageGenerationResult(account, true)
-	if got := atomic.LoadInt32(&account.ImageGenerationSupport); got != 1 {
+	if got := atomic.LoadInt32(&account.codex.ImageGenerationSupport); got != 1 {
 		t.Fatalf("support after success = %d", got)
 	}
 }

@@ -146,7 +146,7 @@ func runQwenResponsesRealCodexCLI(t *testing.T, binary string, websockets bool) 
 			}
 		})
 		codexUpstream = mustParse(upstream.server.URL)
-		accounts = append(accounts, &Account{Type: AccountTypeCodex, ID: "cli-ws", AccessToken: "cli-ws-token", AccountID: "acct_cli_ws", PlanType: "pro"})
+		accounts = append(accounts, &Account{Type: AccountTypeCodex, ID: "cli-ws", AccessToken: "cli-ws-token", codex: codexAccountState{AccountID: "acct_cli_ws"}, PlanType: "pro"})
 	}
 	h := qwenTestHandler(t, http.DefaultTransport, accounts...)
 	base := mustParse(upstream.URL + "/compatible-mode/v1")

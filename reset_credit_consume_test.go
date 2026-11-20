@@ -62,7 +62,7 @@ func resetCreditHandler(upstream *resetCreditUpstream) *proxyHandler {
 }
 
 func codexAccountWithResets() *Account {
-	return &Account{ID: "pool-codex", Type: AccountTypeCodex, AccessToken: "access-token", AccountID: "account-id", Usage: UsageSnapshot{PrimaryUsedPercent: 1, SecondaryUsedPercent: 1, RetrievedAt: time.Now()}}
+	return &Account{ID: "pool-codex", Type: AccountTypeCodex, AccessToken: "access-token", codex: codexAccountState{AccountID: "account-id"}, Usage: UsageSnapshot{PrimaryUsedPercent: 1, SecondaryUsedPercent: 1, RetrievedAt: time.Now()}}
 }
 
 func TestConsumeEarliestResetCreditSpendsSoonestExpiringFreshCredit(t *testing.T) {
@@ -79,7 +79,7 @@ func TestConsumeEarliestResetCreditSpendsSoonestExpiringFreshCredit(t *testing.T
 	h := resetCreditHandler(upstream)
 	account := codexAccountWithResets()
 	// A stale polled snapshot must not decide which credit is spent.
-	account.RateLimitResetCredits = []RateLimitResetCredit{{ID: "credit-stale", ExpiresAt: time.Now().Add(time.Minute)}}
+	account.codex.RateLimitResetCredits = []RateLimitResetCredit{{ID: "credit-stale", ExpiresAt: time.Now().Add(time.Minute)}}
 
 	result, err := h.consumeEarliestCodexResetCredit(account)
 	if err != nil {
@@ -95,8 +95,8 @@ func TestConsumeEarliestResetCreditSpendsSoonestExpiringFreshCredit(t *testing.T
 	if strings.Join(upstream.requests, "|") != strings.Join(want, "|") {
 		t.Fatalf("upstream requests = %v", upstream.requests)
 	}
-	if account.ResetCreditsAvailable != 0 || len(account.RateLimitResetCredits) != 0 || account.ResetCreditRedeeming {
-		t.Fatalf("account after consume: available=%d credits=%v redeeming=%v", account.ResetCreditsAvailable, account.RateLimitResetCredits, account.ResetCreditRedeeming)
+	if account.codex.ResetCreditsAvailable != 0 || len(account.codex.RateLimitResetCredits) != 0 || account.codex.ResetCreditRedeeming {
+		t.Fatalf("account after consume: available=%d credits=%v redeeming=%v", account.codex.ResetCreditsAvailable, account.codex.RateLimitResetCredits, account.codex.ResetCreditRedeeming)
 	}
 }
 
@@ -115,7 +115,7 @@ func TestConsumeEarliestResetCreditSkipsExpiredAndUnavailableCredits(t *testing.
 	if !errors.Is(err, errResetCreditUnavailable) {
 		t.Fatalf("err = %v, want %v", err, errResetCreditUnavailable)
 	}
-	if account.ResetCreditRedeeming {
+	if account.codex.ResetCreditRedeeming {
 		t.Fatal("redeeming flag left set")
 	}
 }
@@ -123,7 +123,7 @@ func TestConsumeEarliestResetCreditSkipsExpiredAndUnavailableCredits(t *testing.
 func TestConsumeEarliestResetCreditRefusesConcurrentConsumeWithoutUpstreamCalls(t *testing.T) {
 	upstream := &resetCreditUpstream{t: t}
 	account := codexAccountWithResets()
-	account.ResetCreditRedeeming = true
+	account.codex.ResetCreditRedeeming = true
 	_, err := resetCreditHandler(upstream).consumeEarliestCodexResetCredit(account)
 	if !errors.Is(err, errResetCreditInProgress) {
 		t.Fatalf("err = %v, want %v", err, errResetCreditInProgress)
@@ -131,7 +131,7 @@ func TestConsumeEarliestResetCreditRefusesConcurrentConsumeWithoutUpstreamCalls(
 	if len(upstream.requests) != 0 {
 		t.Fatalf("upstream requests = %v", upstream.requests)
 	}
-	if !account.ResetCreditRedeeming {
+	if !account.codex.ResetCreditRedeeming {
 		t.Fatal("a concurrent consume released the first consume's guard")
 	}
 }
@@ -148,7 +148,7 @@ func TestConsumeEarliestResetCreditReportsUpstreamRejectionAndReleasesGuard(t *t
 	if _, err := resetCreditHandler(upstream).consumeEarliestCodexResetCredit(account); err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("err = %v", err)
 	}
-	if account.ResetCreditRedeeming {
+	if account.codex.ResetCreditRedeeming {
 		t.Fatal("redeeming flag left set after a rejection")
 	}
 	if len(upstream.requests) != 2 {

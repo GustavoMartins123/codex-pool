@@ -69,7 +69,7 @@ func newCodexBridgeFixture(t *testing.T) *codexBridgeFixture {
 		}
 	})
 	upURL, _ := url.Parse(upstream.server.URL)
-	codex := &Account{Type: AccountTypeCodex, ID: "bridge", AccessToken: "bridge-token", AccountID: "acct_bridge", PlanType: "pro"}
+	codex := &Account{Type: AccountTypeCodex, ID: "bridge", AccessToken: "bridge-token", codex: codexAccountState{AccountID: "acct_bridge"}, PlanType: "pro"}
 	qwenAccount := &Account{ID: "qwen-ws", Type: AccountTypeQwen, AccessToken: "sk-sp-ws", Models: map[string]DiscoveredModel{"qwen3.8-max": {ID: "qwen3.8-max", Protocol: "openai"}}}
 	fx.proxy = newCodexProxyFixture(t, upURL, []*Account{codex, qwenAccount})
 	h := fx.proxy.handler

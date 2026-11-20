@@ -18,7 +18,7 @@ func ownershipFixture(t *testing.T) (*PassportStore, *poolState) {
 	}
 	addTestPassportOperator(t, p, "alice")
 	addTestPassportOperator(t, p, "bob")
-	accounts := []*Account{{ID: "shared", Type: AccountTypeKimi}, {ID: "private", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true}}
+	accounts := []*Account{{ID: "shared", Type: AccountTypeKimi}, {ID: "private", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}}}
 	if err := p.initializeAccountAuthority(accounts[:1]); err != nil {
 		t.Fatal(err)
 	}

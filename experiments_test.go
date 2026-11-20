@@ -215,8 +215,8 @@ func trafficShadowRequest(t *testing.T, h *proxyHandler) *httptest.ResponseRecor
 
 func trafficShadowAccounts() []*Account {
 	return []*Account{
-		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "token-a", AccountID: "acct_a", PlanType: "pro"},
-		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "token-b", AccountID: "acct_b", PlanType: "pro"},
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "token-a", codex: codexAccountState{AccountID: "acct_a"}, PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "token-b", codex: codexAccountState{AccountID: "acct_b"}, PlanType: "pro"},
 	}
 }
 
@@ -346,8 +346,8 @@ func TestTrafficShadowAllowlistSurvivesRetryReset(t *testing.T) {
 	}
 	codexBase, _ := url.Parse("https://codex.mock")
 	pool := newPoolState([]*Account{
-		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
-		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", AccountID: "acct_cb", PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", codex: codexAccountState{AccountID: "acct_ca"}, PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", codex: codexAccountState{AccountID: "acct_cb"}, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
 	}, false)
 	var mu sync.Mutex
 	calls := map[string]int{}
@@ -412,8 +412,8 @@ func TestTrafficShadowDoesNotTouchRealConversationState(t *testing.T) {
 	}
 	codexBase, _ := url.Parse("https://codex.mock")
 	pool := newPoolState([]*Account{
-		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
-		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", AccountID: "acct_cb", PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", codex: codexAccountState{AccountID: "acct_ca"}, PlanType: "pro"},
+		{ID: "codex-b", Type: AccountTypeCodex, AccessToken: "t-cb", codex: codexAccountState{AccountID: "acct_cb"}, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.05}},
 	}, false)
 	shadowDone := make(chan struct{})
 	h := &proxyHandler{
@@ -512,7 +512,7 @@ func TestTrafficShadowDoesNotConsumeClientPolicyBudget(t *testing.T) {
 	}
 	codexBase, _ := url.Parse("https://codex.mock")
 	pool := newPoolState([]*Account{
-		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", AccountID: "acct_ca", PlanType: "pro"},
+		{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "t-ca", codex: codexAccountState{AccountID: "acct_ca"}, PlanType: "pro"},
 	}, false)
 	calls := int32(0)
 	h := &proxyHandler{

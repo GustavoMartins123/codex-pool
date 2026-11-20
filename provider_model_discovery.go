@@ -355,8 +355,8 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	}
 	if account.Type == AccountTypeCodex {
 		hasDaybreak := accountHasDaybreak(snapshot.Models)
-		if account.CyberAccess != hasDaybreak {
-			account.CyberAccess = hasDaybreak
+		if account.codex.CyberAccess != hasDaybreak {
+			account.codex.CyberAccess = hasDaybreak
 			changed = true
 		}
 	}

@@ -211,7 +211,7 @@ func latencyTestHandler(t testing.TB, upstream string, bodyLimit int64) *proxyHa
 	if err != nil {
 		t.Fatal(err)
 	}
-	account := &Account{Type: AccountTypeCodex, ID: "latency_account", AccessToken: "test-upstream-token", AccountID: "latency_account", PlanType: "pro"}
+	account := &Account{Type: AccountTypeCodex, ID: "latency_account", AccessToken: "test-upstream-token", codex: codexAccountState{AccountID: "latency_account"}, PlanType: "pro"}
 	return &proxyHandler{
 		cfg:       &config{maxInMemoryBodyBytes: bodyLimit, maxSpoolBodyBytes: 1 << 20, maxAttempts: 1, streamTimeout: 5 * time.Second},
 		transport: http.DefaultTransport,

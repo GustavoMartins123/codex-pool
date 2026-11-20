@@ -96,8 +96,8 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		planType := a.PlanType
 		email := a.Email
-		accountID := a.AccountID
-		idTokID := a.IDTokenChatGPTAccountID
+		accountID := a.codex.AccountID
+		idTokID := a.codex.IDTokenChatGPTAccountID
 		disabled := a.Disabled
 		dead := a.Dead
 		needsLogin := a.NeedsLogin
@@ -114,7 +114,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 			accountVerificationURL = ""
 		}
 		healthError := a.HealthError
-		cyberAccess := a.CyberAccess
+		cyberAccess := a.codex.CyberAccess
 		expiresAt := a.ExpiresAt
 		lastRefresh := a.LastRefresh
 		penalty := a.Penalty
@@ -259,8 +259,9 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.AccessToken = loaded.AccessToken
 	existing.RefreshToken = loaded.RefreshToken
 	existing.IDToken = loaded.IDToken
-	existing.AccountID = loaded.AccountID
-	existing.IDTokenChatGPTAccountID = loaded.IDTokenChatGPTAccountID
+	existing.grok = loaded.grok
+	existing.codex.AccountID = loaded.codex.AccountID
+	existing.codex.IDTokenChatGPTAccountID = loaded.codex.IDTokenChatGPTAccountID
 	existing.PlanType = loaded.PlanType
 	existing.RateLimitTier = loaded.RateLimitTier
 	existing.MonthlyCost = loaded.MonthlyCost
@@ -273,16 +274,16 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.NeedsLogin = loaded.NeedsLogin
 	existing.AuthError = loaded.AuthError
 	existing.AllowedSourceIPs = loaded.AllowedSourceIPs
-	existing.AccountUUID = loaded.AccountUUID
-	existing.CyberAccess = loaded.CyberAccess
-	existing.CodexCookies = loaded.CodexCookies
+	existing.claude.UUID = loaded.claude.UUID
+	existing.codex.CyberAccess = loaded.codex.CyberAccess
+	existing.codex.Cookies = loaded.codex.Cookies
 	existing.Email = loaded.Email
-	existing.ProjectID = loaded.ProjectID
+	existing.google.ProjectID = loaded.google.ProjectID
 	existing.Models = loaded.Models
 	existing.ModelsFetchedAt = loaded.ModelsFetchedAt
-	existing.QwenTokenPlan = loaded.QwenTokenPlan
-	existing.QwenCredits = loaded.QwenCredits
-	existing.QwenCreditsError = loaded.QwenCreditsError
+	existing.qwen.TokenPlan = loaded.qwen.TokenPlan
+	existing.qwen.Credits = loaded.qwen.Credits
+	existing.qwen.CreditsError = loaded.qwen.CreditsError
 	if providerRequiresModelDiscovery(existing.Type) {
 		existing.HealthError = loaded.HealthError
 		existing.Usage = loaded.Usage

@@ -16,6 +16,12 @@ const (
 	qwenClientContextWindow = 500000
 )
 
+type qwenAccountState struct {
+	TokenPlan    *QwenTokenPlanConfig
+	Credits      *QwenCreditSnapshot
+	CreditsError string
+}
+
 type QwenProvider struct {
 	base *url.URL
 }
@@ -51,7 +57,7 @@ func (p *QwenProvider) LoadAccount(name, path string, data []byte) (*Account, er
 		Type: AccountTypeQwen, ID: strings.TrimSuffix(name, filepath.Ext(name)),
 		File: path, AccessToken: key, PlanType: "token_plan",
 		Dead: auth.Dead, Disabled: auth.Disabled,
-		QwenTokenPlan: auth.TokenPlan,
+		qwen: qwenAccountState{TokenPlan: auth.TokenPlan},
 	}
 	if auth.Models == nil || len(auth.Models.Models) == 0 {
 		account.HealthError = "Qwen model catalog is unavailable; model discovery is required"
@@ -59,10 +65,10 @@ func (p *QwenProvider) LoadAccount(name, path string, data []byte) (*Account, er
 	now := time.Now()
 	if auth.TokenPlan != nil {
 		if err := validateQwenTokenPlan(auth.TokenPlan, now); err != nil {
-			account.QwenCreditsError = err.Error()
+			account.qwen.CreditsError = err.Error()
 		} else if auth.TokenPlan.Mode == qwenPersonalManual {
 			account.PlanType = "token_plan_personal"
-			account.QwenCredits = &QwenCreditSnapshot{Edition: "personal", Plan: auth.TokenPlan.Plan,
+			account.qwen.Credits = &QwenCreditSnapshot{Edition: "personal", Plan: auth.TokenPlan.Plan,
 				Total: auth.TokenPlan.TotalCredits, Remaining: auth.TokenPlan.Remaining,
 				Used:       auth.TokenPlan.TotalCredits - auth.TokenPlan.Remaining,
 				CycleStart: auth.TokenPlan.CycleStart, CycleEnd: auth.TokenPlan.CycleEnd,
@@ -78,14 +84,14 @@ func (p *QwenProvider) LoadAccount(name, path string, data []byte) (*Account, er
 				expectedSource = "alibaba-console"
 			}
 			if credits := auth.Credits; qwenCreditsCurrent(credits, now) && credits.Source == expectedSource {
-				account.QwenCredits = credits
+				account.qwen.Credits = credits
 			}
 		}
 	}
-	if account.QwenCredits != nil {
-		account.Usage = qwenCreditUsage(account.QwenCredits, now)
-	} else if account.QwenCreditsError == "" {
-		account.QwenCreditsError = "Token Plan credit balance is unavailable"
+	if account.qwen.Credits != nil {
+		account.Usage = qwenCreditUsage(account.qwen.Credits, now)
+	} else if account.qwen.CreditsError == "" {
+		account.qwen.CreditsError = "Token Plan credit balance is unavailable"
 	}
 	return account, nil
 }

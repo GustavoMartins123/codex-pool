@@ -72,11 +72,11 @@ func TestPoolStatsMarksHealthErrorAsUnavailable(t *testing.T) {
 func TestPoolStatsExposesBankedResetExpirationsToFriends(t *testing.T) {
 	expiresAt := time.Date(2026, time.July, 18, 0, 35, 13, 709488000, time.UTC)
 	account := &Account{
-		Type:                    AccountTypeCodex,
-		ID:                      "friend-visible-codex-account",
-		ResetCreditsAvailable:   2,
-		ResetCreditsRetrievedAt: time.Now(),
-		RateLimitResetCredits:   []RateLimitResetCredit{{ID: "credit-1", ExpiresAt: expiresAt}},
+		Type: AccountTypeCodex,
+		ID:   "friend-visible-codex-account",
+		codex: codexAccountState{ResetCreditsAvailable: 2,
+			ResetCreditsRetrievedAt: time.Now(),
+			RateLimitResetCredits:   []RateLimitResetCredit{{ID: "credit-1", ExpiresAt: expiresAt}}},
 	}
 	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false)}
 	recorder := httptest.NewRecorder()
@@ -150,11 +150,11 @@ func TestMergeReloadedAccountsCarriesBankedResetsAcrossHotReload(t *testing.T) {
 	expiresAt := time.Date(2026, time.August, 12, 17, 44, 43, 0, time.UTC)
 	retrievedAt := time.Date(2026, time.July, 17, 16, 57, 33, 0, time.UTC)
 	current := &Account{
-		Type:                    AccountTypeCodex,
-		ID:                      "account",
-		ResetCreditsAvailable:   5,
-		ResetCreditsRetrievedAt: retrievedAt,
-		RateLimitResetCredits:   []RateLimitResetCredit{{ID: "credit", ExpiresAt: expiresAt}},
+		Type: AccountTypeCodex,
+		ID:   "account",
+		codex: codexAccountState{ResetCreditsAvailable: 5,
+			ResetCreditsRetrievedAt: retrievedAt,
+			RateLimitResetCredits:   []RateLimitResetCredit{{ID: "credit", ExpiresAt: expiresAt}}},
 	}
 	loaded := &Account{Type: AccountTypeCodex, ID: "account"}
 
@@ -163,10 +163,10 @@ func TestMergeReloadedAccountsCarriesBankedResetsAcrossHotReload(t *testing.T) {
 	if len(merged) != 1 || merged[0] != current {
 		t.Fatal("surviving account must keep its pointer identity")
 	}
-	if current.ResetCreditsAvailable != 5 || !current.ResetCreditsRetrievedAt.Equal(retrievedAt) {
-		t.Fatalf("preserved reset summary = available %d, retrieved %s", current.ResetCreditsAvailable, current.ResetCreditsRetrievedAt)
+	if current.codex.ResetCreditsAvailable != 5 || !current.codex.ResetCreditsRetrievedAt.Equal(retrievedAt) {
+		t.Fatalf("preserved reset summary = available %d, retrieved %s", current.codex.ResetCreditsAvailable, current.codex.ResetCreditsRetrievedAt)
 	}
-	if len(current.RateLimitResetCredits) != 1 || current.RateLimitResetCredits[0].ID != "credit" || !current.RateLimitResetCredits[0].ExpiresAt.Equal(expiresAt) {
-		t.Fatalf("preserved reset credits = %+v", current.RateLimitResetCredits)
+	if len(current.codex.RateLimitResetCredits) != 1 || current.codex.RateLimitResetCredits[0].ID != "credit" || !current.codex.RateLimitResetCredits[0].ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("preserved reset credits = %+v", current.codex.RateLimitResetCredits)
 	}
 }

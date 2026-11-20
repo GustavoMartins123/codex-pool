@@ -136,16 +136,16 @@ func TestReplaceAntigravityAccountCredentialsClearsVerification(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "account.json")
 	account := &Account{
 		Type: AccountTypeAntigravity, ID: "replace-account", File: file,
-		AccessToken: "old-access", RefreshToken: "old-refresh", ProjectID: "old-project",
+		AccessToken: "old-access", RefreshToken: "old-refresh", google: googleAccountState{ProjectID: "old-project", ModelRateLimits: make(map[string]time.Time)},
 		PlanType: "pro", Disabled: true, Dead: true, NeedsVerification: true,
-		VerificationURL: "https://verify.example", HealthError: "403", ModelRateLimits: make(map[string]time.Time),
+		VerificationURL: "https://verify.example", HealthError: "403",
 	}
 	snapshot := AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
 	antigravityModels.ReplaceAccount(account.ID, snapshot)
 	if err := (&proxyHandler{}).replaceAntigravityAccountCredentials(account, antigravityTokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}, "user@example.com", "new-project", "ultra", snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if account.AccessToken != "new-access" || account.RefreshToken != "new-refresh" || account.ProjectID != "new-project" || account.PlanType != "ultra" {
+	if account.AccessToken != "new-access" || account.RefreshToken != "new-refresh" || account.google.ProjectID != "new-project" || account.PlanType != "ultra" {
 		t.Fatalf("credentials were not replaced: %+v", account)
 	}
 	if account.NeedsVerification || account.VerificationURL != "" || account.HealthError != "" || account.Dead || !account.Disabled {
@@ -168,7 +168,7 @@ func TestAntigravityReloginValidationRejectsVerificationAndAcceptsQuota(t *testi
 	daily, _ := url.Parse("https://daily.example")
 	production, _ := url.Parse("https://prod.example")
 	provider := NewAntigravityProvider(daily, production)
-	account := &Account{ProjectID: "project", File: filepath.Join(t.TempDir(), "account.json")}
+	account := &Account{google: googleAccountState{ProjectID: "project"}, File: filepath.Join(t.TempDir(), "account.json")}
 	snapshot := AntigravityAccountSnapshot{Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
 
 	verificationHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -239,7 +239,7 @@ func TestAntigravityOnboardProjectRequiresCompletion(t *testing.T) {
 func TestSaveAntigravityAccountIsOwnerOnlyAndDurable(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "account.json")
-	account := &Account{Type: AccountTypeAntigravity, ID: "account", File: file, AccessToken: "access", RefreshToken: "refresh", Email: "a@example.com", ProjectID: "project", PlanType: "pro", ExpiresAt: time.Now().Add(time.Hour), ModelRateLimits: make(map[string]time.Time)}
+	account := &Account{Type: AccountTypeAntigravity, ID: "account", File: file, AccessToken: "access", RefreshToken: "refresh", Email: "a@example.com", google: googleAccountState{ProjectID: "project", ModelRateLimits: make(map[string]time.Time)}, PlanType: "pro", ExpiresAt: time.Now().Add(time.Hour)}
 	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}})
 	if err := saveAntigravityAccount(account); err != nil {
 		t.Fatal(err)

@@ -283,7 +283,7 @@ func TestGrantAuthenticatedHTTPAndWebSocketTurns(t *testing.T) {
 	}))
 	defer upstream.Close()
 	upstreamURL, _ := url.Parse(upstream.URL)
-	a := &Account{ID: "grant-account", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, AccessToken: "upstream-private"}
+	a := &Account{ID: "grant-account", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, AccessToken: "upstream-private"}
 	fx := newCodexProxyFixture(t, upstreamURL, []*Account{a})
 	h := fx.handler
 	h.cfg.maxAttempts = 1
@@ -452,7 +452,7 @@ func TestGrantTokensApplyToBufferedAndSpooledHTTP(t *testing.T) {
 			}))
 			defer upstream.Close()
 			base, _ := url.Parse(upstream.URL)
-			a := &Account{ID: "token-account", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, AccessToken: "test-upstream"}
+			a := &Account{ID: "token-account", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, AccessToken: "test-upstream"}
 			fx := newCodexProxyFixture(t, base, []*Account{a})
 			h := fx.handler
 			h.cfg.maxAttempts = 1

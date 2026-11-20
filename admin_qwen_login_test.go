@@ -126,7 +126,7 @@ func TestQwenBrowserLoginPersistsPrivateAccountAndAutomaticCredits(t *testing.T)
 		t.Fatalf("expected one private Qwen account, got %d", len(accounts))
 	}
 	account := accounts[0]
-	if account.QwenTokenPlan.Mode != qwenPersonalBrowser || account.QwenCredits.Total != 45000 || account.QwenCredits.Used != 11250 || account.Usage.PrimaryUsedPercent != .25 || len(account.Models) != 1 {
+	if account.qwen.TokenPlan.Mode != qwenPersonalBrowser || account.qwen.Credits.Total != 45000 || account.qwen.Credits.Used != 11250 || account.Usage.PrimaryUsedPercent != .25 || len(account.Models) != 1 {
 		t.Fatal("browser account did not retain its subscription allowance and discovered models")
 	}
 	if h.passport.authorizeAccount("browser-owner", account, "manage") != nil || h.passport.authorizeAccount("other", account, "use") == nil {
@@ -201,7 +201,7 @@ func TestQwenBrowserLoginLinksExistingKeyAccountWithoutReplacingIt(t *testing.T)
 		t.Fatalf("existing account link: %d %s", rr.Code, rr.Body.String())
 	}
 	accounts := h.pool.allAccounts()
-	if len(accounts) != 1 || accounts[0].ID != accountID || accounts[0].AccessToken != "sk-sp-browser-test-key" || accounts[0].QwenTokenPlan.CloudOAuth == nil || accounts[0].QwenCredits.Remaining != 33750 {
+	if len(accounts) != 1 || accounts[0].ID != accountID || accounts[0].AccessToken != "sk-sp-browser-test-key" || accounts[0].qwen.TokenPlan.CloudOAuth == nil || accounts[0].qwen.Credits.Remaining != 33750 {
 		t.Fatal("Cloud linking replaced the existing account or failed to load its balance")
 	}
 }

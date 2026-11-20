@@ -136,7 +136,7 @@ func TestCompactionRoundTrip(t *testing.T) {
 			h.registry = NewProviderRegistry(NewCodexProvider(base, wham, nil), NewClaudeProvider(base), NewGeminiProvider(base, base))
 			if tc.auth == token {
 				account := contextTestAccount("codex", "compact-owner")
-				account.AccountID = "acct"
+				account.codex.AccountID = "acct"
 				upstreamToken = account.AccessToken
 				h.nativeContext = contextTestService(t, base.String(), account)
 				h.pool = h.nativeContext.pool

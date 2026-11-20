@@ -47,7 +47,7 @@ func TestPrivateAccountAuthenticatedStreamAndWebSocketWithdrawal(t *testing.T) {
 	}))
 	defer upstream.Close()
 	base, _ := url.Parse(upstream.URL)
-	account := &Account{ID: "private", Type: AccountTypeCodex, AccessToken: "upstream-private", AccountID: "upstream-account", PlanType: "pro"}
+	account := &Account{ID: "private", Type: AccountTypeCodex, AccessToken: "upstream-private", codex: codexAccountState{AccountID: "upstream-account"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	h := fx.handler
 	h.cfg.maxAttempts = 1

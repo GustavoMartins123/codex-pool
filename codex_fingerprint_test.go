@@ -8,10 +8,10 @@ import (
 
 func TestCodexProviderAddsDesktopFingerprintHeadersAndCookies(t *testing.T) {
 	acc := &Account{
-		Type:         AccountTypeCodex,
-		AccessToken:  "tok",
-		AccountID:    "acct_123",
-		CodexCookies: map[string]string{"cf_clearance": "clear", "__cf_bm": "bm"},
+		Type:        AccountTypeCodex,
+		AccessToken: "tok",
+		codex: codexAccountState{AccountID: "acct_123",
+			Cookies: map[string]string{"cf_clearance": "clear", "__cf_bm": "bm"}},
 	}
 	req, err := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", strings.NewReader(`{}`))
 	if err != nil {
@@ -63,17 +63,17 @@ func TestCodexProviderPreservesClientRequestID(t *testing.T) {
 }
 
 func TestCaptureCodexResponseStatePersistsCloudflareCookies(t *testing.T) {
-	acc := &Account{Type: AccountTypeCodex, ID: "test", CodexCookies: map[string]string{}}
+	acc := &Account{Type: AccountTypeCodex, ID: "test", codex: codexAccountState{Cookies: map[string]string{}}}
 	resp := &http.Response{Header: make(http.Header)}
 	resp.Header.Set("x-codex-turn-state", "turn-1")
 	resp.Header.Add("Set-Cookie", "cf_clearance=abc; Path=/; HttpOnly")
 	resp.Header.Add("Set-Cookie", "session=skip; Path=/")
 
 	captureCodexResponseState(acc, resp, "test")
-	if got := acc.CodexCookies["cf_clearance"]; got != "abc" {
+	if got := acc.codex.Cookies["cf_clearance"]; got != "abc" {
 		t.Fatalf("cf_clearance = %q, want abc", got)
 	}
-	if _, ok := acc.CodexCookies["session"]; ok {
+	if _, ok := acc.codex.Cookies["session"]; ok {
 		t.Fatalf("non-Cloudflare session cookie should not be persisted")
 	}
 }

@@ -23,7 +23,7 @@ func TestAuthenticatedHTTPHandoffPrincipalIsolation(t *testing.T) {
 		cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20,
 			requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second},
 		pool: newPoolState([]*Account{
-			{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "codex-token", AccountID: "codex-account", PlanType: "pro"},
+			{ID: "codex-a", Type: AccountTypeCodex, AccessToken: "codex-token", codex: codexAccountState{AccountID: "codex-account"}, PlanType: "pro"},
 			{ID: "claude-a", Type: AccountTypeClaude, AccessToken: "claude-token", PlanType: "max"},
 		}, false),
 		registry: NewProviderRegistry(NewCodexProvider(codexBase, codexBase, nil), NewClaudeProvider(claudeBase), nil),

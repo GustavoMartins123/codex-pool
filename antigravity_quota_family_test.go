@@ -75,7 +75,7 @@ func TestAntigravityFamilyQuotaGatesOnlyItsOwnModels(t *testing.T) {
 		},
 		QuotaSummary: &summary,
 	}
-	account := &Account{Type: AccountTypeAntigravity, ID: "ag", ModelRateLimits: map[string]time.Time{}, Usage: extractAntigravityAccountUsage(snapshot)}
+	account := &Account{Type: AccountTypeAntigravity, ID: "ag", google: googleAccountState{ModelRateLimits: map[string]time.Time{}}, Usage: extractAntigravityAccountUsage(snapshot)}
 	antigravityModels.ReplaceAccount(account.ID, snapshot)
 
 	if available, until := antigravityModels.DiscoveryAvailability(account.ID, "gemini-3.8-flash-high", now); available || !until.Equal(reset) {

@@ -31,7 +31,7 @@ func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	acc := &Account{ID: "codex-relogin", Type: AccountTypeCodex, File: codexFile, AccountID: "acct-1"}
+	acc := &Account{ID: "codex-relogin", Type: AccountTypeCodex, File: codexFile, codex: codexAccountState{AccountID: "acct-1"}}
 	h := &proxyHandler{pool: newPoolState([]*Account{acc}, false)}
 	if err := h.replaceCodexAccountCredentials("codex-relogin", &CodexTokenResponse{
 		IDToken:      "new-id",

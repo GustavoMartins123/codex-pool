@@ -73,8 +73,8 @@ func TestRealtimeCallAndSidebandUseSamePooledAccount(t *testing.T) {
 	codex := NewCodexProviderWithRealtime(baseURL, baseURL, baseURL, baseURL)
 	registry := NewProviderRegistry(codex, NewClaudeProvider(baseURL), NewGeminiProvider(baseURL, baseURL))
 	accounts := []*Account{
-		{Type: AccountTypeCodex, ID: "first", AccessToken: "first-token", AccountID: "acct_first", PlanType: "pro"},
-		{Type: AccountTypeCodex, ID: "second", AccessToken: "second-token", AccountID: "acct_second", PlanType: "pro"},
+		{Type: AccountTypeCodex, ID: "first", AccessToken: "first-token", codex: codexAccountState{AccountID: "acct_first"}, PlanType: "pro"},
+		{Type: AccountTypeCodex, ID: "second", AccessToken: "second-token", codex: codexAccountState{AccountID: "acct_second"}, PlanType: "pro"},
 	}
 	h := &proxyHandler{
 		cfg:       &config{requestTimeout: 5 * time.Second, maxAttempts: 1, maxInMemoryBodyBytes: 1024, disableRefresh: true, websocketReadLimit: 8 << 20},
@@ -179,7 +179,7 @@ func TestProxyWebSocketPoolRewritesAuthAndPinsSession(t *testing.T) {
 		Type:        AccountTypeCodex,
 		ID:          "codex_pool_1",
 		AccessToken: "pool-access-token",
-		AccountID:   "acct_pool_1",
+		codex:       codexAccountState{AccountID: "acct_pool_1"},
 		PlanType:    "pro",
 	}
 	pool := newPoolState([]*Account{acc}, false)
@@ -259,8 +259,8 @@ func TestProxyWebSocketUsesPinnedAccountBeforeCyberPolicy(t *testing.T) {
 	gemini := NewGeminiProvider(baseURL, baseURL)
 	registry := NewProviderRegistry(codex, claude, gemini)
 
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber", PlanType: "pro", CyberAccess: true}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber", CyberAccess: true}, PlanType: "pro"}
 	pool := newPoolState([]*Account{ordinary, cyber}, false)
 	pool.pin("thread-ws-cyber", "ordinary")
 
@@ -428,7 +428,7 @@ func TestProxyWebSocketForwardsTurnStateBothWays(t *testing.T) {
 	gemini := NewGeminiProvider(baseURL, baseURL)
 	registry := NewProviderRegistry(codex, claude, gemini)
 
-	acc := &Account{Type: AccountTypeCodex, ID: "codex_pool_1", AccessToken: "pool-access-token", AccountID: "acct_pool_1", PlanType: "pro"}
+	acc := &Account{Type: AccountTypeCodex, ID: "codex_pool_1", AccessToken: "pool-access-token", codex: codexAccountState{AccountID: "acct_pool_1"}, PlanType: "pro"}
 	h := &proxyHandler{
 		cfg:       &config{requestTimeout: 5 * time.Second, maxInMemoryBodyBytes: 1024, websocketReadLimit: 128 * 1024 * 1024},
 		transport: http.DefaultTransport,

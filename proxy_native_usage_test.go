@@ -27,7 +27,7 @@ func TestAuditNativeUsage(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
 			}))
 			h.store = store
-			h.pool = newPoolState([]*Account{{ID: "audit_account", Type: kind, AccessToken: "sk-ant-api-test", AccountID: "audit_account", CyberAccess: true}}, false)
+			h.pool = newPoolState([]*Account{{ID: "audit_account", Type: kind, AccessToken: "sk-ant-api-test", codex: codexAccountState{AccountID: "audit_account", CyberAccess: true}}}, false)
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("audit-secret", "audit-user"))

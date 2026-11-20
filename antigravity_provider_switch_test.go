@@ -27,7 +27,7 @@ func TestConversationSwitchCodexToAntigravity(t *testing.T) {
 	antigravityProvider := NewAntigravityProvider(antigravityDaily, antigravityProd)
 
 	codexAcc := &Account{Type: AccountTypeCodex, ID: "codex-1", AccessToken: "codex-token", PlanType: "pro"}
-	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 
 	pool := newPoolState([]*Account{codexAcc, antiAcc}, false)
 	registry := NewProviderRegistry(codexProvider, claudeProvider, geminiProvider, antigravityProvider)

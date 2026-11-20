@@ -81,7 +81,7 @@ func TestStreamedPoolAuthRecovery(t *testing.T) {
 				}))
 				defer upstream.Close()
 				base, _ := url.Parse(upstream.URL)
-				account := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", RefreshToken: "refresh", AccountID: "upstream", PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
+				account := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", RefreshToken: "refresh", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
 				if err := os.WriteFile(account.File, []byte(`{"tokens":{"access_token":"old-access"}}`), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -131,7 +131,7 @@ func TestWebSocketPoolAuthFailure(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { rejectExpiredToken(w) }))
 	defer upstream.Close()
 	base, _ := url.Parse(upstream.URL)
-	fx := newCodexProxyFixture(t, base, []*Account{{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", AccountID: "upstream", PlanType: "pro"}})
+	fx := newCodexProxyFixture(t, base, []*Account{{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro"}})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, resp, err := websocket.Dial(ctx, fx.server.URL+"/v1/responses", &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + generateClaudePoolToken("test-secret", "test-user")}}})
@@ -169,7 +169,7 @@ func TestWebSocketPoolAuthRecovery(t *testing.T) {
 			}))
 			defer upstream.Close()
 			base, _ := url.Parse(upstream.URL)
-			expired := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", AccountID: "upstream", PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
+			expired := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
 			if err := os.WriteFile(expired.File, []byte(`{"tokens":{"access_token":"old-access"}}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +177,7 @@ func TestWebSocketPoolAuthRecovery(t *testing.T) {
 			if recovery == "refresh" {
 				expired.RefreshToken = "refresh"
 			} else {
-				accounts = append(accounts, &Account{ID: "healthy", Type: AccountTypeCodex, AccessToken: "fresh-access", AccountID: "other-upstream", PlanType: "pro"})
+				accounts = append(accounts, &Account{ID: "healthy", Type: AccountTypeCodex, AccessToken: "fresh-access", codex: codexAccountState{AccountID: "other-upstream"}, PlanType: "pro"})
 			}
 			fx := newCodexProxyFixture(t, base, accounts)
 			fx.handler.cfg.disableRefresh = false

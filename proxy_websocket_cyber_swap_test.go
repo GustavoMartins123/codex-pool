@@ -166,7 +166,7 @@ func newAbnormalCloseFixture(t *testing.T) (*codexProxyFixture, *Account) {
 		_ = conn.Close(websocket.StatusInternalError, "upstream exploded")
 	})
 	upURL, _ := url.Parse(upstream.server.URL)
-	account := &Account{Type: AccountTypeCodex, ID: "close", AccessToken: "token", AccountID: "acct_close", PlanType: "pro"}
+	account := &Account{Type: AccountTypeCodex, ID: "close", AccessToken: "token", codex: codexAccountState{AccountID: "acct_close"}, PlanType: "pro"}
 	return newCodexProxyFixture(t, upURL, []*Account{account}), account
 }
 
@@ -225,7 +225,7 @@ func TestCodexWebSocketCompletionRecordsUsageOnce(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	account := &Account{Type: AccountTypeCodex, ID: "usage", AccessToken: "usage-token", AccountID: "acct_usage", PlanType: "pro"}
+	account := &Account{Type: AccountTypeCodex, ID: "usage", AccessToken: "usage-token", codex: codexAccountState{AccountID: "acct_usage"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{account})
 	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
 	if err != nil {
@@ -315,8 +315,8 @@ func TestCodexWebSocketPinsEveryConversationToTheResponseChainAccount(t *testing
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	first := &Account{Type: AccountTypeCodex, ID: "first", AccessToken: "first-token", AccountID: "acct_first", PlanType: "pro"}
-	second := &Account{Type: AccountTypeCodex, ID: "second", AccessToken: "second-token", AccountID: "acct_second", PlanType: "pro"}
+	first := &Account{Type: AccountTypeCodex, ID: "first", AccessToken: "first-token", codex: codexAccountState{AccountID: "acct_first"}, PlanType: "pro"}
+	second := &Account{Type: AccountTypeCodex, ID: "second", AccessToken: "second-token", codex: codexAccountState{AccountID: "acct_second"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{first, second})
 	fx.handler.pool.pin("conv-first", "first")
 	fx.handler.pool.pin("conv-second", "second")
@@ -400,8 +400,8 @@ func TestCyberPolicyMidStreamSwapsSilently(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", AccountID: "acct_shiv", PlanType: "pro"}
-	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", AccountID: "acct_darv", PlanType: "pro", CyberAccess: true}
+	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", codex: codexAccountState{AccountID: "acct_shiv"}, PlanType: "pro"}
+	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", codex: codexAccountState{AccountID: "acct_darv", CyberAccess: true}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{shiv, darv})
 	fx.handler.pool.pin("conv-mid", "shiv")
 
@@ -468,8 +468,8 @@ func TestMetadataRecommendationIsNoOp(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", AccountID: "acct_shiv", PlanType: "pro"}
-	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", AccountID: "acct_darv", PlanType: "pro", CyberAccess: true}
+	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", codex: codexAccountState{AccountID: "acct_shiv"}, PlanType: "pro"}
+	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", codex: codexAccountState{AccountID: "acct_darv", CyberAccess: true}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{shiv, darv})
 	fx.handler.pool.pin("conv-meta", "shiv")
 
@@ -519,7 +519,7 @@ func TestCyberPolicyOnCyberAccountForwardsUpstreamFrame(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", AccountID: "acct_darv", PlanType: "pro", CyberAccess: true}
+	darv := &Account{Type: AccountTypeCodex, ID: "darv", AccessToken: "darv-token", codex: codexAccountState{AccountID: "acct_darv", CyberAccess: true}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{darv})
 	fx.handler.pool.pin("conv-cy", "darv")
 
@@ -572,7 +572,7 @@ func TestCyberPolicyWithoutCyberCandidateForwardsUpstreamFrame(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", AccountID: "acct_shiv", PlanType: "pro"}
+	shiv := &Account{Type: AccountTypeCodex, ID: "shiv", AccessToken: "shiv-token", codex: codexAccountState{AccountID: "acct_shiv"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{shiv})
 	fx.handler.pool.pin("conv-no-cy", "shiv")
 
@@ -750,8 +750,8 @@ func TestQuotaThresholdSwapsBeforeTurn(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_pre", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_pre", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_pre"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_pre"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-quota-pre", "drain")
 
@@ -816,8 +816,8 @@ func TestQuotaErrorMidStreamSwapsAndReplays(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_re", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_re", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_re"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_re"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-quota-re", "drain")
 
@@ -879,7 +879,7 @@ func TestQuotaErrorWithoutReplacementForwardsUpstreamFrame(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	solo := &Account{Type: AccountTypeCodex, ID: "solo", AccessToken: "solo-token", AccountID: "acct_solo", PlanType: "pro"}
+	solo := &Account{Type: AccountTypeCodex, ID: "solo", AccessToken: "solo-token", codex: codexAccountState{AccountID: "acct_solo"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{solo})
 	fx.handler.pool.pin("conv-quota-solo", "solo")
 
@@ -987,8 +987,8 @@ func TestQuotaSwapAfterRejectedRequest(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_rejected", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_rejected", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_rejected"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_rejected"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-rejected", "drain")
 

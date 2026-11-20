@@ -18,7 +18,7 @@ import (
 func TestShouldRetryBufferedSSEForCyberPolicy(t *testing.T) {
 	h := &proxyHandler{}
 	nonCyberAcc := &Account{ID: "shiv_1", Type: AccountTypeCodex}
-	cyberAcc := &Account{ID: "darv", Type: AccountTypeCodex, CyberAccess: true}
+	cyberAcc := &Account{ID: "darv", Type: AccountTypeCodex, codex: codexAccountState{CyberAccess: true}}
 
 	cases := []struct {
 		name        string
@@ -56,8 +56,8 @@ func TestResponsesNonStreamingBufferedRetriesOnCyberPolicy(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber", PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber", CyberAccess: true}, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
 
 	var accounts []string
 	cleanSSE := strings.Join([]string{
@@ -164,8 +164,8 @@ func TestClaudeSDKBufferedTranslationRetriesOnCyberPolicy(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber", PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber", CyberAccess: true}, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
 
 	var accounts []string
 	cleanSSE := strings.Join([]string{

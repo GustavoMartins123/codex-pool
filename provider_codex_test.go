@@ -155,7 +155,7 @@ func TestCodexProviderLoadAccountReadsCyberAccess(t *testing.T) {
 	if acc == nil {
 		t.Fatal("expected account")
 	}
-	if !acc.CyberAccess {
+	if !acc.codex.CyberAccess {
 		t.Fatal("expected cyber access flag")
 	}
 }

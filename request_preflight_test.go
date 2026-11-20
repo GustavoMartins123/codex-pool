@@ -20,7 +20,7 @@ func preflightHandler(transport http.RoundTripper) *proxyHandler {
 	claude, _ := url.Parse("https://api.anthropic.com")
 	return &proxyHandler{
 		cfg:     &config{maxAttempts: 1, maxInMemoryBodyBytes: 4 << 20, requestTimeout: 37 * time.Second, streamTimeout: 3 * time.Minute},
-		pool:    newPoolState([]*Account{{Type: AccountTypeCodex, ID: "codex", AccessToken: "upstream-token", AccountID: "acct", PlanType: "pro"}}, false),
+		pool:    newPoolState([]*Account{{Type: AccountTypeCodex, ID: "codex", AccessToken: "upstream-token", codex: codexAccountState{AccountID: "acct"}, PlanType: "pro"}}, false),
 		metrics: newMetrics(), recent: newRecentErrors(5),
 		registry:  NewProviderRegistry(NewCodexProvider(base, base, nil), NewClaudeProvider(claude), NewGeminiProvider(base, base)),
 		transport: transport,

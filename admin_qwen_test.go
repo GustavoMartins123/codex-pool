@@ -39,8 +39,8 @@ func TestQwenContributionDiscoversModelsAndPersistsPrivateAccount(t *testing.T) 
 	if len(account.Models) != 2 || account.HealthError != "" || account.Models["qwen3.8-max"].Protocol != "openai" {
 		t.Fatalf("invalid discovered catalog: %+v", account.Models)
 	}
-	if account.QwenCredits == nil || account.QwenCredits.Used != 6250 || account.Usage.PrimaryUsedPercent != .25 {
-		t.Fatalf("manual subscription credits not loaded: %+v", account.QwenCredits)
+	if account.qwen.Credits == nil || account.qwen.Credits.Used != 6250 || account.Usage.PrimaryUsedPercent != .25 {
+		t.Fatalf("manual subscription credits not loaded: %+v", account.qwen.Credits)
 	}
 	encrypted, err := os.ReadFile(account.File)
 	if err != nil || strings.Contains(string(encrypted), key) {
@@ -102,7 +102,7 @@ func TestQwenCreditManagementIsOwnerScopedAndHidesCloudCredentials(t *testing.T)
 	body, _ := json.Marshal(map[string]any{"token_plan": plan})
 	saved := httptest.NewRecorder()
 	h.ServeHTTP(saved, passportContributionRequest("PUT", path, ownerSession, ownerCSRF, body))
-	if saved.Code != 200 || account.QwenCredits == nil || account.QwenCredits.Used != 6000 || account.Usage.PrimaryUsedPercent != .6 {
+	if saved.Code != 200 || account.qwen.Credits == nil || account.qwen.Credits.Used != 6000 || account.Usage.PrimaryUsedPercent != .6 {
 		t.Fatalf("Personal balance update failed: %d %s", saved.Code, saved.Body.String())
 	}
 	noCSRF := httptest.NewRecorder()
@@ -117,7 +117,7 @@ func TestQwenCreditManagementIsOwnerScopedAndHidesCloudCredentials(t *testing.T)
 		t.Fatalf("another principal changed credits: %d %s", denied.Code, denied.Body.String())
 	}
 	account.mu.Lock()
-	account.QwenTokenPlan = &QwenTokenPlanConfig{Mode: qwenTeamAPI, AccessKeyID: "cloud-access-id", AccessKeySecret: "cloud-access-secret", SecurityToken: "cloud-session-secret", SeatID: "seat-test"}
+	account.qwen.TokenPlan = &QwenTokenPlanConfig{Mode: qwenTeamAPI, AccessKeyID: "cloud-access-id", AccessKeySecret: "cloud-access-secret", SecurityToken: "cloud-session-secret", SeatID: "seat-test"}
 	account.mu.Unlock()
 	view := httptest.NewRecorder()
 	h.ServeHTTP(view, passportContributionRequest("GET", path, ownerSession, ownerCSRF, nil))
@@ -129,7 +129,7 @@ func TestQwenCreditManagementIsOwnerScopedAndHidesCloudCredentials(t *testing.T)
 	})
 	refresh := httptest.NewRecorder()
 	h.ServeHTTP(refresh, passportContributionRequest("POST", path, ownerSession, ownerCSRF, nil))
-	if refresh.Code != 502 || account.QwenCredits != nil || account.Usage.PrimaryUsageReported || account.QwenCreditsError == "" {
+	if refresh.Code != 502 || account.qwen.Credits != nil || account.Usage.PrimaryUsageReported || account.qwen.CreditsError == "" {
 		t.Fatalf("failed refresh retained a credit balance: %d %s", refresh.Code, refresh.Body.String())
 	}
 }
@@ -140,7 +140,7 @@ func TestQwenCreditSnapshotsExpireWithoutInventingFreshUsage(t *testing.T) {
 	if qwenCreditsCurrent(credits, now) {
 		t.Fatal("stale automatic credits treated as current")
 	}
-	account := &Account{ID: "qwen", Type: AccountTypeQwen, QwenCredits: credits, Usage: qwenCreditUsage(credits, now)}
+	account := &Account{ID: "qwen", Type: AccountTypeQwen, qwen: qwenAccountState{Credits: credits}, Usage: qwenCreditUsage(credits, now)}
 	h := qwenTestHandler(t, nil, account)
 	rr := httptest.NewRecorder()
 	h.handlePoolStats(rr, httptest.NewRequest("GET", "/api/pool/stats", nil))

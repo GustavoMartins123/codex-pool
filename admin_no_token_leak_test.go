@@ -25,7 +25,7 @@ func TestAdminSurfacesNeverLeakUpstreamCredentials(t *testing.T) {
 		apiKeyMarker  = "LEAKTEST-apikey-3a8b"
 	)
 
-	codex := &Account{ID: "codex-leak", Type: AccountTypeCodex, AccessToken: accessMarker, RefreshToken: refreshMarker, AccountID: "acct-cx", PlanType: "pro", File: "pool/codex/x.json"}
+	codex := &Account{ID: "codex-leak", Type: AccountTypeCodex, AccessToken: accessMarker, RefreshToken: refreshMarker, codex: codexAccountState{AccountID: "acct-cx"}, PlanType: "pro", File: "pool/codex/x.json"}
 	claude := &Account{ID: "claude-leak", Type: AccountTypeClaude, AccessToken: accessMarker, RefreshToken: refreshMarker, PlanType: "max", ExpiresAt: time.Now().Add(time.Hour)}
 	apiKeyAcc := &Account{ID: "kimi-leak", Type: AccountTypeKimi, AccessToken: apiKeyMarker, PlanType: "pro"}
 
@@ -78,14 +78,13 @@ func TestAntigravityVerifySurfacesNeverLeakUpstreamCredentials(t *testing.T) {
 	base, _ := url.Parse("https://unused.example.test")
 
 	account := &Account{
-		Type:            AccountTypeAntigravity,
-		ID:              "ag-leak",
-		File:            filepath.Join(t.TempDir(), "ag-leak.json"),
-		AccessToken:     accessMarker,
-		RefreshToken:    refreshMarker,
-		ProjectID:       "project",
-		ExpiresAt:       time.Now().Add(time.Hour),
-		ModelRateLimits: map[string]time.Time{},
+		Type:         AccountTypeAntigravity,
+		ID:           "ag-leak",
+		File:         filepath.Join(t.TempDir(), "ag-leak.json"),
+		AccessToken:  accessMarker,
+		RefreshToken: refreshMarker,
+		google:       googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}},
+		ExpiresAt:    time.Now().Add(time.Hour),
 	}
 	h := &proxyHandler{
 		cfg:       &config{adminToken: "admin-token-test"},

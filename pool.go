@@ -38,31 +38,22 @@ const (
 type Account struct {
 	mu sync.Mutex
 
-	Type         AccountType // codex, gemini, or claude
-	ID           string
-	File         string
-	Label        string
-	AccessToken  string
-	RefreshToken string
-	IDToken      string
-	// AccountID corresponds to Codex `auth.json` field `tokens.account_id`.
-	// Codex uses this value as the `ChatGPT-Account-ID` header.
-	AccountID string
-	// IDTokenChatGPTAccountID is the `chatgpt_account_id` claim extracted from the ID token.
-	// We keep it for debugging/fallback but prefer AccountID when present.
-	IDTokenChatGPTAccountID string
-	PlanType                string
-	RateLimitTier           string
-	PlanCheckedAt           time.Time
-	MonthlyCost             float64
-	DailyTokenLimit         int64
-	Disabled                bool
-	Inflight                int64
-	ImageGenerationSupport  int32
-	ImageGenerationFailures int32
-	ImageGenerationRetryAt  int64
-	ExpiresAt               time.Time
-	LastRefresh             time.Time
+	Type            AccountType // codex, gemini, or claude
+	ID              string
+	File            string
+	Label           string
+	AccessToken     string
+	RefreshToken    string
+	IDToken         string
+	PlanType        string
+	RateLimitTier   string
+	PlanCheckedAt   time.Time
+	MonthlyCost     float64
+	DailyTokenLimit int64
+	Disabled        bool
+	Inflight        int64
+	ExpiresAt       time.Time
+	LastRefresh     time.Time
 	// RefreshBlocked means a transient refresh failure was observed while the
 	// current access token was still usable. Do not keep refreshing proactively;
 	// clear it only after an auth failure or a successful refresh.
@@ -73,34 +64,28 @@ type Account struct {
 	NeedsLogin bool
 	// AuthError keeps the last permanent credential rejection reason for
 	// operator surfaces; it is only meaningful while NeedsLogin is set.
-	AuthError               string
-	AddedAt                 time.Time
-	Usage                   UsageSnapshot
-	Penalty                 float64
-	LastPenalty             time.Time
-	Dead                    bool
-	LastUsed                time.Time
-	RateLimitUntil          time.Time
-	BackoffLevel            int // exponent: cooldown = min(1s * 2^level, 30m)
-	AllowedSourceIPs        []string
-	AccountUUID             string // Anthropic internal account UUID, learned from /api/claude_cli/bootstrap
-	CyberAccess             bool
-	CodexCookies            map[string]string
-	RateLimitResetCredits   []RateLimitResetCredit
-	ResetCreditsAvailable   int
-	ResetCreditsRetrievedAt time.Time
-	ResetCreditRedeeming    bool
-	Email                   string
-	ProjectID               string
-	ModelRateLimits         map[string]time.Time
-	Models                  map[string]DiscoveredModel
-	ModelsFetchedAt         time.Time
-	QwenTokenPlan           *QwenTokenPlanConfig
-	QwenCredits             *QwenCreditSnapshot
-	QwenCreditsError        string
-	NeedsVerification       bool
-	VerificationURL         string
-	HealthError             string
+	AuthError         string
+	AddedAt           time.Time
+	Usage             UsageSnapshot
+	Penalty           float64
+	LastPenalty       time.Time
+	Dead              bool
+	LastUsed          time.Time
+	RateLimitUntil    time.Time
+	BackoffLevel      int // exponent: cooldown = min(1s * 2^level, 30m)
+	AllowedSourceIPs  []string
+	Email             string
+	Models            map[string]DiscoveredModel
+	ModelsFetchedAt   time.Time
+	NeedsVerification bool
+	VerificationURL   string
+	HealthError       string
+
+	codex  codexAccountState
+	claude claudeAccountState
+	grok   grokAccountState
+	google googleAccountState
+	qwen   qwenAccountState
 
 	// Aggregated token counters (in-memory for now; persist later)
 	Totals AccountUsage
@@ -486,18 +471,18 @@ type poolState struct {
 	accountAuthority *PassportStore
 	catalogScoped    bool
 	catalogAccountAllows func(*Account, string) bool
-	mu               sync.RWMutex
-	accounts         []*Account
-	convPin          map[string]string // conversation_id -> account ID
-	convOwner        map[string]string // conversation_id -> user ID owner
-	convUpdatedAt    map[string]time.Time
-	routing          routingPolicySet
-	routingTelemetry map[string]routingTelemetry
-	circuitBreakers  *routing.CircuitBreakerManager
-	fallbackGraph    *FallbackGraph
-	debug            bool
-	rr               uint64
-	tierThreshold    float64 // secondary usage % at which we stop preferring a tier (default 0.50)
+	mu                   sync.RWMutex
+	accounts             []*Account
+	convPin              map[string]string // conversation_id -> account ID
+	convOwner            map[string]string // conversation_id -> user ID owner
+	convUpdatedAt        map[string]time.Time
+	routing              routingPolicySet
+	routingTelemetry     map[string]routingTelemetry
+	circuitBreakers      *routing.CircuitBreakerManager
+	fallbackGraph        *FallbackGraph
+	debug                bool
+	rr                   uint64
+	tierThreshold        float64 // secondary usage % at which we stop preferring a tier (default 0.50)
 }
 
 func newPoolState(accs []*Account, debug bool) *poolState {
@@ -840,14 +825,14 @@ func (p *poolState) excludeImageIncapable(exclude map[string]bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, account := range p.accounts {
-		if account == nil || account.Type != AccountTypeCodex || atomic.LoadInt32(&account.ImageGenerationSupport) >= 0 {
+		if account == nil || account.Type != AccountTypeCodex || atomic.LoadInt32(&account.codex.ImageGenerationSupport) >= 0 {
 			continue
 		}
-		retryAt := atomic.LoadInt64(&account.ImageGenerationRetryAt)
+		retryAt := atomic.LoadInt64(&account.codex.ImageGenerationRetryAt)
 		if retryAt > 0 && time.Now().Unix() >= retryAt {
-			atomic.StoreInt32(&account.ImageGenerationSupport, 0)
-			atomic.StoreInt32(&account.ImageGenerationFailures, 0)
-			atomic.StoreInt64(&account.ImageGenerationRetryAt, 0)
+			atomic.StoreInt32(&account.codex.ImageGenerationSupport, 0)
+			atomic.StoreInt32(&account.codex.ImageGenerationFailures, 0)
+			atomic.StoreInt64(&account.codex.ImageGenerationRetryAt, 0)
 			continue
 		}
 		exclude[account.ID] = true
@@ -859,14 +844,14 @@ func recordImageGenerationResult(account *Account, success bool) {
 		return
 	}
 	if success {
-		atomic.StoreInt32(&account.ImageGenerationFailures, 0)
-		atomic.StoreInt32(&account.ImageGenerationSupport, 1)
-		atomic.StoreInt64(&account.ImageGenerationRetryAt, 0)
+		atomic.StoreInt32(&account.codex.ImageGenerationFailures, 0)
+		atomic.StoreInt32(&account.codex.ImageGenerationSupport, 1)
+		atomic.StoreInt64(&account.codex.ImageGenerationRetryAt, 0)
 		return
 	}
-	atomic.AddInt32(&account.ImageGenerationFailures, 1)
-	atomic.StoreInt32(&account.ImageGenerationSupport, -1)
-	atomic.StoreInt64(&account.ImageGenerationRetryAt, time.Now().Add(10*time.Minute).Unix())
+	atomic.AddInt32(&account.codex.ImageGenerationFailures, 1)
+	atomic.StoreInt32(&account.codex.ImageGenerationSupport, -1)
+	atomic.StoreInt64(&account.codex.ImageGenerationRetryAt, time.Now().Add(10*time.Minute).Unix())
 }
 
 func planMatchesRequired(planType, requiredPlan string) bool {
@@ -988,7 +973,7 @@ func scoreTooltipFromBreakdownLocked(a *Account, now time.Time, breakdown routin
 	if breakdown.CreditBonus > 1.0 {
 		lines = append(lines, fmt.Sprintf("Credits multiplier: x%.2f", breakdown.CreditBonus))
 	}
-	if a.CyberAccess {
+	if a.codex.CyberAccess {
 		lines = append(lines, "Cyber routing weight: 2x when quota health is competitive.")
 	}
 	if accountCoolingDownLocked(a, now) {
@@ -1163,8 +1148,8 @@ func saveCodexAccount(a *Account) error {
 	}
 
 	// Preserve tokens.account_id unless it is missing and we have a value.
-	if _, exists := tokens["account_id"]; !exists && strings.TrimSpace(a.AccountID) != "" {
-		tokens["account_id"] = strings.TrimSpace(a.AccountID)
+	if _, exists := tokens["account_id"]; !exists && strings.TrimSpace(a.codex.AccountID) != "" {
+		tokens["account_id"] = strings.TrimSpace(a.codex.AccountID)
 	}
 
 	if !a.LastRefresh.IsZero() {
@@ -1182,7 +1167,7 @@ func saveCodexAccount(a *Account) error {
 		delete(root, "allowed_ip")
 	}
 
-	if a.CyberAccess {
+	if a.codex.CyberAccess {
 		root["cyber_access"] = true
 	} else {
 		delete(root, "cyber_access")
@@ -1193,8 +1178,8 @@ func saveCodexAccount(a *Account) error {
 		delete(root, "plan_type")
 	}
 
-	if len(a.CodexCookies) > 0 {
-		root["cookies"] = a.CodexCookies
+	if len(a.codex.Cookies) > 0 {
+		root["cookies"] = a.codex.Cookies
 	} else {
 		delete(root, "cookies")
 	}
@@ -1277,8 +1262,8 @@ func saveAPIKeyAccount(a *Account) error {
 	}
 	persistAccountAddedAt(root, a)
 	if a.Type == AccountTypeQwen {
-		root["token_plan"] = a.QwenTokenPlan
-		root["token_plan_credits"] = a.QwenCredits
+		root["token_plan"] = a.qwen.TokenPlan
+		root["token_plan_credits"] = a.qwen.Credits
 	}
 
 	if a.AccessToken != "" {
@@ -1363,7 +1348,7 @@ func applyGrokTokenFields(target map[string]any, a *Account, accessKey, refreshK
 		}
 	}
 	if endpointKey != "" {
-		if endpoint := strings.TrimSpace(a.AccountID); endpoint != "" {
+		if endpoint := strings.TrimSpace(a.grok.TokenEndpoint); endpoint != "" {
 			target[endpointKey] = endpoint
 		}
 	}

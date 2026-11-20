@@ -418,7 +418,7 @@ func (p *poolState) selectSmartRoute(req routing.Request) routeSelection {
 			score := routingScore{Profile: profile, Score: routing.WeightedScore(weights, signals),
 				Signals: signals, Weights: weights, Telemetry: telemetry}
 			candidates = append(candidates, candidate{
-				account: account, score: score, preferPin: pinned && account.CyberAccess,
+				account: account, score: score, preferPin: pinned && account.codex.CyberAccess,
 			})
 		}
 		account.mu.Unlock()

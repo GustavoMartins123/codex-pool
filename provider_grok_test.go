@@ -130,8 +130,8 @@ func TestGrokProviderLoadsCLIAuthJSON(t *testing.T) {
 	if acc.ID != "grok-12345678" {
 		t.Fatalf("id = %q", acc.ID)
 	}
-	if acc.AccountID != "https://auth.x.ai/oauth2/token" {
-		t.Fatalf("token endpoint = %q", acc.AccountID)
+	if acc.grok.TokenEndpoint != "https://auth.x.ai/oauth2/token" {
+		t.Fatalf("token endpoint = %q", acc.grok.TokenEndpoint)
 	}
 	if !acc.ExpiresAt.Equal(expires) {
 		t.Fatalf("expires = %v, want %v", acc.ExpiresAt, expires)
@@ -177,7 +177,7 @@ func TestGrokProviderLoadsPiGrokCliAuthJSON(t *testing.T) {
 	if acc == nil {
 		t.Fatal("expected account")
 	}
-	if acc.AccessToken != "access-token" || acc.RefreshToken != "refresh-token" || acc.AccountID != "https://auth.x.ai/oauth2/token" {
+	if acc.AccessToken != "access-token" || acc.RefreshToken != "refresh-token" || acc.grok.TokenEndpoint != "https://auth.x.ai/oauth2/token" {
 		t.Fatalf("unexpected account: %#v", acc)
 	}
 	if !acc.ExpiresAt.Equal(expires) {
@@ -193,7 +193,7 @@ func TestGrokProviderRefreshesOAuthToken(t *testing.T) {
 		File:         t.TempDir() + "/auth.json",
 		AccessToken:  "old-access",
 		RefreshToken: "old-refresh",
-		AccountID:    "https://auth.x.ai/oauth2/token",
+		grok:         grokAccountState{TokenEndpoint: "https://auth.x.ai/oauth2/token"},
 	}
 	writeTestFile(t, acc.File, `{"access_token":"old-access","refresh_token":"old-refresh"}`)
 
@@ -242,7 +242,7 @@ func TestSaveGrokAccountPreservesPiGrokCliShape(t *testing.T) {
 	path := t.TempDir() + "/pi.json"
 	writeTestFile(t, path, `{"access":"old-access","refresh":"old-refresh","expires":1,"tokenEndpoint":"https://auth.x.ai/oauth2/token","baseUrl":"https://cli-chat-proxy.grok.com/v1"}`)
 	expires := time.Date(2026, 6, 6, 17, 51, 28, 0, time.UTC)
-	acc := &Account{Type: AccountTypeGrok, ID: "pi", File: path, AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: expires, AccountID: "https://auth.x.ai/oauth2/token"}
+	acc := &Account{Type: AccountTypeGrok, ID: "pi", File: path, AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresAt: expires, grok: grokAccountState{TokenEndpoint: "https://auth.x.ai/oauth2/token"}}
 	if err := saveGrokAccount(acc); err != nil {
 		t.Fatalf("saveGrokAccount: %v", err)
 	}

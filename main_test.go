@@ -109,25 +109,25 @@ func TestFetchCodexResetCreditsStoresAvailableExpirations(t *testing.T) {
 	}
 	account := &Account{
 		AccessToken: "access-token",
-		AccountID:   "account-id",
+		codex:       codexAccountState{AccountID: "account-id"},
 	}
 
 	if err := h.fetchCodexResetCredits(account); err != nil {
 		t.Fatal(err)
 	}
-	if account.ResetCreditsAvailable != 3 {
-		t.Fatalf("available count = %d", account.ResetCreditsAvailable)
+	if account.codex.ResetCreditsAvailable != 3 {
+		t.Fatalf("available count = %d", account.codex.ResetCreditsAvailable)
 	}
-	if len(account.RateLimitResetCredits) != 2 {
-		t.Fatalf("expiration count = %d", len(account.RateLimitResetCredits))
+	if len(account.codex.RateLimitResetCredits) != 2 {
+		t.Fatalf("expiration count = %d", len(account.codex.RateLimitResetCredits))
 	}
-	if got := account.RateLimitResetCredits[0].ExpiresAt.Format(time.RFC3339Nano); got != "2026-07-18T00:35:13.709488Z" {
+	if got := account.codex.RateLimitResetCredits[0].ExpiresAt.Format(time.RFC3339Nano); got != "2026-07-18T00:35:13.709488Z" {
 		t.Fatalf("first expiration = %s", got)
 	}
-	if got := account.RateLimitResetCredits[0].ID; got != "credit-sooner" {
+	if got := account.codex.RateLimitResetCredits[0].ID; got != "credit-sooner" {
 		t.Fatalf("first credit id = %s", got)
 	}
-	if account.ResetCreditsRetrievedAt.IsZero() {
+	if account.codex.ResetCreditsRetrievedAt.IsZero() {
 		t.Fatal("reset credits were not marked as retrieved")
 	}
 }
@@ -300,7 +300,7 @@ func TestOversizedCodexBackendAPIResponsesStillHitsCodexPath(t *testing.T) {
 		NewGrokProvider(baseURL),
 	)
 	pool := newPoolState([]*Account{
-		{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", PlanType: "pro", AccountID: "acct"},
+		{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", PlanType: "pro", codex: codexAccountState{AccountID: "acct"}},
 	}, false)
 	h := &proxyHandler{
 		cfg: &config{
@@ -385,7 +385,7 @@ func TestOversizedResponsesModelRoutesAwayFromChatGPT(t *testing.T) {
 		NewKimiProvider(baseURL),
 	)
 	pool := newPoolState([]*Account{
-		{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", PlanType: "pro", AccountID: "acct"},
+		{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", PlanType: "pro", codex: codexAccountState{AccountID: "acct"}},
 		{Type: AccountTypeGrok, ID: "grok", AccessToken: "grok-token", PlanType: "grok"},
 		{Type: AccountTypeKimi, ID: "kimi", AccessToken: "kimi-token", PlanType: "kimi"},
 	}, false)
@@ -525,7 +525,7 @@ func TestCodexSSEStillSamplesWhenCyberPolicyMayInspect(t *testing.T) {
 	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex}, "/v1/responses", resp, wire.TranslateNone, "conv", false) {
 		t.Fatal("codex non-cyber SSE should keep sampling for cyber policy inspection")
 	}
-	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, CyberAccess: true}, "/v1/responses", resp, wire.TranslateNone, "conv", false) {
+	if !shouldSampleResponseBodyForRequest(provider, &Account{Type: AccountTypeCodex, codex: codexAccountState{CyberAccess: true}}, "/v1/responses", resp, wire.TranslateNone, "conv", false) {
 		t.Fatal("codex cyber-access SSE needs response sampling to preserve conversation history")
 	}
 }
@@ -593,7 +593,7 @@ func TestCodexClientClaudeModelUsesClaudeAccount(t *testing.T) {
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api/codex")
 	claudeBase, _ := url.Parse("https://api.anthropic.com")
-	codex := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", AccountID: "acct_codex", PlanType: "pro"}
+	codex := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", codex: codexAccountState{AccountID: "acct_codex"}, PlanType: "pro"}
 	claude := &Account{Type: AccountTypeClaude, ID: "claude", AccessToken: "sk-ant-api-upstream", PlanType: "max"}
 	var upstreamPath string
 	var codexAccountID string
@@ -846,7 +846,7 @@ func TestClaudeSDKRequestToGPTMapsReasoningEffort(t *testing.T) {
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api/codex")
 	wham, _ := url.Parse("https://chatgpt.com/backend-api")
-	acc := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", AccountID: "acct_codex", PlanType: "pro"}
+	acc := &Account{Type: AccountTypeCodex, ID: "codex", AccessToken: "codex-token", codex: codexAccountState{AccountID: "acct_codex"}, PlanType: "pro"}
 	var upstreamPath string
 	var upstreamBody map[string]any
 
@@ -912,8 +912,8 @@ func TestCyberPolicyStreamPinsConversationToCyberAccessAccount(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber", PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber", CyberAccess: true}, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
 	var accounts []string
 
 	h := &proxyHandler{
@@ -967,8 +967,8 @@ func TestCyberPolicyErrorRetriesOnCyberAccessAccount(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber", PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber", CyberAccess: true}, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.50}}
 	var accounts []string
 
 	h := &proxyHandler{

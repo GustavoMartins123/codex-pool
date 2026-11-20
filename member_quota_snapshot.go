@@ -107,8 +107,8 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 			Dead: account.Dead, Disabled: account.Disabled || !a.usable,
 			NeedsVerification: account.NeedsVerification, VerificationURL: account.VerificationURL,
 			HealthError: account.HealthError, RateLimitUntil: account.RateLimitUntil,
-			Models:          make(map[string]DiscoveredModel, len(account.Models)),
-			ModelRateLimits: make(map[string]time.Time, len(account.ModelRateLimits)),
+			Models: make(map[string]DiscoveredModel, len(account.Models)),
+			google: googleAccountState{ModelRateLimits: make(map[string]time.Time, len(account.google.ModelRateLimits))},
 		}
 		for id, model := range account.Models {
 			if admission.CheckModel(id) == nil && a.allows(id) {
@@ -116,8 +116,8 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 				copy.Models[id] = model
 			}
 		}
-		for id, until := range account.ModelRateLimits {
-			copy.ModelRateLimits[id] = until
+		for id, until := range account.google.ModelRateLimits {
+			copy.google.ModelRateLimits[id] = until
 		}
 		account.mu.Unlock()
 		visible.accounts = append(visible.accounts, copy)

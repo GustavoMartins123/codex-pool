@@ -15,6 +15,10 @@ import (
 )
 
 // ClaudeProvider handles Anthropic Claude accounts.
+type claudeAccountState struct {
+	UUID string // UUID from the Anthropic bootstrap endpoint.
+}
+
 type ClaudeProvider struct {
 	claudeBase *url.URL
 }
@@ -91,7 +95,7 @@ func (p *ClaudeProvider) LoadAccount(name, path string, data []byte) (*Account, 
 			acc.PlanType = "claude"
 		}
 		acc.RateLimitTier = cj.ClaudeAiOauth.RateLimitTier
-		acc.AccountUUID = cj.AccountUUID
+		acc.claude.UUID = cj.AccountUUID
 		return acc, nil
 	}
 

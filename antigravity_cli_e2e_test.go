@@ -79,7 +79,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		NewGeminiProvider(upstreamBase, upstreamBase),
 		NewAntigravityProvider(upstreamBase, upstreamBase),
 	)
-	antiAcc := &Account{Type: AccountTypeAntigravity, ID: accountID, AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: accountID, AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 	h := &proxyHandler{
 		cfg: &config{
 			requestTimeout:       5 * time.Second,

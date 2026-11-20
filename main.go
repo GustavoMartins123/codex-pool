@@ -1537,7 +1537,7 @@ func (h *proxyHandler) pinConversationToCyberAccess(conversationID string, accou
 // this case anyway, so retrying is strictly better UX than writing the
 // empty translation.
 func (h *proxyHandler) shouldRetryBufferedSSEForCyberPolicy(cyberPinned bool, attempt, attempts int, acc *Account, reqID, label string) bool {
-	if !cyberPinned || attempt >= attempts || acc == nil || acc.CyberAccess {
+	if !cyberPinned || attempt >= attempts || acc == nil || acc.codex.CyberAccess {
 		return false
 	}
 	log.Printf("[%s] buffered %s SSE saw cyber_policy on account %s; retrying on cyber_access account", reqID, label, acc.ID)
@@ -1554,7 +1554,7 @@ func (h *proxyHandler) shouldRetryBufferedSSEForCyberPolicy(cyberPinned bool, at
 // inline (the buffered translator owns the final shape) — the loop's
 // retry mechanism then discards the buffer and tries a cyber account.
 func (h *proxyHandler) wrapBufferedSSEWithCyberDetector(under io.Writer, accountType AccountType, acc *Account, conversationID, requiredPlan, originIP, reqID string, cyberPinned *bool) io.Writer {
-	if accountType != AccountTypeCodex || acc == nil || acc.CyberAccess {
+	if accountType != AccountTypeCodex || acc == nil || acc.codex.CyberAccess {
 		return under
 	}
 	return &sseInterceptWriter{
@@ -3323,7 +3323,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 			}
 
-			if accountType == AccountTypeCodex && isCyberPolicyError(errBody) && !acc.CyberAccess {
+			if accountType == AccountTypeCodex && isCyberPolicyError(errBody) && !acc.codex.CyberAccess {
 				cyberAccessRetry = true
 				lastErr = fmt.Errorf("upstream %s from non-cyber-access account %s: %s", resp.Status, acc.ID, safeText(errBody))
 				h.recent.add(lastErr.Error())
@@ -3584,7 +3584,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.CyberAccess && isCyberPolicyError(data) {
+				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3669,7 +3669,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.CyberAccess && isCyberPolicyError(data) {
+				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3721,7 +3721,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				if sampleBuf != nil {
 					sampleBuf.Write(data)
 				}
-				if accountType == AccountTypeCodex && !acc.CyberAccess && isCyberPolicyError(data) {
+				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 					}
@@ -3886,7 +3886,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			var claudeAccum *RequestUsage
 
 			usageCallback := func(data []byte) {
-				if accountType == AccountTypeCodex && !acc.CyberAccess && isCyberPolicyError(data) {
+				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, originIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
@@ -3966,7 +3966,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 					writer = wire.NewAnthropicToChatStream(writer)
 				} else if translateDir == wire.TranslateClaudeToOAI {
 					writer = wire.NewChatToAnthropicStream(writer)
-				} else if accountType == AccountTypeCodex && !acc.CyberAccess {
+				} else if accountType == AccountTypeCodex && !acc.codex.CyberAccess {
 					suppressor := &cyberPolicyHTTPSuppressor{
 						h: h, reqID: reqID, conversationID: conversationID,
 						requiredPlan: requiredPlan, clientIP: originIP, accountID: acc.ID, pinned: &cyberPinned,
@@ -4171,7 +4171,10 @@ func (h *proxyHandler) proxyRequestWebSocket(
 
 	if err := h.checkWebSocketGrant(userID, acc); err != nil { respondPolicyError(w, err); return }
 	releaseAccount, err := h.acquireAccountSlot(userID, conversationPinKey(userID, conversationID), acc)
-	if err != nil { respondPolicyError(w, err); return }
+	if err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	defer func() { releaseAccount() }()
 	atomic.AddInt64(&acc.Inflight, 1)
 	atomic.AddInt64(&h.inflight, 1)
@@ -4803,7 +4806,10 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	if err := h.checkLivePolicy(userID, requestedModel, provider.Type()); err != nil { respondPolicyError(w, err); return }
 	prepared, releaseAccount, err := h.acquireGovernedAccount(r, userID, contextSession, acc, requestedModel)
-	if err != nil { respondPolicyError(w, err); return }
+	if err != nil {
+		respondPolicyError(w, err)
+		return
+	}
 	r = prepared
 	defer func() { releaseAccount() }()
 	atomic.AddInt64(&acc.Inflight, 1)
@@ -5117,7 +5123,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		interceptWriter := &sseInterceptWriter{
 			w: writer,
 			callback: func(data []byte) {
-				if accountType == AccountTypeCodex && !acc.CyberAccess && isCyberPolicyError(data) {
+				if accountType == AccountTypeCodex && !acc.codex.CyberAccess && isCyberPolicyError(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, clientIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
@@ -5177,7 +5183,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 				usageWriter.add(*ru)
 			},
 		}
-		if accountType == AccountTypeCodex && !acc.CyberAccess {
+		if accountType == AccountTypeCodex && !acc.codex.CyberAccess {
 			suppressor := &cyberPolicyHTTPSuppressor{
 				h:              h,
 				reqID:          reqID,
@@ -6315,7 +6321,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				h.pacer.wait(sessionID)
 
 				acc.mu.Lock()
-				accUUID := acc.AccountUUID
+				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
 				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
 				if !bodyHasClaudeSystemBlocks(bodyObj) {
@@ -6377,7 +6383,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !ccIsGenuineClaudeCodeRequest(in, bodyObj) {
 				sessionID := ccSessionHeader(in, userID)
 				acc.mu.Lock()
-				accUUID := acc.AccountUUID
+				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
 				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
 				if _, ok := bodyObj["tools"]; !ok {
@@ -6446,7 +6452,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 
 	if h.cfg.debug.Load() {
 		acc.mu.Lock()
-		log.Printf("[%s] -> %s %s (account=%s account_id=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID, acc.AccountID)
+		log.Printf("[%s] -> %s %s (account=%s account_id=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID, acc.codex.AccountID)
 		acc.mu.Unlock()
 	}
 
@@ -6494,7 +6500,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 				if h.cfg.debug.Load() {
 					acc.mu.Lock()
-					log.Printf("[%s] retry after refresh -> %s %s (account=%s account_id=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID, acc.AccountID)
+					log.Printf("[%s] retry after refresh -> %s %s (account=%s account_id=%s)", reqID, outReq.Method, outReq.URL.String(), acc.ID, acc.codex.AccountID)
 					acc.mu.Unlock()
 				}
 				resp, err = h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(in))
@@ -6612,7 +6618,7 @@ func shouldSampleResponseBodyForRequest(provider Codec, acc *Account, path strin
 		return true
 	}
 	if provider.WireFormat() == WireResponses {
-		if acc != nil && !acc.CyberAccess {
+		if acc != nil && !acc.codex.CyberAccess {
 			return true
 		}
 		return conversationID == ""

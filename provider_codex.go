@@ -16,6 +16,20 @@ import (
 )
 
 // CodexProvider handles OpenAI Codex accounts.
+type codexAccountState struct {
+	AccountID               string // ChatGPT account ID from tokens.account_id.
+	IDTokenChatGPTAccountID string
+	CyberAccess             bool
+	Cookies                 map[string]string
+	ImageGenerationSupport  int32
+	ImageGenerationFailures int32
+	ImageGenerationRetryAt  int64
+	RateLimitResetCredits   []RateLimitResetCredit
+	ResetCreditsAvailable   int
+	ResetCreditsRetrievedAt time.Time
+	ResetCreditRedeeming    bool
+}
+
 type CodexProvider struct {
 	responsesBase *url.URL
 	realtimeBase  *url.URL
@@ -75,7 +89,7 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 		IDToken:      aj.Tokens.IDToken,
 	}
 	if aj.Tokens.AccountID != nil {
-		acc.AccountID = strings.TrimSpace(*aj.Tokens.AccountID)
+		acc.codex.AccountID = strings.TrimSpace(*aj.Tokens.AccountID)
 	}
 	if ip := strings.TrimSpace(aj.AllowedIP); ip != "" {
 		acc.AllowedSourceIPs = append(acc.AllowedSourceIPs, ip)
@@ -86,9 +100,9 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 		}
 	}
 	claims := parseCodexClaims(aj.Tokens.IDToken)
-	acc.IDTokenChatGPTAccountID = claims.ChatGPTAccountID
-	if acc.AccountID == "" && acc.IDTokenChatGPTAccountID != "" {
-		acc.AccountID = acc.IDTokenChatGPTAccountID
+	acc.codex.IDTokenChatGPTAccountID = claims.ChatGPTAccountID
+	if acc.codex.AccountID == "" && acc.codex.IDTokenChatGPTAccountID != "" {
+		acc.codex.AccountID = acc.codex.IDTokenChatGPTAccountID
 	}
 	acc.PlanType = claims.PlanType
 	if aj.PlanType != "" {
@@ -107,9 +121,9 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 	acc.Dead = aj.Dead
 	acc.NeedsLogin = aj.NeedsLogin
 	acc.AuthError = aj.AuthError
-	acc.CyberAccess = aj.CyberAccess
+	acc.codex.CyberAccess = aj.CyberAccess
 	if len(aj.CodexCookies) > 0 {
-		acc.CodexCookies = aj.CodexCookies
+		acc.codex.Cookies = aj.CodexCookies
 	}
 	return acc, nil
 }
@@ -117,9 +131,9 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 func (p *CodexProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
 	// ChatGPT Account ID needed for some endpoints
-	chatgptAccID := acc.AccountID
+	chatgptAccID := acc.codex.AccountID
 	if chatgptAccID == "" {
-		chatgptAccID = acc.IDTokenChatGPTAccountID
+		chatgptAccID = acc.codex.IDTokenChatGPTAccountID
 	}
 	if chatgptAccID != "" {
 		req.Header.Set("ChatGPT-Account-ID", chatgptAccID)
@@ -193,9 +207,9 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 			acc.ExpiresAt = claims.ExpiresAt
 		}
 		if claims.ChatGPTAccountID != "" {
-			acc.IDTokenChatGPTAccountID = claims.ChatGPTAccountID
-			if acc.AccountID == "" {
-				acc.AccountID = claims.ChatGPTAccountID
+			acc.codex.IDTokenChatGPTAccountID = claims.ChatGPTAccountID
+			if acc.codex.AccountID == "" {
+				acc.codex.AccountID = claims.ChatGPTAccountID
 			}
 		}
 		if claims.PlanType != "" {

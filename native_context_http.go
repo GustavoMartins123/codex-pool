@@ -175,9 +175,9 @@ func contextAuthSnapshot(acc *Account) *Account {
 	}
 	acc.mu.Lock()
 	defer acc.mu.Unlock()
-	snapshot := &Account{Type: acc.Type, ID: acc.ID, AccessToken: acc.AccessToken, IDToken: acc.IDToken, AccountID: acc.AccountID, IDTokenChatGPTAccountID: acc.IDTokenChatGPTAccountID, Dead: acc.Dead, Disabled: acc.Disabled, AllowedSourceIPs: append([]string(nil), acc.AllowedSourceIPs...), CodexCookies: make(map[string]string, len(acc.CodexCookies))}
-	for key, value := range acc.CodexCookies {
-		snapshot.CodexCookies[key] = value
+	snapshot := &Account{Type: acc.Type, ID: acc.ID, AccessToken: acc.AccessToken, IDToken: acc.IDToken, codex: codexAccountState{AccountID: acc.codex.AccountID, IDTokenChatGPTAccountID: acc.codex.IDTokenChatGPTAccountID, Cookies: make(map[string]string, len(acc.codex.Cookies))}, Dead: acc.Dead, Disabled: acc.Disabled, AllowedSourceIPs: append([]string(nil), acc.AllowedSourceIPs...)}
+	for key, value := range acc.codex.Cookies {
+		snapshot.codex.Cookies[key] = value
 	}
 	return snapshot
 }

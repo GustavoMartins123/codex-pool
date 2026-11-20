@@ -73,7 +73,7 @@ func TestMemberQuotaSnapshotIsolation(t *testing.T) {
 	saveQuotaPolicy(t, h, id, ClientPolicy{})
 	original := h.pool.allAccounts()[0]
 	original.Models = map[string]DiscoveredModel{"claude-opus-5-5": {ID: "claude-opus-5-5", Modalities: []string{"text"}}}
-	original.ModelRateLimits = map[string]time.Time{"claude-opus-5-5": time.Now().Add(time.Minute)}
+	original.google.ModelRateLimits = map[string]time.Time{"claude-opus-5-5": time.Now().Add(time.Minute)}
 	snapshot, err := h.memberQuotaSnapshot(id, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -86,9 +86,9 @@ func TestMemberQuotaSnapshotIsolation(t *testing.T) {
 	original.Usage.PrimaryUsedPercent = .95
 	original.Models["claude-opus-5-5"].Modalities[0] = "image"
 	delete(original.Models, "claude-opus-5-5")
-	delete(original.ModelRateLimits, "claude-opus-5-5")
+	delete(original.google.ModelRateLimits, "claude-opus-5-5")
 	original.mu.Unlock()
-	if account.Usage.PrimaryUsedPercent != .25 || account.Models["claude-opus-5-5"].Modalities[0] != "text" || len(account.ModelRateLimits) != 1 {
+	if account.Usage.PrimaryUsedPercent != .25 || account.Models["claude-opus-5-5"].Modalities[0] != "text" || len(account.google.ModelRateLimits) != 1 {
 		t.Fatal("live mutation changed the request snapshot")
 	}
 	if err := h.passport.revokeAccountGrant(memberQuotaOperator(t, h), "quota-claude", 1); err != nil {

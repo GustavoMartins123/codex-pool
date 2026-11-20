@@ -49,7 +49,7 @@ func TestCodexProxyStripsHostedMCPFromResponsesRequest(t *testing.T) {
 		Type:        AccountTypeCodex,
 		ID:          "codex_test",
 		AccessToken: "upstream-token",
-		AccountID:   "acct_test",
+		codex:       codexAccountState{AccountID: "acct_test"},
 		PlanType:    "pro",
 	}
 	handler := &proxyHandler{
@@ -168,7 +168,7 @@ func TestCodexProxyStripsHostedMCPFromResponsesStream(t *testing.T) {
 			Type:        AccountTypeCodex,
 			ID:          "codex_test",
 			AccessToken: "upstream-token",
-			AccountID:   "acct_test",
+			codex:       codexAccountState{AccountID: "acct_test"},
 			PlanType:    "pro",
 		}}, false),
 		registry: NewProviderRegistry(

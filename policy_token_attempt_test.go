@@ -148,7 +148,7 @@ func TestBudgetedProxyStreamsAndRejectsInsufficientHeadroomBeforeUpstream(t *tes
 	}))
 	defer up.Close()
 	base, _ := url.Parse(up.URL)
-	fx := newCodexProxyFixture(t, base, []*Account{{ID: "budget", Type: AccountTypeCodex, AccountID: "budget", AccessToken: "upstream", PlanType: "pro"}})
+	fx := newCodexProxyFixture(t, base, []*Account{{ID: "budget", Type: AccountTypeCodex, codex: codexAccountState{AccountID: "budget"}, AccessToken: "upstream", PlanType: "pro"}})
 	h := fx.handler
 	h.store = testUsageStore(t)
 	h.passport = nil

@@ -25,6 +25,10 @@ const (
 )
 
 // GrokProvider handles xAI Grok Code OAuth accounts through Grok's OpenAI-compatible Responses API.
+type grokAccountState struct {
+	TokenEndpoint string
+}
+
 type GrokProvider struct {
 	grokBase      *url.URL
 	clientVersion string
@@ -130,7 +134,7 @@ func loadGrokSimpleAccount(name, path string, data []byte) (*Account, error) {
 		acc.ExpiresAt = parseGrokUnixMillis(gj.PiExpires)
 	}
 	if endpoint := firstNonEmpty(gj.TokenEndpoint, gj.PiTokenEndpoint, gj.PiDiscovery.TokenEndpoint); endpoint != "" {
-		acc.AccountID = endpoint
+		acc.grok.TokenEndpoint = endpoint
 	}
 	return acc, nil
 }
@@ -174,7 +178,7 @@ func loadGrokCLIAccount(name, path string, data []byte) (*Account, error) {
 		AccessToken:  strings.TrimSpace(entry.Key),
 		RefreshToken: strings.TrimSpace(entry.RefreshToken),
 		PlanType:     "grok",
-		AccountID:    grokTokenEndpointFromIssuer(entry.OIDCIssuer),
+		grok:         grokAccountState{TokenEndpoint: grokTokenEndpointFromIssuer(entry.OIDCIssuer)},
 		Disabled:     entry.Disabled,
 		Dead:         entry.Dead,
 	}
@@ -193,7 +197,7 @@ func (p *GrokProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 func (p *GrokProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
 	acc.mu.Lock()
 	refreshTok := strings.TrimSpace(acc.RefreshToken)
-	tokenEndpoint := strings.TrimSpace(acc.AccountID)
+	tokenEndpoint := strings.TrimSpace(acc.grok.TokenEndpoint)
 	acc.mu.Unlock()
 
 	if refreshTok == "" {

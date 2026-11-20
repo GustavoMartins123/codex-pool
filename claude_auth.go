@@ -387,7 +387,7 @@ func saveClaudeAccount(a *Account) error {
 	allowedSourceIPs := append([]string(nil), a.AllowedSourceIPs...)
 	dead := a.Dead
 	disabled := a.Disabled
-	accountUUID := a.AccountUUID
+	accountUUID := a.claude.UUID
 	a.mu.Unlock()
 
 	if strings.TrimSpace(file) == "" {
@@ -508,7 +508,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 	acc.LastRefresh = time.Now().UTC()
 	acc.Dead = false
 	accessToken := acc.AccessToken
-	accountUUID := acc.AccountUUID
+	accountUUID := acc.claude.UUID
 	acc.mu.Unlock()
 
 	// Fetch updated plan info from the profile API
@@ -522,7 +522,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 	if accountUUID == "" {
 		if uuid, err := FetchClaudeAccountUUIDWithContext(ctx, accessToken, transport); err == nil && uuid != "" {
 			acc.mu.Lock()
-			acc.AccountUUID = uuid
+			acc.claude.UUID = uuid
 			acc.mu.Unlock()
 			log.Printf("claude account %s: learned account_uuid=%s", acc.ID, uuid)
 		}
@@ -614,7 +614,7 @@ func (h *proxyHandler) probeClaudeAccountUUIDs() {
 	needsProbe := make([]*Account, 0, len(accounts))
 	for _, acc := range accounts {
 		acc.mu.Lock()
-		if strings.HasPrefix(acc.AccessToken, "sk-ant-oat") && acc.AccountUUID == "" {
+		if strings.HasPrefix(acc.AccessToken, "sk-ant-oat") && acc.claude.UUID == "" {
 			needsProbe = append(needsProbe, acc)
 		}
 		acc.mu.Unlock()
@@ -638,7 +638,7 @@ func (h *proxyHandler) probeClaudeAccountUUIDs() {
 		}
 
 		acc.mu.Lock()
-		acc.AccountUUID = uuid
+		acc.claude.UUID = uuid
 		acc.mu.Unlock()
 
 		if err := saveClaudeAccount(acc); err != nil {

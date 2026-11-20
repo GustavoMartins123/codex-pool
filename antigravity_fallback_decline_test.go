@@ -24,7 +24,7 @@ func newFallbackDeclineHandler(t *testing.T, transport http.RoundTripper) *proxy
 	antigravityDaily, _ := url.Parse("https://daily.example")
 	antigravityProd, _ := url.Parse("https://prod.example")
 
-	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 	pool := newPoolState([]*Account{antiAcc}, false)
 
 	return &proxyHandler{

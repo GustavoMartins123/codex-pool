@@ -120,9 +120,9 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 		cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, requestTimeout: 5 * time.Second,
 			streamTimeout: 5 * time.Second, disableRefresh: true, websocketReadLimit: 8 << 20},
 		pool: newPoolState([]*Account{
-			{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex", AccountID: "acct", PlanType: "pro"},
+			{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex", codex: codexAccountState{AccountID: "acct"}, PlanType: "pro"},
 			{ID: "claude", Type: AccountTypeClaude, AccessToken: "claude", PlanType: "max"},
-			{ID: "anti", Type: AccountTypeAntigravity, AccessToken: "anti", ProjectID: "project", PlanType: "pro"},
+			{ID: "anti", Type: AccountTypeAntigravity, AccessToken: "anti", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"},
 		}, false),
 		registry:  NewProviderRegistry(NewCodexProviderWithRealtime(base, base, base, base), NewClaudeProvider(base), nil, NewAntigravityProvider(base, base)),
 		transport: http.DefaultTransport, antigravityTransport: http.DefaultTransport,

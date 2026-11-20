@@ -48,7 +48,7 @@ func TestQwenRemoteBrowserLogin(t *testing.T) {
 	}
 	t.Log(string(output))
 	accounts := h.pool.allAccounts()
-	if len(accounts) != 1 || accounts[0].Type != AccountTypeQwen || accounts[0].QwenTokenPlan.CloudOAuth == nil || accounts[0].QwenCredits == nil || accounts[0].QwenCredits.Remaining != 33750 || len(accounts[0].Models) != 1 {
+	if len(accounts) != 1 || accounts[0].Type != AccountTypeQwen || accounts[0].qwen.TokenPlan.CloudOAuth == nil || accounts[0].qwen.Credits == nil || accounts[0].qwen.Credits.Remaining != 33750 || len(accounts[0].Models) != 1 {
 		t.Fatal("browser flow did not persist the private Qwen account, discovered models and automatic credits")
 	}
 	if err := h.passport.authorizeAccount("browser-owner", accounts[0], "manage"); err != nil {

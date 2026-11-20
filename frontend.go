@@ -2323,8 +2323,8 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			primaryReported = acc.Usage.PrimaryUsageReported
 			secondaryReported = acc.Usage.SecondaryUsageReported
 		}
-		credits := acc.QwenCredits
-		creditsError := acc.QwenCreditsError
+		credits := acc.qwen.Credits
+		creditsError := acc.qwen.CreditsError
 		if acc.Type == AccountTypeQwen && !qwenCreditsCurrent(credits, stats.GeneratedAt) {
 			credits = nil
 			primaryAvailable, secondaryAvailable = false, false
@@ -2380,10 +2380,10 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			TokenPlanCreditsError:    creditsError,
 			Score:                    score,
 			ScoreTooltip:             scoreTooltip,
-			ResetCreditsAvailable:    acc.ResetCreditsAvailable,
-			ResetCreditsKnown:        !acc.ResetCreditsRetrievedAt.IsZero(),
+			ResetCreditsAvailable:    acc.codex.ResetCreditsAvailable,
+			ResetCreditsKnown:        !acc.codex.ResetCreditsRetrievedAt.IsZero(),
 		}
-		for _, credit := range acc.RateLimitResetCredits {
+		for _, credit := range acc.codex.RateLimitResetCredits {
 			as.ResetCreditExpirations = append(as.ResetCreditExpirations, credit.ExpiresAt.UTC().Format(time.RFC3339Nano))
 		}
 
@@ -2615,7 +2615,7 @@ func (h *proxyHandler) computeCyberPolicyStats(accounts []*Account) CyberPolicyS
 	now := time.Now()
 	for _, a := range accounts {
 		a.mu.Lock()
-		if a.CyberAccess && !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) &&
+		if a.codex.CyberAccess && !a.Dead && !a.Disabled && !accountHealthBlockedLocked(a) &&
 			(a.ExpiresAt.IsZero() || a.ExpiresAt.After(now) || h.cfg.disableRefresh) {
 			out.CyberCandidatesAvailable++
 		}

@@ -106,7 +106,7 @@ func (h *proxyHandler) handleGrokImport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if acc.AccountID != grokDefaultTokenURL {
+	if acc.grok.TokenEndpoint != grokDefaultTokenURL {
 		respondJSONError(w, 400, "unsupported Grok token endpoint")
 		return
 	}

@@ -138,9 +138,9 @@ func (p *PassportStore) initializeAccountAuthority(accounts []*Account) error {
 			identity := a.AccessToken
 			switch a.Type {
 			case AccountTypeCodex:
-				identity = a.AccountID
+				identity = a.codex.AccountID
 			case AccountTypeClaude:
-				identity = a.AccountUUID
+				identity = a.claude.UUID
 			case AccountTypeAntigravity:
 				identity = a.Email
 			case AccountTypeGrok:
