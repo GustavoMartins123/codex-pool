@@ -137,7 +137,7 @@ func (p *ClaudeProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 		return nil
 	}
 
-	return RefreshClaudeAccountTokensWithContext(ctx, acc, transport)
+	return RefreshClaudeAccountTokens(ctx, acc, transport)
 }
 
 func (p *ClaudeProvider) ParseUsage(obj map[string]any) *RequestUsage {

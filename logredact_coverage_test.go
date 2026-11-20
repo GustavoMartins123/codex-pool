@@ -383,7 +383,7 @@ func TestClaudeAuthErrorsAreRedactedBeforeReachingCaller(t *testing.T) {
 	})}
 	t.Cleanup(func() { claudeOAuthHTTPClient = &http.Client{Timeout: claudeOAuthHTTPTimeout} })
 
-	_, err := ClaudeRefresh("pool-refresh-token")
+	_, err := ClaudeRefresh(t.Context(), "pool-refresh-token", claudeOAuthHTTPClient.Transport)
 	if err == nil {
 		t.Fatal("expected a refresh error")
 	}

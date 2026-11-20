@@ -175,11 +175,10 @@ func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) 
 }
 
 // ClaudeRefresh refreshes an access token using the refresh token.
-func ClaudeRefresh(refreshToken string) (*ClaudeTokenResponse, error) {
-	return ClaudeRefreshWithContext(context.Background(), refreshToken, nil)
-}
-
-func ClaudeRefreshWithContext(ctx context.Context, refreshToken string, transport http.RoundTripper) (*ClaudeTokenResponse, error) {
+func ClaudeRefresh(ctx context.Context, refreshToken string, transport http.RoundTripper) (*ClaudeTokenResponse, error) {
+	if transport == nil {
+		return nil, errors.New("Claude OAuth transport is required")
+	}
 	body := map[string]string{
 		"grant_type":    "refresh_token",
 		"refresh_token": refreshToken,
@@ -201,10 +200,7 @@ func ClaudeRefreshWithContext(ctx context.Context, refreshToken string, transpor
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := claudeOAuthHTTPClient
-	if transport != nil {
-		client = &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
-	}
+	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -231,11 +227,10 @@ type ClaudeProfileInfo struct {
 }
 
 // FetchClaudeProfile calls /api/oauth/profile to get the account's plan info.
-func FetchClaudeProfile(accessToken string) (*ClaudeProfileInfo, error) {
-	return FetchClaudeProfileWithContext(context.Background(), accessToken, nil)
-}
-
-func FetchClaudeProfileWithContext(ctx context.Context, accessToken string, transport http.RoundTripper) (*ClaudeProfileInfo, error) {
+func FetchClaudeProfile(ctx context.Context, accessToken string, transport http.RoundTripper) (*ClaudeProfileInfo, error) {
+	if transport == nil {
+		return nil, errors.New("Claude OAuth transport is required")
+	}
 	profileCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
 	defer cancel()
 
@@ -253,10 +248,7 @@ func FetchClaudeProfileWithContext(ctx context.Context, accessToken string, tran
 	req.Header.Set("Accept", "application/json")
 	ccStainlessHeaders(req.Header.Set)
 
-	client := claudeOAuthHTTPClient
-	if transport != nil {
-		client = &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
-	}
+	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -309,11 +301,10 @@ func extractProfileInfo(profile map[string]any) *ClaudeProfileInfo {
 // FetchClaudeAccountUUID probes Anthropic's OAuth profile endpoint to
 // discover the real account UUID for an OAuth token. This UUID is injected
 // into metadata.user_id to match real Claude Code traffic.
-func FetchClaudeAccountUUID(accessToken string, transport http.RoundTripper) (string, error) {
-	return FetchClaudeAccountUUIDWithContext(context.Background(), accessToken, transport)
-}
-
-func FetchClaudeAccountUUIDWithContext(ctx context.Context, accessToken string, transport http.RoundTripper) (string, error) {
+func FetchClaudeAccountUUID(ctx context.Context, accessToken string, transport http.RoundTripper) (string, error) {
+	if transport == nil {
+		return "", errors.New("Claude OAuth transport is required")
+	}
 	uuidCtx, cancel := context.WithTimeout(ctx, claudeOAuthHTTPTimeout)
 	defer cancel()
 
@@ -479,11 +470,7 @@ func saveClaudeAccount(a *Account) error {
 }
 
 // RefreshClaudeAccountTokens refreshes tokens for a Claude account and updates it.
-func RefreshClaudeAccountTokens(acc *Account) error {
-	return RefreshClaudeAccountTokensWithContext(context.Background(), acc, http.DefaultTransport)
-}
-
-func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, transport http.RoundTripper) error {
+func RefreshClaudeAccountTokens(ctx context.Context, acc *Account, transport http.RoundTripper) error {
 	if acc == nil {
 		return errors.New("nil account")
 	}
@@ -494,7 +481,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 		return errors.New("no refresh token")
 	}
 
-	tokens, err := ClaudeRefreshWithContext(ctx, refreshToken, transport)
+	tokens, err := ClaudeRefresh(ctx, refreshToken, transport)
 	if err != nil {
 		return err
 	}
@@ -512,7 +499,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 	acc.mu.Unlock()
 
 	// Fetch updated plan info from the profile API
-	if profile, err := FetchClaudeProfileWithContext(ctx, accessToken, transport); err == nil && profile != nil {
+	if profile, err := FetchClaudeProfile(ctx, accessToken, transport); err == nil && profile != nil {
 		applyClaudeProfile(acc, profile)
 	} else if err != nil {
 		log.Printf("claude account %s: failed to fetch profile on refresh: %v", acc.ID, err)
@@ -520,7 +507,7 @@ func RefreshClaudeAccountTokensWithContext(ctx context.Context, acc *Account, tr
 
 	// Re-probe account UUID if we don't have one yet
 	if accountUUID == "" {
-		if uuid, err := FetchClaudeAccountUUIDWithContext(ctx, accessToken, transport); err == nil && uuid != "" {
+		if uuid, err := FetchClaudeAccountUUID(ctx, accessToken, transport); err == nil && uuid != "" {
 			acc.mu.Lock()
 			acc.claude.UUID = uuid
 			acc.mu.Unlock()
@@ -556,7 +543,7 @@ func (h *proxyHandler) checkClaudePlan(ctx context.Context, acc *Account) error 
 	if !strings.HasPrefix(accessToken, "sk-ant-oat") {
 		return nil
 	}
-	profile, err := FetchClaudeProfileWithContext(ctx, accessToken, h.transport)
+	profile, err := FetchClaudeProfile(ctx, accessToken, h.transport)
 	if err != nil {
 		return err
 	}
@@ -597,7 +584,7 @@ func parseScopes(scope string) []string {
 
 // probeClaudeAccountUUIDs iterates all Claude OAuth accounts and probes
 // Anthropic's OAuth profile endpoint for any that don't have an AccountUUID yet.
-func (h *proxyHandler) probeClaudeAccountUUIDs() {
+func (h *proxyHandler) probeClaudeAccountUUIDs(ctx context.Context) {
 	h.pool.mu.RLock()
 	accounts := make([]*Account, 0, len(h.pool.accounts))
 	for _, acc := range h.pool.accounts {
@@ -627,11 +614,14 @@ func (h *proxyHandler) probeClaudeAccountUUIDs() {
 	log.Printf("probing account UUIDs for %d claude accounts...", len(needsProbe))
 
 	for _, acc := range needsProbe {
+		if ctx.Err() != nil {
+			return
+		}
 		acc.mu.Lock()
 		token := acc.AccessToken
 		acc.mu.Unlock()
 
-		uuid, err := FetchClaudeAccountUUID(token, h.transport)
+		uuid, err := FetchClaudeAccountUUID(ctx, token, h.transport)
 		if err != nil {
 			log.Printf("claude account %s: failed to probe account_uuid: %v", acc.ID, err)
 			continue
@@ -648,6 +638,10 @@ func (h *proxyHandler) probeClaudeAccountUUIDs() {
 		}
 
 		// Rate limit: 1 request per second to avoid hammering Anthropic
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
 	}
 }

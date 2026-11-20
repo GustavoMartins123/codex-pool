@@ -809,7 +809,7 @@ func main() {
 	h.startFederationPoller(shutdownCtx)
 
 	// Probe account UUIDs for Claude OAuth accounts that don't have one yet.
-	go h.probeClaudeAccountUUIDs()
+	go h.probeClaudeAccountUUIDs(shutdownCtx)
 
 	h.startConversationCleanup(shutdownCtx)
 
