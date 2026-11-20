@@ -382,34 +382,33 @@ func TestSecurityEffortCapBypassDefense(t *testing.T) {
 // their client IP via proxy headers (CF-Connecting-IP, X-Forwarded-For, X-Real-IP),
 // preventing account whitelist bypass, effort cap evasion, and brute-force ban framing.
 func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
-	// Reset trusted proxies to default (only loopback trusted)
-	setTrustedProxies(nil)
+	var policy ipAccessSettings
 
 	// 1. Untrusted remote peer (e.g. 203.0.113.50) cannot spoof IP via proxy headers
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	req.RemoteAddr = "203.0.113.50:12345"
 
-	if ip := getClientIP(req); ip != "203.0.113.50" {
+	if ip := testResolvedClientIP(t, policy, req); ip != "203.0.113.50" {
 		t.Fatalf("expected remote addr 203.0.113.50, got %s", ip)
 	}
 
 	// Direct untrusted peer tries CF-Connecting-IP
 	req.Header.Set("CF-Connecting-IP", "199.45.144.95")
-	if ip := getClientIP(req); ip != "203.0.113.50" {
+	if ip := testResolvedClientIP(t, policy, req); ip != "203.0.113.50" {
 		t.Fatalf("expected untrusted peer CF-Connecting-IP to be ignored, got %s", ip)
 	}
 
 	// Direct untrusted peer tries X-Forwarded-For
 	req.Header.Del("CF-Connecting-IP")
 	req.Header.Set("X-Forwarded-For", "198.51.100.77, 10.0.0.1")
-	if ip := getClientIP(req); ip != "203.0.113.50" {
+	if ip := testResolvedClientIP(t, policy, req); ip != "203.0.113.50" {
 		t.Fatalf("expected untrusted peer XFF to be ignored, got %s", ip)
 	}
 
 	// Direct untrusted peer tries X-Real-IP
 	req.Header.Del("X-Forwarded-For")
 	req.Header.Set("X-Real-IP", "198.51.100.88")
-	if ip := getClientIP(req); ip != "203.0.113.50" {
+	if ip := testResolvedClientIP(t, policy, req); ip != "203.0.113.50" {
 		t.Fatalf("expected untrusted peer X-Real-IP to be ignored, got %s", ip)
 	}
 
@@ -431,7 +430,7 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 
 	// Attacker sends X-Forwarded-For: 198.51.100.77, but getClientIP returns real IP 203.0.113.50
 	req.Header.Set("X-Forwarded-For", "198.51.100.77")
-	clientIP := getClientIP(req)
+	clientIP := testResolvedClientIP(t, policy, req)
 	cand := p.selectRoute(routing.Request{Profile: string(RoutingLegacy), Provider: string(AccountTypeCodex), ClientIP: clientIP}).Account
 	if cand == nil || cand.ID != "public-fallback-account" {
 		t.Fatalf("untrusted client should not access restricted account via spoofed header, got %+v", cand)
@@ -450,7 +449,7 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 	// Attacker makes 5 failed attempts from 203.0.113.50 with rotating spoofed XFF headers
 	for i := 0; i < 5; i++ {
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("185.220.101.%d", i))
-		bf.recordFailure(getClientIP(req))
+		bf.recordFailure(testResolvedClientIP(t, policy, req))
 	}
 	// Attacker's real IP 203.0.113.50 is banned!
 	if !bf.isBanned("203.0.113.50") {
@@ -467,25 +466,33 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 	trustedReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	trustedReq.RemoteAddr = "127.0.0.1:44321" // Loopback proxy (Caddy/Nginx)
 	trustedReq.Header.Set("X-Forwarded-For", "198.51.100.77, 127.0.0.1")
-	if ip := getClientIP(trustedReq); ip != "198.51.100.77" {
+	if ip := testResolvedClientIP(t, policy, trustedReq); ip != "198.51.100.77" {
 		t.Fatalf("trusted proxy XFF should be respected, got %s", ip)
 	}
 
 	trustedReq.Header.Set("CF-Connecting-IP", "199.45.144.95")
-	if ip := getClientIP(trustedReq); ip != "199.45.144.95" {
+	if ip := testResolvedClientIP(t, policy, trustedReq); ip != "199.45.144.95" {
 		t.Fatalf("trusted proxy CF-Connecting-IP should take precedence, got %s", ip)
 	}
 
 	// 6. Explicitly configured trusted proxy CIDR
-	setTrustedProxies([]string{"10.0.0.0/8"})
-	defer setTrustedProxies(nil)
+	policy = testIPAccessSettings(t, nil, nil, []string{"10.0.0.0/8"})
 
 	cidrReq := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	cidrReq.RemoteAddr = "10.244.0.15:55123"
 	cidrReq.Header.Set("X-Real-IP", "203.0.113.99")
-	if ip := getClientIP(cidrReq); ip != "203.0.113.99" {
+	if ip := testResolvedClientIP(t, policy, cidrReq); ip != "203.0.113.99" {
 		t.Fatalf("trusted CIDR proxy X-Real-IP should be respected, got %s", ip)
 	}
+}
+
+func testResolvedClientIP(t *testing.T, policy ipAccessSettings, r *http.Request) string {
+	t.Helper()
+	ip, err := policy.resolveClientIP(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ip
 }
 
 func TestIPSharesSubnetWithAny(t *testing.T) {
@@ -516,8 +523,7 @@ func TestIPSharesSubnetWithAny(t *testing.T) {
 // (so its X-Forwarded-For is honored) while unrelated peers stay untrusted,
 // and the mode is strictly opt-in via PROXY_TRUST_SAME_SUBNET.
 func TestSecuritySameSubnetProxyTrust(t *testing.T) {
-	setTrustedProxies(nil)
-	setTrustSameSubnet(false)
+	var policy ipAccessSettings
 
 	var subnet *net.IPNet
 	for _, candidate := range localInterfaceSubnets() {
@@ -541,21 +547,20 @@ func TestSecuritySameSubnetProxyTrust(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	req.RemoteAddr = net.JoinHostPort(peer.String(), "40000")
 	req.Header.Set("X-Forwarded-For", "198.51.100.77")
-	if ip := getClientIP(req); ip != peer.String() {
+	if ip := testResolvedClientIP(t, policy, req); ip != peer.String() {
 		t.Fatalf("same-subnet peer must not be trusted by default, got %s", ip)
 	}
 
-	setTrustSameSubnet(true)
-	defer setTrustSameSubnet(false)
+	policy.trustSameSubnet = true
 
-	if ip := getClientIP(req); ip != "198.51.100.77" {
+	if ip := testResolvedClientIP(t, policy, req); ip != "198.51.100.77" {
 		t.Fatalf("same-subnet proxy XFF should be respected, got %s", ip)
 	}
 
 	outsider := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	outsider.RemoteAddr = net.JoinHostPort(outside.String(), "40000")
 	outsider.Header.Set("X-Forwarded-For", "198.51.100.77")
-	if ip := getClientIP(outsider); ip != outside.String() {
+	if ip := testResolvedClientIP(t, policy, outsider); ip != outside.String() {
 		t.Fatalf("peer outside local subnets must stay untrusted, got %s", ip)
 	}
 }

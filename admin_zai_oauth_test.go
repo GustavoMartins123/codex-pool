@@ -20,7 +20,7 @@ func zaiTestResponse(status int, body string) *http.Response {
 
 func TestZAILoginInitPollAndActor(t *testing.T) {
 	var pollToken string
-	h := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	h := &proxyHandler{cfg: &config{}, transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/api/v1/oauth/cli/init":
 			pollToken = strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
@@ -46,7 +46,7 @@ func TestZAILoginInitPollAndActor(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/zai/login/init", strings.NewReader("{}"))
 	request = request.WithContext(context.WithValue(request.Context(), providerContributionActorKey{}, "member-a"))
 	recorder := httptest.NewRecorder()
-	attachContributionFixture(t,h,"member-a")
+	attachContributionFixture(t, h, "member-a")
 	h.handleZAILoginInit(recorder, request)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("init status %d: %s", recorder.Code, recorder.Body.String())
@@ -175,7 +175,7 @@ func TestZAIOAuthPersistsLinkedCodingPlanAccount(t *testing.T) {
 	if result == nil || result.accountID == "" || result.email != "user@example.com" {
 		t.Fatalf("unexpected login result: %+v", result)
 	}
-	data, err := readAccountFile(filepath.Join(h.cfg.poolDir, "zai", result.accountID+".json"))
+	data, err := h.cfg.vault.readAccountFile(filepath.Join(h.cfg.poolDir, "zai", result.accountID+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,7 @@ func antigravityVerifyTestAccount(t *testing.T, id string) *Account {
 	t.Helper()
 	return &Account{
 		Type: AccountTypeAntigravity, ID: id,
+		vault:        plainTestVault(),
 		File:         filepath.Join(t.TempDir(), id+".json"),
 		AccessToken:  "token",
 		RefreshToken: "refresh",

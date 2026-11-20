@@ -62,6 +62,7 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	tracker := newTestBruteForceTracker(t)
 	h := &proxyHandler{cfg: &config{adminToken: "break-glass-admin-token"}, bruteForce: tracker}
 	req := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
+	req = withClientIP(req, testResolvedClientIP(t, h.ipAccess.snapshot(), req))
 	banForTest(tracker, getClientIP(req))
 
 	req.Header.Set("X-Admin-Token", "break-glass-admin-token")
@@ -77,6 +78,7 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	}
 
 	contribution := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/codex/add", nil)
+	contribution = withClientIP(contribution, testResolvedClientIP(t, h.ipAccess.snapshot(), contribution))
 	contribution.Header.Set("X-Admin-Token", "break-glass-admin-token")
 	rr = httptest.NewRecorder()
 	if h.checkProviderContributionAuth(rr, contribution) || rr.Code != http.StatusTooManyRequests {

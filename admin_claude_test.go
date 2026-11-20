@@ -95,7 +95,7 @@ func TestClaudeExchangeIdentifiesAccount(t *testing.T) {
 			if len(accounts) != 1 || accounts[0].claude.UUID != "synthetic-account-uuid" {
 				t.Fatalf("expected account UUID to be persisted, got %+v", accounts)
 			}
-			assertEncryptedCredentialFile(t, accounts[0].File, "sk-ant-oat-synthetic-token")
+			assertEncryptedCredentialFile(t, h.cfg.vault, accounts[0].File, "sk-ant-oat-synthetic-token")
 		})
 	}
 }
@@ -198,7 +198,7 @@ func TestClaudeReloginReplacesCredentialsInPlace(t *testing.T) {
 	if !account.Disabled || account.Penalty != 3 || account.Totals.TotalInputTokens != 123 {
 		t.Fatal("relogin lost administrative or runtime state")
 	}
-	raw, err := readAccountFile(account.File)
+	raw, err := account.vault.readAccountFile(account.File)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestClaudeReloginReplacesCredentialsInPlace(t *testing.T) {
 	if !strings.Contains(string(saved["claudeAiOauth"]), `"subscriptionType": "max"`) || !strings.Contains(string(saved["claudeAiOauth"]), "default_claude_max_20x") {
 		t.Fatal("relogin lost subscription metadata")
 	}
-	assertEncryptedCredentialFile(t, account.File, "sk-ant-oat-new")
+	assertEncryptedCredentialFile(t, h.cfg.vault, account.File, "sk-ant-oat-new")
 	if err := h.reloadAccounts(); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestClaudeReloginExchangeRejectsInvalidSessionsAndCredentials(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			h, account, actor := claudeReloginFixture(t)
 			login := startClaudeReloginTest(t, h, account, actor)
-			before, err := readAccountFile(account.File)
+			before, err := account.vault.readAccountFile(account.File)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -322,7 +322,7 @@ func TestClaudeReloginExchangeRejectsInvalidSessionsAndCredentials(t *testing.T)
 			if w.Code != want || exchanges != wantExchanges {
 				t.Fatalf("status=%d, want %d; exchanges=%d, want %d; body=%s", w.Code, want, exchanges, wantExchanges, w.Body.String())
 			}
-			after, err := readAccountFile(account.File)
+			after, err := account.vault.readAccountFile(account.File)
 			if err != nil || string(before) != string(after) || account.AccessToken != "sk-ant-oat-old" || !account.NeedsLogin {
 				t.Fatal("rejected relogin modified existing credentials")
 			}

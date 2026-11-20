@@ -188,7 +188,9 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *proxyHandler) handleAntigravityAdd(w http.ResponseWriter, r *http.Request) {
-	if !h.checkContributionAttempt(w,r) { return }
+	if !h.checkContributionAttempt(w, r) {
+		return
+	}
 	h.startAntigravityOAuth(w, r, "")
 }
 
@@ -534,7 +536,7 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 	}
 	file := filepath.Join(h.cfg.poolDir, "antigravity", accountID+".json")
 	account := &Account{
-		Type: AccountTypeAntigravity, ID: accountID, File: file, Email: email,
+		Type: AccountTypeAntigravity, ID: accountID, File: file, Email: email, vault: h.cfg.vault,
 		google: googleAccountState{ProjectID: projectID, ModelRateLimits: make(map[string]time.Time)}, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken,
 		PlanType: planType, ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second),
 		LastRefresh: time.Now().UTC(), AddedAt: time.Now().UTC(),

@@ -321,7 +321,7 @@ func TestLoadPoolLoadsXiaomiAccounts(t *testing.T) {
 
 	xiaomiBase, _ := url.Parse("https://token-plan-sgp.xiaomimimo.com/anthropic")
 	registry := NewProviderRegistry(&CodexProvider{}, &ClaudeProvider{}, &GeminiProvider{}, NewXiaomiProvider(xiaomiBase))
-	accounts, err := loadPool(poolDir, registry)
+	accounts, err := loadPool(poolDir, registry, plainTestVault())
 	if err != nil {
 		t.Fatalf("loadPool: %v", err)
 	}
@@ -349,6 +349,7 @@ func TestXiaomiUsagePollerSkipsGenericFetch(t *testing.T) {
 	acc := &Account{
 		Type:        AccountTypeXiaomi,
 		ID:          "one",
+		vault:       plainTestVault(),
 		File:        accountFile,
 		AccessToken: "tp-one",
 		PlanType:    "xiaomi",
@@ -469,8 +470,8 @@ func TestXiaomiAdminRejectsUnauthorizedKeyWithoutSaving(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/xiaomi/add", strings.NewReader(`{"api_key":"tp-bad"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	attachContributionFixture(t,h,"alice")
-	h.handleXiaomiAdd(rr, contributionRequestActor(req,"alice"))
+	attachContributionFixture(t, h, "alice")
+	h.handleXiaomiAdd(rr, contributionRequestActor(req, "alice"))
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
@@ -500,8 +501,8 @@ func TestXiaomiAdminReportsNonAuthValidationFailureWithoutSaving(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/admin/xiaomi/add", strings.NewReader(`{"api_key":"tp-validish"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	attachContributionFixture(t,h,"alice")
-	h.handleXiaomiAdd(rr, contributionRequestActor(req,"alice"))
+	attachContributionFixture(t, h, "alice")
+	h.handleXiaomiAdd(rr, contributionRequestActor(req, "alice"))
 
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())

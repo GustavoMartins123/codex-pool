@@ -552,6 +552,8 @@ func TestSaveAccountPreservesUnknownFields(t *testing.T) {
 
 	acc := &Account{
 		ID:           "a1",
+		Type:         AccountTypeCodex,
+		vault:        plainTestVault(),
 		File:         path,
 		AccessToken:  "new-access",
 		RefreshToken: "new-refresh",

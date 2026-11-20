@@ -188,7 +188,7 @@ func (h *proxyHandler) reloadAccounts() error {
 	defer h.usagePollMu.Unlock()
 
 	log.Printf("reloading pool from %s", h.cfg.poolDir)
-	accs, err := loadPool(h.cfg.poolDir, h.registry)
+	accs, err := loadPool(h.cfg.poolDir, h.registry, h.cfg.vault)
 	if err != nil {
 		log.Printf("load pool: %v", err)
 		h.pool.replace(nil)

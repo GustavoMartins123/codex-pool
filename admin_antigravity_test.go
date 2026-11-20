@@ -58,9 +58,9 @@ func TestAntigravityAddBuildsRealGoogleAuthorizationURL(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/antigravity/add", strings.NewReader("{}"))
 	request.Header.Set("Origin", "https://pool.example.test")
 	recorder := httptest.NewRecorder()
-	h := &proxyHandler{}
-	attachContributionFixture(t,h,"alice")
-	h.handleAntigravityAdd(recorder, contributionRequestActor(request,"alice"))
+	h := &proxyHandler{cfg: &config{}}
+	attachContributionFixture(t, h, "alice")
+	h.handleAntigravityAdd(recorder, contributionRequestActor(request, "alice"))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("unexpected response %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -93,7 +93,7 @@ func TestAntigravityAddBuildsRealGoogleAuthorizationURL(t *testing.T) {
 func TestAntigravityReloginBindsOAuthSessionToAccount(t *testing.T) {
 	t.Setenv("ANTIGRAVITY_OAUTH_CLIENT_ID", "test-client-id")
 	t.Setenv("ANTIGRAVITY_OAUTH_REDIRECT_URI", "https://pool.example.test/admin/antigravity/callback")
-	account := &Account{Type: AccountTypeAntigravity, ID: "relogin-account", Email: "target@example.com", File: filepath.Join(t.TempDir(), "account.json")}
+	account := &Account{Type: AccountTypeAntigravity, ID: "relogin-account", Email: "target@example.com", vault: plainTestVault(), File: filepath.Join(t.TempDir(), "account.json")}
 	handler := &proxyHandler{pool: newPoolState([]*Account{account}, false), cfg: &config{}}
 	request := httptest.NewRequest(http.MethodPost, "/admin/antigravity/relogin", strings.NewReader(`{"account_id":"relogin-account"}`))
 	request.Header.Set("Origin", "https://pool.example.test")
@@ -135,7 +135,7 @@ func TestAntigravityReloginBindsOAuthSessionToAccount(t *testing.T) {
 func TestReplaceAntigravityAccountCredentialsClearsVerification(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "account.json")
 	account := &Account{
-		Type: AccountTypeAntigravity, ID: "replace-account", File: file,
+		Type: AccountTypeAntigravity, ID: "replace-account", vault: plainTestVault(), File: file,
 		AccessToken: "old-access", RefreshToken: "old-refresh", google: googleAccountState{ProjectID: "old-project", ModelRateLimits: make(map[string]time.Time)},
 		PlanType: "pro", Disabled: true, Dead: true, NeedsVerification: true,
 		VerificationURL: "https://verify.example", HealthError: "403",
@@ -168,7 +168,7 @@ func TestAntigravityReloginValidationRejectsVerificationAndAcceptsQuota(t *testi
 	daily, _ := url.Parse("https://daily.example")
 	production, _ := url.Parse("https://prod.example")
 	provider := NewAntigravityProvider(daily, production)
-	account := &Account{google: googleAccountState{ProjectID: "project"}, File: filepath.Join(t.TempDir(), "account.json")}
+	account := &Account{google: googleAccountState{ProjectID: "project"}, vault: plainTestVault(), File: filepath.Join(t.TempDir(), "account.json")}
 	snapshot := AntigravityAccountSnapshot{Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
 
 	verificationHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -239,7 +239,7 @@ func TestAntigravityOnboardProjectRequiresCompletion(t *testing.T) {
 func TestSaveAntigravityAccountIsOwnerOnlyAndDurable(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "account.json")
-	account := &Account{Type: AccountTypeAntigravity, ID: "account", File: file, AccessToken: "access", RefreshToken: "refresh", Email: "a@example.com", google: googleAccountState{ProjectID: "project", ModelRateLimits: make(map[string]time.Time)}, PlanType: "pro", ExpiresAt: time.Now().Add(time.Hour)}
+	account := &Account{Type: AccountTypeAntigravity, ID: "account", vault: plainTestVault(), File: file, AccessToken: "access", RefreshToken: "refresh", Email: "a@example.com", google: googleAccountState{ProjectID: "project", ModelRateLimits: make(map[string]time.Time)}, PlanType: "pro", ExpiresAt: time.Now().Add(time.Hour)}
 	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}})
 	if err := saveAntigravityAccount(account); err != nil {
 		t.Fatal(err)

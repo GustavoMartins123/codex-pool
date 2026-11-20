@@ -87,6 +87,7 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 	if err != nil || account == nil || account.AccessToken != "AIza-test-key" || account.HealthError == "" {
 		t.Fatalf("account = %+v err=%v", account, err)
 	}
+	account.vault = plainTestVault()
 	// A stale dead flag from an earlier probe must not outlive a valid key.
 	account.Dead, account.Penalty = true, 100
 	status := http.StatusOK
@@ -129,6 +130,7 @@ func TestAIStudioUsagePollerLeavesKeysAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 	account := aistudioTestAccount("key", "AIza-poller")
+	account.vault = plainTestVault()
 	account.File = file
 	h := &proxyHandler{
 		cfg:  &config{usageRefresh: time.Minute},

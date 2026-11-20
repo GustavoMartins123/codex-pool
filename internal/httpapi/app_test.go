@@ -38,7 +38,7 @@ func TestRoutingKeepsOriginalURLAndDecodedSegments(t *testing.T) {
 			}
 			app := New(
 				func(http.ResponseWriter, *http.Request) {},
-				func(http.ResponseWriter, *http.Request) bool { return true },
+				func(_ http.ResponseWriter, r *http.Request) *http.Request { return r },
 				func() string { return "test-request" },
 				func(w http.ResponseWriter, r *http.Request) { assertRoute(w, r, false) },
 			)

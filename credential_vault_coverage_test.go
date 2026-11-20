@@ -17,7 +17,7 @@ import (
 // motivated this test was the Codex re-login and Z.ai OAuth paths writing
 // raw JSON through os.WriteFile/os.OpenFile while the vault was enabled.
 func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'c'), nil)
+	vault := keyedTestVault(t, hexKey(t, 1, 'c'), nil)
 	dir := t.TempDir()
 
 	codexFile := filepath.Join(dir, "codex-relogin.json")
@@ -27,11 +27,11 @@ func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
 	}
 	// The file must start out encrypted too, otherwise the test would pass
 	// trivially for the wrong reason.
-	if err := writeAccountFile(codexFile, plain); err != nil {
+	if err := vault.writeAccountFile(codexFile, plain); err != nil {
 		t.Fatal(err)
 	}
 
-	acc := &Account{ID: "codex-relogin", Type: AccountTypeCodex, File: codexFile, codex: codexAccountState{AccountID: "acct-1"}}
+	acc := &Account{ID: "codex-relogin", Type: AccountTypeCodex, vault: vault, File: codexFile, codex: codexAccountState{AccountID: "acct-1"}}
 	h := &proxyHandler{pool: newPoolState([]*Account{acc}, false)}
 	if err := h.replaceCodexAccountCredentials("codex-relogin", &CodexTokenResponse{
 		IDToken:      "new-id",
@@ -40,7 +40,7 @@ func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("codex re-login failed: %v", err)
 	}
-	assertEncryptedCredentialFile(t, codexFile, "new-access", "new-refresh")
+	assertEncryptedCredentialFile(t, vault, codexFile, "new-access", "new-refresh")
 
 	zaiDir := filepath.Join(dir, "zai")
 	base, _ := url.Parse("https://provider.example")
@@ -56,41 +56,41 @@ func TestInvariantNoCredentialFileBypassesTheVault(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 zai account file, got %d", len(entries))
 	}
-	assertEncryptedCredentialFile(t, filepath.Join(zaiDir, entries[0].Name()), "zai-api-key", "zai-jwt", "zai-business-token")
+	assertEncryptedCredentialFile(t, zaiHandler.cfg.vault, filepath.Join(zaiDir, entries[0].Name()), "zai-api-key", "zai-jwt", "zai-business-token")
 }
 
 // TestCredentialWritersGoThroughTheVault pins every credential write helper to
 // the vault: a new writer that forgets to encode must fail here.
 func TestCredentialWritersGoThroughTheVault(t *testing.T) {
-	useKeyedVault(t, hexKey(t, 1, 'q'), nil)
+	vault := keyedTestVault(t, hexKey(t, 1, 'q'), nil)
 	dir := t.TempDir()
 
 	// atomicWriteJSON (used by saveAccount, claude and antigravity refreshes).
 	jsonPath := filepath.Join(dir, "atomic.json")
-	if err := atomicWriteJSON(jsonPath, map[string]any{"api_key": "atomic-secret"}); err != nil {
+	if err := vault.atomicWriteJSON(jsonPath, map[string]any{"api_key": "atomic-secret"}); err != nil {
 		t.Fatal(err)
 	}
-	assertEncryptedCredentialFile(t, jsonPath, "atomic-secret")
+	assertEncryptedCredentialFile(t, vault, jsonPath, "atomic-secret")
 
 	// writeAccountFile (used by the admin add/relogin handlers).
 	rawPath := filepath.Join(dir, "raw.json")
-	if err := writeAccountFile(rawPath, []byte(`{"api_key":"raw-secret"}`)); err != nil {
+	if err := vault.writeAccountFile(rawPath, []byte(`{"api_key":"raw-secret"}`)); err != nil {
 		t.Fatal(err)
 	}
-	assertEncryptedCredentialFile(t, rawPath, "raw-secret")
+	assertEncryptedCredentialFile(t, vault, rawPath, "raw-secret")
 
 	// Migration and rollback must also stay at rest / return to plaintext.
 	plainPath := filepath.Join(dir, "plain.json")
 	if err := os.WriteFile(plainPath, []byte(`{"api_key":"migrate-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := migrateCredentialFiles(dir); err != nil {
+	if _, _, err := vault.migrateCredentialFiles(dir); err != nil {
 		t.Fatal(err)
 	}
-	assertEncryptedCredentialFile(t, plainPath, "migrate-secret")
+	assertEncryptedCredentialFile(t, vault, plainPath, "migrate-secret")
 }
 
-func assertEncryptedCredentialFile(t *testing.T, path string, forbidden ...string) {
+func assertEncryptedCredentialFile(t *testing.T, vault credentialVault, path string, forbidden ...string) {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -104,9 +104,9 @@ func assertEncryptedCredentialFile(t *testing.T, path string, forbidden ...strin
 			t.Fatalf("%s leaked %q to disk", path, secret)
 		}
 	}
-	decoded, err := readAccountFile(path)
+	decoded, err := vault.readAccountFile(path)
 	if err != nil {
-		t.Fatalf("readAccountFile(%s): %v", path, err)
+		t.Fatalf("vault.readAccountFile(%s): %v", path, err)
 	}
 	if !json.Valid(decoded) {
 		t.Fatalf("%s did not decode back to JSON: %s", path, decoded)

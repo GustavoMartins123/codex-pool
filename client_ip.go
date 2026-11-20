@@ -1,26 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
-
-var (
-	trustedProxiesMu       sync.RWMutex
-	trustedProxyNets       []*net.IPNet
-	trustedProxyTrustAll   bool
-	trustedProxySameSubnet bool
-)
-
-func init() {
-	initTrustedProxiesFromEnv()
-}
 
 // splitCommaEntries splits a comma-separated env value into trimmed entries.
 func splitCommaEntries(raw string) []string {
@@ -31,19 +20,6 @@ func splitCommaEntries(raw string) []string {
 		}
 	}
 	return list
-}
-
-func initTrustedProxiesFromEnv() {
-	if err := setTrustedProxies(effectiveTrustedProxies(nil)); err != nil {
-		log.Fatalf("invalid trusted proxies: %v", err)
-	}
-	setTrustSameSubnet(parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
-}
-
-func setTrustSameSubnet(enabled bool) {
-	trustedProxiesMu.Lock()
-	defer trustedProxiesMu.Unlock()
-	trustedProxySameSubnet = enabled
 }
 
 // localSubnetCache caches the subnets of this process's own network
@@ -65,7 +41,7 @@ func localInterfaceSubnets() []*net.IPNet {
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return localSubnetCache.nets
+		return nil
 	}
 	nets := make([]*net.IPNet, 0, len(interfaces))
 	for _, iface := range interfaces {
@@ -143,54 +119,31 @@ func parseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
 	return nets, trustAll, nil
 }
 
-// If empty, only loopback peers are trusted. "*" explicitly trusts all peers.
-func setTrustedProxies(entries []string) error {
-	nets, trustAll, err := parseTrustedProxies(entries)
-	if err != nil {
-		return err
-	}
-	installTrustedProxies(nets, trustAll)
-	return nil
-}
-
-func installTrustedProxies(nets []*net.IPNet, trustAll bool) {
-	trustedProxiesMu.Lock()
-	defer trustedProxiesMu.Unlock()
-	trustedProxyTrustAll = trustAll
-	trustedProxyNets = nets
-}
-
 // isTrustedProxy returns true if the remote peer IP is a trusted proxy.
-func isTrustedProxy(ip net.IP) bool {
+func (s ipAccessSettings) isTrustedProxy(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-	trustedProxiesMu.RLock()
-	trustAll := trustedProxyTrustAll
-	trustSameSubnet := trustedProxySameSubnet
-	nets := trustedProxyNets
-	trustedProxiesMu.RUnlock()
-
-	if trustAll {
+	if s.trustAllProxies {
 		return true
 	}
 	if ip.IsLoopback() {
 		return true
 	}
-	for _, n := range nets {
+	for _, n := range s.trustedProxies {
 		if n.Contains(ip) {
 			return true
 		}
 	}
-	if trustSameSubnet && sameSubnetAsSelf(ip) {
+	if s.trustSameSubnet && sameSubnetAsSelf(ip) {
 		return true
 	}
 	return false
 }
 
-// requestClientIP attributes a request to its peer unless that peer is a
+// resolveClientIP attributes a request to its peer unless that peer is a
 // trusted proxy. A supplied canonical forwarding header must be valid.
-func requestClientIP(r *http.Request) (string, error) {
+func (s ipAccessSettings) resolveClientIP(r *http.Request) (string, error) {
 	if r == nil {
 		return "", errors.New("request missing")
 	}
@@ -202,7 +155,7 @@ func requestClientIP(r *http.Request) (string, error) {
 	if peer == nil {
 		return "", errors.New("invalid remote peer IP")
 	}
-	if !isTrustedProxy(peer) {
+	if !s.isTrustedProxy(peer) {
 		return peer.String(), nil
 	}
 	single := func(name, raw string) (string, error) {
@@ -230,7 +183,7 @@ func requestClientIP(r *http.Request) (string, error) {
 		// Walk from the immediate proxy toward the client. Any addresses to
 		// the left of the first untrusted hop may have been supplied by it.
 		for i := len(ips) - 1; i >= 0; i-- {
-			if !isTrustedProxy(ips[i]) || i == 0 {
+			if !s.isTrustedProxy(ips[i]) || i == 0 {
 				return ips[i].String(), nil
 			}
 		}
@@ -242,6 +195,23 @@ func requestClientIP(r *http.Request) (string, error) {
 		return single("X-Real-IP", raw[0])
 	}
 	return peer.String(), nil
+}
+
+type requestClientIPKey struct{}
+
+func withClientIP(r *http.Request, ip string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), requestClientIPKey{}, ip))
+}
+
+func requestClientIP(r *http.Request) (string, error) {
+	if r == nil {
+		return "", errors.New("request missing")
+	}
+	ip, ok := r.Context().Value(requestClientIPKey{}).(string)
+	if !ok {
+		return "", errors.New("client IP was not resolved at ingress")
+	}
+	return ip, nil
 }
 
 func getClientIP(r *http.Request) string {

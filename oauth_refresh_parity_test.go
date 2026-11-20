@@ -90,7 +90,7 @@ func runOAuthRefreshParity(t *testing.T, tc oauthRefreshParityCase) oauthRefresh
 	if err := os.WriteFile(file, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	acc := &Account{ID: "account", Type: accountType, File: file, AccessToken: "old-access", RefreshToken: tc.RefreshToken, codex: codexAccountState{AccountID: tc.AccountID}, PlanType: "old-plan", Dead: true, NeedsLogin: true, AuthError: "old-error"}
+	acc := &Account{ID: "account", Type: accountType, vault: plainTestVault(), File: file, AccessToken: "old-access", RefreshToken: tc.RefreshToken, codex: codexAccountState{AccountID: tc.AccountID}, PlanType: "old-plan", Dead: true, NeedsLogin: true, AuthError: "old-error"}
 	if accountType == AccountTypeGrok {
 		acc.grok.TokenEndpoint = tc.AccountID
 		acc.codex.AccountID = ""

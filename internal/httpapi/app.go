@@ -17,16 +17,16 @@ type Check func(http.ResponseWriter, *http.Request) bool
 type App struct {
 	mux             *http.ServeMux
 	securityHeaders http.HandlerFunc
-	allowClient     Check
+	authorizeClient func(http.ResponseWriter, *http.Request) *http.Request
 	newRequestID    func() string
 	gateway         http.HandlerFunc
 }
 
-func New(securityHeaders http.HandlerFunc, allowClient Check, newRequestID func() string, gateway http.HandlerFunc) *App {
+func New(securityHeaders http.HandlerFunc, authorizeClient func(http.ResponseWriter, *http.Request) *http.Request, newRequestID func() string, gateway http.HandlerFunc) *App {
 	app := &App{
 		mux:             http.NewServeMux(),
 		securityHeaders: securityHeaders,
-		allowClient:     allowClient,
+		authorizeClient: authorizeClient,
 		newRequestID:    newRequestID,
 		gateway:         gateway,
 	}
@@ -45,7 +45,8 @@ func (app *App) HandleFunc(pattern string, handler http.HandlerFunc) {
 
 func (app *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	app.securityHeaders(w, r)
-	if !app.allowClient(w, r) {
+	r = app.authorizeClient(w, r)
+	if r == nil {
 		return
 	}
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))

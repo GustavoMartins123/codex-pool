@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +81,7 @@ func TestStreamedPoolAuthRecovery(t *testing.T) {
 				}))
 				defer upstream.Close()
 				base, _ := url.Parse(upstream.URL)
-				account := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", RefreshToken: "refresh", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
+				account := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", RefreshToken: "refresh", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", vault: plainTestVault(), File: filepath.Join(t.TempDir(), "account.json")}
 				if err := os.WriteFile(account.File, []byte(`{"tokens":{"access_token":"old-access"}}`), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -169,7 +169,7 @@ func TestWebSocketPoolAuthRecovery(t *testing.T) {
 			}))
 			defer upstream.Close()
 			base, _ := url.Parse(upstream.URL)
-			expired := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", File: filepath.Join(t.TempDir(), "account.json")}
+			expired := &Account{ID: "expired", Type: AccountTypeCodex, AccessToken: "old-access", codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro", vault: plainTestVault(), File: filepath.Join(t.TempDir(), "account.json")}
 			if err := os.WriteFile(expired.File, []byte(`{"tokens":{"access_token":"old-access"}}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -240,6 +240,7 @@ func TestRefreshAccountIsolatedFromClientDisconnect(t *testing.T) {
 	acc := &Account{
 		Type:         AccountTypeCodex,
 		ID:           "codex_test_singleflight",
+		vault:        plainTestVault(),
 		File:         file,
 		AccessToken:  "old-token",
 		RefreshToken: "valid-refresh",

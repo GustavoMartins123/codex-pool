@@ -37,7 +37,7 @@ func TestSetAccountDisabledPersistsAndReloads(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"api_key":"secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	account := &Account{ID: "kimi", Type: AccountTypeKimi, File: file, AccessToken: "secret"}
+	account := &Account{ID: "kimi", Type: AccountTypeKimi, vault: plainTestVault(), File: file, AccessToken: "secret"}
 	h := &proxyHandler{pool: newPoolState([]*Account{account}, false)}
 
 	recorder := httptest.NewRecorder()

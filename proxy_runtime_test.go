@@ -36,7 +36,7 @@ func TestProxyRuntimeDrivesRequestLogsAndLatency(t *testing.T) {
 			logger: slog.New(logredact.NewTextHandler(&output)),
 		},
 	}
-	app := routes.newHTTPApp(&ipAccessPolicy{})
+	app := routes.newHTTPApp()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses",
 		strings.NewReader(`{"model":"gpt-5.5","stream":true,"input":"hello"}`))
 	r.Header.Set("X-Request-ID", requestID)
