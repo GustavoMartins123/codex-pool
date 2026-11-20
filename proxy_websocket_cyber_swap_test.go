@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -227,20 +226,10 @@ func TestCodexWebSocketCompletionRecordsUsageOnce(t *testing.T) {
 	upURL, _ := url.Parse(upstream.server.URL)
 	account := &Account{Type: AccountTypeCodex, ID: "usage", AccessToken: "usage-token", codex: codexAccountState{AccountID: "acct_usage"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{account})
-	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	usage, err := newUsageStore(filepath.Join(t.TempDir(), "usage.db"), 30)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fx.handler.analyticsStore = analytics
+	usage := testUsageStore(t)
+	analytics := testDuckCosts(t, usage)
+	fx.handler.duckAnalytics = analytics
 	fx.handler.store = usage
-	t.Cleanup(func() {
-		_ = analytics.Close()
-		_ = usage.Close()
-	})
 
 	conn := dialClientWS(t, fx, http.Header{
 		"Authorization": []string{"Bearer " + generateClaudePoolToken("test-secret", "ws-user")},
@@ -253,10 +242,6 @@ func TestCodexWebSocketCompletionRecordsUsageOnce(t *testing.T) {
 		t.Fatal("client did not receive response.completed")
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for account.Totals.RequestCount == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
 	account.mu.Lock()
 	totals := account.Totals
 	account.mu.Unlock()
@@ -267,13 +252,14 @@ func TestCodexWebSocketCompletionRecordsUsageOnce(t *testing.T) {
 		t.Fatalf("unexpected websocket totals: %+v", totals)
 	}
 
+	drainTestCosts(t, analytics)
 	var count int
 	var accountID, accountType, userID, model string
 	var input, cached, output, reasoning int64
 	if err := analytics.db.QueryRow(`
-		SELECT COUNT(*), account_id, account_type, user_id, model,
-			input_tokens, cached_tokens, output_tokens, reasoning_tokens
-		FROM request_costs`).Scan(&count, &accountID, &accountType, &userID, &model, &input, &cached, &output, &reasoning); err != nil {
+		SELECT COUNT(*) OVER (), account_id, account_type, principal_id, model_normalized,
+			input_tokens, cache_read_tokens, output_tokens, reasoning_tokens
+		FROM usage_events LIMIT 1`).Scan(&count, &accountID, &accountType, &userID, &model, &input, &cached, &output, &reasoning); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 || accountID != "usage" || accountType != string(AccountTypeCodex) || userID != "ws-user" || model != "gpt-5.5" {

@@ -1051,14 +1051,7 @@ func antigravityBodyIdentifiesQuotaFamily(value any, family string) bool {
 	return false
 }
 
-func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
-	if h == nil {
-		return
-	}
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
+func (h *proxyHandler) startAntigravityModelPoller(ctx context.Context) {
 	syncAll := func() {
 		provider, _ := h.registry.ForType(AccountTypeAntigravity).(*AntigravityProvider)
 		if provider == nil {
@@ -1068,7 +1061,7 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 			if account.Type != AccountTypeAntigravity {
 				continue
 			}
-			checkCtx, cancel := context.WithTimeout(c, 30*time.Second)
+			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			if h.needsRefresh(account) {
 				if err := h.refreshAccount(checkCtx, account); err != nil {
 					log.Printf("antigravity refresh %s failed: %v", account.ID, err)
@@ -1091,7 +1084,7 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx ...context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-c.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				syncAll()

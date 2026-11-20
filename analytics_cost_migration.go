@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
 	"go.etcd.io/bbolt"
+	_ "modernc.org/sqlite"
 )
 
 const costHistorySchema = `
@@ -34,7 +36,7 @@ CREATE TABLE IF NOT EXISTS cost_history_import (
     through_sequence UBIGINT NOT NULL,
     imported_days BIGINT NOT NULL
 );
-CREATE VIEW IF NOT EXISTS cost_activity AS
+CREATE OR REPLACE VIEW cost_activity AS
     SELECT day, account_id, account_type, model, first_seen,
            input_tokens, cached_tokens, cache_creation_tokens, output_tokens,
            reasoning_tokens, request_count, cost_usd
@@ -48,8 +50,12 @@ CREATE VIEW IF NOT EXISTS cost_activity AS
     WHERE source = 'live' AND source_grain = 'request'
       AND NOT EXISTS (
           SELECT 1 FROM cost_history_import AS imported
-          WHERE imported.imported_days > 0
-            AND (event.delivery_sequence IS NULL OR event.delivery_sequence <= imported.through_sequence)
+          JOIN legacy_cost_days AS legacy
+            ON legacy.day = CAST(event.observed_at AT TIME ZONE 'UTC' AS DATE)
+           AND legacy.account_id = event.account_id
+           AND legacy.account_type = event.account_type
+           AND legacy.model = COALESCE(event.model_normalized, '')
+          WHERE event.delivery_sequence IS NULL OR event.delivery_sequence <= imported.through_sequence
       );
 `
 
@@ -58,14 +64,14 @@ WITH requests AS (
     SELECT substr(timestamp, 1, 10) AS date, account_id, account_type,
            COALESCE(model, '') AS model, MIN(timestamp) AS first_seen,
            SUM(input_tokens) AS input_tokens, SUM(cached_tokens) AS cached_tokens,
-           SUM(cache_creation_tokens) AS cache_creation_tokens, SUM(output_tokens) AS output_tokens,
+           SUM(%s) AS cache_creation_tokens, SUM(output_tokens) AS output_tokens,
            SUM(reasoning_tokens) AS reasoning_tokens, COUNT(*) AS request_count, SUM(cost_usd) AS cost_usd
     FROM request_costs
     GROUP BY 1, 2, 3, 4
 )
 SELECT daily.date, daily.account_id, daily.account_type, daily.model,
        daily.date || 'T00:00:00Z',
-       daily.input_tokens, daily.cached_tokens, daily.cache_creation_tokens,
+       daily.input_tokens, daily.cached_tokens, %s,
        daily.output_tokens, daily.reasoning_tokens, daily.request_count, daily.cost_usd
 FROM daily_costs AS daily
 WHERE daily.date <> ? OR NOT EXISTS (
@@ -88,7 +94,7 @@ WHERE raw.date = ? OR NOT EXISTS (
 // migrateSQLiteCosts copies account and model aggregates before the proxy starts
 // accepting traffic. The delivery sequence distinguishes pre-migration activity
 // from new records even if older outbox entries are still waiting to be drained.
-func (a *DuckAnalytics) migrateSQLiteCosts(ctx context.Context, path string, now time.Time) error {
+func (a *DuckAnalytics) migrateSQLiteCosts(ctx context.Context, storePath, configuredPath string, now time.Time) error {
 	a.queryMu.Lock()
 	defer a.queryMu.Unlock()
 
@@ -99,6 +105,10 @@ func (a *DuckAnalytics) migrateSQLiteCosts(ctx context.Context, path string, now
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check cost history import: %w", err)
+	}
+	path, err := legacySQLiteCostPath(storePath, configuredPath)
+	if err != nil {
+		return err
 	}
 
 	var through uint64
@@ -127,13 +137,6 @@ func (a *DuckAnalytics) migrateSQLiteCosts(ctx context.Context, path string, now
 	}
 	defer tx.Rollback()
 	if path != "" {
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("read legacy analytics path: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("legacy analytics path is not a file")
-		}
 		imported, err = importLegacyCostDays(ctx, tx, path, now.UTC().Format(time.DateOnly), deleted)
 		if err != nil {
 			return fmt.Errorf("import SQLite cost history: %w", err)
@@ -143,6 +146,24 @@ func (a *DuckAnalytics) migrateSQLiteCosts(ctx context.Context, path string, now
 		return err
 	}
 	return tx.Commit()
+}
+
+func legacySQLiteCostPath(storePath, configuredPath string) (string, error) {
+	path := configuredPath
+	if path == "" {
+		path = filepath.Join(filepath.Dir(storePath), "analytics.db")
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) && configuredPath == "" {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read legacy analytics path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("legacy analytics path is not a file")
+	}
+	return path, nil
 }
 
 func importLegacyCostDays(ctx context.Context, tx *sql.Tx, path, today string, deleted map[string]struct{}) (int64, error) {
@@ -160,7 +181,27 @@ func importLegacyCostDays(ctx context.Context, tx *sql.Tx, path, today string, d
 		return 0, err
 	}
 	defer source.Close()
-	rows, err := source.QueryContext(ctx, sqliteCostHistoryQuery, today, today)
+	// The SQLite schema tracked cache reads before tracking cache creation.
+	var requestCacheCreation, dailyCacheCreation bool
+	err = source.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM pragma_table_info('request_costs') WHERE name = 'cache_creation_tokens'),
+		       EXISTS (SELECT 1 FROM pragma_table_info('daily_costs') WHERE name = 'cache_creation_tokens')
+	`).Scan(&requestCacheCreation, &dailyCacheCreation)
+	if err != nil {
+		return 0, fmt.Errorf("inspect cache creation columns: %w", err)
+	}
+	requestField, dailyField := "cache_creation_tokens", "daily.cache_creation_tokens"
+	if !requestCacheCreation {
+		requestField = "0"
+	}
+	if !dailyCacheCreation {
+		dailyField = "0"
+	}
+	if !requestCacheCreation || !dailyCacheCreation {
+		log.Print("SQLite cost import: source predates cache creation accounting")
+	}
+	query := fmt.Sprintf(sqliteCostHistoryQuery, requestField, dailyField)
+	rows, err := source.QueryContext(ctx, query, today, today)
 	if err != nil {
 		return 0, err
 	}

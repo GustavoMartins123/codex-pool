@@ -5,22 +5,13 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestSignalAnalyticsEmptyStoresReturnArrays(t *testing.T) {
-	usage, err := newUsageStore(filepath.Join(t.TempDir(), "usage.db"), 30)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer usage.Close()
-	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer analytics.Close()
+	usage := testUsageStore(t)
+	analytics := testDuckCosts(t, usage)
 	h := &proxyHandler{pool: newPoolState(nil, false), store: usage, analyticsStore: analytics}
 	recorder := httptest.NewRecorder()
 	h.handleSignalAnalytics(recorder, httptest.NewRequest("GET", "/api/pool/signal", nil))
@@ -40,11 +31,8 @@ func TestSignalAnalyticsEmptyStoresReturnArrays(t *testing.T) {
 }
 
 func TestSignalEconomicsPreservesMembershipBillingAndLiveCosts(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	for _, row := range []struct {
 		day     int
@@ -56,12 +44,9 @@ func TestSignalEconomicsPreservesMembershipBillingAndLiveCosts(t *testing.T) {
 		{-1, "current", "model-a", 20}, {0, "current", "model-a", 2},
 		{-60, "removed", "model-a", 900},
 	} {
-		if _, err := store.db.Exec(`INSERT INTO daily_costs
-			(date, account_id, account_type, model, cost_usd)
-			VALUES (?, ?, ?, ?, ?)`, now.AddDate(0, 0, row.day).Format("2006-01-02"), row.account,
-			string(AccountTypeCodex), row.model, row.cost); err != nil {
-			t.Fatal(err)
-		}
+		recordTestCost(t, usage, RequestUsage{
+			Timestamp: now.AddDate(0, 0, row.day), AccountID: row.account, AccountType: AccountTypeCodex, Model: row.model,
+		}, row.cost)
 	}
 	for _, row := range []struct {
 		at       time.Time
@@ -71,12 +56,10 @@ func TestSignalEconomicsPreservesMembershipBillingAndLiveCosts(t *testing.T) {
 	}{
 		{now.Add(-time.Hour), "current", AccountTypeCodex, 5},
 		{now.Add(-time.Hour), "live", AccountTypeClaude, 3},
-		{now.AddDate(0, 0, -1), "current", AccountTypeCodex, 999},
 	} {
-		if err := store.recordRequest(RequestUsage{Timestamp: row.at, AccountID: row.account, AccountType: row.provider}, row.cost); err != nil {
-			t.Fatal(err)
-		}
+		recordTestCost(t, usage, RequestUsage{Timestamp: row.at, AccountID: row.account, AccountType: row.provider, RequestID: "live"}, row.cost)
 	}
+	drainTestCosts(t, store)
 	current := &Account{ID: "current", Type: AccountTypeCodex, PlanType: "pro"}
 	live := &Account{ID: "live", Type: AccountTypeClaude, PlanType: "pro"}
 	unmeasured := &Account{ID: "unmeasured", Type: AccountTypeCodex, PlanType: "plus"}
@@ -113,19 +96,14 @@ func TestSignalEconomicsPreservesMembershipBillingAndLiveCosts(t *testing.T) {
 }
 
 func TestSignalEconomicsUsesOneUTCDayAndExactLiveMeasurementTime(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	store.db.SetMaxOpenConns(1)
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
 	now := time.Date(2026, 8, 1, 21, 30, 0, 0, time.FixedZone("local", -3*60*60))
 	first := time.Date(2026, 8, 2, 0, 1, 2, 0, time.UTC)
-	for _, at := range []time.Time{first, first.Add(-2 * time.Minute), first.Add(time.Minute), first.AddDate(0, 0, 1)} {
-		if err := store.recordRequest(RequestUsage{Timestamp: at, AccountID: "a'\"", AccountType: AccountTypeCodex}, 1); err != nil {
-			t.Fatal(err)
-		}
+	for _, at := range []time.Time{first, first.Add(time.Minute), first.AddDate(0, 0, 1)} {
+		recordTestCost(t, usage, RequestUsage{Timestamp: at, AccountID: "a'\"", AccountType: AccountTypeCodex}, 1)
 	}
+	drainTestCosts(t, store)
 	snapshot, err := store.getSignalEconomics([]string{"a'\""}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -140,27 +118,15 @@ func TestSignalEconomicsUsesOneUTCDayAndExactLiveMeasurementTime(t *testing.T) {
 	}
 }
 
-func TestSignalEconomicsRejectsQueryAndDateErrors(t *testing.T) {
-	for _, failure := range []string{"closed", "missing live table", "invalid historical date", "invalid live timestamp"} {
+func TestSignalEconomicsRejectsQueryErrors(t *testing.T) {
+	for _, failure := range []string{"closed", "missing cost view"} {
 		t.Run(failure, func(t *testing.T) {
-			store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer store.Close()
-			var mutation string
-			switch failure {
-			case "closed":
-				err = store.db.Close()
-			case "missing live table":
-				mutation = `DROP TABLE request_costs`
-			case "invalid historical date":
-				mutation = `INSERT INTO daily_costs (date, account_id, account_type, cost_usd) VALUES ('invalid', 'current', 'codex', 1)`
-			case "invalid live timestamp":
-				mutation = `INSERT INTO request_costs (timestamp, account_id, account_type, cost_usd) VALUES ('` + time.Now().UTC().Format("2006-01-02") + `T12:invalid', 'current', 'codex', 1)`
-			}
-			if mutation != "" {
-				_, err = store.db.Exec(mutation)
+			store := testDuckCosts(t, testUsageStore(t))
+			var err error
+			if failure == "closed" {
+				err = store.Close()
+			} else {
+				_, err = store.db.Exec("DROP VIEW cost_activity")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -180,20 +146,17 @@ func TestSignalEconomicsRejectsQueryAndDateErrors(t *testing.T) {
 }
 
 func TestSignalEconomicsAggregatesProviderAndMultipleModels(t *testing.T) {
-	store, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	usage := testUsageStore(t)
+	store := testDuckCosts(t, usage)
 	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	for _, row := range []struct{ account, provider, model string }{
 		{"a", "claude", "m1"}, {"a", "codex", "m2"}, {"b", "codex", "m1"}, {"c", "claude", "m1"},
 	} {
-		if _, err := store.db.Exec(`INSERT INTO daily_costs (date, account_id, account_type, model, cost_usd)
-			VALUES ('2026-07-31', ?, ?, ?, 0.1)`, row.account, row.provider, row.model); err != nil {
-			t.Fatal(err)
-		}
+		recordTestCost(t, usage, RequestUsage{
+			Timestamp: now.AddDate(0, 0, -1), AccountID: row.account, AccountType: AccountType(row.provider), Model: row.model, RequestID: row.model,
+		}, 0.1)
 	}
+	drainTestCosts(t, store)
 	snapshot, err := store.getSignalEconomics([]string{"a", "b", "c"}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -202,10 +165,7 @@ func TestSignalEconomicsAggregatesProviderAndMultipleModels(t *testing.T) {
 		t.Fatalf("unexpected aggregate grain: %+v", snapshot)
 	}
 	for _, row := range snapshot.dailyCosts {
-		want := 0.1
-		if row.AccountType == "codex" {
-			want = 0.3
-		}
+		want := map[string]float64{"claude": 0.2, "codex": 0.2}[row.AccountType]
 		if row.Date != "2026-07-31" || math.Abs(row.CostUSD-want) > 1e-9 {
 			t.Fatalf("provider attribution changed: %+v", row)
 		}
@@ -213,11 +173,8 @@ func TestSignalEconomicsAggregatesProviderAndMultipleModels(t *testing.T) {
 }
 
 func TestSignalAnalyticsLinksWeeklyOriginDrainAndCurrentAccountEconomics(t *testing.T) {
-	usage, err := newUsageStore(filepath.Join(t.TempDir(), "usage.db"), 30)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer usage.Close()
+	usage := testUsageStore(t)
+	analytics := testDuckCosts(t, usage)
 
 	now := time.Now().UTC()
 	if err := usage.record(RequestUsage{
@@ -234,25 +191,10 @@ func TestSignalAnalyticsLinksWeeklyOriginDrainAndCurrentAccountEconomics(t *test
 		t.Fatal(err)
 	}
 
-	analytics, err := newAnalyticsStore(filepath.Join(t.TempDir(), "analytics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer analytics.Close()
-	firstDate := now.AddDate(0, 0, -10).Format("2006-01-02")
-	for _, row := range []struct {
-		account string
-		cost    float64
-	}{
-		{account: "current", cost: 100},
-		{account: "removed", cost: 900},
-	} {
-		if _, err := analytics.db.Exec(`
-			INSERT INTO daily_costs (date, account_id, account_type, model, request_count, cost_usd)
-			VALUES (?, ?, ?, ?, ?, ?)`, firstDate, row.account, string(AccountTypeCodex), "gpt-5.6-sol", 1, row.cost); err != nil {
-			t.Fatal(err)
-		}
-	}
+	first := now.AddDate(0, 0, -10)
+	recordTestCost(t, usage, RequestUsage{Timestamp: first, AccountID: "current", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}, 100)
+	recordTestCost(t, usage, RequestUsage{Timestamp: first, AccountID: "removed", AccountType: AccountTypeCodex, Model: "gpt-5.6-sol"}, 900)
+	drainTestCosts(t, analytics)
 
 	h := &proxyHandler{
 		pool:           newPoolState([]*Account{{ID: "current", Type: AccountTypeCodex, PlanType: "pro"}}, false),

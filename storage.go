@@ -304,10 +304,8 @@ func (s *usageStore) recordWithCost(u RequestUsage, costUSD float64) error {
 		if err := tx.Bucket([]byte(bucketUsageRequests)).Put([]byte(key), val); err != nil {
 			return err
 		}
-		if u.UserID != "" {
-			if err := putAnalyticsOutbox(tx, analyticsFactFromUsage(u, costUSD)); err != nil {
-				return fmt.Errorf("store analytics outbox: %w", err)
-			}
+		if err := putAnalyticsOutbox(tx, analyticsFactFromUsage(u, costUSD)); err != nil {
+			return fmt.Errorf("store analytics outbox: %w", err)
 		}
 
 		// Update account aggregates

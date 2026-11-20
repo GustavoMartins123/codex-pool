@@ -18,21 +18,14 @@ type quotaIntelligenceSnapshot struct {
 	resetEvents     []ResetObservation
 }
 
-func (h *proxyHandler) startQuotaIntelligenceRefresher(ctx ...context.Context) {
-	if h == nil || h.store == nil {
-		return
-	}
-	c := context.Background()
-	if len(ctx) > 0 && ctx[0] != nil {
-		c = ctx[0]
-	}
+func (h *proxyHandler) startQuotaIntelligenceRefresher(ctx context.Context) {
 	go h.refreshQuotaIntelligence()
 	go func() {
 		ticker := time.NewTicker(quotaIntelligenceRefreshInterval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-c.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				h.refreshQuotaIntelligence()

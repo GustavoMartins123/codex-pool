@@ -26,6 +26,7 @@ const (
 	analyticsAckKey       = "acknowledged_sequence"
 )
 
+const analyticsPricingVersion = "2026-09-22-v3"
 const analyticsEventColumns = `event_id,proxy_request_id,usage_sequence,upstream_request_id,attempt_number,observed_at,principal_id,client_credential_id,origin_id,account_id,account_type,plan_type,model_reported,model_normalized,normalization_version,input_tokens,cache_read_tokens,cache_creation_tokens,output_tokens,reasoning_tokens,billable_tokens,api_equivalent_cost_usd,pricing_version,usage_completeness,source,source_grain`
 const insertLegacyAnalyticsFact = `INSERT OR IGNORE INTO usage_events (` + analyticsEventColumns + `) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 const insertDeliveredAnalyticsFact = `INSERT OR IGNORE INTO usage_events (` + analyticsEventColumns + `,delivery_sequence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -185,9 +186,8 @@ func (a *DuckAnalytics) importLegacyBolt() error {
 	const markerKey = "legacy_bolt_import_v1"
 	if os.Getenv("DUCKDB_LOW_MEMORY") != "" {
 		// On memory-constrained hosts DuckDB's default allocation plus the
-		// legacy import exceeds the cgroup limit. The SQLite analytics.db
-		// already holds the historical data; skip the import and let the
-		// outbox accumulate new facts going forward.
+		// legacy import exceeds the cgroup limit. Cost history is imported
+		// independently, and live facts are delivered by the outbox.
 		return a.bolt.Update(func(tx *bbolt.Tx) error {
 			return tx.Bucket([]byte(bucketAnalyticsState)).Put([]byte(markerKey), []byte("skipped_low_memory"))
 		})
@@ -289,7 +289,7 @@ func (a *DuckAnalytics) importLegacyBolt() error {
 	if err := duckTx.Commit(); err != nil {
 		return err
 	}
-	report, _ := json.Marshal(map[string]any{"completed_at": time.Now().UTC(), "request_facts": rawCount, "hour_facts": hourlyCount, "sqlite_policy": "SQLite overlaps retained Bolt request facts and is not imported independently; historical cost remains unavailable where Bolt did not store it."})
+	report, _ := json.Marshal(map[string]any{"completed_at": time.Now().UTC(), "request_facts": rawCount, "hour_facts": hourlyCount})
 	return a.bolt.Update(func(tx *bbolt.Tx) error {
 		return tx.Bucket([]byte(bucketAnalyticsState)).Put([]byte(markerKey), report)
 	})
@@ -344,6 +344,11 @@ type outboxRow struct {
 }
 
 func (a *DuckAnalytics) drain(limit int) error {
+	// Serialize batches from fetch through acknowledgement so a concurrent
+	// account purge cannot be followed by insertion of a stale batch.
+	a.queryMu.Lock()
+	defer a.queryMu.Unlock()
+
 	rows := make([]outboxRow, 0, limit)
 	err := a.bolt.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketAnalyticsOutbox))
@@ -363,17 +368,14 @@ func (a *DuckAnalytics) drain(limit int) error {
 	if err != nil || len(rows) == 0 {
 		return err
 	}
-	a.queryMu.Lock()
 	tx, err := a.db.Begin()
 	if err != nil {
-		a.queryMu.Unlock()
 		a.setFault(err)
 		return err
 	}
 	stmt, err := tx.Prepare(insertDeliveredAnalyticsFact)
 	if err != nil {
 		_ = tx.Rollback()
-		a.queryMu.Unlock()
 		a.setFault(err)
 		return err
 	}
@@ -394,7 +396,6 @@ func (a *DuckAnalytics) drain(limit int) error {
 	} else {
 		_ = tx.Rollback()
 	}
-	a.queryMu.Unlock()
 	if err != nil {
 		a.setFault(err)
 		return err
@@ -479,7 +480,7 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 	ledgerErr := a.db.QueryRow(`SELECT COUNT(*),
  COALESCE(SUM(input_tokens),0),COALESCE(SUM(cache_read_tokens),0),COALESCE(SUM(cache_creation_tokens),0),
  COALESCE(SUM(output_tokens),0),COALESCE(SUM(reasoning_tokens),0),COALESCE(SUM(billable_tokens),0)
- FROM usage_events WHERE observed_at>=? AND observed_at<?`, start.UTC(), end.UTC()).Scan(
+ FROM usage_events WHERE principal_id <> '' AND observed_at>=? AND observed_at<?`, start.UTC(), end.UTC()).Scan(
 		&result.Ledger.Events, &result.Ledger.Input, &result.Ledger.CacheRead, &result.Ledger.CacheCreation,
 		&result.Ledger.Output, &result.Ledger.Reasoning, &result.Ledger.Billable,
 	)
@@ -510,7 +511,7 @@ func (a *DuckAnalytics) Reconcile(start, end time.Time) (*AnalyticsReconciliatio
 		if bucket := tx.Bucket([]byte(bucketAnalyticsOutbox)); bucket != nil {
 			return bucket.ForEach(func(_, value []byte) error {
 				var fact AnalyticsFact
-				if json.Unmarshal(value, &fact) == nil && !fact.ObservedAt.Before(start) && fact.ObservedAt.Before(end) {
+				if json.Unmarshal(value, &fact) == nil && fact.PrincipalID != "" && !fact.ObservedAt.Before(start) && fact.ObservedAt.Before(end) {
 					pending = append(pending, fact)
 				}
 				return nil
@@ -619,7 +620,7 @@ func (a *DuckAnalytics) PrincipalRanking(ctx context.Context, since time.Time) (
 	defer a.queryMu.RUnlock()
 	rows, err := a.db.QueryContext(ctx, `SELECT principal_id, SUM(billable_tokens), COUNT(DISTINCT proxy_request_id),
  CAST(SUM(api_equivalent_cost_usd) AS DOUBLE), MAX(observed_at)
- FROM usage_events WHERE observed_at>=? GROUP BY principal_id ORDER BY SUM(billable_tokens) DESC`, since.UTC())
+ FROM usage_events WHERE principal_id <> '' AND observed_at>=? GROUP BY principal_id ORDER BY SUM(billable_tokens) DESC`, since.UTC())
 	if err != nil {
 		return nil, err
 	}

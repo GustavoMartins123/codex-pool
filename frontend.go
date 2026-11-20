@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"mime"
 	"net"
 	"net/http"
@@ -2504,8 +2505,18 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 	// Populate cost data from analytics store
 	if h.analyticsStore != nil {
 		// Per-account costs and their measurement periods.
-		allTimeCostStats, _ := h.analyticsStore.getAllTimeAccountCostStats()
-		last30dCosts, _ := h.analyticsStore.getCostByAccount(30)
+		allTimeCostStats, err := h.analyticsStore.getAllTimeAccountCostStats()
+		if err != nil {
+			log.Printf("pool stats: read all-time costs: %v", err)
+			http.Error(w, "cost analytics unavailable", http.StatusInternalServerError)
+			return
+		}
+		last30dCosts, err := h.analyticsStore.getCostByAccount(30)
+		if err != nil {
+			log.Printf("pool stats: read last 30 days of costs: %v", err)
+			http.Error(w, "cost analytics unavailable", http.StatusInternalServerError)
+			return
+		}
 
 		// Build account ID -> real ID mapping for cost lookup
 		// (stats use hashed IDs, costs use real IDs)
@@ -2590,9 +2601,13 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Daily cost trend for chart
-		if dailyCosts, err := h.analyticsStore.getDailyCosts(30); err == nil {
-			stats.DailyCosts = dailyCosts
+		dailyCosts, err := h.analyticsStore.getDailyCosts(30)
+		if err != nil {
+			log.Printf("pool stats: read daily costs: %v", err)
+			http.Error(w, "cost analytics unavailable", http.StatusInternalServerError)
+			return
 		}
+		stats.DailyCosts = dailyCosts
 	}
 
 	stats.CyberPolicy = h.computeCyberPolicyStats(accounts)
