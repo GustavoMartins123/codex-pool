@@ -26,7 +26,7 @@ func TestAntigravitySyncTrustsDailyHostForVerification(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example.test")
 	production, _ := url.Parse("https://prod.example.test")
 	file := filepath.Join(t.TempDir(), "ag.json")
-	account := &Account{Type: AccountTypeAntigravity, ID: "ag", File: file, AccessToken: "token", ProjectID: "project", ModelRateLimits: map[string]time.Time{},
+	account := &Account{Type: AccountTypeAntigravity, ID: "ag", File: file, AccessToken: "token", google: googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}},
 		NeedsVerification: true, VerificationURL: "https://accounts.google.com/verify", HealthError: antigravityVerifyFixture}
 
 	dailyQuotaStatus := http.StatusOK
@@ -75,7 +75,7 @@ func TestAntigravitySyncIgnoresProductionOnlyVerificationDemand(t *testing.T) {
 	t.Cleanup(antigravityModels.Reset)
 	daily, _ := url.Parse("https://daily.example.test")
 	production, _ := url.Parse("https://prod.example.test")
-	account := &Account{Type: AccountTypeAntigravity, ID: "ag", File: filepath.Join(t.TempDir(), "ag.json"), AccessToken: "token", ProjectID: "project", ModelRateLimits: map[string]time.Time{}}
+	account := &Account{Type: AccountTypeAntigravity, ID: "ag", File: filepath.Join(t.TempDir(), "ag.json"), AccessToken: "token", google: googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}}}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case strings.HasSuffix(req.URL.Path, ":fetchAvailableModels"):

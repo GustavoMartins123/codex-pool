@@ -704,7 +704,7 @@ func parseAntigravityQuotaSummary(body []byte, fetchedAt time.Time) (Antigravity
 }
 
 func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityQuotaSummary, error) {
-	requestBody, err := json.Marshal(map[string]string{"project": account.ProjectID})
+	requestBody, err := json.Marshal(map[string]string{"project": account.google.ProjectID})
 	if err != nil {
 		return AntigravityQuotaSummary{}, err
 	}
@@ -1032,11 +1032,11 @@ func setAntigravityCooldown(account *Account, key string, until time.Time) {
 		return
 	}
 	account.mu.Lock()
-	if account.ModelRateLimits == nil {
-		account.ModelRateLimits = make(map[string]time.Time)
+	if account.google.ModelRateLimits == nil {
+		account.google.ModelRateLimits = make(map[string]time.Time)
 	}
-	if until.After(account.ModelRateLimits[key]) {
-		account.ModelRateLimits[key] = until
+	if until.After(account.google.ModelRateLimits[key]) {
+		account.google.ModelRateLimits[key] = until
 	}
 	account.mu.Unlock()
 	_ = saveAccount(account)
@@ -1048,12 +1048,12 @@ func clearAntigravityModelCooldown(account *Account, model string) {
 	}
 	account.mu.Lock()
 	canonical := antigravityCanonicalModel(model)
-	_, existed := account.ModelRateLimits[canonical]
-	delete(account.ModelRateLimits, canonical)
+	_, existed := account.google.ModelRateLimits[canonical]
+	delete(account.google.ModelRateLimits, canonical)
 	// A served request proves its family bucket has quota again.
 	if family := antigravityQuotaFamily(canonical); family != "" {
-		_, familyExisted := account.ModelRateLimits[antigravityFamilyCooldownKey(family)]
-		delete(account.ModelRateLimits, antigravityFamilyCooldownKey(family))
+		_, familyExisted := account.google.ModelRateLimits[antigravityFamilyCooldownKey(family)]
+		delete(account.google.ModelRateLimits, antigravityFamilyCooldownKey(family))
 		existed = existed || familyExisted
 	}
 	account.mu.Unlock()
@@ -1070,9 +1070,9 @@ func antigravityFamilyCooldownKey(family string) string {
 // account, honoring both its own cooldown and its family's. Callers hold
 // account.mu.
 func antigravityModelCooldownLocked(account *Account, model string) time.Time {
-	until := account.ModelRateLimits[model]
+	until := account.google.ModelRateLimits[model]
 	if family := antigravityQuotaFamily(model); family != "" {
-		if familyUntil := account.ModelRateLimits[antigravityFamilyCooldownKey(family)]; familyUntil.After(until) {
+		if familyUntil := account.google.ModelRateLimits[antigravityFamilyCooldownKey(family)]; familyUntil.After(until) {
 			until = familyUntil
 		}
 	}

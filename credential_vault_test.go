@@ -130,7 +130,7 @@ func TestLoadPoolDecodesEncryptedCredentials(t *testing.T) {
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
-	if accounts[0].AccessToken != "tok-123" || accounts[0].AccountID != "acct-1" {
+	if accounts[0].AccessToken != "tok-123" || accounts[0].codex.AccountID != "acct-1" {
 		t.Fatalf("account not decoded correctly: %+v", accounts[0])
 	}
 }

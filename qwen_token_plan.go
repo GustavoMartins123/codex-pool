@@ -252,20 +252,20 @@ func parseQwenTeamCredits(body []byte, seatID string, now time.Time) (*QwenCredi
 
 func (h *proxyHandler) fetchQwenCreditUsage(ctx context.Context, now time.Time, account *Account) error {
 	account.mu.Lock()
-	plan := account.QwenTokenPlan
+	plan := account.qwen.TokenPlan
 	account.mu.Unlock()
 	credits, err := h.queryQwenCredits(ctx, plan, now)
 	account.mu.Lock()
 	defer account.mu.Unlock()
-	if account.QwenTokenPlan != plan {
+	if account.qwen.TokenPlan != plan {
 		return errors.New("Token Plan configuration changed during credit refresh")
 	}
-	account.QwenCredits = credits
-	account.QwenCreditsError = ""
+	account.qwen.Credits = credits
+	account.qwen.CreditsError = ""
 	if err != nil {
-		account.QwenCreditsError = err.Error()
+		account.qwen.CreditsError = err.Error()
 	} else if plan == nil {
-		account.QwenCreditsError = "Credit tracking is not configured. Connect your Alibaba Cloud account or select Personal manual tracking."
+		account.qwen.CreditsError = "Credit tracking is not configured. Connect your Alibaba Cloud account or select Personal manual tracking."
 	}
 	if credits != nil {
 		account.Usage = qwenCreditUsage(credits, now)

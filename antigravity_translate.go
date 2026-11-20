@@ -283,7 +283,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			_ = h.refreshAccount(r.Context(), account)
 		}
 		account.mu.Lock()
-		projectID := account.ProjectID
+		projectID := account.google.ProjectID
 		account.mu.Unlock()
 		nativeSeed := conversationID
 		freshSession := false

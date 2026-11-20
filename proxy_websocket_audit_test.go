@@ -86,7 +86,7 @@ func TestAuditWebSocketRejectionRelay(t *testing.T) {
 	}))
 	defer upstream.Close()
 	base, _ := url.Parse(upstream.URL)
-	account := &Account{ID: "rejected", Type: AccountTypeCodex, AccountID: "acct_rejected", AccessToken: "token", PlanType: "pro"}
+	account := &Account{ID: "rejected", Type: AccountTypeCodex, codex: codexAccountState{AccountID: "acct_rejected"}, AccessToken: "token", PlanType: "pro"}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	finished := make(chan struct{})
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { testPoolServeHTTP(t, fx.handler, w, r); close(finished) }))
@@ -141,7 +141,7 @@ func TestAuditWebSocketOverlappingTurns(t *testing.T) {
 		_, _, _ = conn.Read(ctx)
 	})
 	base, _ := url.Parse(upstream.server.URL)
-	account := &Account{ID: "overlap", Type: AccountTypeCodex, AccountID: "acct_overlap", AccessToken: "token", PlanType: "pro"}
+	account := &Account{ID: "overlap", Type: AccountTypeCodex, codex: codexAccountState{AccountID: "acct_overlap"}, AccessToken: "token", PlanType: "pro"}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.analyticsStore = analytics
 	conn := dialClientWS(t, fx, http.Header{"Authorization": {"Bearer " + generateClaudePoolToken("test-secret", "ws-user")}})

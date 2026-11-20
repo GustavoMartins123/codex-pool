@@ -211,58 +211,35 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func providerModelsURL(provider Provider) (*url.URL, bool) {
-	var target url.URL
-	switch typed := provider.(type) {
-	case *CodexProvider:
-		if typed.whamBase == nil {
-			return nil, false
-		}
-		target = *typed.whamBase
-		target.Path = singleJoin(target.Path, "/codex/models")
-		query := target.Query()
-		query.Set("client_version", currentCodexFingerprint().AppVersion)
-		target.RawQuery = query.Encode()
-	case *ClaudeProvider:
-		base := typed.UpstreamURL("/v1/models")
-		if base == nil {
-			return nil, false
-		}
-		target = *base
-		target.Path = singleJoin(target.Path, "/v1/models")
-	case *GrokProvider:
-		base := typed.UpstreamURL("/v1/models")
-		if base == nil {
-			return nil, false
-		}
-		target = *base
-		target.Path = singleJoin(target.Path, "/models")
-	case *KimiProvider, *MinimaxProvider, *ZAIProvider:
-		base := provider.UpstreamURL("/v1/models")
-		if base == nil {
-			return nil, false
-		}
-		target = *base
-		target.Path = singleJoin(target.Path, "/v1/models")
-	case *AIStudioProvider:
-		if typed.base == nil {
-			return nil, false
-		}
-		target = *aistudioModelsURL(typed.base)
-	case *OpencodeGoProvider, *QwenProvider:
-		base := provider.UpstreamURL("/models")
-		if base == nil {
-			return nil, false
-		}
-		target = *base
-		target.Path = singleJoin(target.Path, "/models")
-	default:
-		return nil, false
-	}
-	return &target, true
+// ModelDiscoverer is implemented by providers with an account-specific model list.
+type ModelDiscoverer interface {
+	ModelDiscoveryURL() *url.URL
 }
 
-func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provider Provider, account *Account) (providerModelSnapshot, error) {
+// ModelDiscoveryHeaders sets headers required only for a provider's model list.
+type ModelDiscoveryHeaders interface {
+	SetModelDiscoveryHeaders(*http.Request)
+}
+
+func modelDiscoveryURL(base *url.URL, path string) *url.URL {
+	if base == nil {
+		return nil
+	}
+	target := *base
+	target.Path = singleJoin(target.Path, path)
+	return &target
+}
+
+func providerModelsURL(provider Provider) (*url.URL, bool) {
+	discovery, ok := provider.(ModelDiscoverer)
+	if !ok {
+		return nil, false
+	}
+	target := discovery.ModelDiscoveryURL()
+	return target, target != nil
+}
+
+func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provider ProviderDriver, account *Account) (providerModelSnapshot, error) {
 	target, ok := providerModelsURL(provider)
 	if !ok {
 		return providerModelSnapshot{}, errors.New("provider has no model discovery endpoint")
@@ -273,9 +250,8 @@ func fetchProviderModels(ctx context.Context, transport http.RoundTripper, provi
 	}
 	provider.SetAuthHeaders(req, account)
 	req.Header.Set("Accept", "application/json")
-	if provider.Type() == AccountTypeClaude {
-		req.Header.Set("Anthropic-Version", "2023-06-01")
-		req.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
+	if discovery, ok := provider.(ModelDiscoveryHeaders); ok {
+		discovery.SetModelDiscoveryHeaders(req)
 	}
 
 	resp, err := transport.RoundTrip(req)
@@ -379,8 +355,8 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	}
 	if account.Type == AccountTypeCodex {
 		hasDaybreak := accountHasDaybreak(snapshot.Models)
-		if account.CyberAccess != hasDaybreak {
-			account.CyberAccess = hasDaybreak
+		if account.codex.CyberAccess != hasDaybreak {
+			account.codex.CyberAccess = hasDaybreak
 			changed = true
 		}
 	}

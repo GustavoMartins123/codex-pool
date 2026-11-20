@@ -21,7 +21,7 @@ import (
 type codexCyberSwapOptions struct {
 	ReqID                       string
 	RequestPath                 string
-	Provider                    Provider
+	Provider                    ProviderDriver
 	InitialAccount              *Account
 	InitialContextAccount       *Account
 	InitialOutURL               *url.URL
@@ -218,7 +218,7 @@ func (h *proxyHandler) relayCodexWithCyberSwap(
 		session:              session,
 		activeConversationID: opts.ConversationID,
 		// Already on a cyber account — no further swap is meaningful.
-		swapDone: opts.InitialAccount.CyberAccess,
+		swapDone: opts.InitialAccount.codex.CyberAccess,
 	}
 	defer state.closeAll()
 
@@ -776,7 +776,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 		}
 	}
 	if s.activeAccount != nil {
-		s.swapDone = s.activeAccount.CyberAccess
+		s.swapDone = s.activeAccount.codex.CyberAccess
 	}
 
 	if conversationID == "" {

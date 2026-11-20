@@ -25,9 +25,8 @@ func detectRequestFormat(path string) wire.RequestFormat {
 	}
 }
 
-// providerTargetFormat returns the format the provider expects.
-func providerTargetFormat(accountType AccountType) wire.RequestFormat {
-	switch capabilitiesFor(accountType).WireFormat {
+func requestFormatForCodec(codec Codec) wire.RequestFormat {
+	switch codec.WireFormat() {
 	case WireAnthropic:
 		return wire.FormatClaude
 	case WireResponses, WireOpenAI:

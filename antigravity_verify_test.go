@@ -21,12 +21,11 @@ func antigravityVerifyTestAccount(t *testing.T, id string) *Account {
 	t.Helper()
 	return &Account{
 		Type: AccountTypeAntigravity, ID: id,
-		File:            filepath.Join(t.TempDir(), id+".json"),
-		AccessToken:     "token",
-		RefreshToken:    "refresh",
-		ProjectID:       "project",
-		ExpiresAt:       time.Now().Add(time.Hour),
-		ModelRateLimits: map[string]time.Time{},
+		File:         filepath.Join(t.TempDir(), id+".json"),
+		AccessToken:  "token",
+		RefreshToken: "refresh",
+		google:       googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}},
+		ExpiresAt:    time.Now().Add(time.Hour),
 	}
 }
 

@@ -77,7 +77,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		retrievedAt := a.Usage.RetrievedAt
 		accType := a.Type
 		rateLimitUntil := a.RateLimitUntil
-		resetCreditsRetrievedAt := a.ResetCreditsRetrievedAt
+		resetCreditsRetrievedAt := a.codex.ResetCreditsRetrievedAt
 		a.mu.Unlock()
 
 		// Codex accounts can carry stale dead state from an earlier transient
@@ -385,8 +385,8 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, usageURL, nil)
 		a.mu.Lock()
 		access := a.AccessToken
-		accountID := a.AccountID
-		idTokID := a.IDTokenChatGPTAccountID
+		accountID := a.codex.AccountID
+		idTokID := a.codex.IDTokenChatGPTAccountID
 		a.mu.Unlock()
 		req.Header.Set("Authorization", "Bearer "+access)
 		chatgptHeaderID := accountID
@@ -527,9 +527,9 @@ func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 
 	a.mu.Lock()
 	access := a.AccessToken
-	accountID := a.AccountID
+	accountID := a.codex.AccountID
 	if accountID == "" {
-		accountID = a.IDTokenChatGPTAccountID
+		accountID = a.codex.IDTokenChatGPTAccountID
 	}
 	a.mu.Unlock()
 
@@ -579,9 +579,9 @@ func (h *proxyHandler) fetchCodexResetCredits(a *Account) error {
 	})
 
 	a.mu.Lock()
-	a.ResetCreditsAvailable = payload.AvailableCount
-	a.RateLimitResetCredits = credits
-	a.ResetCreditsRetrievedAt = time.Now()
+	a.codex.ResetCreditsAvailable = payload.AvailableCount
+	a.codex.RateLimitResetCredits = credits
+	a.codex.ResetCreditsRetrievedAt = time.Now()
 	a.mu.Unlock()
 	return nil
 }
@@ -610,15 +610,15 @@ func (h *proxyHandler) consumeEarliestCodexResetCredit(a *Account) (resetCreditC
 		return resetCreditConsumption{}, errors.New("banked resets are only available on Codex accounts")
 	}
 	a.mu.Lock()
-	if a.ResetCreditRedeeming {
+	if a.codex.ResetCreditRedeeming {
 		a.mu.Unlock()
 		return resetCreditConsumption{}, errResetCreditInProgress
 	}
-	a.ResetCreditRedeeming = true
+	a.codex.ResetCreditRedeeming = true
 	a.mu.Unlock()
 	defer func() {
 		a.mu.Lock()
-		a.ResetCreditRedeeming = false
+		a.codex.ResetCreditRedeeming = false
 		a.mu.Unlock()
 	}()
 
@@ -628,7 +628,7 @@ func (h *proxyHandler) consumeEarliestCodexResetCredit(a *Account) (resetCreditC
 	now := time.Now()
 	var credit *RateLimitResetCredit
 	a.mu.Lock()
-	for _, candidate := range a.RateLimitResetCredits {
+	for _, candidate := range a.codex.RateLimitResetCredits {
 		if candidate.ID != "" && candidate.ExpiresAt.After(now) {
 			picked := candidate
 			credit = &picked
@@ -687,9 +687,9 @@ func (h *proxyHandler) consumeCodexResetCredit(a *Account, credit RateLimitReset
 
 	a.mu.Lock()
 	access := a.AccessToken
-	accountID := a.AccountID
+	accountID := a.codex.AccountID
 	if accountID == "" {
-		accountID = a.IDTokenChatGPTAccountID
+		accountID = a.codex.IDTokenChatGPTAccountID
 	}
 	a.mu.Unlock()
 
@@ -990,8 +990,8 @@ func (h *proxyHandler) fetchDailyBreakdownData(a *Account) ([]DailyBreakdownDay,
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	a.mu.Lock()
 	access := a.AccessToken
-	accountID := a.AccountID
-	idTokID := a.IDTokenChatGPTAccountID
+	accountID := a.codex.AccountID
+	idTokID := a.codex.IDTokenChatGPTAccountID
 	a.mu.Unlock()
 	req.Header.Set("Authorization", "Bearer "+access)
 	chatgptHeaderID := accountID

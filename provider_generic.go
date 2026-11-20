@@ -132,6 +132,8 @@ func NewGenericOpenAIProvider(name string, cfg GenericProviderConfig) (*GenericO
 	return provider, nil
 }
 
+func (*GenericOpenAIProvider) WireFormat() WireFormat { return WireOpenAI }
+
 func (p *GenericOpenAIProvider) Type() AccountType { return p.accountType }
 
 func (p *GenericOpenAIProvider) LoadAccount(name, path string, data []byte) (*Account, error) {
@@ -196,9 +198,8 @@ func (p *GenericOpenAIProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	return result
 }
 
-func (p *GenericOpenAIProvider) ParseUsageHeaders(*Account, http.Header) {}
-func (p *GenericOpenAIProvider) UpstreamURL(string) *url.URL             { return p.base }
-func (p *GenericOpenAIProvider) MatchesPath(string) bool                 { return false }
+func (p *GenericOpenAIProvider) UpstreamURL(string) *url.URL { return p.base }
+func (p *GenericOpenAIProvider) MatchesPath(string) bool     { return false }
 
 func (p *GenericOpenAIProvider) NormalizePath(path string) string {
 	basePath := strings.TrimRight(p.base.Path, "/")
@@ -248,13 +249,13 @@ func (p *GenericOpenAIProvider) syntheticAccount() *Account {
 	return account
 }
 
-func buildGenericProviders(configured map[string]GenericProviderConfig) ([]Provider, []*Account, error) {
+func buildGenericProviders(configured map[string]GenericProviderConfig) ([]ProviderDriver, []*Account, error) {
 	names := make([]string, 0, len(configured))
 	for name := range configured {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	providers := make([]Provider, 0, len(names))
+	providers := make([]ProviderDriver, 0, len(names))
 	accounts := make([]*Account, 0, len(names))
 	for _, name := range names {
 		provider, err := NewGenericOpenAIProvider(name, configured[name])

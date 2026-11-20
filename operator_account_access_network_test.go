@@ -42,7 +42,7 @@ func TestOperatorAccountAccessHTTPAndPersistentWebSocketRevocation(t *testing.T)
 	}))
 	defer upstream.Close()
 	base, _ := url.Parse(upstream.URL)
-	a := &Account{ID: "private-operator-network", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, AccessToken: "private-upstream"}
+	a := &Account{ID: "private-operator-network", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, AccessToken: "private-upstream"}
 	fx := newCodexProxyFixture(t, base, []*Account{a})
 	h := fx.handler
 	h.cfg.maxAttempts = 1

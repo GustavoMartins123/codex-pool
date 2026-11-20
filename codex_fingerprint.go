@@ -134,8 +134,8 @@ func codexSecCHPlatform(platform string) string {
 
 func applyCodexCookies(req *http.Request, acc *Account) {
 	acc.mu.Lock()
-	cookies := make(map[string]string, len(acc.CodexCookies))
-	for k, v := range acc.CodexCookies {
+	cookies := make(map[string]string, len(acc.codex.Cookies))
+	for k, v := range acc.codex.Cookies {
 		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
 			cookies[k] = v
 		}
@@ -171,11 +171,11 @@ func captureCodexResponseState(acc *Account, resp *http.Response, reqID string) 
 		if !isPersistedCodexCookie(c.Name) || c.Value == "" {
 			continue
 		}
-		if acc.CodexCookies == nil {
-			acc.CodexCookies = map[string]string{}
+		if acc.codex.Cookies == nil {
+			acc.codex.Cookies = map[string]string{}
 		}
-		if acc.CodexCookies[c.Name] != c.Value {
-			acc.CodexCookies[c.Name] = c.Value
+		if acc.codex.Cookies[c.Name] != c.Value {
+			acc.codex.Cookies[c.Name] = c.Value
 			changed = true
 		}
 	}

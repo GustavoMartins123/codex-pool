@@ -215,8 +215,8 @@ func TestQuotaErrorMidChainReplaysCompleteInput(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_chain", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_chain", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_chain"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_chain"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-chain", "drain")
 
@@ -277,8 +277,8 @@ func TestQuotaThresholdMidChainReplaysCompleteInput(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_chain_pre", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_chain_pre", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_chain_pre"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_chain_pre"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-chain-pre", "drain")
 
@@ -335,8 +335,8 @@ func TestQuotaThresholdKeepsUnreplayableChainOnAccount(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_unknown", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_unknown", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_unknown"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_unknown"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-unknown", "drain")
 
@@ -411,8 +411,8 @@ func TestQuotaErrorOnUnreplayableChainAsksClientToReconnect(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_handoff", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_handoff", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_handoff"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_handoff"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-handoff", "drain")
 	headers := http.Header{
@@ -490,8 +490,8 @@ func TestQuotaErrorAfterForwardedOutputAsksClientToReconnect(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", AccountID: "acct_drain_partial", PlanType: "pro"}
-	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", AccountID: "acct_fresh_partial", PlanType: "pro"}
+	drain := &Account{Type: AccountTypeCodex, ID: "drain", AccessToken: "drain-token", codex: codexAccountState{AccountID: "acct_drain_partial"}, PlanType: "pro"}
+	fresh := &Account{Type: AccountTypeCodex, ID: "fresh", AccessToken: "fresh-token", codex: codexAccountState{AccountID: "acct_fresh_partial"}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{drain, fresh})
 	fx.handler.pool.pin("conv-partial", "drain")
 
@@ -540,8 +540,8 @@ func TestCyberSwapOnUnreplayableChainAsksClientToReconnect(t *testing.T) {
 	})
 
 	upURL, _ := url.Parse(upstream.server.URL)
-	flagged := &Account{Type: AccountTypeCodex, ID: "flagged", AccessToken: "flagged-token", AccountID: "acct_flagged_handoff", PlanType: "pro"}
-	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", AccountID: "acct_cyber_handoff", PlanType: "pro", CyberAccess: true}
+	flagged := &Account{Type: AccountTypeCodex, ID: "flagged", AccessToken: "flagged-token", codex: codexAccountState{AccountID: "acct_flagged_handoff"}, PlanType: "pro"}
+	cyber := &Account{Type: AccountTypeCodex, ID: "cyber", AccessToken: "cyber-token", codex: codexAccountState{AccountID: "acct_cyber_handoff", CyberAccess: true}, PlanType: "pro"}
 	fx := newCodexProxyFixture(t, upURL, []*Account{flagged, cyber})
 	fx.handler.pool.pin("conv-cyber-handoff", "flagged")
 

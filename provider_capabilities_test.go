@@ -8,23 +8,23 @@ import (
 
 func TestProviderCapabilitiesMatchWireAndHandoffContract(t *testing.T) {
 	tests := []struct {
-		provider AccountType
+		provider ProviderDriver
 		wire     WireFormat
 		target   wire.RequestFormat
 		full     bool
 		replay   bool
 	}{
-		{AccountTypeCodex, WireResponses, wire.FormatOpenAI, false, false},
-		{AccountTypeAntigravity, WireGemini, wire.FormatUnknown, false, true},
-		{AccountTypeClaude, WireAnthropic, wire.FormatClaude, true, false},
-		{AccountTypeZAI, WireAnthropic, wire.FormatClaude, true, false},
-		{AccountTypeGemini, WireGemini, wire.FormatUnknown, false, false},
+		{&CodexProvider{}, WireResponses, wire.FormatOpenAI, false, false},
+		{&AntigravityProvider{}, WireGemini, wire.FormatUnknown, false, true},
+		{&ClaudeProvider{}, WireAnthropic, wire.FormatClaude, true, false},
+		{&ZAIProvider{}, WireAnthropic, wire.FormatClaude, true, false},
+		{&GeminiProvider{}, WireGemini, wire.FormatUnknown, false, false},
 	}
 	for _, test := range tests {
-		t.Run(string(test.provider), func(t *testing.T) {
-			caps := capabilitiesFor(test.provider)
-			if caps.WireFormat != test.wire || providerTargetFormat(test.provider) != test.target || caps.SupportsFullHistoryHandoff != test.full || caps.SupportsNativeReplay != test.replay {
-				t.Fatalf("capabilities=%+v target=%s", caps, providerTargetFormat(test.provider))
+		t.Run(string(test.provider.Type()), func(t *testing.T) {
+			caps := capabilitiesFor(test.provider.Type())
+			if caps.WireFormat != test.wire || requestFormatForCodec(test.provider) != test.target || caps.SupportsFullHistoryHandoff != test.full || caps.SupportsNativeReplay != test.replay {
+				t.Fatalf("capabilities=%+v target=%s", caps, requestFormatForCodec(test.provider))
 			}
 			if !caps.SupportsForeignHistory || !caps.SupportsToolHistory || !caps.SupportsParallelTools {
 				t.Fatalf("missing known conversation capabilities: %+v", caps)

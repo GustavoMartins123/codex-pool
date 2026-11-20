@@ -192,7 +192,7 @@ func TestFinalizeCodexModelCatalogAddsDiscoveredQwenModels(t *testing.T) {
 
 func TestCodexModelsEndpointListsQwenModels(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "codex-catalog-qwen-secret")
-	codex := &Account{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-codex", PlanType: "pro"}
+	codex := &Account{ID: "codex", Type: AccountTypeCodex, AccessToken: "codex-access", codex: codexAccountState{AccountID: "acct-codex"}, PlanType: "pro"}
 	qwen := &Account{ID: "qwen", Type: AccountTypeQwen, AccessToken: "sk-sp-catalog", Models: map[string]DiscoveredModel{"qwen3.8-max": {ID: "qwen3.8-max", Protocol: "openai"}}}
 	h := qwenTestHandler(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if !strings.HasSuffix(req.URL.Path, "/codex/models") {
@@ -222,9 +222,9 @@ func TestCodexModelsEndpointListsQwenModels(t *testing.T) {
 
 func TestCodexModelsEndpointListsDiscoveredCodexModels(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "codex-catalog-discovery-secret")
-	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-upstream", PlanType: "pro"}
+	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", codex: codexAccountState{AccountID: "acct-upstream"}, PlanType: "pro"}
 	discovered := &Account{
-		ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", AccountID: "acct-discovered", PlanType: "pro",
+		ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", codex: codexAccountState{AccountID: "acct-discovered"}, PlanType: "pro",
 		Models: map[string]DiscoveredModel{
 			"gpt-6.2-sol": {
 				ID: "gpt-6.2-sol", DisplayName: "GPT-6.2 Sol", ContextWindow: 500000,
@@ -388,8 +388,8 @@ func TestRunnerCatalogServesUpstreamCodexEntries(t *testing.T) {
 
 func TestCodexModelsEndpointServesStaticGPTModelsFromDiscovery(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "codex-catalog-static-secret")
-	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", AccountID: "acct-upstream", PlanType: "plus"}
-	discovered := &Account{ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", AccountID: "acct-discovered", PlanType: "pro",
+	upstream := &Account{ID: "upstream", Type: AccountTypeCodex, AccessToken: "codex-access", codex: codexAccountState{AccountID: "acct-upstream"}, PlanType: "plus"}
+	discovered := &Account{ID: "discovered", Type: AccountTypeCodex, AccessToken: "codex-discovered", codex: codexAccountState{AccountID: "acct-discovered"}, PlanType: "pro",
 		Models: map[string]DiscoveredModel{"gpt-5.6-sol": {ID: "gpt-5.6-sol", DisplayName: "GPT-5.6 Sol", ContextWindow: 372000}},
 	}
 	model := discovered.Models["gpt-5.6-sol"]

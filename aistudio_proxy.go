@@ -92,17 +92,17 @@ func (h *proxyHandler) doAIStudioRequest(ctx context.Context, account *Account, 
 func aistudioModelCoolingDown(account *Account, model string, now time.Time) bool {
 	account.mu.Lock()
 	defer account.mu.Unlock()
-	return account.ModelRateLimits[model].After(now)
+	return account.google.ModelRateLimits[model].After(now)
 }
 
 func setAIStudioModelCooldown(account *Account, model string, until time.Time) {
 	account.mu.Lock()
 	defer account.mu.Unlock()
-	if account.ModelRateLimits == nil {
-		account.ModelRateLimits = make(map[string]time.Time)
+	if account.google.ModelRateLimits == nil {
+		account.google.ModelRateLimits = make(map[string]time.Time)
 	}
-	if until.After(account.ModelRateLimits[model]) {
-		account.ModelRateLimits[model] = until
+	if until.After(account.google.ModelRateLimits[model]) {
+		account.google.ModelRateLimits[model] = until
 	}
 }
 

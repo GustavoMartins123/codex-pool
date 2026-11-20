@@ -92,7 +92,7 @@ func TestClaudeExchangeIdentifiesAccount(t *testing.T) {
 				}
 				return
 			}
-			if len(accounts) != 1 || accounts[0].AccountUUID != "synthetic-account-uuid" {
+			if len(accounts) != 1 || accounts[0].claude.UUID != "synthetic-account-uuid" {
 				t.Fatalf("expected account UUID to be persisted, got %+v", accounts)
 			}
 			assertEncryptedCredentialFile(t, accounts[0].File, "sk-ant-oat-synthetic-token")

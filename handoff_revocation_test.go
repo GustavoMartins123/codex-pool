@@ -43,7 +43,7 @@ func TestAuthenticatedWebSocketRevocationStopsNextTurn(t *testing.T) {
 			}))
 			defer upstream.Close()
 			base, _ := url.Parse(upstream.URL)
-			h := &proxyHandler{cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, pool: newPoolState([]*Account{{ID: "codex", Type: AccountTypeCodex, AccessToken: "token", AccountID: "acct", PlanType: "pro"}}, false), registry: NewProviderRegistry(NewCodexProviderWithRealtime(base, base, base, base), nil, nil), transport: http.DefaultTransport, metrics: newMetrics(), recent: newRecentErrors(5)}
+			h := &proxyHandler{cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, pool: newPoolState([]*Account{{ID: "codex", Type: AccountTypeCodex, AccessToken: "token", codex: codexAccountState{AccountID: "acct"}, PlanType: "pro"}}, false), registry: NewProviderRegistry(NewCodexProviderWithRealtime(base, base, base, base), nil, nil), transport: http.DefaultTransport, metrics: newMetrics(), recent: newRecentErrors(5)}
 			proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 			defer proxy.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

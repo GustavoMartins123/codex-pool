@@ -12,7 +12,7 @@ import (
 // pinned to a cyber_access account so the next turn lands there, and
 // the relay does not terminate the stream early.
 func TestCyberPolicySSESuppressorForwardsAndPins(t *testing.T) {
-	cyber := &Account{ID: "cyber", Type: AccountTypeCodex, CyberAccess: true, AccessToken: "tok"}
+	cyber := &Account{ID: "cyber", Type: AccountTypeCodex, codex: codexAccountState{CyberAccess: true}, AccessToken: "tok"}
 	plain := &Account{ID: "plain", Type: AccountTypeCodex, AccessToken: "tok"}
 	h := &proxyHandler{
 		cfg:     &config{},

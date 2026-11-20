@@ -12,7 +12,7 @@ import (
 )
 
 func exhaustedCodexAccount(id string, primary float64, resetIn time.Duration) *Account {
-	a := &Account{ID: id, Type: AccountTypeCodex, PlanType: "pro", AccessToken: "token", AccountID: id}
+	a := &Account{ID: id, Type: AccountTypeCodex, PlanType: "pro", AccessToken: "token", codex: codexAccountState{AccountID: id}}
 	a.Usage = UsageSnapshot{PrimaryUsedPercent: primary, PrimaryWindowMinutes: 300}
 	if resetIn > 0 {
 		a.Usage.PrimaryResetAt = time.Now().Add(resetIn)
@@ -194,7 +194,7 @@ func newExhaustedFallbackHandler(t *testing.T, preferWait bool, codexAccounts ..
 	antiDaily, _ := url.Parse("https://daily.example")
 	antiProd, _ := url.Parse("https://prod.example")
 
-	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", ProjectID: "proj-1", PlanType: "pro"}
+	antiAcc := &Account{Type: AccountTypeAntigravity, ID: "anti-1", AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 	accounts := append(append([]*Account{}, codexAccounts...), antiAcc)
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		payload := "data: {\"type\":\"response.completed\",\"servedBy\":\"anti\"}\n\n"

@@ -102,8 +102,8 @@ func TestAntigravityInputResidualP99Metric(t *testing.T) {
 }
 
 func TestComputeCyberPolicyStatsHealthSignals(t *testing.T) {
-	cyberLive := &Account{ID: "cyber-live", Type: AccountTypeCodex, CyberAccess: true}
-	cyberDead := &Account{ID: "cyber-dead", Type: AccountTypeCodex, CyberAccess: true, Dead: true}
+	cyberLive := &Account{ID: "cyber-live", Type: AccountTypeCodex, codex: codexAccountState{CyberAccess: true}}
+	cyberDead := &Account{ID: "cyber-dead", Type: AccountTypeCodex, codex: codexAccountState{CyberAccess: true}, Dead: true}
 	plain := &Account{ID: "plain", Type: AccountTypeCodex}
 
 	cases := []struct {

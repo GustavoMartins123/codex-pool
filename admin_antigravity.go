@@ -440,7 +440,7 @@ func (h *proxyHandler) validateAntigravityRelogin(ctx context.Context, target, a
 		return false, errors.New("Antigravity revalidation found no usable model")
 	}
 	body := []byte(`{"contents":[{"role":"user","parts":[{"text":"Reply with OK."}]}]}`)
-	prepared, err := prepareAntigravityRequest("/v1beta/models/"+model+":streamGenerateContent", body, "antigravity/"+model, account.ProjectID, "")
+	prepared, err := prepareAntigravityRequest("/v1beta/models/"+model+":streamGenerateContent", body, "antigravity/"+model, account.google.ProjectID, "")
 	if err != nil {
 		return false, err
 	}
@@ -535,9 +535,9 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 	file := filepath.Join(h.cfg.poolDir, "antigravity", accountID+".json")
 	account := &Account{
 		Type: AccountTypeAntigravity, ID: accountID, File: file, Email: email,
-		ProjectID: projectID, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken,
+		google: googleAccountState{ProjectID: projectID, ModelRateLimits: make(map[string]time.Time)}, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken,
 		PlanType: planType, ExpiresAt: time.Now().Add(time.Duration(token.ExpiresIn) * time.Second),
-		LastRefresh: time.Now().UTC(), AddedAt: time.Now().UTC(), ModelRateLimits: make(map[string]time.Time),
+		LastRefresh: time.Now().UTC(), AddedAt: time.Now().UTC(),
 	}
 	provider, _ := h.registry.ForType(AccountTypeAntigravity).(*AntigravityProvider)
 	if provider == nil {
@@ -610,7 +610,7 @@ func (h *proxyHandler) replaceAntigravityAccountCredentials(target *Account, tok
 	target.AccessToken = token.AccessToken
 	target.RefreshToken = token.RefreshToken
 	target.Email = email
-	target.ProjectID = projectID
+	target.google.ProjectID = projectID
 	if strings.TrimSpace(planType) != "" {
 		target.PlanType = planType
 	}
@@ -894,7 +894,7 @@ func (h *proxyHandler) handleAntigravityModelVerify(w http.ResponseWriter, r *ht
 		}
 		entry.AccountID = account.ID
 		account.mu.Lock()
-		projectID := account.ProjectID
+		projectID := account.google.ProjectID
 		account.mu.Unlock()
 		requestBody := []byte(`{"contents":[{"role":"user","parts":[{"text":"Reply with OK."}]}]}`)
 		prepared, err := prepareAntigravityRequest("/v1beta/models/"+model.ID+":generateContent", requestBody, "antigravity/"+model.ID, projectID, "")

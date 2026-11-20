@@ -15,6 +15,10 @@ import (
 )
 
 // ClaudeProvider handles Anthropic Claude accounts.
+type claudeAccountState struct {
+	UUID string // UUID from the Anthropic bootstrap endpoint.
+}
+
 type ClaudeProvider struct {
 	claudeBase *url.URL
 }
@@ -24,6 +28,21 @@ func NewClaudeProvider(claudeBase *url.URL) *ClaudeProvider {
 	return &ClaudeProvider{
 		claudeBase: claudeBase,
 	}
+}
+
+func (p *ClaudeProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/v1/models")
+}
+
+func (p *ClaudeProvider) SetModelDiscoveryHeaders(req *http.Request) {
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
+}
+
+func (*ClaudeProvider) WireFormat() WireFormat { return WireAnthropic }
+
+func (*ClaudeProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{bufferResponses: true}
 }
 
 func (p *ClaudeProvider) Type() AccountType {
@@ -80,7 +99,7 @@ func (p *ClaudeProvider) LoadAccount(name, path string, data []byte) (*Account, 
 			acc.PlanType = "claude"
 		}
 		acc.RateLimitTier = cj.ClaudeAiOauth.RateLimitTier
-		acc.AccountUUID = cj.AccountUUID
+		acc.claude.UUID = cj.AccountUUID
 		return acc, nil
 	}
 

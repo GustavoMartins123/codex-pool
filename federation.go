@@ -58,6 +58,8 @@ func NewFederatedProvider(name string, cfg FederationNodeConfig) (*FederatedProv
 	return provider, nil
 }
 
+func (*FederatedProvider) WireFormat() WireFormat { return WireOpenAI }
+
 func (p *FederatedProvider) Type() AccountType { return p.accountType }
 func (p *FederatedProvider) LoadAccount(string, string, []byte) (*Account, error) {
 	return nil, nil
@@ -72,9 +74,8 @@ func (p *FederatedProvider) RefreshToken(context.Context, *Account, http.RoundTr
 func (p *FederatedProvider) ParseUsage(object map[string]any) *RequestUsage {
 	return (&GenericOpenAIProvider{}).ParseUsage(object)
 }
-func (p *FederatedProvider) ParseUsageHeaders(*Account, http.Header) {}
-func (p *FederatedProvider) UpstreamURL(string) *url.URL             { return p.base }
-func (p *FederatedProvider) MatchesPath(string) bool                 { return false }
+func (p *FederatedProvider) UpstreamURL(string) *url.URL { return p.base }
+func (p *FederatedProvider) MatchesPath(string) bool     { return false }
 func (p *FederatedProvider) NormalizePath(path string) string {
 	basePath := strings.TrimRight(p.base.Path, "/")
 	if basePath != "" && strings.HasPrefix(path, basePath+"/") {
@@ -104,7 +105,7 @@ func (p *FederatedProvider) syntheticAccount() *Account {
 	return account
 }
 
-func buildFederatedProviders(cfg FederationConfig) ([]Provider, []*Account, error) {
+func buildFederatedProviders(cfg FederationConfig) ([]ProviderDriver, []*Account, error) {
 	if !cfg.Enabled {
 		return nil, nil, nil
 	}
@@ -115,7 +116,7 @@ func buildFederatedProviders(cfg FederationConfig) ([]Provider, []*Account, erro
 		}
 	}
 	sort.Strings(names)
-	var providers []Provider
+	var providers []ProviderDriver
 	var accounts []*Account
 	for _, name := range names {
 		provider, err := NewFederatedProvider(name, cfg.Nodes[name])

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode"
@@ -31,10 +32,15 @@ var (
 	errContextResult      = errors.New("invalid context tool result")
 )
 
+type nativeContextProvider interface {
+	UpstreamURL(path string) *url.URL
+	SetAuthHeaders(*http.Request, *Account)
+}
+
 type nativeContext struct {
 	store     *nativeContextStore
 	pool      *poolState
-	provider  Provider
+	provider  nativeContextProvider
 	transport http.RoundTripper
 	refresh   func(context.Context, *Account) error
 }
@@ -124,14 +130,14 @@ func contextScope(userID string) string {
 // A workspace ID alone does not distinguish two users logged into the same workspace.
 func contextIdentity(acc *Account) (contextAccount, *Account, error) {
 	acc.mu.Lock()
-	snapshot := &Account{Type: acc.Type, ID: acc.ID, AccessToken: acc.AccessToken, IDToken: acc.IDToken, AccountID: acc.AccountID, IDTokenChatGPTAccountID: acc.IDTokenChatGPTAccountID, Dead: acc.Dead, Disabled: acc.Disabled, AllowedSourceIPs: append([]string(nil), acc.AllowedSourceIPs...), CodexCookies: make(map[string]string, len(acc.CodexCookies))}
-	for key, value := range acc.CodexCookies {
-		snapshot.CodexCookies[key] = value
+	snapshot := &Account{Type: acc.Type, ID: acc.ID, AccessToken: acc.AccessToken, IDToken: acc.IDToken, codex: codexAccountState{AccountID: acc.codex.AccountID, IDTokenChatGPTAccountID: acc.codex.IDTokenChatGPTAccountID, Cookies: make(map[string]string, len(acc.codex.Cookies))}, Dead: acc.Dead, Disabled: acc.Disabled, AllowedSourceIPs: append([]string(nil), acc.AllowedSourceIPs...)}
+	for key, value := range acc.codex.Cookies {
+		snapshot.codex.Cookies[key] = value
 	}
 	acc.mu.Unlock()
-	accountID := snapshot.AccountID
+	accountID := snapshot.codex.AccountID
 	if accountID == "" {
-		accountID = snapshot.IDTokenChatGPTAccountID
+		accountID = snapshot.codex.IDTokenChatGPTAccountID
 	}
 	var user string
 	for _, token := range []string{snapshot.AccessToken, snapshot.IDToken} {

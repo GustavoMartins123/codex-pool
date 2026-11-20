@@ -36,6 +36,20 @@ func NewOpencodeGoProvider(opencodeGoBase *url.URL) *OpencodeGoProvider {
 	return &OpencodeGoProvider{opencodeGoBase: opencodeGoBase}
 }
 
+func (p *OpencodeGoProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/models"), "/models")
+}
+
+func (*OpencodeGoProvider) WireFormat() WireFormat { return WireUnknown }
+
+func (*OpencodeGoProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{
+		conversationHeaders: func(req *http.Request, conversationID, userID string) {
+			req.Header.Set("x-opencode-session", opencodeGoSessionHeader(req, conversationID, userID))
+		},
+	}
+}
+
 func (p *OpencodeGoProvider) Type() AccountType {
 	return AccountTypeOpencodeGo
 }

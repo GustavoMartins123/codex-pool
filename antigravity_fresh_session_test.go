@@ -17,7 +17,7 @@ func TestAntigravityStartsFreshNativeSessionOnEachEntry(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")
 	provider := NewAntigravityProvider(daily, prod)
-	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
 	var upstream []map[string]any
 	h := &proxyHandler{
 		cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},

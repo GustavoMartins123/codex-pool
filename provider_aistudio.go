@@ -26,7 +26,16 @@ type AIStudioProvider struct {
 }
 
 func NewAIStudioProvider(base *url.URL) *AIStudioProvider { return &AIStudioProvider{base: base} }
-func (p *AIStudioProvider) Type() AccountType             { return AccountTypeAIStudio }
+func (p *AIStudioProvider) ModelDiscoveryURL() *url.URL {
+	if p.base == nil {
+		return nil
+	}
+	return aistudioModelsURL(p.base)
+}
+
+func (*AIStudioProvider) WireFormat() WireFormat { return WireGemini }
+
+func (p *AIStudioProvider) Type() AccountType { return AccountTypeAIStudio }
 
 type AIStudioAuthJSON struct {
 	APIKey   string                 `json:"api_key"`
@@ -68,10 +77,9 @@ func (p *AIStudioProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	return (&AntigravityProvider{}).ParseUsage(obj)
 }
 
-func (p *AIStudioProvider) ParseUsageHeaders(*Account, http.Header) {}
-func (p *AIStudioProvider) UpstreamURL(string) *url.URL             { return p.base }
-func (p *AIStudioProvider) MatchesPath(string) bool                 { return false }
-func (p *AIStudioProvider) NormalizePath(path string) string        { return path }
+func (p *AIStudioProvider) UpstreamURL(string) *url.URL      { return p.base }
+func (p *AIStudioProvider) MatchesPath(string) bool          { return false }
+func (p *AIStudioProvider) NormalizePath(path string) string { return path }
 func (p *AIStudioProvider) DetectsSSE(path, contentType string) bool {
 	return strings.Contains(path, "streamGenerateContent") || strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }

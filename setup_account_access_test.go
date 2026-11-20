@@ -29,7 +29,7 @@ func TestFreshSetupCredentialsRequireAccountGrant(t *testing.T) {
 			t.Setenv("POOL_JWT_SECRET", "fresh-setup-secret")
 			p, client := newNonceTestPassport(t)
 			addTestPassportOperator(t, p, "owner")
-			a := &Account{ID: "managed-account", Type: tc.provider, AccessToken: "upstream-secret", AccountID: "upstream-account", PlanType: "pro"}
+			a := &Account{ID: "managed-account", Type: tc.provider, AccessToken: "upstream-secret", codex: codexAccountState{AccountID: "upstream-account"}, PlanType: "pro"}
 			if err := p.initializeAccountAuthority([]*Account{a}); err != nil {
 				t.Fatal(err)
 			}

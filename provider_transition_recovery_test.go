@@ -27,7 +27,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
-			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
 			var sessions []string
 			h := &proxyHandler{
 				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
@@ -74,7 +74,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 				t.Fatalf("recovery state=%+v", state.ProviderSessions[AccountTypeAntigravity])
 			}
 			account.mu.Lock()
-			cooldowns := len(account.ModelRateLimits)
+			cooldowns := len(account.google.ModelRateLimits)
 			account.mu.Unlock()
 			if cooldowns != 0 {
 				t.Fatalf("session/context failure changed quota cooldowns: %d", cooldowns)

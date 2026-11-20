@@ -135,7 +135,7 @@ func TestUpstreamAuthFailureDoesNotLeakHeadersOrBody(t *testing.T) {
 	account := &Account{
 		ID: "codex-leaky", Type: AccountTypeCodex,
 		AccessToken: "old-access", RefreshToken: "refresh",
-		AccountID: "upstream", PlanType: "pro",
+		codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro",
 	}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.disableRefresh = true
@@ -198,7 +198,7 @@ func TestUpstreamPaymentBodyIsRedacted(t *testing.T) {
 	account := &Account{
 		ID: "codex-dead", Type: AccountTypeCodex,
 		AccessToken: "old-access", RefreshToken: "refresh",
-		AccountID: "upstream", PlanType: "pro",
+		codex: codexAccountState{AccountID: "upstream"}, PlanType: "pro",
 	}
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.disableRefresh = true

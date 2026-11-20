@@ -124,7 +124,7 @@ func TestAntigravityTransitionHTTPErrorMatrix(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
-			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
 			calls := 0
 			h := &proxyHandler{
 				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
@@ -154,7 +154,7 @@ func TestAntigravityTransitionHTTPErrorMatrix(t *testing.T) {
 				t.Fatalf("status=%d calls=%d body=%s", w.Code, calls, w.Body.String())
 			}
 			account.mu.Lock()
-			cooldowns := len(account.ModelRateLimits)
+			cooldowns := len(account.google.ModelRateLimits)
 			account.mu.Unlock()
 			if (cooldowns > 0) != scenario.quotaAffected {
 				t.Fatalf("cooldowns=%d quotaAffected=%t", cooldowns, scenario.quotaAffected)

@@ -27,8 +27,8 @@ func TestAuditStreamUpstreamDeathDoesNotSpliceFallbackContent(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", AccountID: "acct_ordinary", PlanType: "pro"}
-	backup := &Account{Type: AccountTypeCodex, ID: "backup", AccessToken: "backup-token", AccountID: "acct_backup", PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}}
+	ordinary := &Account{Type: AccountTypeCodex, ID: "ordinary", AccessToken: "ordinary-token", codex: codexAccountState{AccountID: "acct_ordinary"}, PlanType: "pro"}
+	backup := &Account{Type: AccountTypeCodex, ID: "backup", AccessToken: "backup-token", codex: codexAccountState{AccountID: "acct_backup"}, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}}
 
 	ordinaryPrefix := strings.Join([]string{
 		`event: response.created`,

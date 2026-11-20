@@ -19,6 +19,10 @@ func NewAdverserialProvider(adverserialBase *url.URL) *AdverserialProvider {
 	return &AdverserialProvider{apiKeyUpstream: apiKeyUpstream{base: adverserialBase}}
 }
 
+func (*AdverserialProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{bufferBody: true}
+}
+
 func (p *AdverserialProvider) Type() AccountType {
 	return AccountTypeAdverserial
 }

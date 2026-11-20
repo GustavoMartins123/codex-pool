@@ -132,7 +132,7 @@ func runAIStudioResponsesRealCodexCLI(t *testing.T, binary string, websockets bo
 			}
 		})
 		codexUpstream = mustParse(fake.server.URL)
-		accounts = append(accounts, &Account{Type: AccountTypeCodex, ID: "aistudio-ws", AccessToken: "ws-token", AccountID: "acct_aistudio_ws", PlanType: "pro"})
+		accounts = append(accounts, &Account{Type: AccountTypeCodex, ID: "aistudio-ws", AccessToken: "ws-token", codex: codexAccountState{AccountID: "acct_aistudio_ws"}, PlanType: "pro"})
 	}
 	h := aistudioTestHandler(t, upstream.URL, accounts...)
 	h.registry = NewProviderRegistry(NewCodexProvider(codexUpstream, codexUpstream, codexUpstream), NewClaudeProvider(codexUpstream), NewGeminiProvider(codexUpstream, codexUpstream), NewAIStudioProvider(mustParse(upstream.URL)))

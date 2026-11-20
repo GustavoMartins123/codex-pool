@@ -28,7 +28,7 @@ func TestNativeContextWSSwap(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			revoke := tc.revoke
 			a, b := contextTestAccount("a", "user-a"), contextTestAccount("b", "user-b")
-			b.CyberAccess = true
+			b.codex.CyberAccess = true
 			var mu sync.Mutex
 			var seenA, seenB [][]byte
 			var h *proxyHandler

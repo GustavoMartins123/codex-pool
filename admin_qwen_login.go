@@ -291,11 +291,11 @@ func (h *proxyHandler) linkQwenCloudSession(actor, id string, plan *QwenTokenPla
 		return err
 	}
 	account.mu.Lock()
-	previousPlan, previousCredits, previousError, previousUsage, previousType := account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError, account.Usage, account.PlanType
-	account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError = plan, credits, ""
+	previousPlan, previousCredits, previousError, previousUsage, previousType := account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError, account.Usage, account.PlanType
+	account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError = plan, credits, ""
 	account.Usage, account.PlanType = qwenCreditUsage(credits, time.Now()), "token_plan_personal"
 	if err := saveAccount(account); err != nil {
-		account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError, account.Usage, account.PlanType = previousPlan, previousCredits, previousError, previousUsage, previousType
+		account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError, account.Usage, account.PlanType = previousPlan, previousCredits, previousError, previousUsage, previousType
 		account.mu.Unlock()
 		return errors.New("could not save Alibaba Cloud account link")
 	}

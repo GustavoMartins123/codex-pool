@@ -119,7 +119,7 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		account.mu.Lock()
-		plan := account.QwenTokenPlan
+		plan := account.qwen.TokenPlan
 		account.mu.Unlock()
 		if r.Method == http.MethodPut {
 			var input struct {
@@ -144,8 +144,8 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			if r.Method == http.MethodPost {
 				account.mu.Lock()
-				account.QwenCredits = nil
-				account.QwenCreditsError = err.Error()
+				account.qwen.Credits = nil
+				account.qwen.CreditsError = err.Error()
 				account.Usage = UsageSnapshot{Source: "qwen-token-plan", RetrievedAt: time.Now(), primarySet: true, secondarySet: true, creditsSet: true}
 				persistErr := saveAccount(account)
 				account.mu.Unlock()
@@ -162,23 +162,23 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		account.mu.Lock()
-		if r.Method == http.MethodPost && account.QwenTokenPlan != plan {
+		if r.Method == http.MethodPost && account.qwen.TokenPlan != plan {
 			account.mu.Unlock()
 			respondJSONError(w, http.StatusConflict, "Token Plan configuration changed during credit refresh")
 			return
 		}
-		previousPlan, previousCredits, previousError, previousUsage, previousType := account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError, account.Usage, account.PlanType
-		account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError = plan, credits, ""
+		previousPlan, previousCredits, previousError, previousUsage, previousType := account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError, account.Usage, account.PlanType
+		account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError = plan, credits, ""
 		account.PlanType = "token_plan"
 		account.Usage = UsageSnapshot{Source: "qwen-token-plan", RetrievedAt: time.Now(), primarySet: true, secondarySet: true, creditsSet: true}
 		if credits != nil {
 			account.PlanType = "token_plan_" + credits.Edition
 			account.Usage = qwenCreditUsage(credits, time.Now())
 		} else {
-			account.QwenCreditsError = "Token Plan credit tracking is not configured"
+			account.qwen.CreditsError = "Token Plan credit tracking is not configured"
 		}
 		if err := saveAccount(account); err != nil {
-			account.QwenTokenPlan, account.QwenCredits, account.QwenCreditsError, account.Usage, account.PlanType = previousPlan, previousCredits, previousError, previousUsage, previousType
+			account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError, account.Usage, account.PlanType = previousPlan, previousCredits, previousError, previousUsage, previousType
 			account.mu.Unlock()
 			respondJSONError(w, http.StatusInternalServerError, "could not save Token Plan configuration")
 			return
@@ -194,13 +194,13 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 	account.mu.Lock()
 	defer account.mu.Unlock()
 	var safePlan *QwenTokenPlanConfig
-	if account.QwenTokenPlan != nil {
-		copy := *account.QwenTokenPlan
+	if account.qwen.TokenPlan != nil {
+		copy := *account.qwen.TokenPlan
 		copy.AccessKeyID, copy.AccessKeySecret, copy.SecurityToken = "", "", ""
 		copy.CloudOAuth = nil
 		safePlan = &copy
 	}
-	credits, creditsError := account.QwenCredits, account.QwenCreditsError
+	credits, creditsError := account.qwen.Credits, account.qwen.CreditsError
 	if !qwenCreditsCurrent(credits, time.Now()) {
 		credits = nil
 		if creditsError == "" {

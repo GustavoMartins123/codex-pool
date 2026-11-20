@@ -25,6 +25,11 @@ var (
 
 // AntigravityProvider handles subscription accounts used by Google's
 // Antigravity CLI. It is intentionally separate from Gemini API-key accounts.
+type googleAccountState struct {
+	ProjectID       string
+	ModelRateLimits map[string]time.Time
+}
+
 type AntigravityProvider struct {
 	dailyBase *url.URL
 	prodBase  *url.URL
@@ -35,6 +40,8 @@ var antigravityAccountSaveLocks sync.Map
 func NewAntigravityProvider(dailyBase, prodBase *url.URL) *AntigravityProvider {
 	return &AntigravityProvider{dailyBase: dailyBase, prodBase: prodBase}
 }
+
+func (*AntigravityProvider) WireFormat() WireFormat { return WireGemini }
 
 func (p *AntigravityProvider) Type() AccountType { return AccountTypeAntigravity }
 
@@ -57,10 +64,9 @@ func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Acco
 		RefreshToken:      auth.RefreshToken,
 		PlanType:          auth.PlanType,
 		Email:             auth.Email,
-		ProjectID:         auth.ProjectID,
+		google:            googleAccountState{ProjectID: auth.ProjectID, ModelRateLimits: make(map[string]time.Time)},
 		Disabled:          auth.Disabled,
 		Dead:              auth.Dead,
-		ModelRateLimits:   make(map[string]time.Time),
 		NeedsVerification: auth.NeedsVerification,
 		VerificationURL:   auth.VerificationURL,
 		HealthError:       auth.HealthError,
@@ -78,7 +84,7 @@ func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Acco
 	}
 	for model, raw := range auth.ModelCooldowns {
 		if until, err := time.Parse(time.RFC3339Nano, raw); err == nil && until.After(time.Now()) {
-			acc.ModelRateLimits[model] = until
+			acc.google.ModelRateLimits[model] = until
 		}
 	}
 	if auth.ModelSnapshot != nil {
@@ -216,8 +222,6 @@ func (p *AntigravityProvider) ParseUsage(obj map[string]any) *RequestUsage {
 	return result
 }
 
-func (p *AntigravityProvider) ParseUsageHeaders(_ *Account, _ http.Header) {}
-
 func (p *AntigravityProvider) UpstreamURL(_ string) *url.URL { return p.dailyBase }
 func (p *AntigravityProvider) DailyURL() *url.URL            { return p.dailyBase }
 func (p *AntigravityProvider) ProductionURL() *url.URL       { return p.prodBase }
@@ -253,15 +257,15 @@ func saveAntigravityAccount(acc *Account) error {
 	root["expired"] = acc.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	root["last_refresh"] = acc.LastRefresh.UTC().Format(time.RFC3339Nano)
 	root["email"] = acc.Email
-	root["project_id"] = acc.ProjectID
+	root["project_id"] = acc.google.ProjectID
 	root["plan_type"] = acc.PlanType
 	root["disabled"] = acc.Disabled
 	root["dead"] = acc.Dead
 	root["needs_verification"] = acc.NeedsVerification
 	root["verification_url"] = acc.VerificationURL
 	root["health_error"] = acc.HealthError
-	cooldowns := make(map[string]string, len(acc.ModelRateLimits))
-	for model, until := range acc.ModelRateLimits {
+	cooldowns := make(map[string]string, len(acc.google.ModelRateLimits))
+	for model, until := range acc.google.ModelRateLimits {
 		if until.After(time.Now()) {
 			cooldowns[model] = until.UTC().Format(time.RFC3339Nano)
 		}

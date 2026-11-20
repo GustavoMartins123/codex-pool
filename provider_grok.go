@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,10 @@ const (
 )
 
 // GrokProvider handles xAI Grok Code OAuth accounts through Grok's OpenAI-compatible Responses API.
+type grokAccountState struct {
+	TokenEndpoint string
+}
+
 type GrokProvider struct {
 	grokBase      *url.URL
 	clientVersion string
@@ -32,6 +37,31 @@ type GrokProvider struct {
 
 func NewGrokProvider(grokBase *url.URL) *GrokProvider {
 	return &GrokProvider{grokBase: grokBase, clientVersion: grokClientVersion()}
+}
+
+func (p *GrokProvider) ModelDiscoveryURL() *url.URL {
+	return modelDiscoveryURL(p.UpstreamURL("/v1/models"), "/models")
+}
+
+func (*GrokProvider) WireFormat() WireFormat { return WireUnknown }
+
+func (*GrokProvider) RequestPreparation() requestPreparation {
+	return requestPreparation{
+		bufferBody:      true,
+		sanitizeSpooled: sanitizeSpooledGrokRequest,
+		prepareBody: func(_, model string, body []byte) ([]byte, error) {
+			return rewriteAndSanitizeGrokRequestBody(body, model), nil
+		},
+		prepareAttemptBody: rewriteAndSanitizeGrokRequestBody,
+		attemptHeaders: func(headers http.Header, model, conversationID string) {
+			headers.Set("x-grok-model-override", grokCanonicalModel(model))
+			headers.Set("x-grok-context-window", strconv.Itoa(grokModelContextWindow(model)))
+			headers.Set("x-grok-max-completion-tokens", strconv.Itoa(grokModelMaxCompletionTokens(model)))
+			if conversationID != "" {
+				headers.Set("x-grok-conv-id", conversationID)
+			}
+		},
+	}
 }
 
 func (p *GrokProvider) Type() AccountType {
@@ -124,7 +154,7 @@ func loadGrokSimpleAccount(name, path string, data []byte) (*Account, error) {
 		acc.ExpiresAt = parseGrokUnixMillis(gj.PiExpires)
 	}
 	if endpoint := firstNonEmpty(gj.TokenEndpoint, gj.PiTokenEndpoint, gj.PiDiscovery.TokenEndpoint); endpoint != "" {
-		acc.AccountID = endpoint
+		acc.grok.TokenEndpoint = endpoint
 	}
 	return acc, nil
 }
@@ -168,7 +198,7 @@ func loadGrokCLIAccount(name, path string, data []byte) (*Account, error) {
 		AccessToken:  strings.TrimSpace(entry.Key),
 		RefreshToken: strings.TrimSpace(entry.RefreshToken),
 		PlanType:     "grok",
-		AccountID:    grokTokenEndpointFromIssuer(entry.OIDCIssuer),
+		grok:         grokAccountState{TokenEndpoint: grokTokenEndpointFromIssuer(entry.OIDCIssuer)},
 		Disabled:     entry.Disabled,
 		Dead:         entry.Dead,
 	}
@@ -187,7 +217,7 @@ func (p *GrokProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 func (p *GrokProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
 	acc.mu.Lock()
 	refreshTok := strings.TrimSpace(acc.RefreshToken)
-	tokenEndpoint := strings.TrimSpace(acc.AccountID)
+	tokenEndpoint := strings.TrimSpace(acc.grok.TokenEndpoint)
 	acc.mu.Unlock()
 
 	if refreshTok == "" {

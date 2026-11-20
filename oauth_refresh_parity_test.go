@@ -48,7 +48,7 @@ func (rt *oauthRefreshParityTransport) RoundTrip(req *http.Request) (*http.Respo
 	}, nil
 }
 
-func oauthRefreshParityProvider(t *testing.T, name string) (Provider, AccountType) {
+func oauthRefreshParityProvider(t *testing.T, name string) (Authenticator, AccountType) {
 	t.Helper()
 	refreshBase, _ := url.Parse("https://auth.openai.example.test")
 	switch name {
@@ -90,7 +90,11 @@ func runOAuthRefreshParity(t *testing.T, tc oauthRefreshParityCase) oauthRefresh
 	if err := os.WriteFile(file, []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	acc := &Account{ID: "account", Type: accountType, File: file, AccessToken: "old-access", RefreshToken: tc.RefreshToken, AccountID: tc.AccountID, PlanType: "old-plan", Dead: true, NeedsLogin: true, AuthError: "old-error"}
+	acc := &Account{ID: "account", Type: accountType, File: file, AccessToken: "old-access", RefreshToken: tc.RefreshToken, codex: codexAccountState{AccountID: tc.AccountID}, PlanType: "old-plan", Dead: true, NeedsLogin: true, AuthError: "old-error"}
+	if accountType == AccountTypeGrok {
+		acc.grok.TokenEndpoint = tc.AccountID
+		acc.codex.AccountID = ""
+	}
 	transport := &oauthRefreshParityTransport{tc: tc}
 	start := time.Now()
 	err := provider.RefreshToken(t.Context(), acc, transport)
@@ -101,9 +105,13 @@ func runOAuthRefreshParity(t *testing.T, tc oauthRefreshParityCase) oauthRefresh
 	if err != nil {
 		got.Err = strings.ReplaceAll(err.Error(), file, "<file>")
 	}
+	accountID := acc.codex.AccountID
+	if accountType == AccountTypeGrok {
+		accountID = acc.grok.TokenEndpoint
+	}
 	state := map[string]any{
 		"access_token": acc.AccessToken, "refresh_token": acc.RefreshToken, "id_token": acc.IDToken,
-		"account_id": acc.AccountID, "chatgpt_account_id": acc.IDTokenChatGPTAccountID, "plan_type": acc.PlanType,
+		"account_id": accountID, "chatgpt_account_id": acc.codex.IDTokenChatGPTAccountID, "plan_type": acc.PlanType,
 		"expires_at": normalizeOAuthRefreshTime(acc.ExpiresAt, start, end), "last_refresh": normalizeOAuthRefreshTime(acc.LastRefresh, start, end),
 		"dead": acc.Dead, "needs_login": acc.NeedsLogin, "auth_error": acc.AuthError,
 	}

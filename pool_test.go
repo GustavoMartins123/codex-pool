@@ -345,7 +345,7 @@ func TestCandidatePrefersCodexProEvenWhenTierTwoScoresBetter(t *testing.T) {
 
 func TestCandidateWithCyberAccessOnlyReturnsMarkedAccounts(t *testing.T) {
 	ordinary := &Account{ID: "ordinary", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{PrimaryUsedPercent: 0.01, SecondaryUsedPercent: 0.01}}
-	cyber := &Account{ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2, SecondaryUsedPercent: 0.2}}
+	cyber := &Account{ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, Usage: UsageSnapshot{PrimaryUsedPercent: 0.2, SecondaryUsedPercent: 0.2}}
 	p := newPoolState([]*Account{ordinary, cyber}, false)
 
 	got := p.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, Provider: string(AccountTypeCodex)}).Account
@@ -363,7 +363,7 @@ func TestCandidateSoftlyPrefersCyberAccessForOrdinaryTraffic(t *testing.T) {
 		Usage: UsageSnapshot{SecondaryUsedPercent: 0.10},
 	}
 	cyber := &Account{
-		ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true,
+		ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true},
 		Usage: UsageSnapshot{SecondaryUsedPercent: 0.20},
 	}
 	pool := newPoolState([]*Account{ordinary, cyber}, false)
@@ -375,8 +375,8 @@ func TestCandidateSoftlyPrefersCyberAccessForOrdinaryTraffic(t *testing.T) {
 
 func TestCandidateWeightsOrdinaryTrafficWithoutStarvingNonCyberAccounts(t *testing.T) {
 	accounts := []*Account{
-		{ID: "cyber-a", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
-		{ID: "cyber-b", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true, Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
+		{ID: "cyber-a", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
+		{ID: "cyber-b", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true}, Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
 		{ID: "ordinary-a", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
 		{ID: "ordinary-b", Type: AccountTypeCodex, PlanType: "pro", Usage: UsageSnapshot{SecondaryUsedPercent: 0.10}},
 	}
@@ -408,7 +408,7 @@ func TestCandidateDoesNotPreferBadlyDrainedCyberAccess(t *testing.T) {
 		Usage: UsageSnapshot{SecondaryUsedPercent: 0.10},
 	}
 	cyber := &Account{
-		ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", CyberAccess: true,
+		ID: "cyber", Type: AccountTypeCodex, PlanType: "pro", codex: codexAccountState{CyberAccess: true},
 		Usage: UsageSnapshot{SecondaryUsedPercent: 0.50},
 	}
 	pool := newPoolState([]*Account{ordinary, cyber}, false)
@@ -426,9 +426,9 @@ func TestCandidateDoesNotPreferBadlyDrainedCyberAccess(t *testing.T) {
 func TestCandidateWithCyberAccessReturnsExpiredAccount(t *testing.T) {
 	expired := &Account{
 		ID: "cyber-expired", Type: AccountTypeCodex, PlanType: "pro",
-		CyberAccess: true,
-		ExpiresAt:   time.Now().Add(-5 * time.Minute),
-		Usage:       UsageSnapshot{PrimaryUsedPercent: 0.05, SecondaryUsedPercent: 0.05},
+		codex:     codexAccountState{CyberAccess: true},
+		ExpiresAt: time.Now().Add(-5 * time.Minute),
+		Usage:     UsageSnapshot{PrimaryUsedPercent: 0.05, SecondaryUsedPercent: 0.05},
 	}
 	p := newPoolState([]*Account{expired}, false)
 	got := p.selectRoute(routing.Request{Mode: routing.MatchCyberAccess, Provider: string(AccountTypeCodex)}).Account
@@ -551,15 +551,16 @@ func TestSaveAccountPreservesUnknownFields(t *testing.T) {
 	}
 
 	acc := &Account{
-		ID:               "a1",
-		File:             path,
-		AccessToken:      "new-access",
-		RefreshToken:     "new-refresh",
-		IDToken:          "new-id",
-		AccountID:        "acct_123",
-		AllowedSourceIPs: []string{"199.45.144.95"},
-		CyberAccess:      true,
-		LastRefresh:      time.Date(2025, 12, 17, 0, 0, 0, 0, time.UTC),
+		ID:           "a1",
+		File:         path,
+		AccessToken:  "new-access",
+		RefreshToken: "new-refresh",
+		IDToken:      "new-id",
+		codex: codexAccountState{AccountID: "acct_123",
+
+			CyberAccess: true}, AllowedSourceIPs: []string{"199.45.144.95"},
+
+		LastRefresh: time.Date(2025, 12, 17, 0, 0, 0, 0, time.UTC),
 	}
 	if err := saveAccount(acc); err != nil {
 		t.Fatalf("saveAccount: %v", err)

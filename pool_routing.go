@@ -139,7 +139,7 @@ func (p *poolState) selectCyberAccount(req routing.Request) *Account {
 		}
 		account.mu.Lock()
 		// The caller refreshes an expired access token before its upstream call.
-		if !account.CyberAccess || !accountMatchesRouteLocked(account, req) || !quotaAllowsRouteLocked(account) {
+		if !account.codex.CyberAccess || !accountMatchesRouteLocked(account, req) || !quotaAllowsRouteLocked(account) {
 			account.mu.Unlock()
 			continue
 		}
@@ -191,7 +191,7 @@ func (p *poolState) selectTierAccount(req routing.Request) *Account {
 		candidate := routing.TierCandidate[*Account]{
 			Account: account, ID: account.ID, Tier: accountTier(account.Type, account.PlanType),
 			SecondaryUse: accountSecondaryUsageLocked(account), Score: scoreAccountLocked(account, now),
-			CyberAccess: account.CyberAccess,
+			CyberAccess: account.codex.CyberAccess,
 		}
 		account.mu.Unlock()
 		candidate.Score -= float64(atomic.LoadInt64(&account.Inflight)) * 0.02

@@ -102,7 +102,7 @@ func (h *proxyHandler) handleCodexList(w http.ResponseWriter, r *http.Request) {
 				PlanType:    acc.PlanType,
 				Dead:        acc.Dead,
 				Disabled:    acc.Disabled,
-				CyberAccess: acc.CyberAccess,
+				CyberAccess: acc.codex.CyberAccess,
 				ExpiresAt:   acc.ExpiresAt,
 				LastRefresh: acc.LastRefresh,
 			})
@@ -356,9 +356,9 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 
 	newClaims := parseCodexClaims(tokens.IDToken)
 	target.mu.Lock()
-	existingIdentity := target.AccountID
+	existingIdentity := target.codex.AccountID
 	if existingIdentity == "" {
-		existingIdentity = target.IDTokenChatGPTAccountID
+		existingIdentity = target.codex.IDTokenChatGPTAccountID
 	}
 	authFile := target.File
 	target.mu.Unlock()

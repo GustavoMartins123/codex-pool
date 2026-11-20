@@ -58,7 +58,7 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
 			provider := NewAntigravityProvider(daily, prod)
-			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
 			h := &proxyHandler{
 				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
 				pool:     newPoolState([]*Account{account}, false),
@@ -76,7 +76,7 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 			}
 			account.mu.Lock()
-			count := len(account.ModelRateLimits)
+			count := len(account.google.ModelRateLimits)
 			until := account.RateLimitUntil
 			account.mu.Unlock()
 			if (count > 0) != test.cooldown || !until.IsZero() {
@@ -167,7 +167,7 @@ func TestCodexItemReference404DoesNotPenalizeAccount(t *testing.T) {
 func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")
-	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", ProjectID: "project", PlanType: "pro"}
+	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
 	calls := 0
 	var requestSizes []int
 	h := &proxyHandler{

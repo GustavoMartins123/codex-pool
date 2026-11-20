@@ -540,7 +540,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	if err := decoder.Decode(&root); err != nil {
 		return fmt.Errorf("parse Claude account: %w", err)
 	}
-	existingUUID := target.AccountUUID
+	existingUUID := target.claude.UUID
 	if existingUUID == "" {
 		existingUUID, _ = root["account_uuid"].(string)
 	}
@@ -569,7 +569,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	target.RefreshToken = tokens.RefreshToken
 	target.ExpiresAt = expiresAt
 	target.LastRefresh = now
-	target.AccountUUID = uuid
+	target.claude.UUID = uuid
 	target.Dead = false
 	target.NeedsLogin = false
 	target.AuthError = ""

@@ -31,9 +31,9 @@ func newAntigravityFailoverHarness(t *testing.T, statuses map[string]int) (*anti
 			continue
 		}
 		accounts = append(accounts, &Account{
-			Type: AccountTypeAntigravity, ID: "anti-" + token, AccessToken: token, ProjectID: "project", PlanType: "pro",
-			ExpiresAt: time.Now().Add(24 * time.Hour), ModelRateLimits: map[string]time.Time{},
-			Usage: UsageSnapshot{PrimaryUsedPercent: 0.1 * float64(len(accounts)), PrimaryUsed: 0.1 * float64(len(accounts))},
+			Type: AccountTypeAntigravity, ID: "anti-" + token, AccessToken: token, google: googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}}, PlanType: "pro",
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+			Usage:     UsageSnapshot{PrimaryUsedPercent: 0.1 * float64(len(accounts)), PrimaryUsed: 0.1 * float64(len(accounts))},
 		})
 	}
 	harness := &antigravityFailoverHarness{}
@@ -120,7 +120,7 @@ func TestAntigravityQuotaCooldownScopesToNamedFamily(t *testing.T) {
 	}
 
 	until := time.Now().Add(time.Hour)
-	account := &Account{Type: AccountTypeAntigravity, ID: "ag", ModelRateLimits: map[string]time.Time{}}
+	account := &Account{Type: AccountTypeAntigravity, ID: "ag", google: googleAccountState{ModelRateLimits: map[string]time.Time{}}}
 	setAntigravityQuotaCooldown(account, "gemini-3.8-flash-high", familyBody, until)
 	account.mu.Lock()
 	sibling := antigravityModelCooldownLocked(account, "gemini-3.5-flash-low")

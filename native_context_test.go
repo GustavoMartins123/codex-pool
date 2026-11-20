@@ -21,7 +21,7 @@ import (
 func contextTestAccount(alias, user string) *Account {
 	claims, _ := json.Marshal(map[string]any{"sub": user, "https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "workspace", "chatgpt_user_id": user}})
 	token := "header." + base64.RawURLEncoding.EncodeToString(claims) + ".signature"
-	return &Account{Type: AccountTypeCodex, ID: alias, AccessToken: token, AccountID: "workspace", PlanType: "pro"}
+	return &Account{Type: AccountTypeCodex, ID: alias, AccessToken: token, codex: codexAccountState{AccountID: "workspace"}, PlanType: "pro"}
 }
 
 func contextTestService(t *testing.T, baseURL string, accounts ...*Account) *nativeContext {
