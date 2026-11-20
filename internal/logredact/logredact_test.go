@@ -2,7 +2,9 @@ package logredact
 
 import (
 	"bytes"
+	"errors"
 	"log"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -28,6 +30,24 @@ func TestRedactSecrets(t *testing.T) {
 				t.Fatalf("secret survived redaction: %q", got)
 			}
 		})
+	}
+}
+
+func TestTextHandlerRedactsMessageAndAttributes(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewTextHandler(&output)).With("request_id", "test-request")
+	logger.Info(`upstream body {"access_token":"example-access-token"}`,
+		"api_key", "example-key-0123456789",
+		"error", errors.New(`{"password":"example-password"}`))
+
+	record := output.String()
+	for _, secret := range []string{"example-access-token", "example-key-0123456789", "example-password"} {
+		if strings.Contains(record, secret) {
+			t.Errorf("credential survived: %s", record)
+		}
+	}
+	if !strings.Contains(record, "request_id=test-request") || strings.Count(record, "<redacted>") != 3 {
+		t.Errorf("unexpected log record: %s", record)
 	}
 }
 

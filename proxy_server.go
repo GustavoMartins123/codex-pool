@@ -476,9 +476,10 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	app.release = append(app.release, watcher.close)
 	startCodexFingerprintUpdater(shutdownCtx)
 
+	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           h,
+		Handler:           routes.newHTTPApp(globalIPAccess),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       5 * time.Minute, // Keep connections alive for reuse
 	}

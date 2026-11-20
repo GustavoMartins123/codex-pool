@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,7 +24,6 @@ import (
 	"syscall"
 	"time"
 
-	"codex-pool-proxy/internal/httpapi"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/ratelimit"
 	"codex-pool-proxy/internal/routing"
@@ -410,9 +410,6 @@ func main() {
 }
 
 type proxyHandler struct {
-	httpAppOnce sync.Once
-	httpApp     *httpapi.App
-
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions
 
@@ -1535,8 +1532,8 @@ func decodeRequestBody(contentEncoding string, body []byte, maxBytes int64) ([]b
 	return decoded, true, nil
 }
 
-func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqID string) {
-	start := time.Now()
+func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqID string, rt proxyRuntime) {
+	start := rt.now()
 	authHeader := r.Header.Get("Authorization")
 
 	// codex_apps MCP and other noop paths must never require a pool token.
@@ -1564,7 +1561,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	if userID != "" && h.cfg.debug.Load() {
-		log.Printf("[%s] %s pool user request: user_id=%s", reqID, credentialKind, userID)
+		rt.logRequest(r.Context(), reqID, "pool user request",
+			slog.String("credential_kind", credentialKind), slog.String("user_id", userID))
 	}
 
 	// Check if this looks like a real provider credential that should be passed through.
@@ -1584,9 +1582,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			return
 		}
 		if h.cfg.debug.Load() {
-			log.Printf("[%s] pass-through request with %s credential", reqID, providerType)
+			rt.logRequest(r.Context(), reqID, "provider passthrough request", slog.String("provider", string(providerType)))
 		}
-		h.proxyPassthrough(w, r, reqID, providerType, start)
+		h.proxyPassthrough(w, r, reqID, providerType, start, rt)
 		return
 	}
 
@@ -1684,7 +1682,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			respondPolicyError(w, unboundedPolicyRequest())
 			return
 		}
-		h.proxyRequestWebSocket(w, r, reqID, userID, originID, provider, targetBase)
+		h.proxyRequestWebSocket(w, r, reqID, userID, originID, provider, targetBase, rt)
 		return
 	}
 
@@ -1734,7 +1732,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 				return model
 			}
-			spoolStarted := time.Now()
+			spoolStarted := rt.now()
 			spooled, spoolErr := streamCodexResponsesRequest(r.Body, h.cfg.maxSpoolBodyBytes, rewriteModel)
 			if spoolErr != nil {
 				status := http.StatusBadRequest
@@ -1784,8 +1782,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			r.Header.Del("Content-Length")
 			r.Header.Set("Content-Type", "application/json")
 			log.Printf("[%s] disk-streaming Responses request: bytes=%d model=%s provider=%s transform_ms=%d",
-				reqID, spooled.Size, spooled.Model, accountType, time.Since(spoolStarted).Milliseconds())
-			h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase)
+				reqID, spooled.Size, spooled.Model, accountType, rt.now().Sub(spoolStarted).Milliseconds())
+			h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase, rt)
 			return
 		}
 		if provider.WireFormat() == WireResponses {
@@ -1800,7 +1798,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			log.Printf("[%s] streaming request body: method=%s path=%s provider=%s content-length=%d",
 				reqID, r.Method, r.URL.Path, accountType, r.ContentLength)
 		}
-		h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase)
+		h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase, rt)
 		return
 	}
 
@@ -1932,7 +1930,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if experiment != nil {
 		shadowAllowed := admission == nil || admission.CheckModel(experiment.Rule.Candidate) == nil
 		if shadowAllowed {
-			h.maybeStartShadow(r, bodyBytes, experiment, userID, reqID)
+			h.maybeStartShadow(r, bodyBytes, experiment, userID, reqID, rt)
 		}
 		experimentStarted := time.Now()
 		experimentWriter := &experimentResponseWriter{ResponseWriter: w}
@@ -2268,23 +2266,20 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] incoming %s %s provider=%s conv_id=%s user_id=%s origin_id=%s authZ_len=%d chatgpt-id=%q content-type=%q content-encoding=%q body_bytes=%d",
-			reqID,
-			r.Method,
-			r.URL.Path,
-			accountType,
-			conversationID,
-			userID,
-			originID,
-			len(r.Header.Get("Authorization")),
-			r.Header.Get("ChatGPT-Account-ID"),
-			r.Header.Get("Content-Type"),
-			r.Header.Get("Content-Encoding"),
-			len(bodyBytes),
+		rt.logRequest(r.Context(), reqID, "proxy request prepared",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("provider", string(accountType)),
+			slog.String("conversation_id", conversationID),
+			slog.String("user_id", userID),
+			slog.String("origin_id", originID),
+			slog.Int("authorization_length", len(r.Header.Get("Authorization"))),
+			slog.String("chatgpt_account_id", r.Header.Get("ChatGPT-Account-ID")),
+			slog.String("content_type", r.Header.Get("Content-Type")),
+			slog.String("content_encoding", r.Header.Get("Content-Encoding")),
+			slog.Int("body_bytes", len(bodyBytes)),
+			slog.String("model", requestedModel),
 		)
-		if requestedModel != "" {
-			log.Printf("[%s] requested model=%s", reqID, requestedModel)
-		}
 	}
 	if h.cfg.logBodies && len(bodySample) > 0 && !(provider.WireFormat() == WireResponses && mayHaveContext(bodyBytes)) {
 		logSample := bodySample
@@ -2469,7 +2464,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Transition:     h.transitionForTrace(userID, conversationID, accountType, w.Header()),
-			Timestamp:      time.Now().UTC(),
+			Timestamp:      rt.now().UTC(),
 			Policy:         selection.Policy,
 			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
 			Score:          selection.Score,
@@ -2508,7 +2503,8 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			respondPolicyError(w, policyBlocked)
 			return
 		}
-		reqDuration := time.Since(start)
+		attemptEnded := rt.now()
+		reqDuration := attemptEnded.Sub(start)
 		trace.DurationMs = float64(reqDuration.Milliseconds())
 		if resp != nil {
 			trace.StatusCode = resp.StatusCode
@@ -2516,9 +2512,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				h.contextHandoff.MarkTransitionOutcome(conversationScopedKey(userID, conversationID), trace.Transition.Epoch, resp.StatusCode, "", false)
 				trace.Transition.StatusCode = resp.StatusCode
 			}
-			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, time.Now())
+			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, resp.StatusCode, attemptEnded)
 		} else if err != nil {
-			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, http.StatusServiceUnavailable, time.Now())
+			h.pool.recordRoutingOutcome(acc.ID, reqDuration, 0, http.StatusServiceUnavailable, attemptEnded)
 		}
 		if err != nil {
 			trace.Error = err.Error()
@@ -2543,7 +2539,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			// Don't retry if client already disconnected — context is dead,
 			// every subsequent tryOnce will also fail instantly.
 			if ctx.Err() != nil {
-				log.Printf("[%s] account %s: request ended after %dms due to context error: %v", reqID, acc.ID, time.Since(start).Milliseconds(), ctx.Err())
+				rt.logRequest(ctx, reqID, "proxy request interrupted",
+					slog.String("account", acc.ID), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()),
+					slog.String("error", ctx.Err().Error()))
 				break
 			}
 			h.recent.add(err.Error())
@@ -3340,7 +3338,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		h.metrics.inc(strconv.Itoa(resp.StatusCode), acc.ID)
 
 		if h.cfg.debug.Load() {
-			log.Printf("[%s] done status=%d account=%s duration_ms=%d", reqID, resp.StatusCode, acc.ID, time.Since(start).Milliseconds())
+			rt.logRequest(r.Context(), reqID, "proxy request completed",
+				slog.Int("status", resp.StatusCode), slog.String("account", acc.ID),
+				slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
 		}
 		return
 	}
@@ -3368,8 +3368,9 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	originID string,
 	provider ProviderDriver,
 	targetBase *url.URL,
+	rt proxyRuntime,
 ) {
-	start := time.Now()
+	start := rt.now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
 	if !h.enforcePolicy(w, admission, func() error {
@@ -3531,6 +3532,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	if provider.WireFormat() == WireResponses {
 		swap := h.relayCodexWithCyberSwap(w, r, codexCyberSwapOptions{
 			ReqID:                       reqID,
+			Runtime:                     rt,
 			RequestPath:                 r.URL.Path,
 			Provider:                    provider,
 			InitialAccount:              acc,
@@ -3560,7 +3562,8 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		if termination.Side == "" {
 			termination = classifyWebSocketTermination(swap.err)
 		}
-		h.recordWebSocketTermination(reqID, finalAcc.ID, termination, time.Since(start))
+		duration := rt.now().Sub(start)
+		h.recordWebSocketTermination(reqID, finalAcc.ID, termination, duration)
 		if swap.err != nil {
 			h.recent.add(swap.err.Error())
 			h.metrics.inc("error", finalAcc.ID)
@@ -3575,7 +3578,9 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		// A handoff already pinned the conversation to the reconnect target.
 		h.applyWebSocketStatusEffects(reqID, finalAcc, userID, conversationID, swap.swapped || swap.handedOff, refreshFailed, swap.statusCode)
 		if h.cfg.debug.Load() {
-			log.Printf("[%s] websocket done status=%d account=%s user=%s origin=%s duration_ms=%d cyber_swapped=%v", reqID, swap.statusCode, finalAcc.ID, userID, originID, time.Since(start).Milliseconds(), swap.swapped)
+			rt.logRequest(r.Context(), reqID, "websocket proxy completed",
+				slog.Int("status", swap.statusCode), slog.String("account", finalAcc.ID), slog.String("user_id", userID),
+				slog.String("origin_id", originID), slog.Int64("duration_ms", duration.Milliseconds()), slog.Bool("cyber_swapped", swap.swapped))
 		}
 		return
 	}
@@ -3596,7 +3601,8 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		Registry:                    h.webSocketRegistry(),
 	})
 	statusCode, err := relay.statusCode, relay.err
-	h.recordWebSocketTermination(reqID, acc.ID, relay.termination, time.Since(start))
+	duration := rt.now().Sub(start)
+	h.recordWebSocketTermination(reqID, acc.ID, relay.termination, duration)
 
 	if err != nil {
 		h.recent.add(err.Error())
@@ -3614,7 +3620,9 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	h.applyWebSocketStatusEffects(reqID, acc, userID, conversationID, cyberPinned, refreshFailed, statusCode)
 
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] websocket done status=%d account=%s user=%s origin=%s duration_ms=%d", reqID, statusCode, acc.ID, userID, originID, time.Since(start).Milliseconds())
+		rt.logRequest(r.Context(), reqID, "websocket proxy completed",
+			slog.Int("status", statusCode), slog.String("account", acc.ID), slog.String("user_id", userID),
+			slog.String("origin_id", originID), slog.Int64("duration_ms", duration.Milliseconds()))
 	}
 }
 
@@ -3661,6 +3669,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	provider ProviderDriver,
 	targetBase *url.URL,
 	start time.Time,
+	rt proxyRuntime,
 ) {
 	outURL := new(url.URL)
 	*outURL = *r.URL
@@ -3722,7 +3731,8 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	relayOpts.Registry = h.webSocketRegistry()
 	relay := relayWebSocket(w, r, outURL, upstreamHeaders, relayOpts)
 	statusCode, err := relay.statusCode, relay.err
-	h.recordWebSocketTermination(reqID, "passthrough", relay.termination, time.Since(start))
+	duration := rt.now().Sub(start)
+	h.recordWebSocketTermination(reqID, "passthrough", relay.termination, duration)
 
 	if err != nil {
 		h.recent.add(err.Error())
@@ -3736,7 +3746,8 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 		h.metrics.inc(strconv.Itoa(statusCode), "passthrough")
 	}
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] passthrough websocket done status=%d duration_ms=%d", reqID, statusCode, time.Since(start).Milliseconds())
+		rt.logRequest(r.Context(), reqID, "websocket passthrough completed",
+			slog.Int("status", statusCode), slog.Int64("duration_ms", duration.Milliseconds()))
 	}
 }
 
@@ -4028,12 +4039,12 @@ func logRelayFrame(logLabel, label string, msgType websocket.MessageType, data [
 	log.Printf("[ws-relay %s] %s: type=%v len=%d %s%s", logLabel, label, msgType, len(data), string(summary), suffix)
 }
 
-func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider ProviderDriver, targetBase *url.URL) {
+func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider ProviderDriver, targetBase *url.URL, rt proxyRuntime) {
 	if policyAdmissionFromRequest(r).hasTokenBudget() {
 		respondPolicyError(w, unboundedPolicyRequest())
 		return
 	}
-	start := time.Now()
+	start := rt.now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
 	if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
@@ -4561,7 +4572,9 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), acc.ID)
 
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] streamed done status=%d account=%s duration_ms=%d", reqID, resp.StatusCode, acc.ID, time.Since(start).Milliseconds())
+		rt.logRequest(r.Context(), reqID, "streamed proxy request completed",
+			slog.Int("status", resp.StatusCode), slog.String("account", acc.ID),
+			slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
 	}
 }
 
@@ -4877,7 +4890,7 @@ func isClaudePoolToken(secret, authHeader string) (bool, string) {
 
 // proxyPassthrough handles requests where the user provides their own credentials.
 // The request is proxied directly to the upstream without using pool accounts.
-func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, start time.Time) {
+func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, start time.Time, rt proxyRuntime) {
 	h.metrics.incPassport("passthrough_requests", string(providerType))
 	provider := h.registry.ForType(providerType)
 	if provider == nil {
@@ -4896,7 +4909,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 
 	targetBase := provider.UpstreamURL(path)
 	if isWebSocketUpgradeRequest(r) {
-		h.proxyPassthroughWebSocket(w, r, reqID, providerType, provider, targetBase, start)
+		h.proxyPassthroughWebSocket(w, r, reqID, providerType, provider, targetBase, start, rt)
 		return
 	}
 	streamBody := shouldStreamBody(r, h.cfg.maxInMemoryBodyBytes)
@@ -4908,7 +4921,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 			log.Printf("[%s] passthrough streaming body: method=%s path=%s provider=%s content-length=%d",
 				reqID, r.Method, r.URL.Path, providerType, r.ContentLength)
 		}
-		h.proxyPassthroughStreamed(w, r, reqID, providerType, provider, targetBase, start)
+		h.proxyPassthroughStreamed(w, r, reqID, providerType, provider, targetBase, start, rt)
 		return
 	}
 
@@ -5197,11 +5210,12 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), "passthrough")
 
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] passthrough done status=%d duration_ms=%d", reqID, resp.StatusCode, time.Since(start).Milliseconds())
+		rt.logRequest(r.Context(), reqID, "proxy passthrough completed",
+			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
 	}
 }
 
-func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider ProviderDriver, targetBase *url.URL, start time.Time) {
+func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider ProviderDriver, targetBase *url.URL, start time.Time, rt proxyRuntime) {
 	timeout := clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, nil)
 
 	ctx := r.Context()
@@ -5340,7 +5354,8 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), "passthrough")
 
 	if h.cfg.debug.Load() {
-		log.Printf("[%s] passthrough streamed done status=%d duration_ms=%d", reqID, resp.StatusCode, time.Since(start).Milliseconds())
+		rt.logRequest(r.Context(), reqID, "streamed proxy passthrough completed",
+			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
 	}
 }
 

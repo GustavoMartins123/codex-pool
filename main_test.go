@@ -1724,7 +1724,7 @@ func TestServeHTTPCodexAppsMCPDoesNotRequirePoolToken(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/wham/apps", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "test")
+	h.proxyRequest(rr, req, "test", systemProxyRuntime())
 	if rr.Code == http.StatusUnauthorized {
 		t.Fatalf("proxyRequest returned 401 for codex_apps MCP: %s", rr.Body.String())
 	}

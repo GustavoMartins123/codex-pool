@@ -14,7 +14,7 @@ func (h *proxyHandler) adminRoute(method string, handler http.HandlerFunc) http.
 	return httpapi.Require(h.checkAdminAuth, httpapi.OnlyMethod(method, handler))
 }
 
-func (h *proxyHandler) registerAdminRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerAdminRoutes(register httpRouteRegister) {
 	admin := func(handler http.HandlerFunc) http.HandlerFunc {
 		return httpapi.Require(h.checkAdminAuth, handler)
 	}
@@ -82,7 +82,7 @@ func (h *proxyHandler) handleAdminReload(w http.ResponseWriter, r *http.Request)
 	w.Write([]byte("ok"))
 }
 
-func (h *proxyHandler) registerAdminAccountRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerAdminAccountRoutes(register httpRouteRegister) {
 	register("/admin/accounts", h.adminRoute(http.MethodGet, h.serveAccounts))
 	register("/admin/accounts/verify", h.adminRoute(http.MethodPost, h.handleAccountVerifyBatch))
 
@@ -137,7 +137,7 @@ func (h *proxyHandler) handleAdminAccountDisabled(w http.ResponseWriter, r *http
 	}
 }
 
-func (h *proxyHandler) registerContributionRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerContributionRoutes(register httpRouteRegister) {
 	contribute := func(handler http.HandlerFunc) http.HandlerFunc {
 		return httpapi.Require(h.checkProviderContributionAuth, httpapi.OnlyMethod(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)

@@ -351,13 +351,6 @@ func (p *ipAccessPolicy) allowRequest(w http.ResponseWriter, r *http.Request) bo
 	return true
 }
 
-func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.httpAppOnce.Do(func() {
-		h.httpApp = h.newHTTPApp(globalIPAccess)
-	})
-	h.httpApp.ServeHTTP(w, r)
-}
-
 func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

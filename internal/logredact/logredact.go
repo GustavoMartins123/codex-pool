@@ -8,6 +8,7 @@ package logredact
 import (
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -70,6 +71,27 @@ type Writer struct {
 // embedded newlines are escaped.
 func NewWriter(w io.Writer) *Writer {
 	return &Writer{w: w}
+}
+
+// NewTextHandler redacts string attributes before slog escapes them and
+// redacts the rendered record for credential-shaped key/value pairs.
+func NewTextHandler(w io.Writer) slog.Handler {
+	if _, redacted := w.(*Writer); !redacted {
+		w = NewWriter(w)
+	}
+	return slog.NewTextHandler(w, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			switch attr.Value.Kind() {
+			case slog.KindString:
+				attr.Value = slog.StringValue(Redact(attr.Value.String()))
+			case slog.KindAny:
+				if err, ok := attr.Value.Any().(error); ok {
+					attr.Value = slog.StringValue(Redact(err.Error()))
+				}
+			}
+			return attr
+		},
+	})
 }
 
 func (rw *Writer) Write(p []byte) (int, error) {
