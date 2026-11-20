@@ -24,8 +24,8 @@ func (register httpRouteRegister) subtree(path string, root, children http.Handl
 	register(path+"/", children)
 }
 
-func (h *proxyRoutes) newHTTPApp(ipAccess *ipAccessPolicy) *httpapi.App {
-	app := httpapi.New(applySecurityHeaders, ipAccess.allowRequest, randomID, h.logIncomingRequest(h.serveGatewayTraffic))
+func (h *proxyRoutes) newHTTPApp() *httpapi.App {
+	app := httpapi.New(applySecurityHeaders, h.ipAccess.authorizeRequest, randomID, h.logIncomingRequest(h.serveGatewayTraffic))
 
 	early := httpRouteRegister(app.HandleFunc)
 	early("/api/runner/catalog", h.handleRunnerCatalog)

@@ -209,17 +209,8 @@ func (pw *poolWatcher) reloadConfigCandidate() error {
 	}
 	newDebug := getConfigBool("PROXY_DEBUG", cfg.Debug, false)
 	threshold := getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.50)
-	proxies := effectiveTrustedProxies(cfg.TrustedProxies)
 	allow, deny := effectiveIPPolicy(cfg)
-	proxyNets, trustAll, err := parseTrustedProxies(proxies)
-	if err != nil {
-		return err
-	}
-	allowNets, err := parseIPNetList("PROXY_IP_ALLOW", allow)
-	if err != nil {
-		return err
-	}
-	denyNets, err := parseIPNetList("PROXY_IP_DENY", deny)
+	network, err := parseIPAccessSettings(allow, deny, effectiveTrustedProxies(cfg.TrustedProxies), h.ipAccess.snapshot().trustSameSubnet)
 	if err != nil {
 		return err
 	}
@@ -231,8 +222,7 @@ func (pw *poolWatcher) reloadConfigCandidate() error {
 		}
 	}
 	// Install prepared policies without a fallible step after publication.
-	installTrustedProxies(proxyNets, trustAll)
-	globalIPAccess.install(allowNets, denyNets)
+	h.ipAccess.install(network)
 	h.pool.configureRouting(cfg.Routing)
 	h.pool.mu.Lock()
 	h.pool.debug = newDebug

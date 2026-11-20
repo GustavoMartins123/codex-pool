@@ -8,12 +8,16 @@ import (
 )
 
 type ipAccessPolicy struct {
-	mu    sync.RWMutex
-	allow []*net.IPNet
-	deny  []*net.IPNet
+	mu       sync.RWMutex
+	settings ipAccessSettings
 }
 
-var globalIPAccess = &ipAccessPolicy{}
+type ipAccessSettings struct {
+	allow, deny     []*net.IPNet
+	trustedProxies  []*net.IPNet
+	trustAllProxies bool
+	trustSameSubnet bool
+}
 
 func parseIPNetList(field string, entries []string) ([]*net.IPNet, error) {
 	var nets []*net.IPNet
@@ -42,51 +46,55 @@ func parseIPNetList(field string, entries []string) ([]*net.IPNet, error) {
 	return nets, nil
 }
 
-// configure installs an access policy atomically: on any invalid entry it
-// returns an error and keeps the previously installed policy untouched.
-func (p *ipAccessPolicy) configure(allow, deny []string) error {
+func parseIPAccessSettings(allow, deny, proxies []string, sameSubnet bool) (ipAccessSettings, error) {
 	allowNets, err := parseIPNetList("PROXY_IP_ALLOW", allow)
 	if err != nil {
-		return err
+		return ipAccessSettings{}, err
 	}
 	denyNets, err := parseIPNetList("PROXY_IP_DENY", deny)
 	if err != nil {
-		return err
+		return ipAccessSettings{}, err
 	}
-	p.install(allowNets, denyNets)
-	return nil
+	proxyNets, trustAll, err := parseTrustedProxies(proxies)
+	if err != nil {
+		return ipAccessSettings{}, err
+	}
+	return ipAccessSettings{
+		allow: allowNets, deny: denyNets, trustedProxies: proxyNets,
+		trustAllProxies: trustAll, trustSameSubnet: sameSubnet,
+	}, nil
 }
-func (p *ipAccessPolicy) install(allowNets, denyNets []*net.IPNet) {
+
+func (p *ipAccessPolicy) install(settings ipAccessSettings) {
 	p.mu.Lock()
-	p.allow = allowNets
-	p.deny = denyNets
+	p.settings = settings
 	p.mu.Unlock()
 }
 
-func (p *ipAccessPolicy) restricted() bool {
+func (p *ipAccessPolicy) snapshot() ipAccessSettings {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return len(p.allow) > 0 || len(p.deny) > 0
+	return p.settings
 }
 
-func (p *ipAccessPolicy) permitted(clientIP string) bool {
+func (s ipAccessSettings) restricted() bool {
+	return len(s.allow) > 0 || len(s.deny) > 0
+}
+
+func (s ipAccessSettings) permitted(clientIP string) bool {
 	ip := net.ParseIP(strings.TrimSpace(clientIP))
 	if ip == nil {
-		p.mu.RLock()
-		defer p.mu.RUnlock()
-		return len(p.allow) == 0 && len(p.deny) == 0
+		return !s.restricted()
 	}
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for _, n := range p.deny {
+	for _, n := range s.deny {
 		if n.Contains(ip) {
 			return false
 		}
 	}
-	if len(p.allow) == 0 {
+	if len(s.allow) == 0 {
 		return true
 	}
-	for _, n := range p.allow {
+	for _, n := range s.allow {
 		if n.Contains(ip) {
 			return true
 		}

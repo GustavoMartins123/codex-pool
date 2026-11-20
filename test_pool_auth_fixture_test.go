@@ -15,7 +15,7 @@ var testPoolCredentialMu sync.Mutex
 
 func testProxyHTTPApp(h *proxyHandler) http.Handler {
 	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
-	return routes.newHTTPApp(globalIPAccess)
+	return routes.newHTTPApp()
 }
 
 func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +53,7 @@ func testPoolProxyRequest(t *testing.T, h *proxyHandler, w http.ResponseWriter, 
 	if err := prepareTestPoolCredential(t, h, r); err != nil {
 		t.Fatal(err)
 	}
+	r = withClientIP(r, testResolvedClientIP(t, h.ipAccess.snapshot(), r))
 	h.proxyRequest(w, r, requestID, systemProxyRuntime())
 }
 

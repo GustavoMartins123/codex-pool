@@ -390,6 +390,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		return nil, fmt.Errorf("traffic shadow configuration rejected: %w", err)
 	}
 	h := &proxyHandler{
+		ipAccess:             ipAccessPolicy{settings: cfg.ipAccess},
 		cfg:                  cfg,
 		transport:            upstream,
 		antigravityTransport: antigravityTransport,
@@ -479,7 +480,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
-		Handler:           routes.newHTTPApp(globalIPAccess),
+		Handler:           routes.newHTTPApp(),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       5 * time.Minute, // Keep connections alive for reuse
 	}

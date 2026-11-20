@@ -34,6 +34,7 @@ import (
 )
 
 type config struct {
+	ipAccess               ipAccessSettings
 	configPath             string
 	listenAddr             string
 	responsesBase          *url.URL
@@ -303,14 +304,12 @@ func buildConfig() *config {
 			log.Fatalf("invalid PROXY_USAGE_RETENTION_DAYS: malformed or out-of-range integer")
 		}
 	}
-	if err := setTrustedProxies(effectiveTrustedProxies(fileCfg.TrustedProxies)); err != nil {
-		log.Fatalf("invalid trusted proxies: %v", err)
-	}
 	ipAllow, ipDeny := effectiveIPPolicy(&fileCfg)
-	if err := globalIPAccess.configure(ipAllow, ipDeny); err != nil {
+	cfg.ipAccess, err = parseIPAccessSettings(ipAllow, ipDeny, effectiveTrustedProxies(fileCfg.TrustedProxies), parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
+	if err != nil {
 		log.Fatalf("invalid ip access policy: %v", err)
 	}
-	if globalIPAccess.restricted() {
+	if cfg.ipAccess.restricted() {
 		log.Printf("ip access policy active: allow=%v deny=%v", ipAllow, ipDeny)
 	}
 
@@ -410,6 +409,7 @@ func main() {
 }
 
 type proxyHandler struct {
+	ipAccess        ipAccessPolicy
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions
 

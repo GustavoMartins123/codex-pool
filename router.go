@@ -321,7 +321,7 @@ func providerContributionActor(r *http.Request) string {
 
 // localHealthProbe permits only read-only health routes from a direct local
 // peer whose forwarded client identity is also local.
-func localHealthProbe(r *http.Request) bool {
+func localHealthProbe(r *http.Request, clientIP string) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
@@ -334,21 +334,22 @@ func localHealthProbe(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	peer, client := net.ParseIP(host), net.ParseIP(getClientIP(r))
+	peer, client := net.ParseIP(host), net.ParseIP(clientIP)
 	return peer != nil && client != nil && peer.IsLoopback() && client.IsLoopback()
 }
 
-func (p *ipAccessPolicy) allowRequest(w http.ResponseWriter, r *http.Request) bool {
-	clientIP, err := requestClientIP(r)
+func (p *ipAccessPolicy) authorizeRequest(w http.ResponseWriter, r *http.Request) *http.Request {
+	settings := p.snapshot()
+	clientIP, err := settings.resolveClientIP(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return false
+		return nil
 	}
-	if p.restricted() && !localHealthProbe(r) && !p.permitted(clientIP) {
+	if settings.restricted() && !localHealthProbe(r, clientIP) && !settings.permitted(clientIP) {
 		http.Error(w, "forbidden", http.StatusForbidden)
-		return false
+		return nil
 	}
-	return true
+	return withClientIP(r, clientIP)
 }
 
 func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) {
