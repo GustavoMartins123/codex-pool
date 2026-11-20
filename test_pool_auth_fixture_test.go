@@ -13,6 +13,15 @@ import (
 
 var testPoolCredentialMu sync.Mutex
 
+func testProxyHTTPApp(h *proxyHandler) http.Handler {
+	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
+	return routes.newHTTPApp(globalIPAccess)
+}
+
+func (h *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	testProxyHTTPApp(h).ServeHTTP(w, r)
+}
+
 // testPoolAuthenticatedHandler gives proxy integration tests real Passport
 // principals and clients for their signed request credentials.
 func testPoolAuthenticatedHandler(t *testing.T, h *proxyHandler) http.Handler {
@@ -20,13 +29,14 @@ func testPoolAuthenticatedHandler(t *testing.T, h *proxyHandler) http.Handler {
 	if err := ensureTestPassport(t, h); err != nil {
 		t.Fatal(err)
 	}
+	app := testProxyHTTPApp(h)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Hijacked websocket handlers outlive the test, so never touch t here.
 		if err := prepareTestPoolCredentialRequest(h, r); err != nil {
 			http.Error(w, "pool credential fixture failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.ServeHTTP(w, r)
+		app.ServeHTTP(w, r)
 	})
 }
 
@@ -43,7 +53,7 @@ func testPoolProxyRequest(t *testing.T, h *proxyHandler, w http.ResponseWriter, 
 	if err := prepareTestPoolCredential(t, h, r); err != nil {
 		t.Fatal(err)
 	}
-	h.proxyRequest(w, r, requestID)
+	h.proxyRequest(w, r, requestID, systemProxyRuntime())
 }
 
 func ensureTestPassport(t *testing.T, h *proxyHandler) error {

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +12,11 @@ import (
 
 type httpRouteRegister func(string, http.HandlerFunc)
 
+type proxyRoutes struct {
+	*proxyHandler
+	runtime proxyRuntime
+}
+
 // subtree registers the bare path explicitly because ServeMux otherwise
 // redirects it to the slash-terminated subtree.
 func (register httpRouteRegister) subtree(path string, root, children http.HandlerFunc) {
@@ -19,7 +24,7 @@ func (register httpRouteRegister) subtree(path string, root, children http.Handl
 	register(path+"/", children)
 }
 
-func (h *proxyHandler) newHTTPApp(ipAccess *ipAccessPolicy) *httpapi.App {
+func (h *proxyRoutes) newHTTPApp(ipAccess *ipAccessPolicy) *httpapi.App {
 	app := httpapi.New(applySecurityHeaders, ipAccess.allowRequest, randomID, h.logIncomingRequest(h.serveGatewayTraffic))
 
 	early := httpRouteRegister(app.HandleFunc)
@@ -47,16 +52,17 @@ func (h *proxyHandler) newHTTPApp(ipAccess *ipAccessPolicy) *httpapi.App {
 	return app
 }
 
-func (h *proxyHandler) logIncomingRequest(next http.HandlerFunc) http.HandlerFunc {
+func (h *proxyRoutes) logIncomingRequest(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.cfg != nil && h.cfg.debug.Load() {
-			log.Printf("[%s] incoming %s %s", w.Header().Get(httpapi.RequestIDHeader), r.Method, r.URL.Path)
+			h.runtime.logRequest(r.Context(), w.Header().Get(httpapi.RequestIDHeader), "incoming request",
+				slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		}
 		next(w, r)
 	}
 }
 
-func (h *proxyHandler) registerPassportRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerPassportRoutes(register httpRouteRegister) {
 	register("/{$}", h.servePassportSPA)
 	register("/join", h.servePassportSPA)
 	register("/recover", h.servePassportSPA)
@@ -124,7 +130,7 @@ func (h *proxyHandler) registerPassportRoutes(register httpRouteRegister) {
 	})
 }
 
-func (h *proxyHandler) handleConsolePrincipalRoute(w http.ResponseWriter, r *http.Request) {
+func (h *proxyRoutes) handleConsolePrincipalRoute(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, "/usage") {
 		h.handleConsolePrincipalUsage(w, r)
 		return
@@ -149,7 +155,7 @@ func (h *proxyHandler) handleGrantRoute(w http.ResponseWriter, r *http.Request) 
 	h.handleGrantRevoke(w, r, strings.TrimPrefix(r.URL.Path, "/api/account-grants/"))
 }
 
-func (h *proxyHandler) registerPoolRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerPoolRoutes(register httpRouteRegister) {
 	admin := func(handler http.HandlerFunc) http.HandlerFunc {
 		return httpapi.Require(h.checkAdminAuth, handler)
 	}
@@ -204,7 +210,7 @@ func (h *proxyHandler) servePoolCircuitBreakers(w http.ResponseWriter) {
 	respondJSON(w, h.pool.circuitBreakers.Snapshot())
 }
 
-func (h *proxyHandler) handlePoolUserRoute(w http.ResponseWriter, r *http.Request) {
+func (h *proxyRoutes) handlePoolUserRoute(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/daily"):
 		if h.checkAdminAuth(w, r) {
@@ -251,7 +257,7 @@ func (h *proxyHandler) handlePoolCatalog(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (h *proxyHandler) registerSetupRoutes(register httpRouteRegister) {
+func (h *proxyRoutes) registerSetupRoutes(register httpRouteRegister) {
 	scripts := map[string]http.HandlerFunc{
 		"codex":       h.serveCodexSetupScript,
 		"gemini":      h.serveGeminiSetupScript,
@@ -282,7 +288,7 @@ func (h *proxyHandler) registerSetupRoutes(register httpRouteRegister) {
 	})
 }
 
-func (h *proxyHandler) serveGatewayTraffic(w http.ResponseWriter, r *http.Request) {
+func (h *proxyRoutes) serveGatewayTraffic(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/oauth/token"):
 		h.serveFakeOAuthToken(w, r)
@@ -303,6 +309,6 @@ func (h *proxyHandler) serveGatewayTraffic(w http.ResponseWriter, r *http.Reques
 	case shouldNoopCodexPath(r.URL.Path):
 		serveNoopCodexPath(w, r)
 	default:
-		h.proxyRequest(w, r, w.Header().Get(httpapi.RequestIDHeader))
+		h.proxyRequest(w, r, w.Header().Get(httpapi.RequestIDHeader), h.runtime)
 	}
 }

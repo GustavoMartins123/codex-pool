@@ -665,7 +665,7 @@ func TestSecurityUnauthenticatedPassthroughOpenProxy(t *testing.T) {
 	reqUnauth := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
 	reqUnauth.Header.Set("Authorization", "Bearer sk-ant-api03-external-anthropic-key")
 	rrUnauth := httptest.NewRecorder()
-	h.proxyRequest(rrUnauth, reqUnauth, "req-unauth-test")
+	h.proxyRequest(rrUnauth, reqUnauth, "req-unauth-test", systemProxyRuntime())
 
 	if rrUnauth.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated passthrough should be 401, got %d: %s", rrUnauth.Code, rrUnauth.Body.String())
