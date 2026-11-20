@@ -480,9 +480,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("credential vault: %v", err)
 		}
-		if !store.Enabled() {
-			log.Fatal("credential vault: POOL_CREDENTIAL_KEY is required to verify credential files")
-		}
 		accountCredentialStore = store
 		stats, err := verifyCredentialFiles(cfg.poolDir)
 		if err != nil {

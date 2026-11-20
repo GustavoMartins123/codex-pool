@@ -205,6 +205,9 @@ func (s *KeyedStore) keyFor(version int) *Key {
 
 // ReadFile reads a credential file and decodes it if encrypted.
 func ReadFile(store Store, path string) ([]byte, error) {
+	if store == nil {
+		return nil, fmt.Errorf("credstore: store is not initialized")
+	}
 	file, err := openCredentialFile(path)
 	if err != nil {
 		return nil, err
