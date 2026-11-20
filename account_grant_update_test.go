@@ -73,7 +73,7 @@ func TestUpdateAccountGrantRejectsConflictsWithoutChangingAccess(t *testing.T) {
 		{"wildcard overlap", "grant_models_overlap", func(g *accountGrant) { g.Models = []string{"*"} }, 3, 1},
 		{"empty models", "grant_invalid", func(g *accountGrant) { g.Models = nil }, 3, 1},
 		{"empty budget", "grant_invalid", func(g *accountGrant) { g.Budget = PolicyLimits{} }, 3, 1},
-		{"past expiry", "grant_expiry_invalid", func(g *accountGrant) { g.ExpiresAt = g.CreatedAt.Add(time.Nanosecond) }, 3, 1},
+		{"past expiry", "grant_expiry_invalid", func(g *accountGrant) { g.ExpiresAt = g.CreatedAt.Add(time.Hour) }, 3, 1},
 		{"long expiry", "grant_expiry_invalid", func(g *accountGrant) { g.ExpiresAt = time.Now().Add(366 * 24 * time.Hour) }, 3, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,6 +82,13 @@ func TestUpdateAccountGrantRejectsConflictsWithoutChangingAccess(t *testing.T) {
 			addTestPassportOperator(t, p, "charlie")
 			created, err := p.createAccountGrant("alice", 1, testGrant("editable", "bob", a))
 			if err != nil {
+				t.Fatal(err)
+			}
+			// An expired edit must still expire after the stored creation time.
+			created.CreatedAt = created.CreatedAt.Add(-2 * time.Hour)
+			if err := p.db.Update(func(tx *bbolt.Tx) error {
+				return putAccountGrant(tx, *created)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			other := testGrant("other", "bob", a)
