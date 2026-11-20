@@ -86,6 +86,7 @@ type ResponsesBuffer struct {
 	inputTokens         int64
 	outputTokens        int64
 	cachedTokens        int64
+	finalUsage          map[string]any
 	status              string
 	createdAt           int64
 }
@@ -166,17 +167,23 @@ func (bw *ResponsesBuffer) processEvent(event []byte) {
 		bw.addImageGenerationResult(obj, "partial_image_b64")
 	case "response.image_generation_call.completed":
 		bw.addImageGenerationResult(obj, "result")
-	case "response.completed", "response.incomplete":
+	case "response.completed", "response.incomplete", "response.failed":
 		bw.applyResponse(obj)
-		if eventType == "response.incomplete" {
-			bw.status = "incomplete"
+		response, _ := obj["response"].(map[string]any)
+		if usage, _ := response["usage"].(map[string]any); usage != nil {
+			bw.finalUsage = map[string]any{"id": bw.id, "model": bw.model, "usage": usage}
+		}
+		if eventType == "response.incomplete" || eventType == "response.failed" {
+			bw.status = strings.TrimPrefix(eventType, "response.")
 		} else if bw.status == "" {
 			bw.status = "completed"
 		}
-	case "response.failed":
-		bw.applyResponse(obj)
-		bw.status = "failed"
 	}
+}
+
+// FinalUsage returns the upstream usage and identity from the terminal response.
+func (bw *ResponsesBuffer) FinalUsage() map[string]any {
+	return bw.finalUsage
 }
 
 func (bw *ResponsesBuffer) addImageGenerationResult(event map[string]any, field string) {

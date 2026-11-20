@@ -594,7 +594,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			_ = s.h.contextHandoff.RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
-	filtered, drop, changed := filterHostedMCPResponseJSON(data)
+	filtered, _, drop, changed := filterHostedMCPResponseJSON(data)
 	if drop {
 		return []byte{}, nil
 	}
