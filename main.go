@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/httpapi"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/ratelimit"
 	"codex-pool-proxy/internal/transport"
@@ -954,6 +955,9 @@ func serveUntilShutdown(srv *http.Server, h *proxyHandler, shutdown <-chan struc
 }
 
 type proxyHandler struct {
+	httpAppOnce sync.Once
+	httpApp     *httpapi.App
+
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions
 
