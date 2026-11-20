@@ -68,6 +68,24 @@ type PoolUsersConfig struct {
 	StoragePath string `toml:"storage_path"`
 }
 
+type passportConfig struct {
+	jwtSecret       string
+	publicURL       string
+	legacyUsersPath string
+}
+
+func resolvePassportConfig(file ConfigFile) passportConfig {
+	usersPath := file.PoolUsers.StoragePath
+	if usersPath == "" {
+		usersPath = "./data/pool_users.json"
+	}
+	return passportConfig{
+		jwtSecret:       getenv("POOL_JWT_SECRET", file.PoolUsers.JWTSecret),
+		publicURL:       strings.TrimSuffix(getenv("PUBLIC_URL", file.PublicURL), "/"),
+		legacyUsersPath: getenv("POOL_USERS_PATH", usersPath),
+	}
+}
+
 // RoutingConfigFile is the [routing] section. Profiles can override any
 // subset of the built-in weights under [routing.profiles.<name>].
 type RoutingConfigFile struct {

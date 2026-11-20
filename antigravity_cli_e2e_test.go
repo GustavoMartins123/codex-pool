@@ -18,7 +18,7 @@ import (
 // client credential, and must reach the Antigravity upstream account.
 func TestAntigravityCLISmokeChain(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	t.Setenv("POOL_JWT_SECRET", "agy-e2e-secret")
+	const jwtSecret = "agy-e2e-secret"
 
 	// The same account ID is used for the model snapshot and the pool account
 	// so the scheduler resolves models through the real registry association
@@ -71,7 +71,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		t.Fatalf("createGuest: %v", err)
 	}
 	identity := principal.ID + "-c-" + client.ID
-	apiKey := generateGeminiAPIKey(getPoolJWTSecret(), &PoolUser{ID: identity, Email: "agy@pool.local", PlanType: "pro", CreatedAt: time.Now()})
+	apiKey := generateGeminiAPIKey(jwtSecret, &PoolUser{ID: identity, Email: "agy@pool.local", PlanType: "pro", CreatedAt: time.Now()})
 
 	upstreamBase, _ := url.Parse(upstream.URL)
 	registry := NewProviderRegistry(
@@ -82,6 +82,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 	)
 	antiAcc := &Account{Type: AccountTypeAntigravity, ID: accountID, AccessToken: "anti-token", google: googleAccountState{ProjectID: "proj-1"}, PlanType: "pro"}
 	h := &proxyHandler{
+		passportConfig: passportConfig{jwtSecret: jwtSecret},
 		cfg: &config{
 			requestTimeout:       5 * time.Second,
 			streamTimeout:        5 * time.Second,

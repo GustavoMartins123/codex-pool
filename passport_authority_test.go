@@ -74,9 +74,9 @@ func TestPoolCredentialModelDiscoveryOmitsCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := principal.ID + "-c-" + client.ID
-	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics(), pool: newPoolState([]*Account{{ID: "codex-one", Type: AccountTypeCodex}}, false)}
+	h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport, metrics: newMetrics(), pool: newPoolState([]*Account{{ID: "codex-one", Type: AccountTypeCodex}}, false)}
 	request := httptest.NewRequest(http.MethodGet, "/api/pool/models", nil)
-	request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(getPoolJWTSecret(), identity))
+	request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(h.passportConfig.jwtSecret, identity))
 	response := httptest.NewRecorder()
 	h.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -103,7 +103,7 @@ func TestPoolCredentialModelDiscoveryOmitsCapacity(t *testing.T) {
 
 func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
 	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
-	t.Setenv("POOL_JWT_SECRET", "test-live-passport-secret")
+	const secret = "test-live-passport-secret"
 	store := testUsageStore(t)
 	passport, err := newPassportStore(store.db)
 	if err != nil {
@@ -116,10 +116,10 @@ func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
 	identity := principal.ID + "-c-" + client.ID
 	request := func(id string) *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "/api/pool/models", nil)
-		r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(getPoolJWTSecret(), id))
+		r.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(secret, id))
 		return r
 	}
-	without := &proxyHandler{cfg: &config{}, metrics: newMetrics(), pool: newPoolState(nil, false)}
+	without := &proxyHandler{passportConfig: passportConfig{jwtSecret: secret}, cfg: &config{}, metrics: newMetrics(), pool: newPoolState(nil, false)}
 	if _, _, _, _, allowed := without.authorizePoolCredentialRequest(request(identity)); allowed {
 		t.Fatal("signed credential was accepted without Passport")
 	}
@@ -140,7 +140,7 @@ func TestPoolCredentialRequiresLivePassportState(t *testing.T) {
 	if passthroughDenied.Code != http.StatusUnauthorized {
 		t.Fatalf("passthrough without Passport status = %d, want 401", passthroughDenied.Code)
 	}
-	h := &proxyHandler{passport: passport, metrics: newMetrics()}
+	h := &proxyHandler{passportConfig: passportConfig{jwtSecret: secret}, passport: passport, metrics: newMetrics()}
 	if _, _, _, _, allowed := h.authorizePoolCredentialRequest(request(identity)); !allowed {
 		t.Fatal("active principal and client were rejected")
 	}
@@ -183,10 +183,10 @@ func TestPoolCredentialCLIUsageDoesNotExposeGlobalTelemetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := principal.ID + "-c-" + client.ID
-	h := &proxyHandler{cfg: &config{}, passport: passport, metrics: newMetrics(), pool: newPoolState([]*Account{{ID: "private-account", Type: AccountTypeCodex}}, false)}
+	h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport, metrics: newMetrics(), pool: newPoolState([]*Account{{ID: "private-account", Type: AccountTypeCodex}}, false)}
 	for _, path := range []string{"/api/codex/usage", "/api/oauth/profile", "/api/oauth/usage"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
-		request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(getPoolJWTSecret(), identity))
+		request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken(h.passportConfig.jwtSecret, identity))
 		response := httptest.NewRecorder()
 		h.ServeHTTP(response, request)
 		if response.Code != http.StatusOK {

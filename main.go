@@ -36,6 +36,7 @@ import (
 type config struct {
 	vault                  credentialVault
 	ipAccess               ipAccessSettings
+	passport               passportConfig
 	configPath             string
 	listenAddr             string
 	responsesBase          *url.URL
@@ -98,6 +99,9 @@ type config struct {
 	shutdownGrace              time.Duration // Let active websocket turns finish before forcing a restart close
 	tierThreshold              float64       // Secondary usage % at which we stop preferring a tier (default 0.50)
 	routing                    RoutingConfigFile
+	modelAliases               map[string]string
+	maxReasoningEffortByUser   map[string]string
+	maxReasoningEffortByOrigin map[string]string
 	clientPolicies             map[string]ClientPolicy
 	genericProviders           map[string]GenericProviderConfig
 	experiments                ExperimentsConfig
@@ -145,25 +149,22 @@ func parseBoolEnvPtr(key string, cfg *bool, def bool) bool {
 	return def
 }
 
-// Global config file reference for pool users config
-var globalConfigFile *ConfigFile
-
 // validateSecretStrength enforces fail-closed minimum lengths for the
 // symmetric secrets that gate the deployment. A short POOL_JWT_SECRET lets
 // attackers forge pool credentials; a short break-glass ADMIN_TOKEN or
 // POOL_AUTH_ENCRYPTION_KEY weakens admin access and sealed token storage.
 // Refuse to start instead of silently running with a guessable secret.
 func validateSecretStrength(cfg *config) error {
-	if secret := getPoolJWTSecret(); secret != "" && len(secret) < 32 {
+	if secret := cfg.passport.jwtSecret; secret != "" && len(secret) < 32 {
 		return fmt.Errorf("POOL_JWT_SECRET must be at least 32 characters (generate one with: openssl rand -hex 32)")
 	}
 	if key := os.Getenv("POOL_AUTH_ENCRYPTION_KEY"); key != "" && len(key) < 32 {
 		return fmt.Errorf("POOL_AUTH_ENCRYPTION_KEY must be at least 32 characters (generate one with: openssl rand -hex 32)")
 	}
-	if cfg != nil && cfg.metricsToken != "" && (len(cfg.metricsToken) < 32 || strings.ContainsAny(cfg.metricsToken, " \t\r\n")) {
+	if cfg.metricsToken != "" && (len(cfg.metricsToken) < 32 || strings.ContainsAny(cfg.metricsToken, " \t\r\n")) {
 		return fmt.Errorf("MONITORING_METRICS_TOKEN must be at least 32 characters without whitespace")
 	}
-	if cfg != nil && cfg.adminToken != "" && len(cfg.adminToken) < 16 {
+	if cfg.adminToken != "" && len(cfg.adminToken) < 16 {
 		return fmt.Errorf("ADMIN_TOKEN must be at least 16 characters (generate one with: openssl rand -hex 16)")
 	}
 	return nil
@@ -186,12 +187,15 @@ func buildConfig() *config {
 	if err := validateConfigEnvironment(); err != nil {
 		log.Fatalf("invalid configuration environment: %v", err)
 	}
-	globalConfigFile = configFile
-
 	var fileCfg ConfigFile
 	if configFile != nil {
 		fileCfg = *configFile
 	}
+
+	cfg.passport = resolvePassportConfig(fileCfg)
+	cfg.modelAliases = fileCfg.ModelAliases
+	cfg.maxReasoningEffortByUser = fileCfg.MaxReasoningEffortByUser
+	cfg.maxReasoningEffortByOrigin = fileCfg.MaxReasoningEffortByOrigin
 
 	cfg.listenAddr = getConfigString("PROXY_LISTEN_ADDR", fileCfg.ListenAddr, "127.0.0.1:8989")
 	cfg.responsesBase = mustParse(getenv("UPSTREAM_RESPONSES_BASE", "https://chatgpt.com/backend-api/codex"))
@@ -410,6 +414,7 @@ func main() {
 }
 
 type proxyHandler struct {
+	passportConfig  passportConfig
 	ipAccess        ipAccessPolicy
 	qwenCloudTokens qwenCloudTokenCache
 	qwenLogin       qwenLoginSessions

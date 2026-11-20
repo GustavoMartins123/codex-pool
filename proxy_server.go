@@ -320,9 +320,9 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	// The retired pool_users.json store is read once for the final Passport
 	// migration and never consulted again during runtime.
 	var legacyPoolUsers *PoolUserStore
-	if getPoolJWTSecret() != "" {
+	if cfg.passport.jwtSecret != "" {
 		var err error
-		legacyPoolUsers, err = newPoolUserStore(getPoolUsersPath())
+		legacyPoolUsers, err = newPoolUserStore(cfg.passport.legacyUsersPath)
 		if err != nil {
 			log.Printf("warning: failed to load legacy pool users: %v", err)
 		}
@@ -364,14 +364,6 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	}
 	log.Print("DuckDB analytics initialized")
 
-	var aliasesCfg map[string]string
-	var effortByUser, effortByOrigin map[string]string
-	if globalConfigFile != nil {
-		aliasesCfg = globalConfigFile.ModelAliases
-		effortByUser = globalConfigFile.MaxReasoningEffortByUser
-		effortByOrigin = globalConfigFile.MaxReasoningEffortByOrigin
-	}
-
 	// Initialize request pacer from env var. Default to disabled so the proxy
 	// does not add inter-turn latency unless an operator opts in.
 	paceMs := 0
@@ -392,6 +384,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		return nil, fmt.Errorf("traffic shadow configuration rejected: %w", err)
 	}
 	h := &proxyHandler{
+		passportConfig:       cfg.passport,
 		ipAccess:             ipAccessPolicy{settings: cfg.ipAccess},
 		cfg:                  cfg,
 		transport:            upstream,
@@ -404,8 +397,8 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
 		pricing:              pricing,
-		aliases:              newModelAliases(aliasesCfg),
-		effortCap:            newEffortCap(effortByUser, effortByOrigin),
+		aliases:              newModelAliases(cfg.modelAliases),
+		effortCap:            newEffortCap(cfg.maxReasoningEffortByUser, cfg.maxReasoningEffortByOrigin),
 		bruteForce:           newBruteForceTracker(),
 		accountLocks:         newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration),
 		metrics:              newMetrics(),

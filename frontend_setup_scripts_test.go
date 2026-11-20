@@ -607,7 +607,7 @@ func newSetupScriptHandler(t *testing.T) (*proxyHandler, string) {
 	if err != nil {
 		t.Fatalf("mintConfigDownloadNonce: %v", err)
 	}
-	return &proxyHandler{cfg: &config{}, passport: passport}, nonce
+	return &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}, nonce
 }
 
 func TestServeGeminiSetupScript_PowerShell(t *testing.T) {

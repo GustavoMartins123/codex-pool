@@ -211,14 +211,14 @@ func TestIdleWebSocketDoesNotHoldFairQueueCapacity(t *testing.T) {
 
 func TestFairQueueRevalidatesRevokedCredentials(t *testing.T) {
 	p, client := testPolicyPassport(t)
-	t.Setenv("POOL_JWT_SECRET", "queue-test-jwt-secret-long-enough")
+	const secret = "queue-test-jwt-secret-long-enough"
 	identity := client.PrincipalID + "-c-" + client.ID
-	token := generateClaudePoolToken(getPoolJWTSecret(), identity)
+	token := generateClaudePoolToken(secret, identity)
 	r := httptest.NewRequest("POST", "/v1/responses", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
 	q := newFairQueue()
 	q.capacity = 1
-	h := &proxyHandler{passport: p, metrics: newMetrics(), requestQueue: q}
+	h := &proxyHandler{passportConfig: passportConfig{jwtSecret: secret}, passport: p, metrics: newMetrics(), requestQueue: q}
 	release, _ := q.Acquire(context.Background(), "occupant")
 	result := make(chan error, 1)
 	go func() {

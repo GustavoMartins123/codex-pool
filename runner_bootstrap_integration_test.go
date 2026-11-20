@@ -29,7 +29,7 @@ import (
 func TestRunnerBootstrapEndToEnd(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "synthetic-bootstrap-secret")
 	h, principal, _, _, _, _ := memberQuotaFixture(t)
-	login, err := h.passport.createAppToken(h.passport.principal(principal), getPoolJWTSecret())
+	login, err := h.passport.createAppToken(h.passport.principal(principal), h.passportConfig.jwtSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

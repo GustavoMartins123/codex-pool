@@ -572,7 +572,7 @@ func (h *proxyHandler) serveFakeOAuthToken(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *proxyHandler) handlePoolUserRefresh(w http.ResponseWriter, refreshToken string) {
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		respondJSONError(w, http.StatusServiceUnavailable, "JWT secret not configured")
 		return

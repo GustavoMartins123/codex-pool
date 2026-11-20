@@ -85,6 +85,7 @@ func ensureTestPassport(t *testing.T, h *proxyHandler) error {
 	if err != nil {
 		return err
 	}
+	h.passportConfig.jwtSecret = getenv("POOL_JWT_SECRET", "")
 	h.passport = p
 	return nil
 }
@@ -149,7 +150,7 @@ func prepareTestPoolCredentialRequest(h *proxyHandler, r *http.Request) error {
 	if h.passport == nil {
 		return errors.New("test passport not initialized")
 	}
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	identity, _, kind, ok := parsePoolCredentialRequest(r, secret)
 	passthrough := false
 	if !ok {

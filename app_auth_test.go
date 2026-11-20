@@ -14,8 +14,9 @@ import (
 
 func appAuthHandler(t *testing.T) *proxyHandler {
 	t.Helper()
-	t.Setenv("POOL_JWT_SECRET", "test-mobile-jwt-secret")
-	return newLoginBruteForceHandler(t)
+	h := newLoginBruteForceHandler(t)
+	h.passportConfig.jwtSecret = "test-mobile-jwt-secret"
+	return h
 }
 
 func appAuthRequest(h *proxyHandler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -40,6 +41,24 @@ func appSignIn(t *testing.T, h *proxyHandler) appLoginResponse {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestAppTokensUseTheServerJWTSecret(t *testing.T) {
+	const otherSecret = "another-instance-signing-secret"
+	t.Setenv("POOL_JWT_SECRET", otherSecret)
+	h := appAuthHandler(t)
+	other := &proxyHandler{
+		passport:       h.passport,
+		passportConfig: passportConfig{jwtSecret: otherSecret},
+	}
+
+	login := appSignIn(t, h)
+	if w := appAuthRequest(other, http.MethodDelete, "/api/auth/token", login.Token, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("another server accepted the token with HTTP %d", w.Code)
+	}
+	if w := appAuthRequest(h, http.MethodDelete, "/api/auth/token", login.Token, ""); w.Code != http.StatusNoContent {
+		t.Fatalf("issuing server rejected the token with HTTP %d", w.Code)
+	}
 }
 
 func TestAppLoginUsesWebsiteCredentialsWithoutBrowserSession(t *testing.T) {
@@ -182,7 +201,7 @@ func TestAppTokenValidationRejectsWrongScopeAndExpiry(t *testing.T) {
 	h := appAuthHandler(t)
 	login := appSignIn(t, h)
 	var original appTokenClaims
-	if _, err := jwt.ParseWithClaims(login.Token, &original, func(*jwt.Token) (any, error) { return []byte(getPoolJWTSecret()), nil }); err != nil {
+	if _, err := jwt.ParseWithClaims(login.Token, &original, func(*jwt.Token) (any, error) { return []byte(h.passportConfig.jwtSecret), nil }); err != nil {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*appTokenClaims){
@@ -197,7 +216,7 @@ func TestAppTokenValidationRejectsWrongScopeAndExpiry(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			claims := original
 			mutate(&claims)
-			token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(getPoolJWTSecret()))
+			token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(h.passportConfig.jwtSecret))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -239,7 +258,7 @@ func TestAppIssuanceRevalidatesPasswordAndRollsBackAuditFailure(t *testing.T) {
 	if _, err = h.passport.ChangePrincipalPassword(principal.ID, principal.ID, "replacement strong password"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = h.passport.createAppToken(principal, getPoolJWTSecret()); err == nil {
+	if _, err = h.passport.createAppToken(principal, h.passportConfig.jwtSecret); err == nil {
 		t.Fatal("stale password verification minted token")
 	}
 	principal, err = h.passport.verifyLogin("brute@example.com", "replacement strong password")
@@ -250,7 +269,7 @@ func TestAppIssuanceRevalidatesPasswordAndRollsBackAuditFailure(t *testing.T) {
 	if err := h.passport.db.Update(func(tx *bbolt.Tx) error { return tx.DeleteBucket([]byte(bucketPassportAudit)) }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = h.passport.createAppToken(principal, getPoolJWTSecret()); err == nil {
+	if _, err = h.passport.createAppToken(principal, h.passportConfig.jwtSecret); err == nil {
 		t.Fatal("issued token without audit persistence")
 	}
 	if len(h.passport.clients) != before {
@@ -293,7 +312,7 @@ func TestAppBearerQuotasAndCatalogRespectClientPolicy(t *testing.T) {
 	h, principalID, _, _, _, _ := memberQuotaFixture(t)
 	principal := h.passport.principal(principalID)
 	saveQuotaPolicy(t, h, principalID, ClientPolicy{Providers: PolicySelector{Allow: []string{"*"}}})
-	login, err := h.passport.createAppToken(principal, getPoolJWTSecret())
+	login, err := h.passport.createAppToken(principal, h.passportConfig.jwtSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

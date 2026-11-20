@@ -97,7 +97,7 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	secret := getPoolJWTSecret()
+	secret := h.passportConfig.jwtSecret
 	if secret == "" {
 		respondJSONError(w, http.StatusServiceUnavailable, "JWT secret not configured")
 		return

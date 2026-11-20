@@ -49,7 +49,7 @@ func memberQuotaFixture(t *testing.T) (*proxyHandler, string, string, string, st
 	}
 	pool := newPoolState(accounts, false)
 	pool.accountAuthority = p
-	h := &proxyHandler{passport: p, pool: pool, cfg: &config{}}
+	h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), passport: p, pool: pool, cfg: &config{}}
 	return h, link.Principal.ID, session, csrf, opSession, opCSRF
 }
 

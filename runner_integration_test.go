@@ -34,7 +34,7 @@ func TestRunnerSessionEndToEnd(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "synthetic-integration-secret")
 	h, principal, _, _, _, _ := memberQuotaFixture(t)
 	saveQuotaPolicy(t, h, principal, ClientPolicy{Providers: PolicySelector{Allow: []string{"*"}}})
-	login, err := h.passport.createAppToken(h.passport.principal(principal), getPoolJWTSecret())
+	login, err := h.passport.createAppToken(h.passport.principal(principal), h.passportConfig.jwtSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

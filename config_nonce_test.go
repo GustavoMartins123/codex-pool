@@ -62,7 +62,7 @@ func TestConfigDownloadNonceIsSingleUse(t *testing.T) {
 func TestConfigDownloadNonceMintRevokesPrevious(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-config-nonce")
 	passport, client := newNonceTestPassport(t)
-	handler := &proxyHandler{cfg: &config{}, passport: passport}
+	handler := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 
 	first, _, err := passport.mintConfigDownloadNonce(client)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestConfigDownloadNonceHTTPFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := &proxyHandler{cfg: &config{}, passport: passport}
+	handler := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/me/clients", strings.NewReader(`{"label":"machine"}`))
 	request.AddCookie(&http.Cookie{Name: "pool_session", Value: session})
@@ -185,7 +185,7 @@ func TestConfigDownloadNonceHTTPFlow(t *testing.T) {
 func TestConfigDownloadLegacyTokenIsRejected(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-jwt-secret-config-nonce")
 	passport, client := newNonceTestPassport(t)
-	handler := &proxyHandler{cfg: &config{}, passport: passport}
+	handler := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{}, passport: passport}
 	token, err := passport.clientDownloadToken(client)
 	if err != nil {
 		t.Fatal(err)

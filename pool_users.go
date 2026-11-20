@@ -464,40 +464,6 @@ func isPoolGeminiAPIKey(secret, apiKey string) (bool, string, error) {
 	return ok, identity, nil
 }
 
-// getPoolJWTSecret returns the JWT signing secret from config or env.
-func getPoolJWTSecret() string {
-	if v := os.Getenv("POOL_JWT_SECRET"); v != "" {
-		return v
-	}
-	if globalConfigFile != nil && globalConfigFile.PoolUsers.JWTSecret != "" {
-		return globalConfigFile.PoolUsers.JWTSecret
-	}
-	return ""
-}
-
-// getPoolUsersPath returns the pool users storage path from config or env.
-func getPoolUsersPath() string {
-	if v := os.Getenv("POOL_USERS_PATH"); v != "" {
-		return v
-	}
-	if globalConfigFile != nil && globalConfigFile.PoolUsers.StoragePath != "" {
-		return globalConfigFile.PoolUsers.StoragePath
-	}
-	return "./data/pool_users.json"
-}
-
-// getPublicURL returns the public URL override from config or env.
-// Returns empty string if not configured (use request host instead).
-func getPublicURL() string {
-	if v := os.Getenv("PUBLIC_URL"); v != "" {
-		return strings.TrimSuffix(v, "/")
-	}
-	if globalConfigFile != nil && globalConfigFile.PublicURL != "" {
-		return strings.TrimSuffix(globalConfigFile.PublicURL, "/")
-	}
-	return ""
-}
-
 // PoolUserClaudeAuth matches the Claude Code credentials format for pool users.
 type PoolUserClaudeAuth struct {
 	AccessToken  string `json:"access_token"`

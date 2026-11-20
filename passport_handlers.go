@@ -70,7 +70,7 @@ func parsePoolCredentialRequest(r *http.Request, secret string) (identity string
 }
 
 func (h *proxyHandler) authorizePoolCredentialRequest(r *http.Request) (identity, principalID, clientID, kind string, allowed bool) {
-	identity, issuedAt, kind, parsed := parsePoolCredentialRequest(r, getPoolJWTSecret())
+	identity, issuedAt, kind, parsed := parsePoolCredentialRequest(r, h.passportConfig.jwtSecret)
 	if !parsed {
 		h.metrics.incPassport("authorization_outcomes", "unrecognized")
 		return "", "", "", "", false
@@ -103,7 +103,7 @@ func (h *proxyHandler) revalidatePoolCredential(r *http.Request, expectedIdentit
 	if r == nil || h.passport == nil {
 		return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "pool credential is no longer authorized"}
 	}
-	identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, getPoolJWTSecret())
+	identity, issuedAt, _, parsed := parsePoolCredentialRequest(r, h.passportConfig.jwtSecret)
 	if !parsed || identity != expectedIdentity {
 		return websocket.CloseError{Code: websocket.StatusPolicyViolation, Reason: "pool credential is no longer authorized"}
 	}
