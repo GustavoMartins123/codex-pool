@@ -686,13 +686,13 @@ func TestLoginRateLimitsRepeatedFailures(t *testing.T) {
 	wrong := `{"email":"brute@example.com","password":"wrong password"}`
 	for i := 0; i < bruteForceMaxAttempts; i++ {
 		recorder := httptest.NewRecorder()
-		h.handlePassportLogin(recorder, loginRequest(wrong))
+		h.ServeHTTP(recorder, loginRequest(wrong))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d status = %d", i, recorder.Code)
 		}
 	}
 	banned := httptest.NewRecorder()
-	h.handlePassportLogin(banned, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	h.ServeHTTP(banned, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
 	if banned.Code != http.StatusTooManyRequests {
 		t.Fatalf("valid login after repeated failures status = %d, want 429", banned.Code)
 	}
@@ -706,7 +706,7 @@ func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
 	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
 	for i := 0; i < bruteForceMaxAttempts+1; i++ {
 		busy := httptest.NewRecorder()
-		h.handlePassportLogin(busy, loginRequest(correct))
+		h.ServeHTTP(busy, loginRequest(correct))
 		if busy.Code != http.StatusServiceUnavailable || busy.Header().Get("Retry-After") == "" {
 			t.Fatalf("saturated attempt %d status = %d retry-after=%q, want 503 with Retry-After", i, busy.Code, busy.Header().Get("Retry-After"))
 		}
@@ -715,7 +715,7 @@ func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
 		<-h.passport.passwordWork
 	}
 	ok := httptest.NewRecorder()
-	h.handlePassportLogin(ok, loginRequest(correct))
+	h.ServeHTTP(ok, loginRequest(correct))
 	if ok.Code != http.StatusOK {
 		t.Fatalf("login after saturation status = %d, want 200 (saturation must not ban)", ok.Code)
 	}
@@ -729,7 +729,7 @@ func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
 	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
 	for i := 0; i < passwordAttemptLimit; i++ {
 		busy := httptest.NewRecorder()
-		h.handlePassportLogin(busy, loginRequest(correct))
+		h.ServeHTTP(busy, loginRequest(correct))
 		if busy.Code != http.StatusServiceUnavailable {
 			t.Fatalf("attempt %d status = %d, want 503 while saturated", i, busy.Code)
 		}
@@ -738,14 +738,14 @@ func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
 		<-h.passport.passwordWork
 	}
 	throttled := httptest.NewRecorder()
-	h.handlePassportLogin(throttled, loginRequest(correct))
+	h.ServeHTTP(throttled, loginRequest(correct))
 	if throttled.Code != http.StatusTooManyRequests || throttled.Header().Get("Retry-After") == "" {
 		t.Fatalf("attempt past the per-network limit status = %d retry-after=%q, want 429", throttled.Code, throttled.Header().Get("Retry-After"))
 	}
 	other := loginRequest(correct)
 	other.RemoteAddr = "198.51.100.20:4242"
 	ok := httptest.NewRecorder()
-	h.handlePassportLogin(ok, other)
+	h.ServeHTTP(ok, other)
 	if ok.Code != http.StatusOK {
 		t.Fatalf("another network status = %d, want 200", ok.Code)
 	}
@@ -759,7 +759,7 @@ func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
 		request := loginRequest(fmt.Sprintf(`{"email":%q,"password":%q}`, login, password))
 		request.RemoteAddr = fmt.Sprintf("198.51.%d.1:4242", network)
 		recorder := httptest.NewRecorder()
-		h.handlePassportLogin(recorder, request)
+		h.ServeHTTP(recorder, request)
 		return recorder.Code
 	}
 	// Each network stays below its own IP ban; only the account limit trips.
@@ -783,25 +783,25 @@ func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {
 		recorder := httptest.NewRecorder()
-		h.handlePassportLogin(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
+		h.ServeHTTP(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d status = %d", i, recorder.Code)
 		}
 	}
 	ok := httptest.NewRecorder()
-	h.handlePassportLogin(ok, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	h.ServeHTTP(ok, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
 	if ok.Code != http.StatusOK {
 		t.Fatalf("valid login status = %d body=%s", ok.Code, ok.Body.String())
 	}
 	for i := 0; i < bruteForceMaxAttempts-1; i++ {
 		recorder := httptest.NewRecorder()
-		h.handlePassportLogin(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
+		h.ServeHTTP(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("post-success attempt %d status = %d", i, recorder.Code)
 		}
 	}
 	final := httptest.NewRecorder()
-	h.handlePassportLogin(final, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
+	h.ServeHTTP(final, loginRequest(`{"email":"brute@example.com","password":"correct horse battery"}`))
 	if final.Code != http.StatusOK {
 		t.Fatalf("login after counter reset status = %d", final.Code)
 	}
