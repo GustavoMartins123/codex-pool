@@ -176,6 +176,7 @@ type UsageSnapshot struct {
 
 // RequestUsage captures per-request token consumption parsed from SSE events.
 type RequestUsage struct {
+	PricingUnavailable bool `json:"pricing_unavailable,omitempty"`
 	Timestamp           time.Time
 	AccountID           string
 	PlanType            string

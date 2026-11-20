@@ -729,8 +729,10 @@ func main() {
 	}
 
 	// Initialize pricing data
-	pricing := newPricingData()
-	pricing.startPricingRefresh(shutdownCtx)
+	pricing, err := newPricingData()
+	if err != nil {
+		log.Fatalf("initialize pricing: %v", err)
+	}
 
 	// Initialize canonical DuckDB analytics. SQLite remains during migration.
 	duckAnalytics, duckErr := newDuckAnalytics(duckPath, store.db)
@@ -753,7 +755,6 @@ func main() {
 		go func() {
 			if err := analyticsStore.rebuildPricingFromBoltDB(store, pricing); err != nil {
 				log.Printf("warning: failed to rebuild analytics pricing: %v", err)
-				analyticsStore.seedFromBoltDB(store, pricing)
 			}
 		}()
 		analyticsStore.startDailyRollup(shutdownCtx)

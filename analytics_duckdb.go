@@ -75,6 +75,10 @@ func analyticsFactFromUsage(ru RequestUsage, cost float64) AnalyticsFact {
 	if completeness == "" {
 		completeness = "complete"
 	}
+	pricingVersion := analyticsPricingVersion
+	if ru.PricingUnavailable {
+		pricingVersion = "unavailable"
+	}
 	return AnalyticsFact{
 		EventID: uuid.NewString(), ProxyRequestID: proxyID, UsageSequence: ru.UsageSequence,
 		AttemptNumber: ru.AttemptNumber, ObservedAt: ru.Timestamp.UTC(), PrincipalID: ru.UserID,
@@ -84,7 +88,7 @@ func analyticsFactFromUsage(ru RequestUsage, cost float64) AnalyticsFact {
 		InputTokens: ru.InputTokens, CacheReadTokens: ru.CachedInputTokens,
 		CacheCreationTokens: ru.CacheCreationTokens, OutputTokens: ru.OutputTokens,
 		ReasoningTokens: ru.ReasoningTokens, BillableTokens: ru.BillableTokens,
-		APIEquivalentCostUSD: cost, PricingVersion: analyticsPricingVersion, UsageCompleteness: completeness,
+		APIEquivalentCostUSD: cost, PricingVersion: pricingVersion, UsageCompleteness: completeness,
 		Source: "live", SourceGrain: "request",
 	}
 }

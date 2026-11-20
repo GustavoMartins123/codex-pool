@@ -337,7 +337,13 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 	// analytics fact and raw request commit together.
 	var costUSD float64
 	if h.pricing != nil {
-		costUSD = h.pricing.calculateCost(ru)
+		price, err := h.pricing.calculateCost(ru)
+		if err != nil {
+			ru.PricingUnavailable = true
+			log.Printf("pricing: %v", err)
+		} else {
+			costUSD = price
+		}
 		if costUSD > 0 {
 			a.mu.Lock()
 			a.Totals.TotalCostEstimate += costUSD

@@ -34,7 +34,7 @@ func TestRebuildPricingFromBoltDBRestoresCacheCreationAndCosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer analytics.Close()
-	pricing := newPricingData()
+	pricing := testPricingData(t)
 	if err := analytics.rebuildPricingFromBoltDB(usage, pricing); err != nil {
 		t.Fatal(err)
 	}
