@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Accounts } from "./Accounts";
 import { deleteAccount } from "../api";
@@ -43,11 +43,13 @@ it("arms on the first click and only deletes on the confirm click", async () => 
   expect(deleteAccount).not.toHaveBeenCalled();
   expect(onAccountsChanged).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
-  await waitFor(() => expect(deleteAccount).toHaveBeenCalledWith("pool-codex"));
-  await waitFor(() => expect(onAccountsChanged).toHaveBeenCalledOnce());
-  expect(await screen.findByText("pool-codex deleted")).toBeTruthy();
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm delete" })).toBeNull());
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+  });
+  expect(deleteAccount).toHaveBeenCalledWith("pool-codex");
+  expect(onAccountsChanged).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Confirm delete" })).toBeNull();
+  expect(screen.getByText("pool-codex deleted")).toBeTruthy();
 });
 
 it("shows the server error and keeps the account when the delete fails", async () => {
