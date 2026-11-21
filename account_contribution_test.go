@@ -219,10 +219,10 @@ func TestContributionVaultAndOAuthSessionAreFailClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("plaintext contribution accepted")
 	}
-	_, verifier, _ := startCodexOAuthSession("alice", "")
-	codexOAuthSessions.Lock()
-	codexOAuthSessions.sessions[verifier].CreatedAt = time.Now().Add(-11 * time.Minute)
-	codexOAuthSessions.Unlock()
+	_, verifier, _ := h.startCodexOAuthSession("alice", "")
+	h.codexOAuth.Lock()
+	h.codexOAuth.sessions[verifier].CreatedAt = time.Now().Add(-11 * time.Minute)
+	h.codexOAuth.Unlock()
 	body, _ := json.Marshal(map[string]string{"code": "unused", "verifier": verifier})
 	request := contributionRequestActor(httptest.NewRequest("POST", "/", strings.NewReader(string(body))), "alice")
 	request.Header.Set("Content-Type", "application/json")
@@ -231,9 +231,9 @@ func TestContributionVaultAndOAuthSessionAreFailClosed(t *testing.T) {
 	if response.Code != 400 {
 		t.Fatalf("expired session: %d", response.Code)
 	}
-	codexOAuthSessions.RLock()
-	_, exists := codexOAuthSessions.sessions[verifier]
-	codexOAuthSessions.RUnlock()
+	h.codexOAuth.RLock()
+	_, exists := h.codexOAuth.sessions[verifier]
+	h.codexOAuth.RUnlock()
 	if exists {
 		t.Fatal("consumed session retained")
 	}
