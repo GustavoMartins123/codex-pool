@@ -12,6 +12,29 @@ export function parseAccountSort(key: string | null, direction: string | null): 
   return { key: key as AccountSortKey, direction: direction === "desc" ? "desc" : "asc" };
 }
 
+const SORT_STORAGE_KEY = "codex-pool.accounts.sort";
+
+// Storage can be missing or throw (private windows, blocked site data); the table then simply starts unsorted.
+export function loadStoredAccountSort(): AccountSort | null {
+  try {
+    const raw = window.localStorage.getItem(SORT_STORAGE_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as { key?: string; direction?: string };
+    return parseAccountSort(stored.key ?? null, stored.direction ?? null);
+  } catch {
+    return null;
+  }
+}
+
+export function storeAccountSort(sort: AccountSort | null) {
+  try {
+    if (sort) window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(sort));
+    else window.localStorage.removeItem(SORT_STORAGE_KEY);
+  } catch {
+    // The preference just will not survive a reload.
+  }
+}
+
 // Each click cycles ascending, descending, then back to the pool's own order.
 export function nextAccountSort(current: AccountSort | null, key: AccountSortKey): AccountSort | null {
   if (current?.key !== key) return { key, direction: "asc" };

@@ -4,10 +4,10 @@ import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
 import { Sparkline } from "../charts";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
-import { type AccountSort, type AccountSortKey, nextAccountSort, parseAccountSort, sortAccounts } from "../accountSort";
+import { type AccountSort, type AccountSortKey, loadStoredAccountSort, nextAccountSort, parseAccountSort, sortAccounts, storeAccountSort } from "../accountSort";
 import { queryValue, updateURL } from "../navigation";
 import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
 
@@ -37,7 +37,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [selected, setSelected] = useState<string | null>(() => queryValue("account"));
   const [query, setQuery] = useState("");
   const [attentionOnly, setAttentionOnly] = useState(() => queryValue("accounts") === "attention");
-  const [sort, setSort] = useState<AccountSort | null>(() => parseAccountSort(queryValue("sort"), queryValue("dir")));
+  const [sort, setSort] = useState<AccountSort | null>(() => parseAccountSort(queryValue("sort"), queryValue("dir")) ?? loadStoredAccountSort());
   const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 1300px)").matches);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
@@ -50,6 +50,17 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const inspectorRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const accountTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Inspector scroll lives in memory only, per account, so a refresh or a switch between profiles keeps the reader's place.
+  const inspectorScroll = useRef(new Map<string, number>());
+  const rememberInspectorScroll = (event: UIEvent<HTMLElement>) => {
+    if (selected) inspectorScroll.current.set(selected, event.currentTarget.scrollTop);
+  };
+  useLayoutEffect(() => {
+    const node = inspectorRef.current;
+    if (!node || !selected) return;
+    const saved = inspectorScroll.current.get(selected) ?? 0;
+    if (node.scrollTop !== saved) node.scrollTop = saved;
+  });
 
   const selectAccount = useCallback((accountID: string | null) => {
     if (accountID === selected) return;
@@ -66,12 +77,14 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
   useEffect(() => updateURL({ account: selected }, "replace"), [selected]);
   useEffect(() => updateURL({ accounts: attentionOnly ? "attention" : null }, "replace"), [attentionOnly]);
-  useEffect(() => updateURL({ sort: sort?.key ?? null, dir: sort?.direction ?? null }, "replace"), [sort]);
+  useEffect(() => {
+    updateURL({ sort: sort?.key ?? null, dir: sort?.direction ?? null }, "replace");
+    storeAccountSort(sort);
+  }, [sort]);
   useEffect(() => {
     const restoreAccountState = () => {
       selectAccount(queryValue("account"));
       setAttentionOnly(queryValue("accounts") === "attention");
-      setSort(parseAccountSort(queryValue("sort"), queryValue("dir")));
     };
     window.addEventListener("popstate", restoreAccountState);
     return () => window.removeEventListener("popstate", restoreAccountState);
@@ -87,7 +100,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    window.requestAnimationFrame(() => closeRef.current?.focus());
+    window.requestAnimationFrame(() => closeRef.current?.focus({ preventScroll: true }));
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -119,7 +132,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
   useEffect(() => {
     if (!selected || mobileInspector) return;
-    const frame = requestAnimationFrame(() => closeRef.current?.focus());
+    const frame = requestAnimationFrame(() => closeRef.current?.focus({ preventScroll: true }));
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeInspector(); }
     };
@@ -341,6 +354,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         {selected && (
           <aside
             ref={inspectorRef}
+            onScroll={rememberInspectorScroll}
             className="account-inspector"
             role={mobileInspector ? "dialog" : "complementary"}
             aria-modal={mobileInspector ? true : undefined}
