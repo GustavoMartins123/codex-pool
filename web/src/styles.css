@@ -514,6 +514,18 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .reset-credit-popover em { margin-bottom: 6px; color: var(--gold-hot); font-style: normal; font-size: .58rem; letter-spacing: .06em; }
 .reset-credit-popover span { color: var(--muted); font-size: .58rem; line-height: 1.7; }
 .account-row:hover .reset-credit-popover, .account-row:focus-visible .reset-credit-popover { display: block; }
+.account-windows { position: relative; }
+.quota-family-popover { position: absolute; z-index: 30; left: 0; top: calc(100% + 9px); display: none; width: max-content; min-width: 230px; padding: 10px 12px; border: 1px solid var(--gold); background: #090907; box-shadow: 0 16px 45px #000; white-space: normal; }
+.account-windows:hover .quota-family-popover, .account-row:focus-visible .quota-family-popover { display: grid; gap: 10px; }
+.quota-family { display: grid; gap: 2px; }
+.quota-family em { margin-bottom: 3px; color: var(--gold-hot); font-style: normal; font-size: .58rem; letter-spacing: .06em; text-transform: uppercase; }
+.quota-family-window { display: grid; grid-template-columns: 52px 38px minmax(0,1fr); gap: 6px; color: var(--muted); font: .62rem/1.5 "IBM Plex Mono", monospace; white-space: nowrap; }
+.quota-family-window strong { color: var(--gold-hot); font-weight: 600; text-align: right; }
+.quota-family-window small { color: var(--ink); font-size: inherit; text-align: right; }
+.quota-family-window.unavailable b, .quota-family-window.unavailable small { color: var(--faint); }
+.inspector-quota-families { display: grid; gap: 8px; margin-top: 16px; padding: 10px 12px; border: 1px solid var(--rule); }
+.inspector-quota-families header { color: var(--gold-dim); font: .52rem "IBM Plex Mono", monospace; text-transform: uppercase; }
+.inspector-quota-families small { color: var(--faint); font-size: .61rem; line-height: 1.5; }
 .account-spark { height: 32px; padding-top: 4px !important; padding-bottom: 4px !important; border-left: 1px solid var(--rule); }
 .account-inspector { position: sticky; top: calc(var(--rail-height) + 12px); max-height: calc(100vh - var(--rail-height) - 24px); overflow: auto; padding: 17px 0 17px 24px; }
 .inspector-close { position: absolute; right: 8px; top: 7px; min-height: 38px; border: 0; background: transparent; color: var(--muted); padding: 0 9px; cursor: pointer; font: .6875rem "IBM Plex Mono", monospace; }

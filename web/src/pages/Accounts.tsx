@@ -6,7 +6,7 @@ import { Sparkline } from "../charts";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
 import { type AccountSort, type AccountSortKey, loadStoredAccountSort, nextAccountSort, parseAccountSort, sortAccounts, storeAccountSort } from "../accountSort";
 import { queryValue, updateURL } from "../navigation";
-import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
+import { AccountQuotaWindows, AccountResetWindows, Instrument, QuotaFamilyBreakdown, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, focusedQuotaAccount, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
 import { type CSSProperties, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
@@ -142,7 +142,10 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
   if (!stats) return <SignalSkeleton />;
 
-  const needsAttention = (account: AccountStats) => account.status !== "healthy" || (account.secondary_window_available && account.secondary_window_used_pct >= 80);
+  const needsAttention = (account: AccountStats) => {
+    const quota = focusedQuotaAccount(account);
+    return account.status !== "healthy" || (quota.secondary_window_available && quota.secondary_window_used_pct >= 80);
+  };
   const normalizedQuery = query.trim().toLowerCase();
   const displayID = (account: AccountStats) => adminAccounts.find((candidate) => candidate.public_id === account.id)?.id ?? account.id;
   const filteredAccounts = sortAccounts(stats.accounts.filter((account) => {
@@ -340,9 +343,9 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
               >
                 <span className="account-identity"><i className="provider-mark" aria-hidden="true" /><b>{provider.label}</b><small><em>{account.plan_type || "unknown plan"}</em><span>{adminMatch?.id ?? account.id}</span></small></span>
                 <span className={`state ${account.status}`} data-label="State">{account.status === "dead" ? "offline" : account.status === "verification_required" ? "revalidation" : account.status === "needs_login" ? "relogin" : account.status}</span>
-                <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={account} /></span>
+                <span className="account-pace" data-label="Weekly pace"><WeeklyPace account={focusedQuotaAccount(account)} /></span>
                 <span className="account-windows" data-label="Reset windows">
-                  <AccountResetWindows account={account} compact />
+                  <AccountQuotaWindows account={account} />
                 </span>
                 <span data-label="24h burn">{formatTokens(accountThroughput(account))}</span>
                 <strong data-label="API value">{formatAPIValue(account.api_cost_estimate)}</strong>
@@ -375,8 +378,15 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                 )}
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
                 <div className="inspector-windows" aria-label="Account usage reset windows">
-                  <AccountResetWindows account={selectedAccount} />
+                  <AccountResetWindows account={focusedQuotaAccount(selectedAccount)} />
                 </div>
+                {(selectedAccount.quota_families?.length ?? 0) > 0 && (
+                  <section className="inspector-quota-families" aria-label="Quota by model family">
+                    <header><span>Quota by model family</span></header>
+                    <QuotaFamilyBreakdown account={selectedAccount} />
+                    <small>The windows above follow the Gemini quota; each family draws from its own buckets.</small>
+                  </section>
+                )}
                 {selectedAccount.type === "qwen" && <QwenCreditBalance credits={selectedAccount.token_plan_credits} error={selectedAccount.token_plan_credits_error} />}
                 {selectedAccount.type === "codex" && (
                   <section className="inspector-reset-credits" aria-label="Banked usage resets">

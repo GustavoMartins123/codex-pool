@@ -707,15 +707,26 @@ func antigravityQuotaWindow(bucket AntigravityQuotaBucket) string {
 	}
 }
 
-func antigravitySummaryWindow(summary *AntigravityQuotaSummary, window string) (*float64, time.Time) {
-	if summary == nil {
-		return nil, time.Time{}
+// allBuckets returns every bucket of the summary, top-level ones first.
+func (s *AntigravityQuotaSummary) allBuckets() []AntigravityQuotaBucket {
+	if s == nil {
+		return nil
 	}
+	buckets := append([]AntigravityQuotaBucket(nil), s.Buckets...)
+	for _, group := range s.Groups {
+		buckets = append(buckets, group.Buckets...)
+	}
+	return buckets
+}
+
+// antigravityBucketsWindow returns the most consumed bucket of one window,
+// with the reset it reports.
+func antigravityBucketsWindow(buckets []AntigravityQuotaBucket, window string) (*float64, time.Time) {
 	var remaining *float64
 	var reset time.Time
-	consider := func(bucket AntigravityQuotaBucket) {
+	for _, bucket := range buckets {
 		if bucket.Disabled || bucket.RemainingFraction == nil || antigravityQuotaWindow(bucket) != window {
-			return
+			continue
 		}
 		value := *bucket.RemainingFraction
 		betterReset := !bucket.ResetTime.IsZero() && (reset.IsZero() || bucket.ResetTime.Before(reset))
@@ -725,15 +736,11 @@ func antigravitySummaryWindow(summary *AntigravityQuotaSummary, window string) (
 			reset = bucket.ResetTime
 		}
 	}
-	for _, bucket := range summary.Buckets {
-		consider(bucket)
-	}
-	for _, group := range summary.Groups {
-		for _, bucket := range group.Buckets {
-			consider(bucket)
-		}
-	}
 	return remaining, reset
+}
+
+func antigravitySummaryWindow(summary *AntigravityQuotaSummary, window string) (*float64, time.Time) {
+	return antigravityBucketsWindow(summary.allBuckets(), window)
 }
 
 func antigravityModelQuotaFallback(snapshot AntigravityAccountSnapshot) (*float64, time.Time) {

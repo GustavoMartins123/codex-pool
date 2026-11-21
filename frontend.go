@@ -2189,6 +2189,9 @@ type AccountStats struct {
 
 	TokenPlanCredits      *QwenCreditSnapshot `json:"token_plan_credits,omitempty"`
 	TokenPlanCreditsError string              `json:"token_plan_credits_error,omitempty"`
+
+	// QuotaFamilies splits an Antigravity account's quota by model family.
+	QuotaFamilies []AccountQuotaFamily `json:"quota_families,omitempty"`
 }
 
 type AggregateStats struct {
@@ -2294,6 +2297,13 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 
 		accType := string(acc.Type)
 
+		var quotaFamilies []AccountQuotaFamily
+		if acc.Type == AccountTypeAntigravity && h.pool.antigravity != nil && h.pool.antigravity.models != nil {
+			if snapshot, ok := h.pool.antigravity.models.AccountSnapshot(acc.ID); ok {
+				quotaFamilies = antigravityQuotaFamilies(snapshot.QuotaSummary, stats.GeneratedAt)
+			}
+		}
+
 		cacheHitRate := float64(0)
 		if acc.Totals.TotalInputTokens > 0 {
 			cacheHitRate = float64(acc.Totals.TotalCachedTokens) / float64(acc.Totals.TotalInputTokens) * 100
@@ -2383,6 +2393,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			ScoreTooltip:             scoreTooltip,
 			ResetCreditsAvailable:    acc.codex.ResetCreditsAvailable,
 			ResetCreditsKnown:        !acc.codex.ResetCreditsRetrievedAt.IsZero(),
+			QuotaFamilies:            quotaFamilies,
 		}
 		for _, credit := range acc.codex.RateLimitResetCredits {
 			as.ResetCreditExpirations = append(as.ResetCreditExpirations, credit.ExpiresAt.UTC().Format(time.RFC3339Nano))

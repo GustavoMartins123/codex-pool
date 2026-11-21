@@ -1,6 +1,6 @@
 import { type DitherColor } from "./components/dither-kit";
 import { quotaEstimate } from "./insights";
-import { type AccountStats, type PoolStats, type Provider, type ResetWindowKind } from "./types";
+import { type AccountQuotaWindow, type AccountStats, type PoolStats, type Provider, type ResetWindowKind } from "./types";
 import { type ReactNode, useState } from "react";
 
 export const PROVIDERS: Record<Provider, { label: string; color: string; dither: DitherColor; glyph: string }> = {
@@ -159,6 +159,76 @@ export function AccountResetWindows({ account, compact = false }: { account: Acc
   return <>{windows.filter((window) => window.kind !== "none").map((window) => (
     <ResetWindow key={window.kind} label={`${RESET_WINDOW_LABELS[window.kind]}${compact ? "" : " window"}`} available={window.available} used={window.used} resetMinutes={window.resetMinutes} paceRatio={window.paceRatio} showPace={!compact} compact={compact} />
   ))}</>;
+}
+
+
+function windowPaceRatio(window: AccountQuotaWindow) {
+  const elapsed = window.window_minutes - window.reset_minutes;
+  if (window.window_minutes <= 0 || elapsed < window.window_minutes / 100) return 0;
+  return window.used_pct / (100 * elapsed / window.window_minutes);
+}
+
+
+// The account-level Antigravity windows blend every model family into the most
+// consumed bucket, so an exhausted Claude/GPT bucket reads as a full Gemini
+// quota. Rows lead with Gemini and keep the other families in the breakdown.
+export function focusedQuotaAccount(account: AccountStats): AccountStats {
+  const gemini = account.type === "antigravity" ? account.quota_families?.find((family) => family.id === "gemini") : undefined;
+  if (!gemini || (!gemini.five_hour && !gemini.weekly)) return account;
+  const { five_hour: fiveHour, weekly } = gemini;
+  return {
+    ...account,
+    primary_window_available: Boolean(fiveHour),
+    primary_usage_reported: Boolean(fiveHour),
+    primary_window_used_pct: fiveHour?.used_pct ?? 0,
+    primary_reset_minutes: fiveHour?.reset_minutes ?? 0,
+    primary_window_minutes: fiveHour?.window_minutes ?? 300,
+    primary_pace_ratio: fiveHour ? windowPaceRatio(fiveHour) : 0,
+    secondary_window_available: Boolean(weekly),
+    secondary_usage_reported: Boolean(weekly),
+    secondary_window_used_pct: weekly?.used_pct ?? 0,
+    secondary_reset_minutes: weekly?.reset_minutes ?? 0,
+    secondary_window_minutes: weekly?.window_minutes ?? 7 * 1440,
+    secondary_pace_ratio: weekly ? windowPaceRatio(weekly) : 0,
+  };
+}
+
+
+function QuotaFamilyWindow({ label, window }: { label: string; window?: AccountQuotaWindow }) {
+  if (!window) return <span className="quota-family-window unavailable"><b>{label}</b><small>NOT REPORTED</small></span>;
+  return <span className="quota-family-window"><b>{label}</b><strong>{window.used_pct.toFixed(0)}%</strong><small>{formatReset(window.reset_minutes)}</small></span>;
+}
+
+
+export function QuotaFamilyBreakdown({ account }: { account: AccountStats }) {
+  const families = account.quota_families ?? [];
+  if (families.length === 0) return null;
+  return (
+    <>
+      {families.map((family) => (
+        <span className="quota-family" key={family.id}>
+          <em>{family.label}</em>
+          <QuotaFamilyWindow label="5 hour" window={family.five_hour} />
+          <QuotaFamilyWindow label="Weekly" window={family.weekly} />
+        </span>
+      ))}
+    </>
+  );
+}
+
+
+export function AccountQuotaWindows({ account }: { account: AccountStats }) {
+  const hasFamilies = (account.quota_families?.length ?? 0) > 0;
+  return (
+    <>
+      <AccountResetWindows account={focusedQuotaAccount(account)} compact />
+      {hasFamilies && (
+        <span className="quota-family-popover" role="tooltip">
+          <QuotaFamilyBreakdown account={account} />
+        </span>
+      )}
+    </>
+  );
 }
 
 

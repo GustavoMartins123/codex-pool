@@ -97,6 +97,19 @@ export interface PassportUsagePoint {
 }
 
 
+export interface AccountQuotaWindow {
+  used_pct: number;
+  reset_minutes: number;
+  window_minutes: number;
+}
+
+export interface AccountQuotaFamily {
+  id: string;
+  label: string;
+  five_hour?: AccountQuotaWindow;
+  weekly?: AccountQuotaWindow;
+}
+
 export interface AccountStats {
   id: string;
   type: Provider | string;
@@ -143,6 +156,7 @@ export interface AccountStats {
   reset_credits_known?: boolean;
   token_plan_credits?: TokenPlanCredits;
   token_plan_credits_error?: string;
+  quota_families?: AccountQuotaFamily[];
 }
 
 export interface TokenPlanCredits {

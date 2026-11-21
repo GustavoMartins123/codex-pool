@@ -1,5 +1,5 @@
 import { type AccountStats } from "./types";
-import { accountThroughput, providerDisplay, weeklyPaceBurnPerDay } from "./ui";
+import { accountThroughput, focusedQuotaAccount, providerDisplay, weeklyPaceBurnPerDay } from "./ui";
 
 export type AccountSortKey = "provider" | "plan" | "account" | "state" | "pace" | "reset" | "burn" | "value";
 export type SortDirection = "asc" | "desc";
@@ -54,8 +54,8 @@ function sortValue(account: AccountStats, key: AccountSortKey, displayID: string
     case "plan": return account.plan_type || null;
     case "account": return displayID;
     case "state": return account.status;
-    case "pace": return weeklyPaceBurnPerDay(account);
-    case "reset": return soonestReset(account);
+    case "pace": return weeklyPaceBurnPerDay(focusedQuotaAccount(account));
+    case "reset": return soonestReset(focusedQuotaAccount(account));
     case "burn": return accountThroughput(account);
     case "value": return account.api_cost_estimate;
   }
