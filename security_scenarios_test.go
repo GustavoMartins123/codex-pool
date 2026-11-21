@@ -526,7 +526,7 @@ func TestSecuritySameSubnetProxyTrust(t *testing.T) {
 	var policy ipAccessSettings
 
 	var subnet *net.IPNet
-	for _, candidate := range localInterfaceSubnets() {
+	for _, candidate := range interfaceSubnets() {
 		if candidate.IP.To4() != nil {
 			subnet = candidate
 			break
