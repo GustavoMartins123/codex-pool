@@ -18,7 +18,7 @@ func TestRestoreProcessInterruption(t *testing.T) {
 			if err := recoverPairedRestore(os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := restorePairedBackup(os.Getenv("RESTORE_MANIFEST"), os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
+		} else if err := (pairedRestorer{}).restorePairedBackup(os.Getenv("RESTORE_MANIFEST"), os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
 			t.Fatal(err)
 		}
 		return

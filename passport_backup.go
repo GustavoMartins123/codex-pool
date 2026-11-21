@@ -141,11 +141,20 @@ func verifyBackupFile(path string, expected backupFileManifest) error {
 	return nil
 }
 
-// restoreRename is indirected so tests can deterministically fail the
-// first or second swap and prove the rollback restores both stores.
-var restoreRename = os.Rename
+type pairedRestorer struct {
+	// rename is indirected so tests can deterministically fail the
+	// first or second swap and prove the rollback restores both stores.
+	rename func(oldPath, newPath string) error
+}
 
-func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
+func (r pairedRestorer) swap(oldPath, newPath string) error {
+	if r.rename != nil {
+		return r.rename(oldPath, newPath)
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+func (r pairedRestorer) restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 	if err := recoverPairedRestore(boltPath, duckPath); err != nil {
 		return err
 	}
@@ -224,14 +233,14 @@ func restorePairedBackup(manifestPath, boltPath, duckPath string) error {
 		return err
 	}
 	restoreCheckpoint("prepared")
-	if err := restoreRename(boltTemp, boltPath); err != nil {
+	if err := r.swap(boltTemp, boltPath); err != nil {
 		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
 			return fmt.Errorf("restore Bolt: %v; recovery: %w", err, recoveryErr)
 		}
 		return fmt.Errorf("restore Bolt store: %w", err)
 	}
 	restoreCheckpoint("bolt-swapped")
-	if err := restoreRename(duckTemp, duckPath); err != nil {
+	if err := r.swap(duckTemp, duckPath); err != nil {
 		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
 			return fmt.Errorf("restore DuckDB: %v; recovery: %w", err, recoveryErr)
 		}

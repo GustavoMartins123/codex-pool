@@ -82,7 +82,7 @@ func TestPairedRestorePreservesAccountAndCredentialSecurity(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := restorePairedBackup(manifest, boltPath, duckPath); err != nil {
+	if err := (pairedRestorer{}).restorePairedBackup(manifest, boltPath, duckPath); err != nil {
 		t.Fatal(err)
 	}
 	db, err = bbolt.Open(boltPath, 0600, nil)
