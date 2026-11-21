@@ -28,29 +28,23 @@ func TestClaudeExchangeIdentifiesAccount(t *testing.T) {
 		{"profile missing account", nil, http.StatusOK, `{"organization":{"uuid":"not-an-account"}}`, http.StatusBadGateway, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			originalClient := claudeOAuthHTTPClient
-			t.Cleanup(func() { claudeOAuthHTTPClient = originalClient })
-			claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-				if r.URL.String() != ClaudeOAuthTokenURL {
-					t.Fatalf("unexpected token endpoint: %s", r.URL)
-				}
-				var request map[string]string
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Fatal(err)
-				}
-				if request["code"] != "synthetic-code" || request["state"] != "session-state" || request["code_verifier"] != "synthetic-verifier" {
-					t.Fatalf("unexpected exchange payload: %+v", request)
-				}
-				body, _ := json.Marshal(map[string]any{
-					"access_token": "sk-ant-oat-synthetic-token", "refresh_token": "synthetic-refresh",
-					"expires_in": 3600, "scope": "user:profile user:inference", "account": tc.tokenAccount,
-				})
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
-			})}
-
 			profileCalled := false
 			base, _ := url.Parse("https://api.anthropic.com")
 			h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, NewClaudeProvider(base), nil), transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.String() == ClaudeOAuthTokenURL {
+					var request map[string]string
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Fatal(err)
+					}
+					if request["code"] != "synthetic-code" || request["state"] != "session-state" || request["code_verifier"] != "synthetic-verifier" {
+						t.Fatalf("unexpected exchange payload: %+v", request)
+					}
+					body, _ := json.Marshal(map[string]any{
+						"access_token": "sk-ant-oat-synthetic-token", "refresh_token": "synthetic-refresh",
+						"expires_in": 3600, "scope": "user:profile user:inference", "account": tc.tokenAccount,
+					})
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+				}
 				profileCalled = true
 				if !tc.wantProfile {
 					t.Fatal("token account UUID must not require an additional API request")
@@ -165,10 +159,8 @@ func TestClaudeReloginReplacesCredentialsInPlace(t *testing.T) {
 	if session.ActorID != "alice" || session.ReloginAccountID != account.ID {
 		t.Fatalf("session binding: %+v", session)
 	}
-	originalClient := claudeOAuthHTTPClient
-	t.Cleanup(func() { claudeOAuthHTTPClient = originalClient })
 	exchanges := 0
-	claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+	h.transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		exchanges++
 		var payload map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -178,7 +170,7 @@ func TestClaudeReloginReplacesCredentialsInPlace(t *testing.T) {
 			t.Fatalf("exchange payload: %+v", payload)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"access_token":"sk-ant-oat-new","refresh_token":"new-refresh","expires_in":3600,"scope":"user:profile user:inference","account":{"uuid":"synthetic-account-uuid"}}`))}, nil
-	})}
+	})
 	body, _ := json.Marshal(map[string]string{"code": "synthetic-code#" + login["state"], "verifier": login["verifier"]})
 	exchange := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -308,17 +300,15 @@ func TestClaudeReloginExchangeRejectsInvalidSessionsAndCredentials(t *testing.T)
 			case "withdrawn during exchange":
 				want, wantExchanges = http.StatusForbidden, 1
 			}
-			originalClient := claudeOAuthHTTPClient
-			t.Cleanup(func() { claudeOAuthHTTPClient = originalClient })
 			exchanges := 0
-			claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			h.transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				exchanges++
 				if name == "withdrawn during exchange" {
 					withdraw()
 				}
 				data, _ := json.Marshal(token)
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
-			})}
+			})
 			body, _ := json.Marshal(map[string]string{"code": "synthetic-code#" + login["state"], "verifier": login["verifier"]})
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, authorityRequest(http.MethodPost, path, actor, string(body)))
