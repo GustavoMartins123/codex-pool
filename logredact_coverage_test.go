@@ -248,18 +248,6 @@ func TestUpstreamAuthFailureAfterFailedRefreshIsRedacted(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	// The Claude token endpoint must fail so the refresh is attempted and fails.
-	claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusInternalServerError,
-			Status:     "500 Internal Server Error",
-			Body:       io.NopCloser(strings.NewReader(`{"error":"refresh unavailable","access_token":"` + marker + `"}`)),
-			Header:     http.Header{},
-			Request:    r,
-		}, nil
-	})}
-	t.Cleanup(func() { claudeOAuthHTTPClient = &http.Client{Timeout: claudeOAuthHTTPTimeout} })
-
 	readLog := captureLog(t)
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 
@@ -373,17 +361,16 @@ func TestClaudeAuthErrorsAreRedactedBeforeReachingCaller(t *testing.T) {
 	readLog := captureLog(t)
 	const marker = "CLAUDELEAK-3b7f"
 
-	claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+	rt := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusUnauthorized,
 			Status:     "401 Unauthorized",
 			Body:       io.NopCloser(strings.NewReader(`{"error":"bad refresh","refresh_token":"` + marker + `"}`)),
 			Header:     http.Header{},
 		}, nil
-	})}
-	t.Cleanup(func() { claudeOAuthHTTPClient = &http.Client{Timeout: claudeOAuthHTTPTimeout} })
+	})
 
-	_, err := ClaudeRefresh(t.Context(), "pool-refresh-token", claudeOAuthHTTPClient.Transport)
+	_, err := ClaudeRefresh(t.Context(), "pool-refresh-token", rt)
 	if err == nil {
 		t.Fatal("expected a refresh error")
 	}
@@ -391,7 +378,7 @@ func TestClaudeAuthErrorsAreRedactedBeforeReachingCaller(t *testing.T) {
 		t.Fatalf("refresh error carries an unredacted upstream body: %v", err)
 	}
 
-	_, err = ClaudeExchange("code", "verifier", "state")
+	_, err = ClaudeExchange("code", "verifier", "state", rt)
 	if err == nil {
 		t.Fatal("expected an exchange error")
 	}

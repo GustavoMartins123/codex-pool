@@ -469,7 +469,7 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Exchange code for tokens
-	tokens, err := ClaudeExchange(code, verifier, session.State)
+	tokens, err := ClaudeExchange(code, verifier, session.State, h.transport)
 	if err != nil {
 		log.Printf("Claude token exchange failed: %v", err)
 		respondJSONError(w, http.StatusInternalServerError, "token exchange failed: "+err.Error())

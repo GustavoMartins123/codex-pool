@@ -36,13 +36,10 @@ func TestClaudeAuthorizeUsesExpandedScopes(t *testing.T) {
 }
 
 func TestClaudeExchangeAuthorizationCodeFormats(t *testing.T) {
-	originalClient := claudeOAuthHTTPClient
-	t.Cleanup(func() { claudeOAuthHTTPClient = originalClient })
-
 	for _, code := range []string{"synthetic-code#session-state", "synthetic-code"} {
 		t.Run(code, func(t *testing.T) {
 			called := false
-			claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 				called = true
 				if r.Method != http.MethodPost || r.URL.String() != ClaudeOAuthTokenURL {
 					t.Fatalf("unexpected token request: %s %s", r.Method, r.URL)
@@ -60,8 +57,8 @@ func TestClaudeExchangeAuthorizationCodeFormats(t *testing.T) {
 					}
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"access_token":"synthetic-token","refresh_token":"synthetic-refresh","expires_in":3600}`))}, nil
-			})}
-			tokens, err := ClaudeExchange(code, "synthetic-verifier", "session-state")
+			})
+			tokens, err := ClaudeExchange(code, "synthetic-verifier", "session-state", transport)
 			if err != nil {
 				t.Fatalf("ClaudeExchange: %v", err)
 			}
@@ -73,19 +70,17 @@ func TestClaudeExchangeAuthorizationCodeFormats(t *testing.T) {
 }
 
 func TestClaudeExchangeRejectsInvalidStateBeforeRequest(t *testing.T) {
-	originalClient := claudeOAuthHTTPClient
-	t.Cleanup(func() { claudeOAuthHTTPClient = originalClient })
-	claudeOAuthHTTPClient = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		t.Fatal("invalid state must not reach the token endpoint")
 		return nil, nil
-	})}
+	})
 
 	for _, tc := range []struct{ code, state string }{
 		{"synthetic-code#another-state", "session-state"},
 		{"synthetic-code#", "session-state"},
 		{"synthetic-code", ""},
 	} {
-		if _, err := ClaudeExchange(tc.code, "synthetic-verifier", tc.state); err == nil {
+		if _, err := ClaudeExchange(tc.code, "synthetic-verifier", tc.state, transport); err == nil {
 			t.Errorf("expected state error for code %q and state %q", tc.code, tc.state)
 		}
 	}

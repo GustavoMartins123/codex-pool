@@ -32,8 +32,6 @@ const (
 	claudeOAuthHTTPTimeout   = 30 * time.Second
 )
 
-var claudeOAuthHTTPClient = &http.Client{Timeout: claudeOAuthHTTPTimeout}
-
 // PKCE contains the code verifier and challenge for OAuth PKCE flow.
 type PKCE struct {
 	Verifier  string
@@ -120,7 +118,10 @@ type ClaudeOAuthTokenAccount struct {
 }
 
 // ClaudeExchange exchanges an authorization code for tokens.
-func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) {
+func ClaudeExchange(code, verifier, state string, transport http.RoundTripper) (*ClaudeTokenResponse, error) {
+	if transport == nil {
+		return nil, errors.New("Claude OAuth transport is required")
+	}
 	if state == "" {
 		return nil, errors.New("OAuth session state is required")
 	}
@@ -155,7 +156,8 @@ func ClaudeExchange(code, verifier, state string) (*ClaudeTokenResponse, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), claudeOAuthHTTPTimeout)
 	defer cancel()
 	req = req.WithContext(ctx)
-	resp, err := claudeOAuthHTTPClient.Do(req)
+	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
