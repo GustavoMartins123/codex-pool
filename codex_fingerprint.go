@@ -37,10 +37,15 @@ type codexFingerprintState struct {
 	Arch            string `json:"arch"`
 }
 
-var codexFingerprint = struct {
+type codexFingerprintStore struct {
+	once  sync.Once
 	mu    sync.RWMutex
 	state codexFingerprintState
-}{state: defaultCodexFingerprintState()}
+}
+
+func (s *codexFingerprintStore) ensure() {
+	s.once.Do(func() { s.state = defaultCodexFingerprintState() })
+}
 
 func defaultCodexFingerprintState() codexFingerprintState {
 	return codexFingerprintState{
@@ -77,10 +82,11 @@ func codexArch() string {
 	}
 }
 
-func currentCodexFingerprint() codexFingerprintState {
-	codexFingerprint.mu.RLock()
-	defer codexFingerprint.mu.RUnlock()
-	return codexFingerprint.state
+func (s *codexFingerprintStore) current() codexFingerprintState {
+	s.ensure()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
 }
 
 func codexDesktopUserAgent(fp codexFingerprintState) string {
@@ -90,12 +96,12 @@ func codexDesktopUserAgent(fp codexFingerprintState) string {
 	return fmt.Sprintf("Codex Desktop/%s (%s; %s)", fp.AppVersion, fp.Platform, fp.Arch)
 }
 
-func applyCodexRequestFingerprint(req *http.Request, acc *Account) {
+func (s *codexFingerprintStore) applyRequest(req *http.Request, acc *Account) {
 	if req == nil || acc == nil || acc.Type != AccountTypeCodex {
 		return
 	}
 
-	fp := currentCodexFingerprint()
+	fp := s.current()
 	req.Header.Set("originator", fp.Originator)
 	req.Header.Set("x-openai-internal-codex-residency", getenv("CODEX_RESIDENCY", codexDefaultResidency))
 	if req.Header.Get("x-client-request-id") == "" {
@@ -196,12 +202,12 @@ func isPersistedCodexCookie(name string) bool {
 	}
 }
 
-func startCodexFingerprintUpdater(ctx context.Context) {
+func (s *codexFingerprintStore) startUpdater(ctx context.Context) {
 	if getenv("CODEX_FINGERPRINT_AUTO_UPDATE", "1") == "0" {
 		return
 	}
 	go func() {
-		checkCodexFingerprintUpdate(ctx)
+		s.checkUpdate(ctx)
 		period := codexFingerprintPollPeriod
 		if raw := strings.TrimSpace(os.Getenv("CODEX_FINGERPRINT_UPDATE_SECONDS")); raw != "" {
 			if n, err := parseInt64(raw); err == nil && n > 0 {
@@ -215,13 +221,13 @@ func startCodexFingerprintUpdater(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				checkCodexFingerprintUpdate(ctx)
+				s.checkUpdate(ctx)
 			}
 		}
 	}()
 }
 
-func checkCodexFingerprintUpdate(ctx context.Context) {
+func (s *codexFingerprintStore) checkUpdate(ctx context.Context) {
 	url := getenv("CODEX_APPCAST_URL", codexAppcastURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -248,14 +254,16 @@ func checkCodexFingerprintUpdate(ctx context.Context) {
 	if version == "" || build == "" {
 		return
 	}
-	codexFingerprint.mu.Lock()
-	changed := codexFingerprint.state.AppVersion != version || codexFingerprint.state.BuildNumber != build
+	// Seed the defaults first: a later current() must not overwrite this update.
+	s.ensure()
+	s.mu.Lock()
+	changed := s.state.AppVersion != version || s.state.BuildNumber != build
 	if changed {
-		codexFingerprint.state.AppVersion = version
-		codexFingerprint.state.BuildNumber = build
+		s.state.AppVersion = version
+		s.state.BuildNumber = build
 	}
-	state := codexFingerprint.state
-	codexFingerprint.mu.Unlock()
+	state := s.state
+	s.mu.Unlock()
 	if changed {
 		log.Printf("codex fingerprint updated from appcast: version=%s build=%s", state.AppVersion, state.BuildNumber)
 	}

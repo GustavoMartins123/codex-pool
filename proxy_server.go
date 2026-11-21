@@ -476,7 +476,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		return nil, fmt.Errorf("failed to start file watcher: %w", err)
 	}
 	app.release = append(app.release, watcher.close)
-	startCodexFingerprintUpdater(shutdownCtx)
+	codexProvider.fingerprint.startUpdater(shutdownCtx)
 
 	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
 	srv := &http.Server{
