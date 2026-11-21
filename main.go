@@ -420,6 +420,7 @@ type proxyHandler struct {
 	qwenLogin           qwenLoginSessions
 	antigravityOAuth    antigravityOAuthSessionStore
 	antigravityLoopback antigravityLoopbackListeners
+	antigravityReplay   antigravityReplayCache
 
 	requestQueue         *fairQueue
 	cfg                  *config

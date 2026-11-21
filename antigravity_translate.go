@@ -301,7 +301,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			state, _ := h.contextHandoff.State(conversationScopedKey(userID, conversationID))
 			transitionEpoch = state.TransitionEpoch
 		}
-		prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transitionEpoch, freshSession)
+		prepared.Body, replayScope, _ = h.antigravityScopedReplay(prepared.Body, conversationID, transitionEpoch, freshSession)
 		prepared.EstimatedInputTokens = estimateAntigravitySerializedTokens(prepared.Body)
 		if conversationID != "" {
 			var envelope map[string]any
@@ -359,7 +359,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 						antigravityWriteError(w, antigravityFormatForPath(r.URL.Path), http.StatusBadRequest, []byte(err.Error()))
 						return true
 					}
-					prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, transition.Epoch, true)
+					prepared.Body, replayScope, _ = h.antigravityScopedReplay(prepared.Body, conversationID, transition.Epoch, true)
 					prepared.EstimatedInputTokens = estimateAntigravitySerializedTokens(prepared.Body)
 					var envelope map[string]any
 					if json.Unmarshal(prepared.Body, &envelope) == nil {
@@ -419,7 +419,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			if providerErr.Class == ProviderErrorContext {
 				compacted, didCompact, compactErr := compactAntigravityRequestBodyWithRecentTokens(r.URL.Path, body, antigravityEmergencyRecentTokens)
 				if compactErr == nil && didCompact {
-					antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+					h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 					logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, providerErr)
 					body = compacted
 					contextCompactionRetry = true
@@ -439,7 +439,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		if resp.StatusCode == http.StatusTooManyRequests {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			providerErr := classifyAntigravityError(resp.StatusCode, errBody)
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, providerErr)
 			if providerErr.Class == ProviderErrorProtocol || providerErr.Class == ProviderErrorPolicy {
@@ -467,7 +467,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		if resp.StatusCode == http.StatusForbidden {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			recordAntigravityForbidden(account, errBody)
 			lastError = fmt.Errorf("Antigravity account %s was rejected: %s", account.ID, safeText(errBody))
@@ -478,7 +478,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 			// rotate instead of failing a request other accounts can serve.
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			lastFailureStatus, lastFailureBody = resp.StatusCode, errBody
 			lastError = fmt.Errorf("Antigravity %s returned %d on account %s", canonical, resp.StatusCode, account.ID)
@@ -492,7 +492,7 @@ func (h *proxyHandler) handleAntigravityProxy(w http.ResponseWriter, r *http.Req
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			resp.Body.Close()
-			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			logAntigravityUpstreamError(reqID, r.URL.Path, prepared.Format, canonical, resp.StatusCode, errBody, classifyAntigravityError(resp.StatusCode, errBody))
 			antigravityWriteError(w, prepared.Format, resp.StatusCode, errBody)
 			return true
@@ -876,7 +876,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 			antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(marshalErr.Error()))
 			return
 		}
-		antigravityCaptureNativeReplay(replayScope, prepared.Body, wrapped)
+		h.antigravityCaptureNativeReplay(replayScope, prepared.Body, wrapped)
 		body, err := wire.GeminiResponseToClient(wrapped, prepared.Format, prepared.PublicModel, prepared.Tools)
 		if err != nil {
 			antigravityWriteError(w, prepared.Format, http.StatusBadGateway, []byte(err.Error()))
@@ -924,7 +924,7 @@ func (h *proxyHandler) writeAntigravityResponse(w http.ResponseWriter, resp *htt
 		if _, ok := response["candidates"]; ok {
 			validResponseSeen = true
 		}
-		antigravityCaptureNativeReplay(replayScope, prepared.Body, []byte(data))
+		h.antigravityCaptureNativeReplay(replayScope, prepared.Body, []byte(data))
 		_, _ = translator.Write([]byte("data: " + data + "\n\n"))
 		if value := antigravityUsage(response); value != nil {
 			usage = value
