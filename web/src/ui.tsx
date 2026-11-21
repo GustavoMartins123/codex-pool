@@ -82,18 +82,35 @@ function paceLabel(paceRatio?: number) {
 }
 
 
-export function WeeklyPace({ account }: { account: AccountStats }) {
+function paceWindow(account: AccountStats) {
   const { primary, secondary } = account.reset_windows;
   const hasQuotaWindow = secondary === "weekly" || primary === "daily" || secondary === "secondary";
   const usePrimary = primary === "daily" || (secondary === "secondary" && !account.secondary_window_available && account.primary_window_available);
   const available = usePrimary ? account.primary_window_available : account.secondary_window_available;
-  if (!hasQuotaWindow || !available) {
+  if (!hasQuotaWindow || !available) return null;
+  const rawWindow = usePrimary ? account.primary_window_minutes : account.secondary_window_minutes;
+  return {
+    usedPct: usePrimary ? account.primary_window_used_pct : account.secondary_window_used_pct,
+    resetMinutes: usePrimary ? account.primary_reset_minutes : account.secondary_reset_minutes,
+    windowMinutes: rawWindow > 0 ? rawWindow : (usePrimary ? 1440 : 7 * 1440),
+  };
+}
+
+
+// Projected burn in percent of the quota per day; null when the pace is not forecastable.
+export function weeklyPaceBurnPerDay(account: AccountStats): number | null {
+  const window = paceWindow(account);
+  if (!window || window.usedPct <= 0) return null;
+  return quotaEstimate(window.usedPct, window.resetMinutes, window.windowMinutes)?.burnPerDay ?? null;
+}
+
+
+export function WeeklyPace({ account }: { account: AccountStats }) {
+  const window = paceWindow(account);
+  if (!window) {
     return <span className="quota-limit unavailable">N/A</span>;
   }
-  const usedPct = usePrimary ? account.primary_window_used_pct : account.secondary_window_used_pct;
-  const resetMinutes = usePrimary ? account.primary_reset_minutes : account.secondary_reset_minutes;
-  const rawWindow = usePrimary ? account.primary_window_minutes : account.secondary_window_minutes;
-  const windowMinutes = rawWindow > 0 ? rawWindow : (usePrimary ? 1440 : 7 * 1440);
+  const { usedPct, resetMinutes, windowMinutes } = window;
   const windowDays = windowMinutes / 1440;
   const budgetPerDay = 100 / windowDays;
   const estimate = quotaEstimate(usedPct, resetMinutes, windowMinutes);
