@@ -146,6 +146,8 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	claudeProvider := NewClaudeProvider(cfg.claudeBase)
 	geminiProvider := NewGeminiProvider(cfg.geminiBase, cfg.geminiAPIBase)
 	antigravityProvider := NewAntigravityProvider(cfg.antigravityDailyBase, cfg.antigravityProdBase)
+	antigravityRT := newAntigravityRuntime()
+	antigravityProvider.runtime = antigravityRT
 	kimiProvider := NewKimiProvider(cfg.kimiBase)
 	minimaxProvider := NewMinimaxProvider(cfg.minimaxBase)
 	zaiProvider := NewZAIProvider(cfg.zaiBase)
@@ -176,6 +178,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	accounts = append(accounts, genericAccounts...)
 	accounts = append(accounts, federatedAccounts...)
 	pool := newPoolState(accounts, cfg.debug.Load())
+	pool.antigravity = antigravityRT
 	pool.tierThreshold = cfg.tierThreshold
 	pool.observeAccountStates(time.Now())
 	pool.configureRouting(cfg.routing)
@@ -448,7 +451,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	} else {
 		log.Printf("quota intelligence disabled by PROXY_ENABLE_QUOTA_INTELLIGENCE")
 	}
-	startAntigravityVersionUpdater(shutdownCtx)
+	startAntigravityVersionUpdater(shutdownCtx, antigravityRT)
 	h.startAntigravityModelPoller(shutdownCtx)
 	h.startProviderModelPoller(shutdownCtx)
 	h.startGenericProviderHealthPoller(shutdownCtx)

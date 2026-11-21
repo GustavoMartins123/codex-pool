@@ -21,8 +21,7 @@ func antigravityTestResponse(status int, body string) *http.Response {
 }
 
 func TestAntigravitySyncTrustsDailyHostForVerification(t *testing.T) {
-	antigravityModels.Reset()
-	t.Cleanup(antigravityModels.Reset)
+	rt := newAntigravityRuntime()
 	daily, _ := url.Parse("https://daily.example.test")
 	production, _ := url.Parse("https://prod.example.test")
 	file := filepath.Join(t.TempDir(), "ag.json")
@@ -43,13 +42,13 @@ func TestAntigravitySyncTrustsDailyHostForVerification(t *testing.T) {
 		}
 	})
 
-	if err := syncAntigravityModels(context.Background(), transport, account, daily, production); err != nil {
+	if err := syncAntigravityModels(context.Background(), rt, transport, account, daily, production); err != nil {
 		t.Fatal(err)
 	}
 	if account.NeedsVerification || account.VerificationURL != "" || account.HealthError != "" {
 		t.Fatalf("daily quota success must clear verification: %v %q %q", account.NeedsVerification, account.VerificationURL, account.HealthError)
 	}
-	snapshot, _ := antigravityModels.AccountSnapshot(account.ID)
+	snapshot, _ := rt.models.AccountSnapshot(account.ID)
 	if snapshot.QuotaSummary == nil || len(snapshot.QuotaSummary.Groups) != 1 {
 		t.Fatalf("quota summary not stored: %#v", snapshot.QuotaSummary)
 	}
@@ -58,21 +57,20 @@ func TestAntigravitySyncTrustsDailyHostForVerification(t *testing.T) {
 	}
 
 	dailyQuotaStatus = http.StatusForbidden
-	if err := syncAntigravityModels(context.Background(), transport, account, daily, production); err == nil {
+	if err := syncAntigravityModels(context.Background(), rt, transport, account, daily, production); err == nil {
 		t.Fatal("daily verification demand must be reported")
 	}
 	if !account.NeedsVerification || account.VerificationURL != "https://accounts.google.com/verify" {
 		t.Fatalf("daily 403 must flag verification: %v %q", account.NeedsVerification, account.VerificationURL)
 	}
-	snapshot, _ = antigravityModels.AccountSnapshot(account.ID)
+	snapshot, _ = rt.models.AccountSnapshot(account.ID)
 	if snapshot.QuotaSummary == nil {
 		t.Fatal("previous quota summary must survive a failed quota poll")
 	}
 }
 
 func TestAntigravitySyncIgnoresProductionOnlyVerificationDemand(t *testing.T) {
-	antigravityModels.Reset()
-	t.Cleanup(antigravityModels.Reset)
+	rt := newAntigravityRuntime()
 	daily, _ := url.Parse("https://daily.example.test")
 	production, _ := url.Parse("https://prod.example.test")
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", vault: plainTestVault(), File: filepath.Join(t.TempDir(), "ag.json"), AccessToken: "token", google: googleAccountState{ProjectID: "project", ModelRateLimits: map[string]time.Time{}}}
@@ -86,7 +84,7 @@ func TestAntigravitySyncIgnoresProductionOnlyVerificationDemand(t *testing.T) {
 			return antigravityTestResponse(http.StatusServiceUnavailable, "unavailable"), nil
 		}
 	})
-	if err := syncAntigravityModels(context.Background(), transport, account, daily, production); err != nil {
+	if err := syncAntigravityModels(context.Background(), rt, transport, account, daily, production); err != nil {
 		t.Fatalf("a transient quota failure must not fail the model sync: %v", err)
 	}
 	if account.NeedsVerification || account.HealthError != "" {

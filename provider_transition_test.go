@@ -216,7 +216,7 @@ func TestProviderTransitionAntigravityStrictUpstream(t *testing.T) {
 	if err != nil || !result.Switched {
 		t.Fatalf("handoff: switched=%v err=%v", result.Switched, err)
 	}
-	prepared, err := prepareAntigravityRequest("/v1/responses", clean, "antigravity/gemini-3.8-flash-high", "project", "strict-upstream")
+	prepared, err := prepareAntigravityRequest(newAntigravityRuntime(), "/v1/responses", clean, "antigravity/gemini-3.8-flash-high", "project", "strict-upstream")
 	if err != nil {
 		t.Fatal(err)
 	}

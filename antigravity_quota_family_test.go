@@ -52,8 +52,7 @@ func TestAntigravityModelQuotaInfoWithoutFractionIsExhausted(t *testing.T) {
 }
 
 func TestAntigravityFamilyQuotaGatesOnlyItsOwnModels(t *testing.T) {
-	antigravityModels.Reset()
-	t.Cleanup(antigravityModels.Reset)
+	rt := newAntigravityRuntime()
 	now := time.Now().UTC()
 	exhausted, half, full := 0.0, 0.5, 1.0
 	reset := now.Add(48 * time.Hour)
@@ -76,22 +75,23 @@ func TestAntigravityFamilyQuotaGatesOnlyItsOwnModels(t *testing.T) {
 		QuotaSummary: &summary,
 	}
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", google: googleAccountState{ModelRateLimits: map[string]time.Time{}}, Usage: extractAntigravityAccountUsage(snapshot)}
-	antigravityModels.ReplaceAccount(account.ID, snapshot)
+	rt.models.ReplaceAccount(account.ID, snapshot)
 
-	if available, until := antigravityModels.DiscoveryAvailability(account.ID, "gemini-3.8-flash-high", now); available || !until.Equal(reset) {
+	if available, until := rt.models.DiscoveryAvailability(account.ID, "gemini-3.8-flash-high", now); available || !until.Equal(reset) {
 		t.Fatalf("gemini availability = %v until %s despite per-model fraction 1", available, until)
 	}
-	if available, _ := antigravityModels.DiscoveryAvailability(account.ID, "claude-opus-4-6-thinking", now); !available {
+	if available, _ := rt.models.DiscoveryAvailability(account.ID, "claude-opus-4-6-thinking", now); !available {
 		t.Fatal("claude family still has quota")
 	}
 	account.mu.Lock()
-	usageExhausted := accountUsageExhaustedLocked(account)
+	usageExhausted := accountUsageExhaustedLocked(rt, account)
 	account.mu.Unlock()
 	if usageExhausted {
 		t.Fatal("one exhausted family must not exhaust the whole account")
 	}
 
 	pool := newPoolState([]*Account{account}, false)
+	pool.antigravity = rt
 	req := routing.Request{Provider: string(AccountTypeAntigravity), Model: "claude-opus-4-6-thinking", Profile: string(RoutingBalanced)}
 	if got := pool.selectRoute(req); got.Account != account {
 		t.Fatalf("claude request was not routed to the account with claude quota: %#v", got)
@@ -103,7 +103,7 @@ func TestAntigravityFamilyQuotaGatesOnlyItsOwnModels(t *testing.T) {
 
 	summary.Groups[1].Buckets[0].RemainingFraction = &exhausted
 	account.mu.Lock()
-	usageExhausted = accountUsageExhaustedLocked(account)
+	usageExhausted = accountUsageExhaustedLocked(rt, account)
 	account.mu.Unlock()
 	if !usageExhausted {
 		t.Fatal("an account with every family exhausted must report exhausted usage")

@@ -316,7 +316,7 @@ func attachCodexCatalogEntries(body []byte, models map[string]DiscoveredModel) e
 	return nil
 }
 
-func syncProviderModels(ctx context.Context, transport http.RoundTripper, registry *ProviderRegistry, account *Account) error {
+func syncProviderModels(ctx context.Context, rt *antigravityRuntime, transport http.RoundTripper, registry *ProviderRegistry, account *Account) error {
 	if registry == nil || account == nil {
 		return errors.New("missing provider model discovery dependency")
 	}
@@ -331,7 +331,7 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 			account.Models = nil
 			account.ModelsFetchedAt = time.Time{}
 			account.HealthError = discoveryFailureMessage(account.Type)
-			saveErr := saveAccount(account)
+			saveErr := saveAccount(rt, account)
 			account.mu.Unlock()
 			if saveErr != nil {
 				return errors.Join(err, saveErr)
@@ -345,11 +345,11 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	account.ModelsFetchedAt = snapshot.FetchedAt
 	if providerRequiresModelDiscovery(account.Type) {
 		account.HealthError = ""
-		saveErr := saveAccount(account)
+		saveErr := saveAccount(rt, account)
 		account.mu.Unlock()
 		if saveErr == nil && account.Type == AccountTypeAIStudio {
 			// Listing models authenticates the key, so it clears a stale dead flag.
-			restoreValidatedAccount(account, "AI Studio model discovery")
+			restoreValidatedAccount(rt, account, "AI Studio model discovery")
 		}
 		return saveErr
 	}
@@ -364,7 +364,7 @@ func syncProviderModels(ctx context.Context, transport http.RoundTripper, regist
 	if !changed {
 		return nil
 	}
-	return saveAccount(account)
+	return saveAccount(rt, account)
 }
 
 func accountHasDaybreak(models map[string]DiscoveredModel) bool {
@@ -386,7 +386,7 @@ func (h *proxyHandler) startProviderModelPoller(ctx context.Context) {
 			if h.needsRefresh(account) {
 				_ = h.refreshAccount(checkCtx, account)
 			}
-			_ = syncProviderModels(checkCtx, h.transport, h.registry, account)
+			_ = syncProviderModels(checkCtx, h.pool.antigravity, h.transport, h.registry, account)
 			cancel()
 		}
 	}
@@ -430,7 +430,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 				aggregates[key] = entry
 			}
 			entry.supporting++
-			if accountAvailableForRoutingLocked(account, now) {
+			if accountAvailableForRoutingLocked(pool.antigravity, account, now) {
 				entry.available++
 			}
 		}

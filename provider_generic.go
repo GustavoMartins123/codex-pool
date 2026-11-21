@@ -337,7 +337,7 @@ func (h *proxyHandler) startGenericProviderHealthPoller(ctx context.Context) {
 					account.mu.Lock()
 					account.HealthError = ""
 					account.mu.Unlock()
-					restoreValidatedAccount(account, "generic health")
+					restoreValidatedAccount(h.pool.antigravity, account, "generic health")
 				}
 			}
 			check()

@@ -21,8 +21,7 @@ type antigravityFailoverHarness struct {
 // Accounts listed later carry more primary usage, so routing tries them last.
 func newAntigravityFailoverHarness(t *testing.T, statuses map[string]int) (*antigravityFailoverHarness, []*Account) {
 	t.Helper()
-	antigravityModels.Reset()
-	t.Cleanup(antigravityModels.Reset)
+	rt := newAntigravityRuntime()
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")
 	var accounts []*Account
@@ -37,12 +36,14 @@ func newAntigravityFailoverHarness(t *testing.T, statuses map[string]int) (*anti
 		})
 	}
 	for _, account := range accounts {
-		registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+		registerTestAntigravityModels(rt, account.ID, "gemini-3.8-flash-high")
 	}
+	pool := newPoolState(accounts, false)
+	pool.antigravity = rt
 	harness := &antigravityFailoverHarness{}
 	harness.handler = &proxyHandler{
 		cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
-		pool:     newPoolState(accounts, false),
+		pool:     pool,
 		registry: NewProviderRegistry(nil, nil, nil, NewAntigravityProvider(daily, prod)),
 		transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
@@ -111,20 +112,21 @@ func TestAntigravityServerErrorFailoverIsBounded(t *testing.T) {
 }
 
 func TestAntigravityQuotaCooldownScopesToNamedFamily(t *testing.T) {
+	rt := newAntigravityRuntime()
 	familyBody := []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","metadata":{"quota_bucket":"gemini-weekly"}}]}}`)
-	if got := antigravityRateLimitScope("gemini-3.8-flash-high", familyBody); got != "family:gemini" {
+	if got := antigravityRateLimitScope(rt, "gemini-3.8-flash-high", familyBody); got != "family:gemini" {
 		t.Fatalf("scope = %q, want the gemini family", got)
 	}
-	if got := antigravityRateLimitScope("claude-opus-4-6-thinking", familyBody); got != "claude-opus-4-6-thinking" {
+	if got := antigravityRateLimitScope(rt, "claude-opus-4-6-thinking", familyBody); got != "claude-opus-4-6-thinking" {
 		t.Fatalf("another family's bucket must not widen the scope, got %q", got)
 	}
-	if got := antigravityRateLimitScope("gemini-3.8-flash-high", []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded for gemini-weekly"}}`)); got != "gemini-3.8-flash-high" {
+	if got := antigravityRateLimitScope(rt, "gemini-3.8-flash-high", []byte(`{"error":{"status":"RESOURCE_EXHAUSTED","message":"quota exceeded for gemini-weekly"}}`)); got != "gemini-3.8-flash-high" {
 		t.Fatalf("free-form text must stay model scoped, got %q", got)
 	}
 
 	until := time.Now().Add(time.Hour)
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", google: googleAccountState{ModelRateLimits: map[string]time.Time{}}}
-	setAntigravityQuotaCooldown(account, "gemini-3.8-flash-high", familyBody, until)
+	setAntigravityQuotaCooldown(rt, account, "gemini-3.8-flash-high", familyBody, until)
 	account.mu.Lock()
 	sibling := antigravityModelCooldownLocked(account, "gemini-3.5-flash-low")
 	other := antigravityModelCooldownLocked(account, "claude-opus-4-6-thinking")
@@ -132,7 +134,7 @@ func TestAntigravityQuotaCooldownScopesToNamedFamily(t *testing.T) {
 	if !sibling.Equal(until) || !other.IsZero() {
 		t.Fatalf("family cooldown: sibling=%s other=%s", sibling, other)
 	}
-	clearAntigravityModelCooldown(account, "gemini-3.5-flash-low")
+	clearAntigravityModelCooldown(rt, account, "gemini-3.5-flash-low")
 	account.mu.Lock()
 	sibling = antigravityModelCooldownLocked(account, "gemini-3.8-flash-high")
 	account.mu.Unlock()

@@ -147,7 +147,7 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 				account.qwen.Credits = nil
 				account.qwen.CreditsError = err.Error()
 				account.Usage = UsageSnapshot{Source: "qwen-token-plan", RetrievedAt: time.Now(), primarySet: true, secondarySet: true, creditsSet: true}
-				persistErr := saveAccount(account)
+				persistErr := saveAccount(h.pool.antigravity, account)
 				account.mu.Unlock()
 				if persistErr != nil {
 					respondJSONError(w, http.StatusInternalServerError, "credit refresh failed and unavailable state could not be saved")
@@ -177,7 +177,7 @@ func (h *proxyHandler) handleQwenTokenPlan(w http.ResponseWriter, r *http.Reques
 		} else {
 			account.qwen.CreditsError = "Token Plan credit tracking is not configured"
 		}
-		if err := saveAccount(account); err != nil {
+		if err := saveAccount(h.pool.antigravity, account); err != nil {
 			account.qwen.TokenPlan, account.qwen.Credits, account.qwen.CreditsError, account.Usage, account.PlanType = previousPlan, previousCredits, previousError, previousUsage, previousType
 			account.mu.Unlock()
 			respondJSONError(w, http.StatusInternalServerError, "could not save Token Plan configuration")

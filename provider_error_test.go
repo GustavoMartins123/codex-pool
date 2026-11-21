@@ -59,7 +59,8 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 			prod, _ := url.Parse("https://prod.example")
 			provider := NewAntigravityProvider(daily, prod)
 			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
-			registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+			rt := newAntigravityRuntime()
+			registerTestAntigravityModels(rt, account.ID, "gemini-3.8-flash-high")
 			h := &proxyHandler{
 				cfg:      &config{maxAttempts: 1, requestTimeout: time.Second, streamTimeout: time.Second},
 				pool:     newPoolState([]*Account{account}, false),
@@ -68,6 +69,7 @@ func TestAntigravity429CooldownRequiresQuotaEvidence(t *testing.T) {
 					return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(test.body)), Request: req}, nil
 				}),
 			}
+			h.pool.antigravity = rt
 			r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"antigravity/gemini-3.8-flash-high","input":"hello","stream":false}`))
 			w := httptest.NewRecorder()
 			if !h.handleAntigravityProxy(w, r, []byte(`{"model":"antigravity/gemini-3.8-flash-high","input":"hello","stream":false}`), "antigravity/gemini-3.8-flash-high", "conv-429", "user", "origin", "127.0.0.1", "req", "") {
@@ -169,7 +171,8 @@ func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
 	daily, _ := url.Parse("https://daily.example")
 	prod, _ := url.Parse("https://prod.example")
 	account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
-	registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+	rt := newAntigravityRuntime()
+	registerTestAntigravityModels(rt, account.ID, "gemini-3.8-flash-high")
 	calls := 0
 	var requestSizes []int
 	h := &proxyHandler{
@@ -190,6 +193,7 @@ func TestAntigravityRetriesInputLimitWithCompactedBody(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
 		}),
 	}
+	h.pool.antigravity = rt
 	body, err := json.Marshal(map[string]any{
 		"model":  "antigravity/gemini-3.8-flash-high",
 		"stream": false,

@@ -130,6 +130,7 @@ func TestSyncZAIUsageDoesNotInventCodingPlanWindows(t *testing.T) {
 	zaiBase, _ := url.Parse("http://mock-zai.local/api/anthropic")
 	h := &proxyHandler{
 		cfg:       &config{zaiBase: zaiBase},
+		pool:      newPoolState(nil, false),
 		transport: mockServer,
 	}
 	acc := &Account{
@@ -289,6 +290,7 @@ func TestSyncZAIUsageMockServer(t *testing.T) {
 	zaiBase, _ := url.Parse("http://mock-zai.local/api/anthropic")
 	h := &proxyHandler{
 		cfg:       &config{zaiBase: zaiBase},
+		pool:      newPoolState(nil, false),
 		transport: mockServer,
 	}
 

@@ -214,7 +214,7 @@ func claudeModelEntry(slug, displayName string, contextWindow int) map[string]an
 
 // injectClaudeModels adds local pool model entries to the Codex model catalog response
 // so the Codex CLI can select models that the pool routes but upstream omits.
-func injectClaudeModels(body []byte) []byte {
+func injectClaudeModels(rt *antigravityRuntime, body []byte) []byte {
 	// Decompress gzip if needed (upstream may return compressed data when
 	// client's Accept-Encoding header is forwarded)
 	actualBody := body
@@ -251,7 +251,7 @@ func injectClaudeModels(body []byte) []byte {
 			models = append(models, claudeModelEntry(model.ID, model.DisplayName, model.ContextWindow))
 		}
 	}
-	for _, model := range antigravityModels.Models(nil) {
+	for _, model := range rt.models.Models(nil) {
 		slug := "antigravity/" + model.ID
 		if !existing[slug] {
 			models = append(models, claudeModelEntry(slug, model.DisplayName, model.MaxTokens))

@@ -564,7 +564,7 @@ func TestSaveAccountPreservesUnknownFields(t *testing.T) {
 
 		LastRefresh: time.Date(2025, 12, 17, 0, 0, 0, 0, time.UTC),
 	}
-	if err := saveAccount(acc); err != nil {
+	if err := saveAccount(nil, acc); err != nil {
 		t.Fatalf("saveAccount: %v", err)
 	}
 

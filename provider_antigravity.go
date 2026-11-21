@@ -31,14 +31,23 @@ type googleAccountState struct {
 }
 
 type AntigravityProvider struct {
-	dailyBase *url.URL
-	prodBase  *url.URL
+	dailyBase   *url.URL
+	prodBase    *url.URL
+	runtimeOnce sync.Once
+	runtime     *antigravityRuntime
 }
-
-var antigravityAccountSaveLocks sync.Map
 
 func NewAntigravityProvider(dailyBase, prodBase *url.URL) *AntigravityProvider {
 	return &AntigravityProvider{dailyBase: dailyBase, prodBase: prodBase}
+}
+
+func (p *AntigravityProvider) antigravityRuntime() *antigravityRuntime {
+	p.runtimeOnce.Do(func() {
+		if p.runtime == nil {
+			p.runtime = newAntigravityRuntime()
+		}
+	})
+	return p.runtime
 }
 
 func (*AntigravityProvider) WireFormat() WireFormat { return WireGemini }
@@ -88,7 +97,7 @@ func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Acco
 		}
 	}
 	if auth.ModelSnapshot != nil {
-		antigravityModels.ReplaceAccount(acc.ID, *auth.ModelSnapshot)
+		p.antigravityRuntime().models.ReplaceAccount(acc.ID, *auth.ModelSnapshot)
 		acc.Usage = extractAntigravityAccountUsage(*auth.ModelSnapshot)
 	}
 	return acc, nil
@@ -97,7 +106,7 @@ func (p *AntigravityProvider) LoadAccount(name, path string, data []byte) (*Acco
 func (p *AntigravityProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", antigravityUserAgent())
+	req.Header.Set("User-Agent", antigravityUserAgent(p.antigravityRuntime()))
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Connection", "close")
 }
@@ -124,20 +133,20 @@ func decodeAntigravityPublicOAuthValue(encoded []byte) string {
 	return string(decoded)
 }
 
-func antigravityUserAgent() string {
-	return fmt.Sprintf("antigravity/hub/%s darwin/arm64", antigravityClientVersion())
+func antigravityUserAgent(rt *antigravityRuntime) string {
+	return fmt.Sprintf("antigravity/hub/%s darwin/arm64", antigravityClientVersion(rt))
 }
 
-func antigravityOnboardUserAgent() string {
-	return antigravityUserAgent() + " google-api-nodejs-client/10.3.0"
+func antigravityOnboardUserAgent(rt *antigravityRuntime) string {
+	return antigravityUserAgent(rt) + " google-api-nodejs-client/10.3.0"
 }
 
-func antigravityClientVersion() string {
+func antigravityClientVersion(rt *antigravityRuntime) string {
 	version := strings.TrimSpace(os.Getenv("ANTIGRAVITY_CLIENT_VERSION"))
 	if version != "" {
 		return version
 	}
-	return antigravityVersions.current(time.Now())
+	return rt.versions.current(time.Now())
 }
 
 func (p *AntigravityProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {
@@ -195,7 +204,7 @@ func (p *AntigravityProvider) RefreshToken(ctx context.Context, acc *Account, tr
 	acc.LastRefresh = time.Now().UTC()
 	acc.Dead = false
 	acc.mu.Unlock()
-	return saveAccount(acc)
+	return saveAccount(p.antigravityRuntime(), acc)
 }
 
 func (p *AntigravityProvider) ParseUsage(obj map[string]any) *RequestUsage {
@@ -231,8 +240,8 @@ func (p *AntigravityProvider) DetectsSSE(path, contentType string) bool {
 	return strings.Contains(path, "streamGenerateContent") || strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
-func saveAntigravityAccount(acc *Account) error {
-	lockValue, _ := antigravityAccountSaveLocks.LoadOrStore(acc.File, &sync.Mutex{})
+func saveAntigravityAccount(rt *antigravityRuntime, acc *Account) error {
+	lockValue, _ := rt.saveLocks.LoadOrStore(acc.File, &sync.Mutex{})
 	fileLock := lockValue.(*sync.Mutex)
 	fileLock.Lock()
 	defer fileLock.Unlock()
@@ -271,7 +280,7 @@ func saveAntigravityAccount(acc *Account) error {
 	root["model_rate_limits"] = cooldowns
 	persistAccountAddedAt(root, acc)
 	acc.mu.Unlock()
-	if snapshot, ok := antigravityModels.AccountSnapshot(acc.ID); ok {
+	if snapshot, ok := rt.models.AccountSnapshot(acc.ID); ok {
 		root["model_snapshot"] = snapshot
 	}
 	if err := os.MkdirAll(filepath.Dir(acc.File), 0o700); err != nil {

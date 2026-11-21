@@ -2011,7 +2011,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	// Antigravity owns its complete upstream envelope and protocol conversion.
 	// Handle it before the generic provider translator so every public protocol
 	// consumes the same model registry and quota scheduler.
-	if requestedModel != "" && shouldRouteAntigravityModel(requestedModel) {
+	if requestedModel != "" && shouldRouteAntigravityModel(h.pool.antigravity, requestedModel) {
 		if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(AccountTypeAntigravity) }) {
 			return
 		}
@@ -2602,7 +2602,7 @@ func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, u
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
 		if markedDead {
-			if err := saveAccount(acc); err != nil {
+			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 			}
 		}
@@ -3192,7 +3192,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	outReq.GetBody = r.GetBody
 	resp, err := h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(r))
-	captureCodexResponseState(acc, resp, reqID)
+	captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 	if err != nil {
 		var blocked *policyError
 		if errors.As(err, &blocked) {
@@ -3228,7 +3228,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		}
 		provider.SetAuthHeaders(retry, authAccount)
 		resp, err = h.policyRoundTrip(retry, provider.Type(), policyAdmissionFromRequest(r))
-		captureCodexResponseState(acc, resp, reqID)
+		captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 		if err != nil {
 			http.Error(w, "upstream request failed after authentication recovery", http.StatusBadGateway)
 			return
@@ -3246,7 +3246,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		}
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
 		if markedDead {
-			if err := saveAccount(acc); err != nil {
+			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 			}
 		}
@@ -3276,7 +3276,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
 		if markedDead {
-			if err := saveAccount(acc); err != nil {
+			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 			}
 		}
@@ -4703,7 +4703,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	}
 
 	resp, err := h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(in))
-	captureCodexResponseState(acc, resp, reqID)
+	captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 	if resp != nil && len(claudeToolNameMapper) > 0 {
 		resp.Header.Del("Content-Length")
 		resp.Body = newClaudeToolNameReadCloser(resp.Body, claudeToolNameMapper)
@@ -4750,7 +4750,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					acc.mu.Unlock()
 				}
 				resp, err = h.policyRoundTrip(outReq, provider.Type(), policyAdmissionFromRequest(in))
-				captureCodexResponseState(acc, resp, reqID)
+				captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 				if resp != nil && len(claudeToolNameMapper) > 0 {
 					resp.Header.Del("Content-Length")
 					resp.Body = newClaudeToolNameReadCloser(resp.Body, claudeToolNameMapper)
@@ -4781,9 +4781,9 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					h.applyRateLimit(acc, nil)
 				} else if isPermanentRefreshTokenError(err) {
 					if retireAfterRefreshFail(acc, err, time.Now()) {
-						persistDeadAccount(acc, "refresh token revoked/invalid")
+						persistDeadAccount(h.pool.antigravity, acc, "refresh token revoked/invalid")
 					} else {
-						markAccountNeedsLogin(acc, errStr)
+						markAccountNeedsLogin(h.pool.antigravity, acc, errStr)
 					}
 					refreshFailed = true
 				} else if !strings.Contains(errStr, "rate limited") {
@@ -4973,7 +4973,7 @@ func (h *proxyHandler) refreshAccountOnce(ctx context.Context, a *Account) error
 			a.AuthError = ""
 		}
 		a.mu.Unlock()
-		if saveErr := saveAccount(a); saveErr != nil {
+		if saveErr := saveAccount(h.pool.antigravity, a); saveErr != nil {
 			log.Printf("warning: failed to save account %s after refresh: %v", a.ID, saveErr)
 		}
 	}

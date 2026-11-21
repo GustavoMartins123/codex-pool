@@ -269,6 +269,7 @@ func TestRefreshAccountIsolatedFromClientDisconnect(t *testing.T) {
 
 	serverURL, _ := url.Parse(server.URL)
 	h := &proxyHandler{
+		pool:             newPoolState(nil, false),
 		refreshTransport: server.Client().Transport,
 		registry:         NewProviderRegistry(NewCodexProvider(serverURL, serverURL, serverURL), nil, nil),
 	}

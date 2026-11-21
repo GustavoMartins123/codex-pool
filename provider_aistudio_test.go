@@ -98,7 +98,7 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 		return qwenJSONResponse(status, aistudioModelsFixture), nil
 	})
 	registry := NewProviderRegistry(nil, nil, nil, provider)
-	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
+	if err := syncProviderModels(context.Background(), nil, transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
 	if account.HealthError != "" || len(account.Models) != 1 || account.Dead || account.Penalty != 0 {
@@ -116,7 +116,7 @@ func TestAIStudioDiscoveryPublishesResponsesModels(t *testing.T) {
 	}
 
 	status = http.StatusBadRequest
-	if err := syncProviderModels(context.Background(), transport, registry, account); err == nil {
+	if err := syncProviderModels(context.Background(), nil, transport, registry, account); err == nil {
 		t.Fatal("a rejected API key did not fail discovery")
 	}
 	if account.HealthError == "" || len(account.Models) != 0 {

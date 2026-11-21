@@ -46,7 +46,7 @@ func TestAntigravityAddUsesConfiguredOAuthIdentity(t *testing.T) {
 	if got := antigravityOAuthClientSecret(); got != "test-client-secret" {
 		t.Fatalf("client secret = %q", got)
 	}
-	if got := antigravityUserAgent(); got != "antigravity/hub/2.2.1 darwin/arm64" {
+	if got := antigravityUserAgent(newAntigravityRuntime()); got != "antigravity/hub/2.2.1 darwin/arm64" {
 		t.Fatalf("user agent = %q", got)
 	}
 }
@@ -141,8 +141,9 @@ func TestReplaceAntigravityAccountCredentialsClearsVerification(t *testing.T) {
 		VerificationURL: "https://verify.example", HealthError: "403",
 	}
 	snapshot := AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
-	antigravityModels.ReplaceAccount(account.ID, snapshot)
-	if err := (&proxyHandler{}).replaceAntigravityAccountCredentials(account, antigravityTokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}, "user@example.com", "new-project", "ultra", snapshot); err != nil {
+	h := &proxyHandler{pool: newPoolState(nil, false)}
+	h.pool.antigravity.models.ReplaceAccount(account.ID, snapshot)
+	if err := h.replaceAntigravityAccountCredentials(account, antigravityTokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}, "user@example.com", "new-project", "ultra", snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if account.AccessToken != "new-access" || account.RefreshToken != "new-refresh" || account.google.ProjectID != "new-project" || account.PlanType != "ultra" {
@@ -171,7 +172,7 @@ func TestAntigravityReloginValidationRejectsVerificationAndAcceptsQuota(t *testi
 	account := &Account{google: googleAccountState{ProjectID: "project"}, vault: plainTestVault(), File: filepath.Join(t.TempDir(), "account.json")}
 	snapshot := AntigravityAccountSnapshot{Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}}
 
-	verificationHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	verificationHandler := &proxyHandler{pool: newPoolState(nil, false), transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":403,"message":"Verify your account to continue.","status":"PERMISSION_DENIED"}}`)), Request: req}, nil
 	})}
 	if _, err := verificationHandler.validateAntigravityRelogin(context.Background(), account, account, provider, snapshot); err == nil {
@@ -181,7 +182,7 @@ func TestAntigravityReloginValidationRejectsVerificationAndAcceptsQuota(t *testi
 		t.Fatal("verification failure was not persisted on the target account")
 	}
 
-	quotaHandler := &proxyHandler{transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	quotaHandler := &proxyHandler{pool: newPoolState(nil, false), transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusTooManyRequests, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED","details":[{"reason":"QUOTA_EXCEEDED"}]}}`)), Request: req}, nil
 	})}
 	quotaLimited, err := quotaHandler.validateAntigravityRelogin(context.Background(), account, account, provider, snapshot)
@@ -233,8 +234,9 @@ func TestSaveAntigravityAccountIsOwnerOnlyAndDurable(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "account.json")
 	account := &Account{Type: AccountTypeAntigravity, ID: "account", vault: plainTestVault(), File: file, AccessToken: "access", RefreshToken: "refresh", Email: "a@example.com", google: googleAccountState{ProjectID: "project", ModelRateLimits: make(map[string]time.Time)}, PlanType: "pro", ExpiresAt: time.Now().Add(time.Hour)}
-	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}})
-	if err := saveAntigravityAccount(account); err != nil {
+	rt := newAntigravityRuntime()
+	rt.models.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-test": {ID: "gemini-test"}}})
+	if err := saveAntigravityAccount(rt, account); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(file)

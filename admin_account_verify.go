@@ -95,17 +95,17 @@ func (h *proxyHandler) verifyAntigravityAccount(ctx context.Context, acc *Accoun
 		}
 		if err := h.refreshAccount(ctx, acc); err != nil {
 			if isPermanentRefreshTokenError(err) {
-				persistDeadAccount(acc, "refresh token revoked/invalid")
+				persistDeadAccount(h.pool.antigravity, acc, "refresh token revoked/invalid")
 				return fail("revoked", err.Error())
 			}
 			return fail("error", err.Error())
 		}
 	}
 
-	summary, err := fetchAntigravityQuotaSummary(ctx, h.transport, acc, daily, production)
+	summary, err := fetchAntigravityQuotaSummary(ctx, h.pool.antigravity, h.transport, acc, daily, production)
 	var forbidden *antigravityForbiddenError
 	if errors.As(err, &forbidden) {
-		recordAntigravityForbidden(acc, forbidden.body)
+		recordAntigravityForbidden(h.pool.antigravity, acc, forbidden.body)
 		needsVerification, banned, verificationURL := classifyAntigravityForbidden(forbidden.body)
 		detail := antigravityErrorSummary(forbidden.body)
 		switch {
@@ -123,7 +123,7 @@ func (h *proxyHandler) verifyAntigravityAccount(ctx context.Context, acc *Accoun
 		return fail("error", err.Error())
 	}
 
-	clearAntigravityHealth(acc)
+	clearAntigravityHealth(h.pool.antigravity, acc)
 	if antigravityQuotaExhausted(summary) {
 		return fail("quota_exhausted", "all enabled quota buckets are exhausted")
 	}
@@ -186,7 +186,7 @@ func (h *proxyHandler) verifyAccountAccess(ctx context.Context, acc *Account) ac
 		detail = fmt.Sprintf("cooling down until %s", acc.RateLimitUntil.UTC().Format(time.RFC3339))
 	case probeErr != nil:
 		result.Status = "error"
-	case accountUsageExhaustedLocked(acc):
+	case accountUsageExhaustedLocked(h.pool.antigravity, acc):
 		result.Status = "quota_exhausted"
 		detail = "usage windows are exhausted"
 	default:
@@ -234,7 +234,7 @@ func (h *proxyHandler) probeAccountAccess(ctx context.Context, acc *Account, now
 	case AccountTypeGemini:
 		return h.verifyGeminiToken(ctx, acc, now)
 	}
-	return syncProviderModels(ctx, h.transport, h.registry, acc)
+	return syncProviderModels(ctx, h.pool.antigravity, h.transport, h.registry, acc)
 }
 
 func (h *proxyHandler) verifyGeminiToken(ctx context.Context, acc *Account, now time.Time) error {
@@ -246,7 +246,7 @@ func (h *proxyHandler) verifyGeminiToken(ctx context.Context, acc *Account, now 
 	}
 	err := h.refreshAccount(ctx, acc)
 	if err != nil && isPermanentRefreshTokenError(err) {
-		persistDeadAccount(acc, "refresh token revoked/invalid")
+		persistDeadAccount(h.pool.antigravity, acc, "refresh token revoked/invalid")
 	}
 	return err
 }

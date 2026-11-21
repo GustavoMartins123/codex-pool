@@ -161,7 +161,7 @@ func applyCodexCookies(req *http.Request, acc *Account) {
 	req.Header.Set("Cookie", strings.Join(parts, "; "))
 }
 
-func captureCodexResponseState(acc *Account, resp *http.Response, reqID string) {
+func captureCodexResponseState(rt *antigravityRuntime, acc *Account, resp *http.Response, reqID string) {
 	if acc == nil || resp == nil || acc.Type != AccountTypeCodex {
 		return
 	}
@@ -181,7 +181,7 @@ func captureCodexResponseState(acc *Account, resp *http.Response, reqID string) 
 	}
 	acc.mu.Unlock()
 	if changed && acc.File != "" {
-		if err := saveAccount(acc); err != nil {
+		if err := saveAccount(rt, acc); err != nil {
 			log.Printf("[%s] warning: failed to persist codex cookies for account %s: %v", reqID, acc.ID, err)
 		}
 	}

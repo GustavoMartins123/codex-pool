@@ -93,7 +93,7 @@ func (h *proxyHandler) handleMyQuotas(w http.ResponseWriter, r *http.Request) {
 			}
 			row.SupportingAccounts++
 			u := account.Usage
-			row.AvailableNow = row.AvailableNow || accountAvailableForRoutingLocked(account, now)
+			row.AvailableNow = row.AvailableNow || accountAvailableForRoutingLocked(h.pool.antigravity, account, now)
 			addMemberQuotaWindow(&row.Primary, u.PrimaryUsedPercent, u.PrimaryUsageReported && u.primarySet, u.RetrievedAt, u.PrimaryResetAt, now)
 			addMemberQuotaWindow(&row.Secondary, u.SecondaryUsedPercent, u.SecondaryUsageReported && u.secondarySet, u.RetrievedAt, u.SecondaryResetAt, now)
 		}

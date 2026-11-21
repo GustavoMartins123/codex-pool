@@ -278,7 +278,7 @@ func (p *GrokProvider) RefreshToken(ctx context.Context, acc *Account, transport
 	acc.Dead = false
 	acc.mu.Unlock()
 
-	return saveAccount(acc)
+	return saveAccount(nil, acc)
 }
 
 func (p *GrokProvider) ParseUsage(obj map[string]any) *RequestUsage {

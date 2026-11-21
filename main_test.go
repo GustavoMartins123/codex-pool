@@ -1020,7 +1020,7 @@ func TestInjectClaudeModelsAddsPoolModelsWithoutCloningGPTEntries(t *testing.T) 
 	t.Parallel()
 
 	body := []byte(`{"models":[{"slug":"gpt-5.4","display_name":"gpt-5.4","description":"template","base_instructions":"You are ChatGPT."}]}`)
-	out := injectClaudeModels(body)
+	out := injectClaudeModels(newAntigravityRuntime(), body)
 
 	var catalog map[string]any
 	if err := json.Unmarshal(out, &catalog); err != nil {
@@ -1063,7 +1063,7 @@ func TestInjectClaudeModelsDoesNotDuplicateExistingCodexFallbackModels(t *testin
 	t.Parallel()
 
 	body := []byte(`{"models":[{"slug":"gpt-5.5","display_name":"gpt-5.5"}]}`)
-	out := injectClaudeModels(body)
+	out := injectClaudeModels(newAntigravityRuntime(), body)
 
 	var catalog map[string]any
 	if err := json.Unmarshal(out, &catalog); err != nil {
@@ -1086,7 +1086,7 @@ func TestInjectClaudeModelsAccessProgramsIncludeCyber(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{"models":[{"slug":"gpt-5.5","display_name":"gpt-5.5","available_access_programs":{"cyber":["standard"]}}]}`)
-	out := injectClaudeModels(body)
+	out := injectClaudeModels(newAntigravityRuntime(), body)
 
 	var catalog map[string]any
 	if err := json.Unmarshal(out, &catalog); err != nil {

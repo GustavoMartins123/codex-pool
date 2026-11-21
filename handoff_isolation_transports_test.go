@@ -128,7 +128,9 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 		transport: http.DefaultTransport, antigravityTransport: http.DefaultTransport,
 		metrics: newMetrics(), recent: newRecentErrors(5),
 	}
-	registerTestAntigravityModels(t, "anti", "gemini-3.8-flash-high")
+	rt := newAntigravityRuntime()
+	registerTestAntigravityModels(rt, "anti", "gemini-3.8-flash-high")
+	h.pool.antigravity = rt
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 	models := []string{"gpt-5.6-sol", "claude-opus-4-6", "antigravity/gemini-3.8-flash-high", "gpt-5.6-sol"}

@@ -60,7 +60,7 @@ func TestSyncCodexModelsSetsCyberFromDaybreak(t *testing.T) {
 		}, nil
 	})
 
-	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
+	if err := syncProviderModels(context.Background(), nil, transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
 	if !account.codex.CyberAccess {
@@ -74,7 +74,7 @@ func TestSyncCodexModelsSetsCyberFromDaybreak(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if err := syncProviderModels(context.Background(), transport, registry, account); err != nil {
+	if err := syncProviderModels(context.Background(), nil, transport, registry, account); err != nil {
 		t.Fatal(err)
 	}
 	if account.codex.CyberAccess {

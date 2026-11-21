@@ -37,7 +37,7 @@ func TestAntigravityAdditionalToolsFlattenNamespaces(t *testing.T) {
 		"store":false,
 		"stream":true
 	}`)
-	prepared, err := prepareAntigravityRequest("/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
+	prepared, err := prepareAntigravityRequest(newAntigravityRuntime(), "/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestAntigravityAdditionalToolsReplayNamespacedHistory(t *testing.T) {
 		],
 		"stream":false
 	}`)
-	prepared, err := prepareAntigravityRequest("/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
+	prepared, err := prepareAntigravityRequest(newAntigravityRuntime(), "/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestAntigravityAdditionalToolsDropEncryptedSchemaAnnotation(t *testing.T) {
 		"tools":[],
 		"stream":false
 	}`)
-	prepared, err := prepareAntigravityRequest("/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
+	prepared, err := prepareAntigravityRequest(newAntigravityRuntime(), "/v1/responses", body, "antigravity/gemini-3.8-flash-high", "project-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}

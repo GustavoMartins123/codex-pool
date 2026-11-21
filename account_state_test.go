@@ -34,8 +34,8 @@ func TestUnifiedStateMatchesRoutingAvailability(t *testing.T) {
 		{NeedsLogin: true, ExpiresAt: now.Add(-time.Hour)},
 	}
 	for i, a := range accounts {
-		state := accountLifecycleStateLocked(a, now)
-		wantRoutable := accountAvailableForRoutingLocked(a, now)
+		state := accountLifecycleStateLocked(nil, a, now)
+		wantRoutable := accountAvailableForRoutingLocked(nil, a, now)
 		if got := accountstate.Routable(state); got != wantRoutable {
 			t.Fatalf("account[%d] state=%s routable=%v, routing gate says %v", i, state, got, wantRoutable)
 		}
@@ -81,19 +81,19 @@ func TestObserveAccountStatesRecordsTransitions(t *testing.T) {
 func TestAccountStateSnapshotFeedsAdmin(t *testing.T) {
 	now := time.Now()
 	acc := &Account{ID: "codex-2", Dead: true}
-	snap := accountStateSnapshotLocked(acc, now)
+	snap := accountStateSnapshotLocked(nil, acc, now)
 	if snap.State != accountstate.StateDead || snap.Reason != "permanent_failure" || snap.Routable {
 		t.Fatalf("unexpected snapshot: %+v", snap)
 	}
 
 	healthy := &Account{ID: "codex-3"}
-	snap = accountStateSnapshotLocked(healthy, now)
+	snap = accountStateSnapshotLocked(nil, healthy, now)
 	if snap.State != accountstate.StateHealthy || !snap.Routable {
 		t.Fatalf("unexpected snapshot: %+v", snap)
 	}
 
 	zombie := &Account{ID: "codex-4", NeedsLogin: true, AuthError: "invalid_grant"}
-	snap = accountStateSnapshotLocked(zombie, now)
+	snap = accountStateSnapshotLocked(nil, zombie, now)
 	if snap.State != accountstate.StateNeedsLogin || snap.Reason != "refresh_token_rejected" || !snap.Routable {
 		t.Fatalf("unexpected needs-login snapshot: %+v", snap)
 	}

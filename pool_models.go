@@ -146,7 +146,11 @@ func poolModelDescriptors(pools ...*poolState) []poolModelDescriptor {
 			AvailableNow:       availableNow,
 		})
 	}
-	for _, model := range antigravityModels.Models(pool) {
+	var antigravityCatalog []AntigravityCatalogModel
+	if pool != nil {
+		antigravityCatalog = pool.antigravity.models.Models(pool)
+	}
+	for _, model := range antigravityCatalog {
 		modalities := []string{"text"}
 		if model.SupportsImages {
 			modalities = append(modalities, "image")
@@ -288,7 +292,7 @@ func poolModelAvailability(pool *poolState, accountType AccountType, modelIDs ..
 			}
 		}
 		supportingAccounts++
-		if accountAvailableForRoutingLocked(account, now) {
+		if accountAvailableForRoutingLocked(pool.antigravity, account, now) {
 			availableAccounts++
 		}
 		account.mu.Unlock()
@@ -409,7 +413,11 @@ func serveUnifiedGeminiModels(w http.ResponseWriter, pool *poolState) {
 			"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent", "countTokens"},
 		})
 	}
-	for _, model := range antigravityModels.Models(pool) {
+	var antigravityCatalog []AntigravityCatalogModel
+	if pool != nil {
+		antigravityCatalog = pool.antigravity.models.Models(pool)
+	}
+	for _, model := range antigravityCatalog {
 		if !catalogModelAllowed(pool, AccountTypeAntigravity, model.ID) {
 			continue
 		}

@@ -125,7 +125,8 @@ func TestAntigravityTransitionHTTPErrorMatrix(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
 			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
-			registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+			rt := newAntigravityRuntime()
+			registerTestAntigravityModels(rt, account.ID, "gemini-3.8-flash-high")
 			calls := 0
 			h := &proxyHandler{
 				contextHandoff: newConversationHandoffStore(),
@@ -139,6 +140,7 @@ func TestAntigravityTransitionHTTPErrorMatrix(t *testing.T) {
 					return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(payload)), Request: req}, nil
 				}),
 			}
+			h.pool.antigravity = rt
 			store := h.contextHandoff
 			if _, _, err := store.Prepare(conversationScopedKey("user", "error-matrix"), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "prior", false)); err != nil {
 				t.Fatal(err)

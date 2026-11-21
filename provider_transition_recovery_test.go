@@ -28,7 +28,8 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 			daily, _ := url.Parse("https://daily.example")
 			prod, _ := url.Parse("https://prod.example")
 			account := &Account{Type: AccountTypeAntigravity, ID: "anti", AccessToken: "token", google: googleAccountState{ProjectID: "project"}, PlanType: "pro"}
-			registerTestAntigravityModels(t, account.ID, "gemini-3.8-flash-high")
+			rt := newAntigravityRuntime()
+			registerTestAntigravityModels(rt, account.ID, "gemini-3.8-flash-high")
 			var sessions []string
 			h := &proxyHandler{
 				contextHandoff: newConversationHandoffStore(),
@@ -50,6 +51,7 @@ func TestAntigravityTransitionRecoveryRetriesOnce(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(response)), Request: req}, nil
 				}),
 			}
+			h.pool.antigravity = rt
 			store := h.contextHandoff
 			conversationID := "recovery-conversation"
 			if _, _, err := store.Prepare(conversationScopedKey("user", conversationID), AccountTypeCodex, "/v1/responses", contextTestBody(contextFormatResponses, "first", false)); err != nil {
