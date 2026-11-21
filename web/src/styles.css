@@ -516,7 +516,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .account-row:hover .reset-credit-popover, .account-row:focus-visible .reset-credit-popover { display: block; }
 .account-windows { position: relative; }
 .quota-family-popover { position: absolute; z-index: 30; left: 0; top: calc(100% + 9px); display: none; width: max-content; min-width: 230px; padding: 10px 12px; border: 1px solid var(--gold); background: #090907; box-shadow: 0 16px 45px #000; white-space: normal; }
-.account-windows:hover .quota-family-popover, .account-row:focus-visible .quota-family-popover { display: grid; gap: 10px; }
+.account-windows:hover .quota-family-popover, .account-pace:hover + .account-windows .quota-family-popover, .account-row:focus-visible .quota-family-popover { display: grid; gap: 10px; }
 .quota-family { display: grid; gap: 2px; }
 .quota-family em { margin-bottom: 3px; color: var(--gold-hot); font-style: normal; font-size: .58rem; letter-spacing: .06em; text-transform: uppercase; }
 .quota-family-window { display: grid; grid-template-columns: 52px 38px minmax(0,1fr); gap: 6px; color: var(--muted); font: .62rem/1.5 "IBM Plex Mono", monospace; white-space: nowrap; }
