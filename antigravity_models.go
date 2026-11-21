@@ -181,6 +181,10 @@ func antigravityQuotaFamily(model string) string {
 	switch {
 	case strings.HasPrefix(lower, "claude"), strings.HasPrefix(lower, "gpt"):
 		return antigravityQuotaFamilyThirdParty
+	// Gemini 4 Argon has its own weekly bucket on paid Pro plans, so it must not
+	// share the Gemini family.
+	case strings.HasPrefix(lower, "gemini") && strings.Contains(lower, "argon"):
+		return antigravityQuotaFamilyArgon
 	case strings.HasPrefix(lower, "gemini") && !strings.Contains(lower, "image"):
 		return antigravityQuotaFamilyGemini
 	default:
@@ -188,8 +192,15 @@ func antigravityQuotaFamily(model string) string {
 	}
 }
 
+// antigravityBucketFamily names the family a bucket belongs to from its ID. The
+// Argon bucket is "gemini-argon-wtu-weekly": its prefix says Gemini, but it is
+// a separate limit.
 func antigravityBucketFamily(bucket AntigravityQuotaBucket) string {
-	family, _, ok := strings.Cut(strings.ToLower(strings.TrimSpace(bucket.BucketID)), "-")
+	id := strings.ToLower(strings.TrimSpace(bucket.BucketID))
+	if strings.Contains(id, antigravityQuotaFamilyArgon) {
+		return antigravityQuotaFamilyArgon
+	}
+	family, _, ok := strings.Cut(id, "-")
 	if !ok {
 		return ""
 	}
@@ -206,7 +217,7 @@ func (r *antigravityModelRegistry) AllFamiliesExhausted(accountID string, now ti
 	if !ok || snapshot.QuotaSummary == nil {
 		return false, false
 	}
-	for _, family := range []string{antigravityQuotaFamilyGemini, antigravityQuotaFamilyThirdParty} {
+	for _, family := range []string{antigravityQuotaFamilyGemini, antigravityQuotaFamilyArgon, antigravityQuotaFamilyThirdParty} {
 		if len(snapshot.QuotaSummary.familyBuckets(family)) == 0 {
 			continue
 		}
@@ -244,7 +255,13 @@ func (s *AntigravityQuotaSummary) familyBuckets(family string) []AntigravityQuot
 // the pool's hard-exclude thresholds; a model is usable again only once every
 // bucket it draws from has refilled. Another family's buckets never block it.
 func (s *AntigravityQuotaSummary) exhaustedUntil(model string, now time.Time) time.Time {
-	return s.familyExhaustedUntil(antigravityQuotaFamily(model), now)
+	family := antigravityQuotaFamily(model)
+	// Ultra plans fold Argon into the larger Gemini bucket and report no bucket
+	// of its own.
+	if family == antigravityQuotaFamilyArgon && len(s.familyBuckets(family)) == 0 {
+		family = antigravityQuotaFamilyGemini
+	}
+	return s.familyExhaustedUntil(family, now)
 }
 
 func (s *AntigravityQuotaSummary) familyExhaustedUntil(family string, now time.Time) time.Time {

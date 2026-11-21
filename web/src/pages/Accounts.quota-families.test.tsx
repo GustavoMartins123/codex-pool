@@ -9,6 +9,7 @@ vi.mock("../components/AccountGovernance", () => ({ AccountGovernance: () => nul
 
 const families: AccountQuotaFamily[] = [
   { id: "gemini", label: "Gemini", five_hour: { used_pct: 6, reset_minutes: 297, window_minutes: 300 }, weekly: { used_pct: 0, reset_minutes: 8820, window_minutes: 10080 } },
+  { id: "argon", label: "Gemini 4 Argon", weekly: { used_pct: 29.5, reset_minutes: 10042, window_minutes: 10080 } },
   { id: "3p", label: "Claude / GPT", five_hour: { used_pct: 0, reset_minutes: 297, window_minutes: 300 }, weekly: { used_pct: 100, reset_minutes: 7920, window_minutes: 10080 } },
 ];
 
@@ -64,6 +65,12 @@ it("shows the Gemini weekly quota in the row and both families in the hover brea
   expect(popover.textContent).toContain("Gemini");
   expect(popover.textContent).toContain("Claude / GPT");
   expect(popover.textContent).toContain("100%");
+
+  // Argon reports a weekly limit only, so no empty 5-hour row is listed for it.
+  const argon = [...popover.querySelectorAll(".quota-family")].find((node) => node.textContent?.includes("Gemini 4 Argon"))!;
+  expect(argon.querySelectorAll(".quota-family-window")).toHaveLength(1);
+  expect(argon.textContent).toContain("30%");
+  expect(popover.textContent).not.toContain("NOT REPORTED");
 });
 
 it("lists every family in the inspector", () => {
