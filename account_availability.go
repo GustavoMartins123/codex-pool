@@ -41,14 +41,14 @@ func accountCoolingDownLocked(a *Account, now time.Time) bool {
 	return !a.RateLimitUntil.IsZero() && a.RateLimitUntil.After(now)
 }
 
-func accountUsageExhaustedLocked(a *Account) bool {
+func accountUsageExhaustedLocked(rt *antigravityRuntime, a *Account) bool {
 	if a == nil {
 		return false
 	}
 	// Antigravity aggregate usage mixes model families with separate quotas;
 	// the account is exhausted only when every family is.
 	if a.Type == AccountTypeAntigravity {
-		if exhausted, known := antigravityModels.AllFamiliesExhausted(a.ID, time.Now()); known {
+		if exhausted, known := rt.models.AllFamiliesExhausted(a.ID, time.Now()); known {
 			return exhausted
 		}
 	}
@@ -78,7 +78,7 @@ func accountHealthBlockedLocked(a *Account) bool {
 	return a.NeedsVerification || strings.TrimSpace(a.HealthError) != "" || strings.TrimSpace(a.VerificationURL) != ""
 }
 
-func accountAvailableForRoutingLocked(a *Account, now time.Time) bool {
+func accountAvailableForRoutingLocked(rt *antigravityRuntime, a *Account, now time.Time) bool {
 	if a == nil {
 		return false
 	}
@@ -88,7 +88,7 @@ func accountAvailableForRoutingLocked(a *Account, now time.Time) bool {
 	if accountCoolingDownLocked(a, now) {
 		return false
 	}
-	return !accountUsageExhaustedLocked(a)
+	return !accountUsageExhaustedLocked(rt, a)
 }
 
 func syncUsageCooldown(a *Account) {

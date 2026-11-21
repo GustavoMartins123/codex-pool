@@ -14,7 +14,7 @@ const maxAccountStateHistory = 20
 // accountStateFactsLocked projects an Account onto accountstate.Facts using
 // the same predicates the router consumes (account_availability.go), so the
 // unified state can never disagree with routing behavior.
-func accountStateFactsLocked(a *Account, now time.Time) accountstate.Facts {
+func accountStateFactsLocked(rt *antigravityRuntime, a *Account, now time.Time) accountstate.Facts {
 	if a == nil {
 		return accountstate.Facts{Dead: true}
 	}
@@ -26,13 +26,13 @@ func accountStateFactsLocked(a *Account, now time.Time) accountstate.Facts {
 		HealthError:        strings.TrimSpace(a.HealthError) != "",
 		CredentialsExpired: !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now),
 		RateLimited:        accountCoolingDownLocked(a, now),
-		UsageExhausted:     accountUsageExhaustedLocked(a),
+		UsageExhausted:     accountUsageExhaustedLocked(rt, a),
 	}
 }
 
 // accountLifecycleState computes the current unified state under a.mu.
-func accountLifecycleStateLocked(a *Account, now time.Time) accountstate.State {
-	return accountstate.Derive(accountStateFactsLocked(a, now))
+func accountLifecycleStateLocked(rt *antigravityRuntime, a *Account, now time.Time) accountstate.State {
+	return accountstate.Derive(accountStateFactsLocked(rt, a, now))
 }
 
 // observeAccountStates refreshes the lifecycle projection of every account
@@ -54,7 +54,7 @@ func (p *poolState) observeAccountStates(now time.Time) {
 			continue
 		}
 		a.mu.Lock()
-		facts := accountStateFactsLocked(a, now)
+		facts := accountStateFactsLocked(p.antigravity, a, now)
 		state := accountstate.Derive(facts)
 		switch {
 		case a.LifecycleState == "":
@@ -98,8 +98,8 @@ type accountStateSnapshot struct {
 	Transitions []accountstate.Transition `json:"transitions,omitempty"`
 }
 
-func accountStateSnapshotLocked(a *Account, now time.Time) accountStateSnapshot {
-	facts := accountStateFactsLocked(a, now)
+func accountStateSnapshotLocked(rt *antigravityRuntime, a *Account, now time.Time) accountStateSnapshot {
+	facts := accountStateFactsLocked(rt, a, now)
 	state := accountstate.Derive(facts)
 	history := a.LifecycleHistory
 	if len(history) == 0 && a.LifecycleState != "" && a.LifecycleState != state {

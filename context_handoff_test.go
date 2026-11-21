@@ -282,7 +282,7 @@ func TestAntigravitySameProviderLargeRequestIsCompacted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := &proxyHandler{contextHandoff: newConversationHandoffStore()}
+	h := &proxyHandler{contextHandoff: newConversationHandoffStore(), pool: newPoolState(nil, false)}
 	w := httptest.NewRecorder()
 	rewritten, err := h.prepareProviderContextHandoff(w, "user", "antigravity-large", AccountTypeAntigravity, "/v1/responses", body)
 	if err != nil {
@@ -338,8 +338,8 @@ func TestAntigravityEstimatorCountsToolSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withoutTokens := estimateAntigravityRequestTokens("/v1/responses", withoutTools)
-	withTokens := estimateAntigravityRequestTokens("/v1/responses", withTools)
+	withoutTokens := estimateAntigravityRequestTokens(newAntigravityRuntime(), "/v1/responses", withoutTools)
+	withTokens := estimateAntigravityRequestTokens(newAntigravityRuntime(), "/v1/responses", withTools)
 	if withTokens <= withoutTokens+100 {
 		t.Fatalf("tool schema was not included in Antigravity estimate: without=%d with=%d", withoutTokens, withTokens)
 	}
@@ -367,7 +367,7 @@ func TestAntigravityImageEstimatorUsesTiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := estimateAntigravityRequestTokens("/v1beta/models/gemini-3.8-flash-high:streamGenerateContent", body); got < want {
+	if got := estimateAntigravityRequestTokens(newAntigravityRuntime(), "/v1beta/models/gemini-3.8-flash-high:streamGenerateContent", body); got < want {
 		t.Fatalf("inline image was not included in request estimate: got %d want at least %d", got, want)
 	}
 }
@@ -383,14 +383,14 @@ func TestAntigravityCompactionUsesNormalAndEmergencyRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	normal, didCompact, err := compactAntigravityRequestBodyWithRecentTokens("/v1/responses", body, antigravityNormalRecentTokens)
+	normal, didCompact, err := compactAntigravityRequestBodyWithRecentTokens(newAntigravityRuntime(), "/v1/responses", body, antigravityNormalRecentTokens)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !didCompact || !strings.Contains(normalizedContextText(t, "/v1/responses", normal), "LATEST-BEGIN") {
 		t.Fatal("normal Antigravity compaction did not retain the recent turn")
 	}
-	emergency, didCompact, err := compactAntigravityRequestBodyWithRecentTokens("/v1/responses", body, antigravityEmergencyRecentTokens)
+	emergency, didCompact, err := compactAntigravityRequestBodyWithRecentTokens(newAntigravityRuntime(), "/v1/responses", body, antigravityEmergencyRecentTokens)
 	if err != nil {
 		t.Fatal(err)
 	}

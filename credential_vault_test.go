@@ -138,7 +138,7 @@ func TestLoadPoolDecodesEncryptedCredentials(t *testing.T) {
 	otherVault := keyedTestVault(t, hexKey(t, 1, 'c'), nil)
 	account := accounts[0]
 	account.AccessToken = "updated-token"
-	if err := saveAccount(account); err != nil {
+	if err := saveAccount(nil, account); err != nil {
 		t.Fatal(err)
 	}
 	assertEncryptedCredentialFile(t, vault, account.File, "updated-token")

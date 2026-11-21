@@ -156,7 +156,7 @@ func (p *GeminiProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 	acc.Dead = false
 	acc.mu.Unlock()
 
-	return saveAccount(acc)
+	return saveAccount(nil, acc)
 }
 
 func (p *GeminiProvider) ParseUsage(obj map[string]any) *RequestUsage {

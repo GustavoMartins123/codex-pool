@@ -175,8 +175,7 @@ func TestMemberQuotaSnapshotDiscoveredModels(t *testing.T) {
 }
 
 func TestMemberQuotaSnapshotAntigravityRequiresAccountDiscovery(t *testing.T) {
-	antigravityModels.Reset()
-	t.Cleanup(antigravityModels.Reset)
+	rt := newAntigravityRuntime()
 	h, id, session, _, _, _ := memberQuotaFixture(t)
 	saveQuotaPolicy(t, h, id, ClientPolicy{})
 	account := &Account{ID: "member-antigravity", Type: AccountTypeAntigravity, Usage: h.pool.allAccounts()[0].Usage}
@@ -196,10 +195,11 @@ func TestMemberQuotaSnapshotAntigravityRequiresAccountDiscovery(t *testing.T) {
 	if rows := quotaHTTP(t, h, session); len(rows) != 0 {
 		t.Fatal("cold-start catalog substitute established model access")
 	}
-	antigravityModels.ReplaceAccount("foreign-antigravity", AntigravityAccountSnapshot{
+	h.pool.antigravity = rt
+	rt.models.ReplaceAccount("foreign-antigravity", AntigravityAccountSnapshot{
 		Models: map[string]AntigravityModelInfo{"foreign-model": {ID: "foreign-model", DisplayName: "Foreign"}},
 	})
-	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{
+	rt.models.ReplaceAccount(account.ID, AntigravityAccountSnapshot{
 		Models: map[string]AntigravityModelInfo{"member-model": {ID: "member-model", DisplayName: "Member"}},
 	})
 	rows := quotaHTTP(t, h, session)

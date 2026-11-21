@@ -142,7 +142,7 @@ func (h *proxyHandler) handleAPIKeyRemove(w http.ResponseWriter, r *http.Request
 	target.LastPenalty = time.Now()
 	target.mu.Unlock()
 
-	if err := saveAccount(target); err != nil {
+	if err := saveAccount(h.pool.antigravity, target); err != nil {
 		log.Printf("warning: failed to save dead %s account %s: %v", acctType, accountID, err)
 		respondJSONError(w, http.StatusInternalServerError, "failed to persist: "+err.Error())
 		return

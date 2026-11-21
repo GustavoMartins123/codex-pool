@@ -65,7 +65,7 @@ type cuteCodeModelConfig struct {
 	Description   string `json:"description,omitempty"`
 }
 
-func generatePiModelsJSON(publicURL, codexAPIKey, anthropicAPIKey string) ([]byte, error) {
+func generatePiModelsJSON(rt *antigravityRuntime, publicURL, codexAPIKey, anthropicAPIKey string) ([]byte, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(publicURL), "/")
 	cfg := piModelsConfig{
 		Providers: map[string]piProviderConfig{
@@ -85,7 +85,7 @@ func generatePiModelsJSON(publicURL, codexAPIKey, anthropicAPIKey string) ([]byt
 				BaseURL: baseURL + "/v1",
 				APIKey:  codexAPIKey,
 				API:     "openai-completions",
-				Models:  antigravityPiModels(),
+				Models:  antigravityPiModels(rt),
 			},
 			"kimi": {
 				BaseURL: baseURL,
@@ -135,7 +135,7 @@ func generatePiModelsJSON(publicURL, codexAPIKey, anthropicAPIKey string) ([]byt
 	return json.MarshalIndent(cfg, "", "  ")
 }
 
-func generateCuteCodeSettingsJSON(publicURL, apiKey string) ([]byte, error) {
+func generateCuteCodeSettingsJSON(rt *antigravityRuntime, publicURL, apiKey string) ([]byte, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(publicURL), "/")
 	settings := cuteCodeSettings{
 		Model:            defaultCodexModel,
@@ -152,12 +152,12 @@ func generateCuteCodeSettingsJSON(publicURL, apiKey string) ([]byte, error) {
 	}
 	settings.CustomModels = append(settings.CustomModels, opencodeGoCuteModels(baseURL, apiKey)...)
 	settings.CustomModels = append(settings.CustomModels, grokCuteModels(baseURL, apiKey)...)
-	settings.CustomModels = append(settings.CustomModels, antigravityCuteModels(baseURL, apiKey)...)
+	settings.CustomModels = append(settings.CustomModels, antigravityCuteModels(rt, baseURL, apiKey)...)
 	return json.MarshalIndent(settings, "", "  ")
 }
 
-func antigravityPiModels() []piModelConfig {
-	models := antigravityModels.Models(nil)
+func antigravityPiModels(rt *antigravityRuntime) []piModelConfig {
+	models := rt.models.Models(nil)
 	result := make([]piModelConfig, 0, len(models))
 	for _, model := range models {
 		input := []string{"text"}
@@ -178,8 +178,8 @@ func antigravityPiModels() []piModelConfig {
 	return result
 }
 
-func antigravityCuteModels(baseURL, apiKey string) []cuteCodeModelConfig {
-	models := antigravityModels.Models(nil)
+func antigravityCuteModels(rt *antigravityRuntime, baseURL, apiKey string) []cuteCodeModelConfig {
+	models := rt.models.Models(nil)
 	result := make([]cuteCodeModelConfig, 0, len(models))
 	for _, model := range models {
 		result = append(result, cuteOpenAIModel(baseURL, apiKey, "antigravity/"+model.ID, model.DisplayName, model.MaxTokens, "Google Antigravity"))

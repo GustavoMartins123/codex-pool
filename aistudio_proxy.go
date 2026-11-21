@@ -167,7 +167,7 @@ func (h *proxyHandler) handleAIStudioProxy(w http.ResponseWriter, r *http.Reques
 			return true
 		}
 		var replayScope antigravityReplayScope
-		prepared.Body, replayScope, _ = antigravityScopedReplay(prepared.Body, conversationID, 0, false)
+		prepared.Body, replayScope, _ = h.antigravityScopedReplay(prepared.Body, conversationID, 0, false)
 		prepared.EstimatedInputTokens = estimateAntigravitySerializedTokens(prepared.Body)
 
 		started := time.Now()
@@ -183,7 +183,7 @@ func (h *proxyHandler) handleAIStudioProxy(w http.ResponseWriter, r *http.Reques
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			_ = resp.Body.Close()
-			antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
+			h.antigravityClearNativeReplayOnError(replayScope, resp.StatusCode, errBody)
 			switch {
 			case resp.StatusCode == http.StatusTooManyRequests:
 				until, ok := parseGeminiRateLimitReset(errBody, time.Now())

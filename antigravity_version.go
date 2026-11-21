@@ -75,15 +75,13 @@ func (s *antigravityVersionState) refresh(ctx context.Context, client *http.Clie
 	return nil
 }
 
-var antigravityVersions = newAntigravityVersionState(antigravityFallbackClientVersion, antigravityVersionCacheTTL)
-
 // startAntigravityVersionUpdater refreshes the Hub version independently from
 // requests. The last valid value remains available until its six-hour TTL.
-func startAntigravityVersionUpdater(ctx context.Context) {
+func startAntigravityVersionUpdater(ctx context.Context, rt *antigravityRuntime) {
 	client := &http.Client{Timeout: antigravityVersionFetchTimeout}
 	go func() {
 		refresh := func() {
-			_ = antigravityVersions.refresh(ctx, client, antigravityVersionManifestURL, time.Now())
+			_ = rt.versions.refresh(ctx, client, antigravityVersionManifestURL, time.Now())
 		}
 		refresh()
 		ticker := time.NewTicker(antigravityVersionCacheTTL / 2)

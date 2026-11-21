@@ -91,7 +91,19 @@ type antigravityModelRegistry struct {
 	accounts map[string]AntigravityAccountSnapshot
 }
 
-var antigravityModels = &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot)}
+// antigravityRuntime is the per-server Antigravity state shared by pool, provider and handler.
+type antigravityRuntime struct {
+	models    *antigravityModelRegistry
+	versions  *antigravityVersionState
+	saveLocks sync.Map
+}
+
+func newAntigravityRuntime() *antigravityRuntime {
+	return &antigravityRuntime{
+		models:   &antigravityModelRegistry{accounts: make(map[string]AntigravityAccountSnapshot)},
+		versions: newAntigravityVersionState(antigravityFallbackClientVersion, antigravityVersionCacheTTL),
+	}
+}
 
 func (r *antigravityModelRegistry) Reset() {
 	r.mu.Lock()
@@ -364,7 +376,7 @@ func antigravityAccountModelAvailable(pool *poolState, accountID, model string) 
 		}
 		now := time.Now()
 		until := antigravityModelCooldownLocked(account, model)
-		discoveryAvailable, discoveryReset := antigravityModels.DiscoveryAvailability(accountID, model, now)
+		discoveryAvailable, discoveryReset := pool.antigravity.models.DiscoveryAvailability(accountID, model, now)
 		if discoveryReset.After(until) {
 			until = discoveryReset
 		}
@@ -509,14 +521,14 @@ func decodeRaw(raw map[string]json.RawMessage, key string, target any) {
 	}
 }
 
-func fetchAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error) {
-	snapshot, _, err := fetchAntigravityModelsWithQuota(ctx, transport, account, bases...)
+func fetchAntigravityModels(ctx context.Context, rt *antigravityRuntime, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error) {
+	snapshot, _, err := fetchAntigravityModelsWithQuota(ctx, rt, transport, account, bases...)
 	return snapshot, err
 }
 
 // fetchAntigravityModelsWithQuota also reports why the quota summary is
 // missing, so callers can act on a daily-host verification demand.
-func fetchAntigravityModelsWithQuota(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error, error) {
+func fetchAntigravityModelsWithQuota(ctx context.Context, rt *antigravityRuntime, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityAccountSnapshot, error, error) {
 	body := []byte(`{}`)
 	var lastErr error
 	for _, base := range bases {
@@ -531,7 +543,7 @@ func fetchAntigravityModelsWithQuota(ctx context.Context, transport http.RoundTr
 		}
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", antigravityUserAgent())
+		req.Header.Set("User-Agent", antigravityUserAgent(rt))
 		resp, err := transport.RoundTrip(req)
 		if err != nil {
 			lastErr = err
@@ -551,7 +563,7 @@ func fetchAntigravityModelsWithQuota(ctx context.Context, transport http.RoundTr
 		if err != nil {
 			return AntigravityAccountSnapshot{}, nil, err
 		}
-		summary, summaryErr := fetchAntigravityQuotaSummary(ctx, transport, account, bases...)
+		summary, summaryErr := fetchAntigravityQuotaSummary(ctx, rt, transport, account, bases...)
 		if summaryErr == nil {
 			snapshot.QuotaSummary = &summary
 		}
@@ -636,7 +648,7 @@ func parseAntigravityQuotaSummary(body []byte, fetchedAt time.Time) (Antigravity
 	return summary, nil
 }
 
-func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityQuotaSummary, error) {
+func fetchAntigravityQuotaSummary(ctx context.Context, rt *antigravityRuntime, transport http.RoundTripper, account *Account, bases ...*url.URL) (AntigravityQuotaSummary, error) {
 	requestBody, err := json.Marshal(map[string]string{"project": account.google.ProjectID})
 	if err != nil {
 		return AntigravityQuotaSummary{}, err
@@ -654,7 +666,7 @@ func fetchAntigravityQuotaSummary(ctx context.Context, transport http.RoundTripp
 		}
 		req.Header.Set("Authorization", "Bearer "+account.AccessToken)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", antigravityUserAgent())
+		req.Header.Set("User-Agent", antigravityUserAgent(rt))
 		resp, err := transport.RoundTrip(req)
 		if err != nil {
 			lastErr = err
@@ -793,19 +805,19 @@ func extractAntigravityAccountUsage(snapshot AntigravityAccountSnapshot) UsageSn
 // The quota summary doubles as the account health probe: a daily-host success
 // clears verification markers that only a served request could clear before,
 // and a daily-host verification demand sets them.
-func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, account *Account, bases ...*url.URL) error {
-	previous, hadPrevious := antigravityModels.AccountSnapshot(account.ID)
-	snapshot, quotaErr, err := fetchAntigravityModelsWithQuota(ctx, transport, account, bases...)
+func syncAntigravityModels(ctx context.Context, rt *antigravityRuntime, transport http.RoundTripper, account *Account, bases ...*url.URL) error {
+	previous, hadPrevious := rt.models.AccountSnapshot(account.ID)
+	snapshot, quotaErr, err := fetchAntigravityModelsWithQuota(ctx, rt, transport, account, bases...)
 	if err != nil {
 		return err
 	}
 	var forbidden *antigravityForbiddenError
 	switch {
 	case quotaErr == nil:
-		clearAntigravityHealth(account)
+		clearAntigravityHealth(rt, account)
 	case errors.As(quotaErr, &forbidden):
 		if needsVerification, banned, _ := classifyAntigravityForbidden(forbidden.body); needsVerification || banned {
-			recordAntigravityForbidden(account, forbidden.body)
+			recordAntigravityForbidden(rt, account, forbidden.body)
 		}
 	default:
 		log.Printf("antigravity quota summary %s failed: %v", account.ID, quotaErr)
@@ -813,14 +825,14 @@ func syncAntigravityModels(ctx context.Context, transport http.RoundTripper, acc
 	if snapshot.QuotaSummary == nil && hadPrevious && previous.QuotaSummary != nil {
 		snapshot.QuotaSummary = previous.QuotaSummary
 	}
-	antigravityModels.ReplaceAccount(account.ID, snapshot)
+	rt.models.ReplaceAccount(account.ID, snapshot)
 	if account != nil {
 		account.mu.Lock()
 		account.Usage = extractAntigravityAccountUsage(snapshot)
 		account.mu.Unlock()
 	}
 	if !hadPrevious || !antigravitySnapshotsEquivalent(previous, snapshot) {
-		if err := saveAccount(account); err != nil {
+		if err := saveAccount(rt, account); err != nil {
 			return err
 		}
 	}
@@ -845,20 +857,20 @@ func antigravitySnapshotsEquivalent(left, right AntigravityAccountSnapshot) bool
 	return reflect.DeepEqual(left, right)
 }
 
-func isAntigravityModel(model string) bool {
-	_, ok := antigravityModels.Canonical(model)
+func isAntigravityModel(rt *antigravityRuntime, model string) bool {
+	_, ok := rt.models.Canonical(model)
 	return ok
 }
 
-func antigravityCanonicalModel(model string) string {
-	canonical, _ := antigravityModels.Canonical(model)
+func antigravityCanonicalModel(rt *antigravityRuntime, model string) string {
+	canonical, _ := rt.models.Canonical(model)
 	return canonical
 }
 
 func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	model := antigravityCanonicalModel(req.Model)
+	model := antigravityCanonicalModel(p.antigravity, req.Model)
 	conversationID, exclude := req.ConversationID, req.Exclude
 	now := time.Now()
 	p.evictOldestPinsLocked(now)
@@ -875,12 +887,12 @@ func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 		}
 		if pinnedID := p.convPin[pinKey]; pinnedID != "" && (exclude == nil || !exclude[pinnedID]) {
 			for _, account := range p.accounts {
-				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !antigravityModels.Supports(account.ID, model) {
+				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !p.antigravity.models.Supports(account.ID, model) {
 					continue
 				}
 				account.mu.Lock()
 				until := antigravityModelCooldownLocked(account, model)
-				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
+				discoveryAvailable, _ := p.antigravity.models.DiscoveryAvailability(account.ID, model, now)
 				eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
@@ -892,12 +904,12 @@ func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 			p.unpinLocked(pinKey)
 		} else if pinnedID := p.convPin[conversationID]; pinnedID != "" && (exclude == nil || !exclude[pinnedID]) {
 			for _, account := range p.accounts {
-				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !antigravityModels.Supports(account.ID, model) {
+				if account.ID != pinnedID || account.Type != AccountTypeAntigravity || !p.antigravity.models.Supports(account.ID, model) {
 					continue
 				}
 				account.mu.Lock()
 				until := antigravityModelCooldownLocked(account, model)
-				discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
+				discoveryAvailable, _ := p.antigravity.models.DiscoveryAvailability(account.ID, model, now)
 				eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 				account.mu.Unlock()
 				if eligible {
@@ -915,7 +927,7 @@ func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 	var best *Account
 	bestScore := -1e9
 	for _, account := range p.accounts {
-		if account.Type != AccountTypeAntigravity || (exclude != nil && exclude[account.ID]) || !antigravityModels.Supports(account.ID, model) {
+		if account.Type != AccountTypeAntigravity || (exclude != nil && exclude[account.ID]) || !p.antigravity.models.Supports(account.ID, model) {
 			continue
 		}
 		if p.circuitBreakers != nil {
@@ -925,7 +937,7 @@ func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 		}
 		account.mu.Lock()
 		until := antigravityModelCooldownLocked(account, model)
-		discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
+		discoveryAvailable, _ := p.antigravity.models.DiscoveryAvailability(account.ID, model, now)
 		eligible := accountMatchesRouteLocked(account, req) && !until.After(now) && discoveryAvailable
 		score := scoreAccountLocked(account, now) - float64(atomic.LoadInt64(&account.Inflight))*0.02
 		account.mu.Unlock()
@@ -950,17 +962,17 @@ func (p *poolState) selectAntigravityAccount(req routing.Request) *Account {
 	return best
 }
 
-func setAntigravityModelCooldown(account *Account, model string, until time.Time) {
-	setAntigravityCooldown(account, antigravityCanonicalModel(model), until)
+func setAntigravityModelCooldown(rt *antigravityRuntime, account *Account, model string, until time.Time) {
+	setAntigravityCooldown(rt, account, antigravityCanonicalModel(rt, model), until)
 }
 
 // setAntigravityQuotaCooldown cools down the whole model family when the
 // rate-limit body names a shared family bucket, and only the model otherwise.
-func setAntigravityQuotaCooldown(account *Account, model string, body []byte, until time.Time) {
-	setAntigravityCooldown(account, antigravityRateLimitScope(model, body), until)
+func setAntigravityQuotaCooldown(rt *antigravityRuntime, account *Account, model string, body []byte, until time.Time) {
+	setAntigravityCooldown(rt, account, antigravityRateLimitScope(rt, model, body), until)
 }
 
-func setAntigravityCooldown(account *Account, key string, until time.Time) {
+func setAntigravityCooldown(rt *antigravityRuntime, account *Account, key string, until time.Time) {
 	if account == nil || until.IsZero() {
 		return
 	}
@@ -972,15 +984,15 @@ func setAntigravityCooldown(account *Account, key string, until time.Time) {
 		account.google.ModelRateLimits[key] = until
 	}
 	account.mu.Unlock()
-	_ = saveAccount(account)
+	_ = saveAccount(rt, account)
 }
 
-func clearAntigravityModelCooldown(account *Account, model string) {
+func clearAntigravityModelCooldown(rt *antigravityRuntime, account *Account, model string) {
 	if account == nil {
 		return
 	}
 	account.mu.Lock()
-	canonical := antigravityCanonicalModel(model)
+	canonical := antigravityCanonicalModel(rt, model)
 	_, existed := account.google.ModelRateLimits[canonical]
 	delete(account.google.ModelRateLimits, canonical)
 	// A served request proves its family bucket has quota again.
@@ -991,7 +1003,7 @@ func clearAntigravityModelCooldown(account *Account, model string) {
 	}
 	account.mu.Unlock()
 	if existed {
-		_ = saveAccount(account)
+		_ = saveAccount(rt, account)
 	}
 }
 
@@ -1016,8 +1028,8 @@ func antigravityModelCooldownLocked(account *Account, model string) time.Time {
 // structured provider-emitted bucket identifier establishes that the limit is
 // shared by the family; generic RESOURCE_EXHAUSTED and free-form messages
 // stay scoped to the exact model.
-func antigravityRateLimitScope(model string, body []byte) string {
-	model = antigravityCanonicalModel(model)
+func antigravityRateLimitScope(rt *antigravityRuntime, model string, body []byte) string {
+	model = antigravityCanonicalModel(rt, model)
 	family := antigravityQuotaFamily(model)
 	var root any
 	if family != "" && json.Unmarshal(body, &root) == nil && antigravityBodyIdentifiesQuotaFamily(root, family) {
@@ -1067,7 +1079,7 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx context.Context) {
 					log.Printf("antigravity refresh %s failed: %v", account.ID, err)
 				}
 			}
-			if err := syncAntigravityModels(checkCtx, h.transport, account, provider.DailyURL(), provider.ProductionURL()); err != nil {
+			if err := syncAntigravityModels(checkCtx, h.pool.antigravity, h.transport, account, provider.DailyURL(), provider.ProductionURL()); err != nil {
 				log.Printf("antigravity sync %s failed: %v", account.ID, err)
 			}
 			if accountPlanCheckDue(account, time.Now()) {

@@ -523,6 +523,7 @@ func TestFetchGrokUsageFromBillingEndpoints(t *testing.T) {
 	base := mustParse(server.URL + "/v1")
 	handler := &proxyHandler{
 		cfg:       &config{grokBase: base},
+		pool:      newPoolState(nil, false),
 		transport: http.DefaultTransport,
 	}
 	account := &Account{Type: AccountTypeGrok, AccessToken: "access-token"}
@@ -573,6 +574,7 @@ func TestFetchGrokUsageClearsStaleWeeklyAfterReset(t *testing.T) {
 	}
 	handler := &proxyHandler{
 		cfg:       &config{grokBase: mustParse(server.URL + "/v1")},
+		pool:      newPoolState(nil, false),
 		transport: http.DefaultTransport,
 	}
 	if err := handler.fetchGrokUsage(now, account); err != nil {
@@ -581,7 +583,7 @@ func TestFetchGrokUsageClearsStaleWeeklyAfterReset(t *testing.T) {
 	if account.Usage.SecondaryUsedPercent != 0 {
 		t.Fatalf("stale weekly usage survived reset: %+v", account.Usage)
 	}
-	if accountUsageExhaustedLocked(account) {
+	if accountUsageExhaustedLocked(nil, account) {
 		t.Fatal("account still hard-excluded after weekly credits reset")
 	}
 }
@@ -705,7 +707,7 @@ func TestGrokWeeklyCreditsStillExcludeWhenExhausted(t *testing.T) {
 		Source:               "grok_billing",
 		RetrievedAt:          time.Now(),
 	}}
-	if !accountUsageExhaustedLocked(grok) {
+	if !accountUsageExhaustedLocked(nil, grok) {
 		t.Fatal("grok account at 99% weekly credits should be exhausted")
 	}
 	p := newPoolState([]*Account{grok}, false)
@@ -758,10 +760,10 @@ func TestGrokMonthlySpendDoesNotBlockRouting(t *testing.T) {
 	grok := &Account{ID: "pp-grok", Type: AccountTypeGrok, PlanType: "grok", Usage: overMonthly}
 	codex := &Account{ID: "codex", Type: AccountTypeCodex, PlanType: "pro", Usage: overMonthly}
 
-	if accountUsageExhaustedLocked(grok) {
+	if accountUsageExhaustedLocked(nil, grok) {
 		t.Fatalf("grok account exhausted by monthly spend: %+v", grok.Usage)
 	}
-	if !accountUsageExhaustedLocked(codex) {
+	if !accountUsageExhaustedLocked(nil, codex) {
 		t.Fatal("control codex account with 100%/100% should still be exhausted")
 	}
 

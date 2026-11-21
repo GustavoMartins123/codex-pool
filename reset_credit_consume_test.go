@@ -58,7 +58,7 @@ func (u *resetCreditUpstream) RoundTrip(req *http.Request) (*http.Response, erro
 
 func resetCreditHandler(upstream *resetCreditUpstream) *proxyHandler {
 	base, _ := url.Parse("https://chatgpt.com/backend-api")
-	return &proxyHandler{cfg: &config{whamBase: base}, transport: upstream}
+	return &proxyHandler{cfg: &config{whamBase: base}, pool: newPoolState(nil, false), transport: upstream}
 }
 
 func codexAccountWithResets() *Account {

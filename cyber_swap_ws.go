@@ -999,7 +999,7 @@ func (s *codexRelayState) doSwap(cand *Account) error {
 		}
 		return err
 	}
-	captureCodexResponseState(cand, newResp, s.opts.ReqID)
+	captureCodexResponseState(s.h.pool.antigravity, cand, newResp, s.opts.ReqID)
 	newConn.SetReadLimit(s.opts.ReadLimit)
 	if s.contextEnabled() {
 		replay, err = s.h.prepareContextFrame(s.opts.UserID, s.opts.ClientIP, replay, authAccount)

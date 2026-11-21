@@ -39,7 +39,7 @@ func (p *poolState) selectRoute(req routing.Request) routeSelection {
 	if RoutingProfile(req.Profile) != RoutingLegacy {
 		decision := p.selectSmartRoute(req)
 		if req.Mode == routing.MatchModelFamily && req.ConversationID != "" && decision.Account != nil {
-			canonical := antigravityCanonicalModel(req.Model)
+			canonical := antigravityCanonicalModel(p.antigravity, req.Model)
 			p.mu.Lock()
 			err := p.pinForUserLocked(req.UserID, "antigravity:"+canonical+":"+req.ConversationID, decision.Account.ID, time.Now())
 			p.mu.Unlock()
@@ -277,7 +277,7 @@ func (p *poolState) describeTierSelection(req routing.Request, account *Account)
 	family := req.Mode == routing.MatchModelFamily
 	pinned := p.convPin[req.ConversationID] == account.ID
 	if family {
-		key := "antigravity:" + antigravityCanonicalModel(req.Model) + ":" + req.ConversationID
+		key := "antigravity:" + antigravityCanonicalModel(p.antigravity, req.Model) + ":" + req.ConversationID
 		pinned = pinned || p.convPin[key] == account.ID
 	}
 	if req.ConversationID != "" && pinned {

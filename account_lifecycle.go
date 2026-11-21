@@ -68,7 +68,7 @@ const maxAuthErrorLength = 200
 // ended, token reused or invalidated) on an account whose access token is
 // still usable. The account keeps serving traffic, but the operator must
 // relogin before the access token expires or the account goes dead silently.
-func markAccountNeedsLogin(a *Account, reason string) {
+func markAccountNeedsLogin(rt *antigravityRuntime, a *Account, reason string) {
 	if a == nil {
 		return
 	}
@@ -87,7 +87,7 @@ func markAccountNeedsLogin(a *Account, reason string) {
 	a.mu.Unlock()
 
 	log.Printf("account %s needs relogin: %s", accountID, reason)
-	if err := saveAccount(a); err != nil {
+	if err := saveAccount(rt, a); err != nil {
 		log.Printf("warning: failed to save needs-login state for account %s: %v", accountID, err)
 	}
 }
@@ -110,7 +110,7 @@ func clearAccountNeedsLogin(a *Account) {
 
 // persistDeadAccount retires an account once. Repeating the write is what made
 // the pool watcher hot-reload every minute after a refresh token was revoked.
-func persistDeadAccount(a *Account, reason string) {
+func persistDeadAccount(rt *antigravityRuntime, a *Account, reason string) {
 	if a == nil {
 		return
 	}
@@ -129,7 +129,7 @@ func persistDeadAccount(a *Account, reason string) {
 	}
 
 	log.Printf("marking account %s as dead: %s", accountID, reason)
-	if err := saveAccount(a); err != nil {
+	if err := saveAccount(rt, a); err != nil {
 		log.Printf("warning: failed to save dead account %s: %v", accountID, err)
 	}
 }
@@ -178,7 +178,7 @@ func applyProxyAuthFailure(a *Account, refreshFailed bool) (markedDead bool, pen
 // restoreValidatedAccount clears stale retirement state after a provider-specific
 // credential check succeeds. The validation request is the authority for static
 // API keys; a historical proxied 401 is not.
-func restoreValidatedAccount(a *Account, validation string) {
+func restoreValidatedAccount(rt *antigravityRuntime, a *Account, validation string) {
 	if a == nil {
 		return
 	}
@@ -199,7 +199,7 @@ func restoreValidatedAccount(a *Account, validation string) {
 	if strings.TrimSpace(a.File) == "" {
 		return
 	}
-	if err := saveAccount(a); err != nil {
+	if err := saveAccount(rt, a); err != nil {
 		log.Printf("warning: failed to persist restored account %s: %v", accountID, err)
 	}
 }
@@ -235,7 +235,7 @@ func (h *proxyHandler) disableAccountPermanently(a *Account, reqID string, reaso
 		log.Printf("%sdisabling account %s permanently: %s", prefix, accountID, reason)
 	}
 
-	if err := saveAccount(a); err != nil {
+	if err := saveAccount(h.pool.antigravity, a); err != nil {
 		log.Printf("%swarning: failed to persist disabled account %s: %v", prefix, accountID, err)
 	}
 }

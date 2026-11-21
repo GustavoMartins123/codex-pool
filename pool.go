@@ -361,7 +361,11 @@ type ClaudeOAuthData struct {
 
 func loadPool(dir string, registry *ProviderRegistry, vault credentialVault) ([]*Account, error) {
 	var accs []*Account
-	antigravityModels.Reset()
+	if registry != nil {
+		if provider, ok := registry.ForType(AccountTypeAntigravity).(*AntigravityProvider); ok && provider != nil {
+			provider.antigravityRuntime().models.Reset()
+		}
+	}
 
 	// Load accounts from provider subdirectories: pool/codex/, pool/claude/, pool/gemini/
 	providerDirs := map[string]AccountType{
@@ -470,6 +474,7 @@ const (
 type poolState struct {
 	catalogVerifications map[string]modelVerification
 
+	antigravity          *antigravityRuntime
 	accountAuthority     *PassportStore
 	catalogScoped        bool
 	catalogAccountAllows func(*Account, string) bool
@@ -491,6 +496,7 @@ func newPoolState(accs []*Account, debug bool) *poolState {
 		accounts: accs, convPin: map[string]string{}, convOwner: map[string]string{}, convUpdatedAt: map[string]time.Time{}, debug: debug, tierThreshold: 0.50,
 		routing: newRoutingPolicySet(RoutingConfigFile{}), routingTelemetry: make(map[string]routingTelemetry),
 		circuitBreakers: routing.NewCircuitBreakerManager(),
+		antigravity:     newAntigravityRuntime(),
 	}
 }
 
@@ -567,7 +573,7 @@ func accountPlanCheckDue(a *Account, now time.Time) bool {
 	return true
 }
 
-func updateAccountPlan(a *Account, plan string) {
+func updateAccountPlan(rt *antigravityRuntime, a *Account, plan string) {
 	a.mu.Lock()
 	previous := a.PlanType
 	a.PlanType = plan
@@ -576,7 +582,7 @@ func updateAccountPlan(a *Account, plan string) {
 		return
 	}
 	log.Printf("%s account %s plan changed: %s -> %s", a.Type, a.ID, previous, plan)
-	if err := saveAccount(a); err != nil {
+	if err := saveAccount(rt, a); err != nil {
 		log.Printf("save %s plan change: %v", a.ID, err)
 	}
 }
@@ -657,7 +663,7 @@ func (p *poolState) hasRoutableAccountOfType(accountType AccountType, exclude ma
 			continue
 		}
 		a.mu.Lock()
-		ok := accountAvailableForRoutingLocked(a, now)
+		ok := accountAvailableForRoutingLocked(p.antigravity, a, now)
 		a.mu.Unlock()
 		if ok {
 			return true
@@ -1070,7 +1076,7 @@ func (p *poolState) allAccounts() []*Account {
 }
 
 // saveAccount persists the account back to its auth.json file.
-func saveAccount(a *Account) error {
+func saveAccount(rt *antigravityRuntime, a *Account) error {
 	if a == nil {
 		return fmt.Errorf("nil account")
 	}
@@ -1082,7 +1088,7 @@ func saveAccount(a *Account) error {
 	case AccountTypeGemini:
 		return saveGeminiAccount(a)
 	case AccountTypeAntigravity:
-		return saveAntigravityAccount(a)
+		return saveAntigravityAccount(rt, a)
 	case AccountTypeClaude:
 		return saveClaudeAccount(a)
 	case AccountTypeKimi:

@@ -61,7 +61,16 @@ func newAntigravityReplayCache(ttl time.Duration, maxEntries int) *antigravityRe
 	}
 }
 
-var antigravityNativeReplay = newAntigravityReplayCache(antigravityReplayTTL, antigravityReplayMaxEntries)
+// initLocked lets a zero-value cache embedded in proxyHandler initialize on first use.
+func (c *antigravityReplayCache) initLocked() {
+	if c.entries != nil {
+		return
+	}
+	c.ttl = antigravityReplayTTL
+	c.maxEntries = antigravityReplayMaxEntries
+	c.entries = make(map[string]antigravityReplayEntry)
+	c.now = time.Now
+}
 
 func antigravityReplayScopeFromBody(body []byte) antigravityReplayScope {
 	var root map[string]any
@@ -103,15 +112,7 @@ func antigravityStableReplaySession(request map[string]any) string {
 	return ""
 }
 
-// antigravityApplyNativeReplay restores native Gemini signatures and function
-// call parts before a translated request is sent upstream.
-func antigravityApplyNativeReplay(body []byte) ([]byte, antigravityReplayScope, bool) {
-	scope := antigravityReplayScopeFromBody(body)
-	updated, changed := antigravityNativeReplay.apply(scope, body)
-	return updated, scope, changed
-}
-
-func antigravityScopedReplay(body []byte, conversationID string, epoch uint64, fresh bool) ([]byte, antigravityReplayScope, bool) {
+func (h *proxyHandler) antigravityScopedReplay(body []byte, conversationID string, epoch uint64, fresh bool) ([]byte, antigravityReplayScope, bool) {
 	scope := antigravityReplayScopeFromBody(body)
 	if conversationID != "" {
 		scope.ConversationID = conversationID
@@ -121,20 +122,20 @@ func antigravityScopedReplay(body []byte, conversationID string, epoch uint64, f
 	if fresh {
 		return body, scope, false
 	}
-	updated, changed := antigravityNativeReplay.apply(scope, body)
+	updated, changed := h.antigravityReplay.apply(scope, body)
 	return updated, scope, changed
 }
 
 // antigravityCaptureNativeReplay records signed upstream parts. It accepts one
 // SSE JSON payload or a collected response body.
-func antigravityCaptureNativeReplay(scope antigravityReplayScope, requestBody, responseBody []byte) bool {
-	return antigravityNativeReplay.capture(scope, requestBody, responseBody)
+func (h *proxyHandler) antigravityCaptureNativeReplay(scope antigravityReplayScope, requestBody, responseBody []byte) bool {
+	return h.antigravityReplay.capture(scope, requestBody, responseBody)
 }
 
 // antigravityClearNativeReplayOnError discards stale native state only when
 // Gemini rejects a signature.
-func antigravityClearNativeReplayOnError(scope antigravityReplayScope, status int, body []byte) bool {
-	return antigravityNativeReplay.clearForInvalidSignature(scope, status, body)
+func (h *proxyHandler) antigravityClearNativeReplayOnError(scope antigravityReplayScope, status int, body []byte) bool {
+	return h.antigravityReplay.clearForInvalidSignature(scope, status, body)
 }
 
 func (c *antigravityReplayCache) key(scope antigravityReplayScope) string {
@@ -148,12 +149,17 @@ func (c *antigravityReplayCache) key(scope antigravityReplayScope) string {
 }
 
 func (c *antigravityReplayCache) get(scope antigravityReplayScope, now time.Time) (antigravityReplayEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.initLocked()
+	return c.getLocked(scope, now)
+}
+
+func (c *antigravityReplayCache) getLocked(scope antigravityReplayScope, now time.Time) (antigravityReplayEntry, bool) {
 	key := c.key(scope)
 	if key == "" {
 		return antigravityReplayEntry{}, false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
 	if !ok {
 		return antigravityReplayEntry{}, false
@@ -214,9 +220,10 @@ func (c *antigravityReplayCache) capture(scope antigravityReplayScope, requestBo
 		return false
 	}
 
-	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.initLocked()
+	now := c.now()
 	entry := c.entries[key]
 	entry.Timestamp = now
 	for _, replay := range captured {
@@ -270,7 +277,10 @@ func antigravityReplayFunctionCallID(part map[string]any) string {
 }
 
 func (c *antigravityReplayCache) apply(scope antigravityReplayScope, body []byte) ([]byte, bool) {
-	entry, ok := c.get(scope, c.now())
+	c.mu.Lock()
+	c.initLocked()
+	entry, ok := c.getLocked(scope, c.now())
+	c.mu.Unlock()
 	if !ok {
 		return body, false
 	}

@@ -222,7 +222,7 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 	acc.AuthError = ""
 	acc.mu.Unlock()
 
-	return saveAccount(acc)
+	return saveAccount(nil, acc)
 }
 
 func (p *CodexProvider) ParseUsage(obj map[string]any) *RequestUsage {

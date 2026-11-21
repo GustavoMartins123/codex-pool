@@ -79,22 +79,22 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 	// Antigravity requires an actual discovery for this account. The global
 	// catalog's substitute entries must never establish a member entitlement.
 	antigravityEntitlements := make(map[string]map[string]bool)
-	antigravityModels.mu.RLock()
+	h.pool.antigravity.models.mu.RLock()
 	for account := range access {
 		if account.Type != AccountTypeAntigravity {
 			continue
 		}
 		models := make(map[string]bool)
-		for id := range antigravityModels.accounts[account.ID].Models {
+		for id := range h.pool.antigravity.models.accounts[account.ID].Models {
 			models[id] = true
 		}
 		antigravityEntitlements[account.ID] = models
 	}
-	antigravityModels.mu.RUnlock()
+	h.pool.antigravity.models.mu.RUnlock()
 
 	// Copy only catalog and quota fields, without credentials or a copied mutex.
 	// Each live account is locked once; later model scans use detached values.
-	visible := &poolState{catalogScoped: true, catalogVerifications: verifications}
+	visible := &poolState{catalogScoped: true, catalogVerifications: verifications, antigravity: h.pool.antigravity}
 	detachedAccess := make(map[*Account]memberQuotaAccess, len(access))
 	for _, account := range accounts {
 		a, ok := access[account]

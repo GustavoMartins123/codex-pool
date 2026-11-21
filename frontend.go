@@ -218,7 +218,7 @@ func (h *proxyHandler) generateCuteCodeSettingsForToken(token string, r *http.Re
 	if err != nil {
 		return nil, err
 	}
-	return generateCuteCodeSettingsJSON(publicURL, claudeAuth.AccessToken)
+	return generateCuteCodeSettingsJSON(h.pool.antigravity, publicURL, claudeAuth.AccessToken)
 }
 
 func (h *proxyHandler) serveCuteCodeSettingsConfig(w http.ResponseWriter, r *http.Request) {
@@ -2283,7 +2283,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			status = "needs_login"
 		} else if needsVerification {
 			status = "verification_required"
-		} else if accountCoolingDownLocked(acc, stats.GeneratedAt) || accountUsageExhaustedLocked(acc) {
+		} else if accountCoolingDownLocked(acc, stats.GeneratedAt) || accountUsageExhaustedLocked(h.pool.antigravity, acc) {
 			status = "cooldown"
 		} else if healthBlocked || acc.Penalty > 2.0 {
 			status = "degraded"

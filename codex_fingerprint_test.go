@@ -69,7 +69,7 @@ func TestCaptureCodexResponseStatePersistsCloudflareCookies(t *testing.T) {
 	resp.Header.Add("Set-Cookie", "cf_clearance=abc; Path=/; HttpOnly")
 	resp.Header.Add("Set-Cookie", "session=skip; Path=/")
 
-	captureCodexResponseState(acc, resp, "test")
+	captureCodexResponseState(nil, acc, resp, "test")
 	if got := acc.codex.Cookies["cf_clearance"]; got != "abc" {
 		t.Fatalf("cf_clearance = %q, want abc", got)
 	}

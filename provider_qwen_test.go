@@ -89,7 +89,7 @@ func TestQwenDiscoveryFailureClearsCatalogAndRecovers(t *testing.T) {
 	account := &Account{ID: "qwen", Type: AccountTypeQwen, vault: plainTestVault(), File: path, AccessToken: "sk-sp-discovery-test-key", Models: map[string]DiscoveredModel{"qwen-old": {ID: "qwen-old"}}}
 	h := qwenTestHandler(t, nil, account)
 	failed := roundTripFunc(func(*http.Request) (*http.Response, error) { return qwenJSONResponse(503, `{}`), nil })
-	if syncProviderModels(context.Background(), failed, h.registry, account) == nil || len(account.Models) != 0 || account.HealthError == "" {
+	if syncProviderModels(context.Background(), nil, failed, h.registry, account) == nil || len(account.Models) != 0 || account.HealthError == "" {
 		t.Fatal("failed discovery kept a usable Qwen catalog")
 	}
 	if h.pool.selectRoute(routing.Request{Provider: string(AccountTypeQwen), Model: "qwen-old", Profile: string(RoutingLegacy)}).Account != nil {
@@ -98,7 +98,7 @@ func TestQwenDiscoveryFailureClearsCatalogAndRecovers(t *testing.T) {
 	good := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return qwenJSONResponse(200, `{"data":[{"id":"qwen-new"}]}`), nil
 	})
-	if err := syncProviderModels(context.Background(), good, h.registry, account); err != nil || account.HealthError != "" || len(account.Models) != 1 {
+	if err := syncProviderModels(context.Background(), nil, good, h.registry, account); err != nil || account.HealthError != "" || len(account.Models) != 1 {
 		t.Fatalf("Qwen discovery did not recover: %v", err)
 	}
 	if isOpencodeGoModel("qwen3.8-max") || !isOpencodeGoModel("opencode-go/qwen3.8-max") {

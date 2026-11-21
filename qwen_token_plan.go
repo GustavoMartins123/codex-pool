@@ -272,7 +272,7 @@ func (h *proxyHandler) fetchQwenCreditUsage(ctx context.Context, now time.Time, 
 	} else {
 		account.Usage = UsageSnapshot{Source: "qwen-token-plan", RetrievedAt: now, primarySet: true, secondarySet: true, creditsSet: true}
 	}
-	if saveErr := saveAccount(account); saveErr != nil {
+	if saveErr := saveAccount(h.pool.antigravity, account); saveErr != nil {
 		return errors.Join(err, saveErr)
 	}
 	return err

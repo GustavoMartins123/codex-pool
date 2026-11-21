@@ -101,7 +101,7 @@ func TestRestoreValidatedStaticAccountPersistsHealthyState(t *testing.T) {
 	}
 	account := &Account{ID: "minimax", Type: AccountTypeMinimax, vault: plainTestVault(), File: path, AccessToken: "secret", Dead: true, Penalty: 100}
 
-	restoreValidatedAccount(account, "test")
+	restoreValidatedAccount(nil, account, "test")
 
 	if account.Dead || account.Penalty != 0 {
 		t.Fatalf("account state = dead %v penalty %v", account.Dead, account.Penalty)
@@ -122,7 +122,7 @@ func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
 	}
 	acc := &Account{ID: "codex", Type: AccountTypeCodex, vault: plainTestVault(), File: path, AccessToken: "a", RefreshToken: "r"}
 
-	markAccountNeedsLogin(acc, "refresh failed: 400 Bad Request: invalid_grant")
+	markAccountNeedsLogin(nil, acc, "refresh failed: 400 Bad Request: invalid_grant")
 
 	if !acc.NeedsLogin || acc.AuthError == "" {
 		t.Fatalf("needs login marker missing: %+v", acc)
@@ -149,7 +149,7 @@ func TestMarkAccountNeedsLoginPersistsAndReloads(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"tokens":{"access_token":"a","refresh_token":"r"},"needs_login":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	markAccountNeedsLogin(acc, "refresh failed: 400 Bad Request: invalid_grant")
+	markAccountNeedsLogin(nil, acc, "refresh failed: 400 Bad Request: invalid_grant")
 	data, err = os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

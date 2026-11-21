@@ -138,7 +138,7 @@ func lookupModelMetadata(modelID string, pool *poolState) (ModelMetadata, bool) 
 	if strings.HasPrefix(lower, "antigravity/") || strings.Contains(lower, "gemini") {
 		canonical := strings.TrimPrefix(lower, "antigravity/")
 		if pool != nil {
-			for _, m := range antigravityModels.Models(pool) {
+			for _, m := range pool.antigravity.models.Models(pool) {
 				if strings.EqualFold(m.ID, canonical) || strings.EqualFold("antigravity/"+m.ID, modelID) {
 					return ModelMetadata{
 						ID:            "antigravity/" + m.ID,

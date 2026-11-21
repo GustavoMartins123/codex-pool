@@ -143,7 +143,7 @@ func TestFetchAntigravityModelsUsesDailyThenProductionAndEmptyBody(t *testing.T)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"models":{"gemini-live":{"displayName":"Gemini Live"}}}`)), Header: make(http.Header)}, nil
 	})
-	snapshot, err := fetchAntigravityModels(context.Background(), transport, &Account{AccessToken: "token", google: googleAccountState{ProjectID: "project-1"}}, daily, production)
+	snapshot, err := fetchAntigravityModels(context.Background(), newAntigravityRuntime(), transport, &Account{AccessToken: "token", google: googleAccountState{ProjectID: "project-1"}}, daily, production)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestAntigravityModelSelectionSkipsVerificationBlockedAccount(t *testing.T) 
 	healthy := &Account{Type: AccountTypeAntigravity, ID: "healthy-verification"}
 	pool := newPoolState([]*Account{blocked, healthy}, false)
 	for _, account := range []*Account{blocked, healthy} {
-		antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{model: {ID: model}}})
+		pool.antigravity.models.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{model: {ID: model}}})
 	}
 	if got := pool.selectRoute(routing.Request{Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity), Model: model, Profile: string(RoutingLegacy)}).Account; got != healthy {
 		t.Fatalf("selected %v, want healthy account", got)
@@ -201,7 +201,7 @@ func TestAntigravityModelSelectionSkipsVerificationBlockedAccount(t *testing.T) 
 func TestAntigravityModelCooldownDoesNotBlockAnotherModel(t *testing.T) {
 	account := &Account{Type: AccountTypeAntigravity, ID: "ag", google: googleAccountState{ModelRateLimits: map[string]time.Time{"gemini-a": time.Now().Add(time.Hour)}}}
 	pool := newPoolState([]*Account{account}, false)
-	antigravityModels.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-a": {ID: "gemini-a"}, "gemini-b": {ID: "gemini-b"}}})
+	pool.antigravity.models.ReplaceAccount(account.ID, AntigravityAccountSnapshot{FetchedAt: time.Now(), Models: map[string]AntigravityModelInfo{"gemini-a": {ID: "gemini-a"}, "gemini-b": {ID: "gemini-b"}}})
 	req := routing.Request{Mode: routing.MatchModelFamily, Provider: string(AccountTypeAntigravity), Model: "gemini-a", Profile: string(RoutingLegacy)}
 	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatalf("cooling model selected account %#v", got)
@@ -212,21 +212,10 @@ func TestAntigravityModelCooldownDoesNotBlockAnotherModel(t *testing.T) {
 	}
 }
 
-func registerTestAntigravityModels(t *testing.T, accountID string, models ...string) {
-	t.Helper()
-	previous, existed := antigravityModels.AccountSnapshot(accountID)
-	t.Cleanup(func() {
-		antigravityModels.mu.Lock()
-		defer antigravityModels.mu.Unlock()
-		if existed {
-			antigravityModels.accounts[accountID] = previous
-		} else {
-			delete(antigravityModels.accounts, accountID)
-		}
-	})
+func registerTestAntigravityModels(rt *antigravityRuntime, accountID string, models ...string) {
 	snapshot := AntigravityAccountSnapshot{Models: make(map[string]AntigravityModelInfo, len(models))}
 	for _, model := range models {
 		snapshot.Models[model] = AntigravityModelInfo{ID: model, DisplayName: model}
 	}
-	antigravityModels.ReplaceAccount(accountID, snapshot)
+	rt.models.ReplaceAccount(accountID, snapshot)
 }

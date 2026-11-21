@@ -1852,11 +1852,11 @@ func extractAssistantTextFromResponseSample(sample []byte) string {
 	return strings.TrimSpace(completed)
 }
 
-func compactAntigravityRequestBody(path string, body []byte) ([]byte, bool, error) {
-	return compactAntigravityRequestBodyWithRecentTokens(path, body, antigravityNormalRecentTokens)
+func compactAntigravityRequestBody(rt *antigravityRuntime, path string, body []byte) ([]byte, bool, error) {
+	return compactAntigravityRequestBodyWithRecentTokens(rt, path, body, antigravityNormalRecentTokens)
 }
 
-func compactAntigravityRequestBodyWithRecentTokens(path string, body []byte, recentTokens int) ([]byte, bool, error) {
+func compactAntigravityRequestBodyWithRecentTokens(rt *antigravityRuntime, path string, body []byte, recentTokens int) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
 	}
@@ -1873,7 +1873,7 @@ func compactAntigravityRequestBodyWithRecentTokens(path string, body []byte, rec
 	if len(messages) == 0 {
 		return body, false, nil
 	}
-	originalTokens := estimateAntigravityRequestTokens(path, body)
+	originalTokens := estimateAntigravityRequestTokens(rt, path, body)
 	if originalTokens == 0 {
 		originalTokens = estimateContextTokens(messages)
 	}
@@ -1915,7 +1915,7 @@ func compactAntigravityRequestBodyWithRecentTokens(path string, body []byte, rec
 		if err != nil {
 			return body, false, err
 		}
-		candidateTokens := estimateAntigravityRequestTokens(path, encoded)
+		candidateTokens := estimateAntigravityRequestTokens(rt, path, encoded)
 		if candidateTokens == 0 {
 			candidateTokens = estimateContextTokens(compacted)
 		}
@@ -1952,7 +1952,7 @@ func (h *proxyHandler) prepareProviderContextHandoff(
 		return nil, err
 	}
 	if target == AccountTypeAntigravity {
-		compacted, didCompact, compactErr := compactAntigravityRequestBody(path, rewritten)
+		compacted, didCompact, compactErr := compactAntigravityRequestBody(h.pool.antigravity, path, rewritten)
 		if compactErr != nil {
 			return nil, compactErr
 		}

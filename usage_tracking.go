@@ -163,7 +163,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 						continue
 					}
 					if isPermanentRefreshTokenError(err) {
-						markAccountNeedsLogin(a, err.Error())
+						markAccountNeedsLogin(h.pool.antigravity, a, err.Error())
 					}
 					log.Printf("proactive refresh for %s failed: %v", a.ID, err)
 				} else {
@@ -178,7 +178,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 				}
 			}
 			if accType == AccountTypeAntigravity {
-				if snapshot, ok := antigravityModels.AccountSnapshot(a.ID); ok {
+				if snapshot, ok := h.pool.antigravity.models.AccountSnapshot(a.ID); ok {
 					a.mu.Lock()
 					a.Usage = extractAntigravityAccountUsage(snapshot)
 					a.mu.Unlock()
@@ -238,7 +238,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 						continue
 					}
 					if isPermanentRefreshTokenError(err) {
-						markAccountNeedsLogin(a, err.Error())
+						markAccountNeedsLogin(h.pool.antigravity, a, err.Error())
 					}
 					log.Printf("proactive refresh for %s failed: %v", a.ID, err)
 				} else {
@@ -298,7 +298,7 @@ func (h *proxyHandler) fetchGrokUsage(now time.Time, a *Account) error {
 	a.Usage = mergeUsage(a.Usage, snap)
 	a.mu.Unlock()
 	log.Printf("grok usage fetch %s: monthly=%.1f%% weekly=%.1f%%", a.ID, usagePrimaryUsed(snap)*100, usageSecondaryUsed(snap)*100)
-	restoreValidatedAccount(a, "Grok billing API")
+	restoreValidatedAccount(h.pool.antigravity, a, "Grok billing API")
 	return nil
 }
 
@@ -349,13 +349,13 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 			}
 			if isPermanentRefreshTokenError(err) {
 				if retireAfterRefreshFail(a, err, now) {
-					persistDeadAccount(a, "refresh token revoked/invalid")
+					persistDeadAccount(h.pool.antigravity, a, "refresh token revoked/invalid")
 					return fmt.Errorf("refresh token invalid: %w", err)
 				}
 				a.mu.Lock()
 				a.RefreshBlocked = true
 				a.mu.Unlock()
-				markAccountNeedsLogin(a, errStr)
+				markAccountNeedsLogin(h.pool.antigravity, a, errStr)
 				log.Printf("codex refresh token invalid for %s; continuing with live access token", a.ID)
 			}
 			// If refresh was rate limited, skip this usage fetch cycle entirely.
@@ -448,9 +448,9 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 				}
 				if isPermanentRefreshTokenError(err) {
 					if retireAfterRefreshFail(a, err, now) {
-						persistDeadAccount(a, "refresh token revoked")
+						persistDeadAccount(h.pool.antigravity, a, "refresh token revoked")
 					} else {
-						markAccountNeedsLogin(a, err.Error())
+						markAccountNeedsLogin(h.pool.antigravity, a, err.Error())
 					}
 					return fmt.Errorf("refresh token invalid: %w", err)
 				}
@@ -462,7 +462,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 			}
 		} else {
 			// No refresh token - mark as dead
-			persistDeadAccount(a, "no refresh token and usage 401/403")
+			persistDeadAccount(h.pool.antigravity, a, "no refresh token and usage 401/403")
 			return fmt.Errorf("usage unauthorized, no refresh token: %s", resp.Status)
 		}
 	}
@@ -485,7 +485,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 		whamSnap.CreditsBalance, _ = readFloatFromMap(credits, "balance")
 	}
 	if planType, ok := payload["plan_type"].(string); ok && planType != "" {
-		updateAccountPlan(a, normalizeCodexPlanType(planType))
+		updateAccountPlan(h.pool.antigravity, a, normalizeCodexPlanType(planType))
 	}
 	log.Printf("usage fetch %s: 5hr=%.1f%% weekly=%.1f%%", a.ID, usagePrimaryUsed(whamSnap)*100, usageSecondaryUsed(whamSnap)*100)
 	a.mu.Lock()
@@ -493,7 +493,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 	a.mu.Unlock()
 	// A successful authenticated WHAM response is provider-authoritative
 	// evidence that stale dead state is wrong.
-	restoreValidatedAccount(a, "Codex WHAM usage")
+	restoreValidatedAccount(h.pool.antigravity, a, "Codex WHAM usage")
 	return nil
 }
 
@@ -1235,7 +1235,7 @@ func (h *proxyHandler) fetchKimiUsage(now time.Time, a *Account) error {
 		a.Penalty += 100.0
 		a.mu.Unlock()
 		log.Printf("marking kimi account %s as dead: usage returned %d", a.ID, resp.StatusCode)
-		if err := saveAccount(a); err != nil {
+		if err := saveAccount(h.pool.antigravity, a); err != nil {
 			log.Printf("warning: failed to save dead kimi account %s: %v", a.ID, err)
 		}
 		return fmt.Errorf("kimi usage unauthorized: %s", resp.Status)
@@ -1312,7 +1312,7 @@ func (h *proxyHandler) fetchKimiUsage(now time.Time, a *Account) error {
 	a.mu.Lock()
 	a.Usage = mergeUsage(a.Usage, snap)
 	a.mu.Unlock()
-	restoreValidatedAccount(a, "Kimi usage API")
+	restoreValidatedAccount(h.pool.antigravity, a, "Kimi usage API")
 	return nil
 }
 
@@ -1347,7 +1347,7 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 		a.Penalty += 100.0
 		a.mu.Unlock()
 		log.Printf("marking minimax account %s as dead: seed returned %d", a.ID, resp.StatusCode)
-		if err := saveAccount(a); err != nil {
+		if err := saveAccount(h.pool.antigravity, a); err != nil {
 			log.Printf("warning: failed to save dead minimax account %s: %v", a.ID, err)
 		}
 		return fmt.Errorf("minimax seed unauthorized: %s", resp.Status)
@@ -1356,7 +1356,7 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 	// A successful model request proves the static credential is live, even when
 	// an older request-scoped 401 left a persisted dead flag behind.
 	applyMinimaxRateLimits(a, resp.Header, now)
-	restoreValidatedAccount(a, "MiniMax model")
+	restoreValidatedAccount(h.pool.antigravity, a, "MiniMax model")
 
 	return nil
 }
@@ -1389,7 +1389,7 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 		a.Penalty += 100.0
 		a.mu.Unlock()
 		log.Printf("marking zai account %s as dead: models returned %d", a.ID, resp.StatusCode)
-		if err := saveAccount(a); err != nil {
+		if err := saveAccount(h.pool.antigravity, a); err != nil {
 			log.Printf("warning: failed to save dead zai account %s: %v", a.ID, err)
 		}
 		return fmt.Errorf("zai models unauthorized: %s", resp.Status)
@@ -1444,8 +1444,8 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 	}
 	a.mu.Unlock()
 
-	restoreValidatedAccount(a, "Z.ai model API")
-	_ = saveAccount(a)
+	restoreValidatedAccount(h.pool.antigravity, a, "Z.ai model API")
+	_ = saveAccount(h.pool.antigravity, a)
 	return nil
 }
 

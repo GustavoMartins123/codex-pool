@@ -24,8 +24,8 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 	// so the scheduler resolves models through the real registry association
 	// (Supports/DiscoveryAvailability).
 	const accountID = "agy-e2e-account"
-	antigravityModels.Reset()
-	antigravityModels.ReplaceAccount(accountID, AntigravityAccountSnapshot{
+	rt := newAntigravityRuntime()
+	rt.models.ReplaceAccount(accountID, AntigravityAccountSnapshot{
 		FetchedAt:  time.Now(),
 		Deprecated: map[string]string{"gemini-3.1-pro-high": "gemini-pro-agent"},
 		Models: map[string]AntigravityModelInfo{
@@ -33,7 +33,6 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 			"gemini-pro-agent":      {ID: "gemini-pro-agent", DisplayName: "Gemini 3.1 Pro (High)"},
 		},
 	})
-	t.Cleanup(antigravityModels.Reset)
 
 	var mu sync.Mutex
 	upstreamCalls := make(map[string]int)
@@ -97,6 +96,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		recent:    newRecentErrors(5),
 		passport:  passport,
 	}
+	h.pool.antigravity = rt
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
 

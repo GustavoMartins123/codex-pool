@@ -123,7 +123,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		scoreTooltip := scoreTooltipFromBreakdownLocked(a, now, breakdown)
 		usage := a.Usage
 		totals := a.Totals
-		stateSnap := accountStateSnapshotLocked(a, now)
+		stateSnap := accountStateSnapshotLocked(h.pool.antigravity, a, now)
 		a.mu.Unlock()
 
 		out = append(out, row{
@@ -313,7 +313,7 @@ func (h *proxyHandler) setAccountDisabled(w http.ResponseWriter, accountID strin
 	previous := target.Disabled
 	target.Disabled = disabled
 	target.mu.Unlock()
-	if err := saveAccount(target); err != nil {
+	if err := saveAccount(h.pool.antigravity, target); err != nil {
 		target.mu.Lock()
 		target.Disabled = previous
 		target.mu.Unlock()
@@ -440,9 +440,9 @@ func (h *proxyHandler) forceRefreshAccount(w http.ResponseWriter, accountID stri
 		log.Printf("force refresh %s failed: %v", accountID, err)
 		if isPermanentRefreshTokenError(err) {
 			if retireAfterRefreshFail(target, err, time.Now()) {
-				persistDeadAccount(target, "refresh token revoked/invalid")
+				persistDeadAccount(h.pool.antigravity, target, "refresh token revoked/invalid")
 			} else {
-				markAccountNeedsLogin(target, err.Error())
+				markAccountNeedsLogin(h.pool.antigravity, target, err.Error())
 			}
 		}
 		respondJSONError(w, http.StatusInternalServerError, "refresh failed: "+err.Error())

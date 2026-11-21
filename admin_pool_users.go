@@ -155,7 +155,7 @@ func (h *proxyHandler) serveConfigDownload(w http.ResponseWriter, r *http.Reques
 		if codexAuth.Tokens != nil {
 			codexAccessToken = codexAuth.Tokens.AccessToken
 		}
-		modelsJSON, err := generatePiModelsJSON(publicURL, codexAccessToken, auth.AccessToken)
+		modelsJSON, err := generatePiModelsJSON(h.pool.antigravity, publicURL, codexAccessToken, auth.AccessToken)
 		if err != nil {
 			respondJSONError(w, http.StatusInternalServerError, err.Error())
 			return

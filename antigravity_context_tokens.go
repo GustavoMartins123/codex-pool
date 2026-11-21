@@ -23,7 +23,7 @@ const (
 	antigravityJSONScalarTokens    = 2
 )
 
-func estimateAntigravityRequestTokens(path string, body []byte) int {
+func estimateAntigravityRequestTokens(rt *antigravityRuntime, path string, body []byte) int {
 	var root map[string]any
 	if json.Unmarshal(body, &root) != nil {
 		return 0
@@ -33,7 +33,7 @@ func estimateAntigravityRequestTokens(path string, body []byte) int {
 		model = antigravityModelFromGeminiPath(path)
 	}
 	if model != "" {
-		if prepared, err := prepareAntigravityRequest(path, body, model, "token-estimate", ""); err == nil {
+		if prepared, err := prepareAntigravityRequest(rt, path, body, model, "token-estimate", ""); err == nil {
 			if tokens := estimateAntigravitySerializedTokens(prepared.Body); tokens > 0 {
 				return tokens
 			}

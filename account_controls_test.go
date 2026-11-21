@@ -67,7 +67,7 @@ func TestAccountControlsPersistAndEnforcePinnedDraining(t *testing.T) {
 	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatal("restart lost maintenance")
 	}
-	restoreValidatedAccount(a, "test")
+	restoreValidatedAccount(nil, a, "test")
 	if got := pool.selectRoute(req).Account; got != nil {
 		t.Fatal("refresh bypassed maintenance")
 	}

@@ -345,7 +345,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 				acc.Penalty += 100.0
 				acc.mu.Unlock()
 				log.Printf("[%s] marking account %s as DEAD: %s", reqID, acc.ID, safeText(errBody))
-				if err := saveAccount(acc); err != nil {
+				if err := saveAccount(h.pool.antigravity, acc); err != nil {
 					log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 				}
 				lastErr = fmt.Errorf("account deactivated: %s", safeText(errBody))
@@ -364,7 +364,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 				markedDead, penaltyNow := applyProxyAuthFailure(acc, refreshFailed)
 				if markedDead {
 					log.Printf("[%s] account %s DEAD: %d refresh failed, body=%s", reqID, acc.ID, resp.StatusCode, safeText(errBody))
-					if err := saveAccount(acc); err != nil {
+					if err := saveAccount(h.pool.antigravity, acc); err != nil {
 						log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
 					}
 				} else {

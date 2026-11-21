@@ -90,7 +90,7 @@ func (h *proxyHandler) handleMyAccounts(w http.ResponseWriter, r *http.Request) 
 				view.State = "unavailable"
 			} else {
 				account.mu.Lock()
-				view.State = strings.ToLower(string(accountLifecycleStateLocked(account, time.Now())))
+				view.State = strings.ToLower(string(accountLifecycleStateLocked(h.pool.antigravity, account, time.Now())))
 				account.mu.Unlock()
 			}
 		}

@@ -380,7 +380,7 @@ func (p *poolState) selectSmartRoute(req routing.Request) routeSelection {
 	model := req.Model
 	accountType := AccountType(req.Provider)
 	if accountType == AccountTypeAntigravity {
-		if canonical := antigravityCanonicalModel(model); canonical != "" {
+		if canonical := antigravityCanonicalModel(p.antigravity, model); canonical != "" {
 			model = canonical
 		}
 	}
@@ -402,8 +402,8 @@ func (p *poolState) selectSmartRoute(req routing.Request) routeSelection {
 			eligible = quotaAllowsRouteLocked(account)
 		}
 		if eligible && account.Type == AccountTypeAntigravity {
-			discoveryAvailable, _ := antigravityModels.DiscoveryAvailability(account.ID, model, now)
-			eligible = antigravityModels.Supports(account.ID, model) &&
+			discoveryAvailable, _ := p.antigravity.models.DiscoveryAvailability(account.ID, model, now)
+			eligible = p.antigravity.models.Supports(account.ID, model) &&
 				!antigravityModelCooldownLocked(account, model).After(now) && discoveryAvailable
 		} else if eligible && requiresDiscovery {
 			_, eligible = accountDiscoveredModel(account, model)

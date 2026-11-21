@@ -430,7 +430,7 @@ func (h *proxyHandler) fetchOpencodeGoUsage(now time.Time, a *Account) error {
 		a.Penalty += 100.0
 		a.mu.Unlock()
 		log.Printf("marking opencode-go account %s as dead: usage returned %d", a.ID, resp.StatusCode)
-		if err := saveAccount(a); err != nil {
+		if err := saveAccount(h.pool.antigravity, a); err != nil {
 			log.Printf("warning: failed to save dead opencode-go account %s: %v", a.ID, err)
 		}
 		return fmt.Errorf("opencode-go usage unauthorized: %s", resp.Status)
@@ -463,6 +463,6 @@ func (h *proxyHandler) fetchOpencodeGoUsage(now time.Time, a *Account) error {
 	log.Printf("opencode-go usage fetch %s: rolling=%.1f%% weekly=%.1f%% monthly=%.1f%% limited=%v",
 		a.ID, state.snapshot.PrimaryUsedPercent*100, state.snapshot.SecondaryUsedPercent*100,
 		state.monthlyPct*100, state.limited)
-	restoreValidatedAccount(a, "OpenCode Go usage API")
+	restoreValidatedAccount(h.pool.antigravity, a, "OpenCode Go usage API")
 	return nil
 }
