@@ -194,8 +194,10 @@ export function focusedQuotaAccount(account: AccountStats): AccountStats {
 }
 
 
+// A window the family does not report is left out: Gemini 4 Argon has only a
+// weekly limit, and Claude/GPT drops its 5-hour limit once the weekly one is hit.
 function QuotaFamilyWindow({ label, window }: { label: string; window?: AccountQuotaWindow }) {
-  if (!window) return <span className="quota-family-window unavailable"><b>{label}</b><small>NOT REPORTED</small></span>;
+  if (!window) return null;
   return <span className="quota-family-window"><b>{label}</b><strong>{window.used_pct.toFixed(0)}%</strong><small>{formatReset(window.reset_minutes)}</small></span>;
 }
 
