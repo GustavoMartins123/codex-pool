@@ -64,13 +64,16 @@ func TestClaudeExchangeIdentifiesAccount(t *testing.T) {
 				return &http.Response{StatusCode: tc.profileStatus, Status: http.StatusText(tc.profileStatus), Body: io.NopCloser(strings.NewReader(tc.profileBody))}, nil
 			})}
 			attachContributionFixture(t, h, "alice")
-			claudeOAuthSessions.Lock()
-			claudeOAuthSessions.sessions["synthetic-verifier"] = &ClaudeOAuthSession{ActorID: "alice", State: "session-state", CreatedAt: time.Now()}
-			claudeOAuthSessions.Unlock()
+			h.claudeOAuth.Lock()
+			if h.claudeOAuth.sessions == nil {
+				h.claudeOAuth.sessions = make(map[string]*ClaudeOAuthSession)
+			}
+			h.claudeOAuth.sessions["synthetic-verifier"] = &ClaudeOAuthSession{ActorID: "alice", State: "session-state", CreatedAt: time.Now()}
+			h.claudeOAuth.Unlock()
 			t.Cleanup(func() {
-				claudeOAuthSessions.Lock()
-				delete(claudeOAuthSessions.sessions, "synthetic-verifier")
-				claudeOAuthSessions.Unlock()
+				h.claudeOAuth.Lock()
+				delete(h.claudeOAuth.sessions, "synthetic-verifier")
+				h.claudeOAuth.Unlock()
 			})
 			r := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/claude/exchange", strings.NewReader(`{"code":"synthetic-code#session-state","verifier":"synthetic-verifier"}`))
 			r.Header.Set("Content-Type", "application/json")
@@ -138,9 +141,9 @@ func startClaudeReloginTest(t *testing.T, h *proxyHandler, account *Account, act
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		claudeOAuthSessions.Lock()
-		delete(claudeOAuthSessions.sessions, result["verifier"])
-		claudeOAuthSessions.Unlock()
+		h.claudeOAuth.Lock()
+		delete(h.claudeOAuth.sessions, result["verifier"])
+		h.claudeOAuth.Unlock()
 	})
 	return result
 }
@@ -156,9 +159,9 @@ func TestClaudeReloginReplacesCredentialsInPlace(t *testing.T) {
 	if login["account_id"] != account.ID || authorizeURL.Query().Get("state") != login["state"] || authorizeURL.Query().Get("code_challenge") == "" {
 		t.Fatal("relogin did not return a bound PKCE session")
 	}
-	claudeOAuthSessions.RLock()
-	session := claudeOAuthSessions.sessions[login["verifier"]]
-	claudeOAuthSessions.RUnlock()
+	h.claudeOAuth.RLock()
+	session := h.claudeOAuth.sessions[login["verifier"]]
+	h.claudeOAuth.RUnlock()
 	if session.ActorID != "alice" || session.ReloginAccountID != account.ID {
 		t.Fatalf("session binding: %+v", session)
 	}
@@ -291,9 +294,9 @@ func TestClaudeReloginExchangeRejectsInvalidSessionsAndCredentials(t *testing.T)
 			case "missing access token":
 				token.AccessToken, wantExchanges = "", 1
 			case "expired session":
-				claudeOAuthSessions.Lock()
-				claudeOAuthSessions.sessions[login["verifier"]].CreatedAt = time.Now().Add(-11 * time.Minute)
-				claudeOAuthSessions.Unlock()
+				h.claudeOAuth.Lock()
+				h.claudeOAuth.sessions[login["verifier"]].CreatedAt = time.Now().Add(-11 * time.Minute)
+				h.claudeOAuth.Unlock()
 			case "another actor":
 				actor = addAuthorityPrincipal(t, h.passport, "bob", PrincipalOperator)
 				want = http.StatusForbidden

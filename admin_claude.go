@@ -16,10 +16,10 @@ import (
 // Claude account admin handlers - JSON API only
 
 // In-memory store for pending OAuth sessions
-var claudeOAuthSessions = struct {
+type claudeOAuthSessions struct {
 	sync.RWMutex
 	sessions map[string]*ClaudeOAuthSession
-}{sessions: make(map[string]*ClaudeOAuthSession)}
+}
 
 // serveClaudeAdmin routes Claude admin requests (auth already checked by router)
 func (h *proxyHandler) serveClaudeAdmin(w http.ResponseWriter, r *http.Request) {
@@ -388,12 +388,15 @@ func (h *proxyHandler) startClaudeOAuth(w http.ResponseWriter, r *http.Request, 
 	session.ReloginAccountID = reloginAccountID
 
 	// Store session
-	claudeOAuthSessions.Lock()
-	claudeOAuthSessions.sessions[session.PKCE.Verifier] = session
-	claudeOAuthSessions.Unlock()
+	h.claudeOAuth.Lock()
+	if h.claudeOAuth.sessions == nil {
+		h.claudeOAuth.sessions = make(map[string]*ClaudeOAuthSession)
+	}
+	h.claudeOAuth.sessions[session.PKCE.Verifier] = session
+	h.claudeOAuth.Unlock()
 
 	// Clean up old sessions
-	go cleanupOldSessions()
+	go h.cleanupOldSessions()
 
 	respondJSON(w, map[string]any{
 		"oauth_url":  authURL,
@@ -440,12 +443,12 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Look up session
-	claudeOAuthSessions.Lock()
-	session, ok := claudeOAuthSessions.sessions[verifier]
+	h.claudeOAuth.Lock()
+	session, ok := h.claudeOAuth.sessions[verifier]
 	if ok && session.ActorID == providerContributionActor(r) {
-		delete(claudeOAuthSessions.sessions, verifier)
+		delete(h.claudeOAuth.sessions, verifier)
 	}
-	claudeOAuthSessions.Unlock()
+	h.claudeOAuth.Unlock()
 
 	if !ok || time.Since(session.CreatedAt) > 10*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired session")
@@ -512,9 +515,9 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 	session.AccountID = accountID
 
 	// Remove session
-	claudeOAuthSessions.Lock()
-	delete(claudeOAuthSessions.sessions, verifier)
-	claudeOAuthSessions.Unlock()
+	h.claudeOAuth.Lock()
+	delete(h.claudeOAuth.sessions, verifier)
+	h.claudeOAuth.Unlock()
 
 	respondJSON(w, map[string]any{
 		"success":    true,
@@ -608,14 +611,14 @@ func (h *proxyHandler) handleClaudeRefresh(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func cleanupOldSessions() {
-	claudeOAuthSessions.Lock()
-	defer claudeOAuthSessions.Unlock()
+func (h *proxyHandler) cleanupOldSessions() {
+	h.claudeOAuth.Lock()
+	defer h.claudeOAuth.Unlock()
 
 	now := time.Now()
-	for verifier, session := range claudeOAuthSessions.sessions {
+	for verifier, session := range h.claudeOAuth.sessions {
 		if now.Sub(session.CreatedAt) > 10*time.Minute {
-			delete(claudeOAuthSessions.sessions, verifier)
+			delete(h.claudeOAuth.sessions, verifier)
 		}
 	}
 }
