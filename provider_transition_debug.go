@@ -29,8 +29,8 @@ type transitionDryRunResponse struct {
 	Warnings       []string       `json:"warnings"`
 }
 
-func transitionDryRunWire(provider AccountType) (contextWireFormat, string) {
-	switch capabilitiesFor(provider).WireFormat {
+func transitionDryRunWire(provider AccountType, registry *ProviderRegistry) (contextWireFormat, string) {
+	switch capabilitiesFor(provider, registry).WireFormat {
 	case WireResponses:
 		return contextFormatResponses, "/v1/responses"
 	case WireAnthropic:
@@ -83,7 +83,7 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 		respondJSONError(w, http.StatusBadRequest, "conversation_id, from and to are required")
 		return
 	}
-	format, defaultPath := transitionDryRunWire(input.To)
+	format, defaultPath := transitionDryRunWire(input.To, h.registry)
 	if format == contextFormatUnknown {
 		respondJSONError(w, http.StatusBadRequest, "unsupported target provider")
 		return
@@ -119,6 +119,7 @@ func (h *proxyHandler) handleTransitionDryRun(w http.ResponseWriter, r *http.Req
 		return
 	}
 	clone := newConversationHandoffStore()
+	clone.registry = h.registry
 	clone.records[key] = copied
 	path := input.Path
 	if path == "" {

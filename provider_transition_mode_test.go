@@ -22,7 +22,7 @@ func TestTransitionModesFollowCapabilities(t *testing.T) {
 		{AccountTypeCodex, AccountType("unregistered"), TransitionSummary},
 	}
 	for _, test := range tests {
-		if got := transitionMode(test.from, test.to); got != test.want {
+		if got := transitionMode(test.from, test.to, nil); got != test.want {
 			t.Errorf("%s -> %s mode=%s want=%s", test.from, test.to, got, test.want)
 		}
 	}

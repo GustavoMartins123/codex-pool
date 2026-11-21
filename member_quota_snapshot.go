@@ -94,7 +94,7 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 
 	// Copy only catalog and quota fields, without credentials or a copied mutex.
 	// Each live account is locked once; later model scans use detached values.
-	visible := &poolState{catalogScoped: true, catalogVerifications: verifications, antigravity: h.pool.antigravity}
+	visible := &poolState{catalogScoped: true, catalogVerifications: verifications, antigravity: h.pool.antigravity, registry: h.pool.registry}
 	detachedAccess := make(map[*Account]memberQuotaAccess, len(access))
 	for _, account := range accounts {
 		a, ok := access[account]

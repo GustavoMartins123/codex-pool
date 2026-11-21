@@ -120,6 +120,17 @@ func (r *ProviderRegistry) ForType(t AccountType) ProviderDriver {
 	return r.byType[t]
 }
 
+func (r *ProviderRegistry) isGenericType(t AccountType) bool {
+	if r == nil {
+		return false
+	}
+	switch r.byType[t].(type) {
+	case *GenericOpenAIProvider, *FederatedProvider:
+		return true
+	}
+	return false
+}
+
 // ForPath returns the provider that handles the given request path.
 // Returns nil if no provider matches.
 func (r *ProviderRegistry) ForPath(path string) ProviderDriver {

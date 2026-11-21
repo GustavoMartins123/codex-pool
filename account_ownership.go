@@ -266,6 +266,7 @@ func (p *poolState) visiblePool(identity string) *poolState {
 		}
 	}
 	visible := newPoolState(accounts, false)
+	visible.registry = p.registry
 	visible.antigravity = p.antigravity
 	visible.catalogScoped = p.accountAuthority != nil
 	if p.accountAuthority != nil {

@@ -2604,7 +2604,7 @@ func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, u
 		acc.Penalty += 1.0
 		acc.mu.Unlock()
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
@@ -3248,7 +3248,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		if provider.WireFormat() == WireResponses && upstreamTokenRevoked(resp) {
 			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
 		}
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
@@ -3278,7 +3278,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		// Replace body so client still gets the error
 		resp.Body = io.NopCloser(bytes.NewReader(errBody))
 
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)

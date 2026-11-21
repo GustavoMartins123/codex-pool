@@ -473,6 +473,7 @@ const (
 
 type poolState struct {
 	catalogVerifications map[string]modelVerification
+	registry             *ProviderRegistry
 
 	antigravity          *antigravityRuntime
 	accountAuthority     *PassportStore

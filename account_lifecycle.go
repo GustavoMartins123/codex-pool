@@ -134,8 +134,8 @@ func persistDeadAccount(rt *antigravityRuntime, a *Account, reason string) {
 	}
 }
 
-func accountUsesStaticAPIKey(accountType AccountType) bool {
-	if isGenericProviderType(accountType) {
+func accountUsesStaticAPIKey(accountType AccountType, registry *ProviderRegistry) bool {
+	if registry.isGenericType(accountType) {
 		return true
 	}
 	switch accountType {
@@ -150,7 +150,7 @@ func accountUsesStaticAPIKey(accountType AccountType) bool {
 // from proxied user requests. Codex requests can fail for request-scoped
 // reasons, so they only get a small retry penalty here instead of being treated
 // like a bad account.
-func applyProxyAuthFailure(a *Account, refreshFailed bool) (markedDead bool, penaltyNow float64) {
+func applyProxyAuthFailure(a *Account, refreshFailed bool, registry *ProviderRegistry) (markedDead bool, penaltyNow float64) {
 	if a == nil {
 		return false, 0
 	}
@@ -158,7 +158,7 @@ func applyProxyAuthFailure(a *Account, refreshFailed bool) (markedDead bool, pen
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.Type == AccountTypeCodex || accountUsesStaticAPIKey(a.Type) {
+	if a.Type == AccountTypeCodex || accountUsesStaticAPIKey(a.Type, registry) {
 		// A proxied 401/403 is not a credential oracle for static-key providers:
 		// model access and request shape can be rejected with the same status. Only
 		// a provider-specific validation request may retire one of these accounts.

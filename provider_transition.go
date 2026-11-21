@@ -41,13 +41,13 @@ func transitionCost(mode TransitionMode) float64 {
 	}
 }
 
-func CanTransition(state ConversationState, from, to AccountType) TransitionCompatibility {
-	mode := transitionMode(from, to)
+func CanTransition(state ConversationState, from, to AccountType, registry *ProviderRegistry) TransitionCompatibility {
+	mode := transitionMode(from, to, registry)
 	result := TransitionCompatibility{Allowed: true, Mode: mode, Cost: transitionCost(mode)}
 	if mode == TransitionNative {
 		return result
 	}
-	caps := capabilitiesFor(to)
+	caps := capabilitiesFor(to, registry)
 	var hasImage, hasTool, hasParallel bool
 	for _, message := range state.IR.Messages {
 		calls := 0
@@ -94,11 +94,11 @@ const (
 	TransitionSummary     TransitionMode = "summary"
 )
 
-func transitionMode(from, to AccountType) TransitionMode {
+func transitionMode(from, to AccountType, registry *ProviderRegistry) TransitionMode {
 	if from == to {
 		return TransitionNative
 	}
-	source, target := capabilitiesFor(from), capabilitiesFor(to)
+	source, target := capabilitiesFor(from, registry), capabilitiesFor(to, registry)
 	if source.SupportsFullHistoryHandoff && target.SupportsFullHistoryHandoff &&
 		source.WireFormat == target.WireFormat {
 		return TransitionFullHistory

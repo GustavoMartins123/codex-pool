@@ -25,7 +25,7 @@ type ProviderCapabilities struct {
 
 // capabilitiesFor describes protocol behavior used by context handoff and
 // routing. Conservative defaults keep unknown providers on a fresh handoff.
-func capabilitiesFor(provider AccountType) ProviderCapabilities {
+func capabilitiesFor(provider AccountType, registry *ProviderRegistry) ProviderCapabilities {
 	switch provider {
 	case AccountTypeCodex:
 		return ProviderCapabilities{
@@ -75,7 +75,7 @@ func capabilitiesFor(provider AccountType) ProviderCapabilities {
 			SupportsImages: true, SupportsReasoning: true,
 		}
 	default:
-		if isGenericProviderType(provider) {
+		if registry.isGenericType(provider) {
 			return ProviderCapabilities{WireFormat: WireOpenAI, SupportsForeignHistory: true, SupportsToolHistory: true}
 		}
 		return ProviderCapabilities{WireFormat: WireUnknown}

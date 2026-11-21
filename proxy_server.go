@@ -178,6 +178,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	accounts = append(accounts, genericAccounts...)
 	accounts = append(accounts, federatedAccounts...)
 	pool := newPoolState(accounts, cfg.debug.Load())
+	pool.registry = registry
 	pool.antigravity = antigravityRT
 	pool.tierThreshold = cfg.tierThreshold
 	pool.observeAccountStates(time.Now())
@@ -416,6 +417,8 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		pacer:                pacer,
 		largeReplayBodies:    make(chan struct{}, 1),
 	}
+	h.contextHandoff.registry = registry
+	h.poolAuto.registry = registry
 	app.release = append(app.release, h.bruteForce.stop, h.accountLocks.stop)
 	if passport != nil && h.effortCap != nil {
 		passport.mu.RLock()

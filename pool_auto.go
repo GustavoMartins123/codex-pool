@@ -87,6 +87,7 @@ type AutoDecision struct {
 type PoolAutoOrchestrator struct {
 	mu            sync.RWMutex
 	customWeights map[string]PoolAutoProfileWeights
+	registry      *ProviderRegistry
 }
 
 func newPoolAutoOrchestrator(customWeights map[string]PoolAutoProfileWeights) *PoolAutoOrchestrator {
@@ -184,7 +185,7 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 		}
 		transition := TransitionCompatibility{Allowed: true, Mode: TransitionNative}
 		if conversation != nil {
-			transition = CanTransition(*conversation, conversation.ActiveProvider, meta.Provider)
+			transition = CanTransition(*conversation, conversation.ActiveProvider, meta.Provider, o.registry)
 			if !transition.Allowed {
 				candidateScores[candID] = 0
 				continue

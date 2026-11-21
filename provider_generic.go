@@ -10,7 +10,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -53,24 +52,6 @@ type GenericOpenAIProvider struct {
 	health      GenericProviderHealthConfig
 	models      map[string]GenericProviderModelConfig
 	publicIDs   []string
-}
-
-var genericProviderTypes = struct {
-	sync.RWMutex
-	types map[AccountType]bool
-}{types: make(map[AccountType]bool)}
-
-func markGenericProviderType(accountType AccountType) {
-	genericProviderTypes.Lock()
-	genericProviderTypes.types[accountType] = true
-	genericProviderTypes.Unlock()
-}
-
-func isGenericProviderType(accountType AccountType) bool {
-	genericProviderTypes.RLock()
-	ok := genericProviderTypes.types[accountType]
-	genericProviderTypes.RUnlock()
-	return ok
 }
 
 func NewGenericOpenAIProvider(name string, cfg GenericProviderConfig) (*GenericOpenAIProvider, error) {
@@ -126,7 +107,6 @@ func NewGenericOpenAIProvider(name string, cfg GenericProviderConfig) (*GenericO
 		}
 	}
 	sort.Strings(provider.publicIDs)
-	markGenericProviderType(provider.accountType)
 	return provider, nil
 }
 
