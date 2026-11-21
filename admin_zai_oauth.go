@@ -33,10 +33,10 @@ type zaiLoginSession struct {
 	err       string
 }
 
-var zaiLoginSessions = struct {
+type zaiLoginSessions struct {
 	sync.Mutex
 	byID map[string]*zaiLoginSession
-}{byID: make(map[string]*zaiLoginSession)}
+}
 
 type zaiEnvelope struct {
 	Code    *int            `json:"code"`
@@ -144,22 +144,25 @@ func (h *proxyHandler) handleZAILoginInit(w http.ResponseWriter, r *http.Request
 		return
 	}
 	actor := providerContributionActor(r)
-	zaiLoginSessions.Lock()
-	for id, session := range zaiLoginSessions.byID {
+	h.zaiLogin.Lock()
+	if h.zaiLogin.byID == nil {
+		h.zaiLogin.byID = make(map[string]*zaiLoginSession)
+	}
+	for id, session := range h.zaiLogin.byID {
 		if session.actor == actor && session.status == "exchanging" {
-			zaiLoginSessions.Unlock()
+			h.zaiLogin.Unlock()
 			respondJSONError(w, http.StatusConflict, "Z.ai login is still being finalized")
 			return
 		}
 		if session.status != "exchanging" && (session.actor == actor || time.Now().After(session.expiresAt.Add(time.Minute))) {
-			delete(zaiLoginSessions.byID, id)
+			delete(h.zaiLogin.byID, id)
 		}
 	}
-	zaiLoginSessions.byID[sessionID] = &zaiLoginSession{
+	h.zaiLogin.byID[sessionID] = &zaiLoginSession{
 		actor: actor, pollToken: pollToken, flowID: data.FlowID,
 		expiresAt: time.Unix(data.ExpiresAt, 0), status: "pending",
 	}
-	zaiLoginSessions.Unlock()
+	h.zaiLogin.Unlock()
 	respondJSON(w, map[string]any{"session_id": sessionID, "oauth_url": data.AuthorizeURL, "poll_period": data.PollIntervalSec})
 }
 
@@ -171,15 +174,15 @@ func (h *proxyHandler) handleZAILoginPoll(w http.ResponseWriter, r *http.Request
 		respondJSONError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	zaiLoginSessions.Lock()
-	session := zaiLoginSessions.byID[input.SessionID]
+	h.zaiLogin.Lock()
+	session := h.zaiLogin.byID[input.SessionID]
 	if session == nil {
-		zaiLoginSessions.Unlock()
+		h.zaiLogin.Unlock()
 		respondJSONError(w, http.StatusNotFound, "OAuth session not found")
 		return
 	}
 	if session.actor != providerContributionActor(r) {
-		zaiLoginSessions.Unlock()
+		h.zaiLogin.Unlock()
 		respondJSONError(w, http.StatusForbidden, "OAuth session belongs to another principal")
 		return
 	}
@@ -188,16 +191,16 @@ func (h *proxyHandler) handleZAILoginPoll(w http.ResponseWriter, r *http.Request
 	}
 	if session.status != "pending" {
 		result := zaiLoginStatus(session)
-		zaiLoginSessions.Unlock()
+		h.zaiLogin.Unlock()
 		respondJSON(w, result)
 		return
 	}
 	session.status = "exchanging"
 	flowID, pollToken := session.flowID, session.pollToken
-	zaiLoginSessions.Unlock()
+	h.zaiLogin.Unlock()
 
 	result, err := h.pollZAILogin(r, flowID, pollToken)
-	zaiLoginSessions.Lock()
+	h.zaiLogin.Lock()
 	if err != nil {
 		session.status, session.err = "error", err.Error()
 	} else if result != nil {
@@ -206,7 +209,7 @@ func (h *proxyHandler) handleZAILoginPoll(w http.ResponseWriter, r *http.Request
 		session.status = "pending"
 	}
 	response := zaiLoginStatus(session)
-	zaiLoginSessions.Unlock()
+	h.zaiLogin.Unlock()
 	respondJSON(w, response)
 }
 

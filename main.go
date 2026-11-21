@@ -423,6 +423,7 @@ type proxyHandler struct {
 	antigravityReplay   antigravityReplayCache
 	claudeOAuth         claudeOAuthSessions
 	codexOAuth          codexOAuthSessions
+	zaiLogin            zaiLoginSessions
 
 	requestQueue         *fairQueue
 	cfg                  *config
