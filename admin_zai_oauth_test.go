@@ -58,9 +58,9 @@ func TestZAILoginInitPollAndActor(t *testing.T) {
 		t.Fatalf("missing OAuth session: %v", err)
 	}
 	t.Cleanup(func() {
-		zaiLoginSessions.Lock()
-		delete(zaiLoginSessions.byID, started.SessionID)
-		zaiLoginSessions.Unlock()
+		h.zaiLogin.Lock()
+		delete(h.zaiLogin.byID, started.SessionID)
+		h.zaiLogin.Unlock()
 	})
 	pollBody := fmt.Sprintf(`{"session_id":%q}`, started.SessionID)
 	wrong := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/zai/login/poll", strings.NewReader(pollBody))

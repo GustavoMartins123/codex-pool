@@ -40,10 +40,10 @@ type CodexOAuthSession struct {
 }
 
 // In-memory store for pending Codex OAuth sessions
-var codexOAuthSessions = struct {
+type codexOAuthSessions struct {
 	sync.RWMutex
 	sessions map[string]*CodexOAuthSession
-}{sessions: make(map[string]*CodexOAuthSession)}
+}
 
 // CodexTokenResponse is the response from the token endpoint
 type CodexTokenResponse struct {
@@ -119,7 +119,7 @@ func (h *proxyHandler) handleCodexList(w http.ResponseWriter, r *http.Request) {
 // the pending session. actor binds the session to the contributing principal
 // (empty disables the binding); reloginAccountID binds it to an existing
 // account (see handleCodexRelogin).
-func startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier, state string) {
+func (h *proxyHandler) startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier, state string) {
 	// Generate PKCE verifier and challenge
 	verifierBytes := make([]byte, 32)
 	if _, err := rand.Read(verifierBytes); err != nil {
@@ -162,12 +162,15 @@ func startCodexOAuthSession(actor, reloginAccountID string) (oauthURL, verifier,
 		CreatedAt:        time.Now(),
 	}
 
-	codexOAuthSessions.Lock()
-	codexOAuthSessions.sessions[verifier] = session
-	codexOAuthSessions.Unlock()
+	h.codexOAuth.Lock()
+	if h.codexOAuth.sessions == nil {
+		h.codexOAuth.sessions = make(map[string]*CodexOAuthSession)
+	}
+	h.codexOAuth.sessions[verifier] = session
+	h.codexOAuth.Unlock()
 
 	// Clean up old sessions
-	go cleanupOldCodexSessions()
+	go h.cleanupOldCodexSessions()
 
 	return u.String(), verifier, state
 }
@@ -177,7 +180,7 @@ func (h *proxyHandler) handleCodexAdd(w http.ResponseWriter, r *http.Request) {
 	if !h.checkContributionAttempt(w, r) {
 		return
 	}
-	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), "")
+	oauthURL, verifier, state := h.startCodexOAuthSession(providerContributionActor(r), "")
 	if oauthURL == "" {
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
 		return
@@ -236,7 +239,7 @@ func (h *proxyHandler) handleCodexRelogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	oauthURL, verifier, state := startCodexOAuthSession(providerContributionActor(r), accountID)
+	oauthURL, verifier, state := h.startCodexOAuthSession(providerContributionActor(r), accountID)
 	if oauthURL == "" {
 		respondJSONError(w, http.StatusInternalServerError, "failed to generate OAuth session")
 		return
@@ -277,12 +280,12 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Look up session
-	codexOAuthSessions.Lock()
-	session, ok := codexOAuthSessions.sessions[verifier]
+	h.codexOAuth.Lock()
+	session, ok := h.codexOAuth.sessions[verifier]
 	if ok && session.ActorID == providerContributionActor(r) {
-		delete(codexOAuthSessions.sessions, verifier)
+		delete(h.codexOAuth.sessions, verifier)
 	}
-	codexOAuthSessions.Unlock()
+	h.codexOAuth.Unlock()
 
 	if !ok || time.Since(session.CreatedAt) > 10*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired session")
@@ -307,9 +310,9 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 			respondJSONError(w, http.StatusForbidden, "relogin failed: "+err.Error())
 			return
 		}
-		codexOAuthSessions.Lock()
-		delete(codexOAuthSessions.sessions, verifier)
-		codexOAuthSessions.Unlock()
+		h.codexOAuth.Lock()
+		delete(h.codexOAuth.sessions, verifier)
+		h.codexOAuth.Unlock()
 		h.reloadAccounts()
 		h.auditProviderContribution(r, "codex-relogin", session.ReloginAccountID)
 		respondJSON(w, map[string]any{
@@ -328,9 +331,9 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Remove session
-	codexOAuthSessions.Lock()
-	delete(codexOAuthSessions.sessions, verifier)
-	codexOAuthSessions.Unlock()
+	h.codexOAuth.Lock()
+	delete(h.codexOAuth.sessions, verifier)
+	h.codexOAuth.Unlock()
 
 	respondJSON(w, map[string]any{
 		"success":    true,
@@ -455,14 +458,14 @@ func codexExchangeCodeWithClient(code, verifier string, client *http.Client) (*C
 	return &tokens, nil
 }
 
-func cleanupOldCodexSessions() {
-	codexOAuthSessions.Lock()
-	defer codexOAuthSessions.Unlock()
+func (h *proxyHandler) cleanupOldCodexSessions() {
+	h.codexOAuth.Lock()
+	defer h.codexOAuth.Unlock()
 
 	now := time.Now()
-	for verifier, session := range codexOAuthSessions.sessions {
+	for verifier, session := range h.codexOAuth.sessions {
 		if now.Sub(session.CreatedAt) > 10*time.Minute {
-			delete(codexOAuthSessions.sessions, verifier)
+			delete(h.codexOAuth.sessions, verifier)
 		}
 	}
 }
