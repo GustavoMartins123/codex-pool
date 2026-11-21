@@ -48,7 +48,7 @@ func TestAuditWatcherSurvivesRepeatedAtomicConfigReplace(t *testing.T) {
 		if want {
 			content = "debug = true\n"
 		}
-		if err := writeFileAtomic(cfgPath, []byte(content)); err != nil {
+		if err := (atomicWriter{}).writeFileAtomic(cfgPath, []byte(content)); err != nil {
 			t.Fatalf("replace %d: %v", i, err)
 		}
 		if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() == want }) {
@@ -96,7 +96,7 @@ func TestWatcherReloadsDefaultRelativeConfigPath(t *testing.T) {
 	}
 	_, h := newAuditConfigWatcher(t, "", cfgPath)
 
-	if err := writeFileAtomic(cfgPath, []byte("debug = true\n")); err != nil {
+	if err := (atomicWriter{}).writeFileAtomic(cfgPath, []byte("debug = true\n")); err != nil {
 		t.Fatal(err)
 	}
 	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
@@ -115,7 +115,7 @@ func TestAuditWatcherReloadsCRLFConfigFile(t *testing.T) {
 	}
 	_, h := newAuditConfigWatcher(t, "", cfgPath)
 
-	if err := writeFileAtomic(cfgPath, []byte("debug = true\r\n")); err != nil {
+	if err := (atomicWriter{}).writeFileAtomic(cfgPath, []byte("debug = true\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	if !auditWaitFor(t, 3*time.Second, func() bool { return h.cfg.debug.Load() }) {
