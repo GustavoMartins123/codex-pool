@@ -48,8 +48,9 @@ func TestClaudeProviderLoadAccountFlags(t *testing.T) {
 }
 
 func TestClaudeInjectMetadataAddsClaudeCodeShape(t *testing.T) {
+	id := &claudeIdentity{}
 	body := map[string]any{}
-	ccInjectMetadata(body, "", "user-abc", "sess-xyz")
+	id.injectMetadata(body, "", "user-abc", "sess-xyz")
 
 	metadata, ok := body["metadata"].(map[string]any)
 	if !ok {
@@ -67,7 +68,7 @@ func TestClaudeInjectMetadataAddsClaudeCodeShape(t *testing.T) {
 	if payload["device_id"] == "" {
 		t.Fatal("device_id missing")
 	}
-	if payload["device_id"] != ccUserDeviceID("user-abc") {
+	if payload["device_id"] != id.userDeviceID("user-abc") {
 		t.Fatalf("device_id = %q, want stable per-user id", payload["device_id"])
 	}
 	if payload["session_id"] != "sess-xyz" {
@@ -82,7 +83,7 @@ func TestClaudeInjectMetadataPreservesExistingMetadata(t *testing.T) {
 	body := map[string]any{
 		"metadata": map[string]any{"user_id": "keep-me"},
 	}
-	ccInjectMetadata(body, "ignored", "user-abc", "sess-xyz")
+	(&claudeIdentity{}).injectMetadata(body, "ignored", "user-abc", "sess-xyz")
 
 	metadata := body["metadata"].(map[string]any)
 	if metadata["user_id"] != "keep-me" {
@@ -93,20 +94,37 @@ func TestClaudeInjectMetadataPreservesExistingMetadata(t *testing.T) {
 func TestCCSessionHeaderPrefersClientHeader(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
 	req.Header.Set("X-Claude-Code-Session-Id", "client-supplied")
-	if got := ccSessionHeader(req, "user-abc"); got != "client-supplied" {
-		t.Fatalf("ccSessionHeader = %q, want client-supplied", got)
+	if got := (&claudeIdentity{}).sessionHeader(req, "user-abc"); got != "client-supplied" {
+		t.Fatalf("sessionHeader = %q, want client-supplied", got)
 	}
 }
 
 func TestCCSessionHeaderFallsBackToStablePerUserID(t *testing.T) {
+	id := &claudeIdentity{}
 	req, _ := http.NewRequest(http.MethodPost, "https://example.com/v1/messages", nil)
-	got := ccSessionHeader(req, "user-abc")
-	again := ccSessionHeader(req, "user-abc")
+	got := id.sessionHeader(req, "user-abc")
+	again := id.sessionHeader(req, "user-abc")
 	if got == "" || got != again {
 		t.Fatalf("expected stable per-user fallback, got %q vs %q", got, again)
 	}
-	other := ccSessionHeader(req, "user-different")
+	other := id.sessionHeader(req, "user-different")
 	if other == got {
 		t.Fatalf("expected distinct ids per user, both = %q", got)
+	}
+}
+
+func TestClaudeIdentityIsScopedToItsInstance(t *testing.T) {
+	first, second := &claudeIdentity{}, &claudeIdentity{}
+	if first.session() == second.session() {
+		t.Fatal("distinct identities share a session fallback")
+	}
+	if first.device() == second.device() {
+		t.Fatal("distinct identities share a device fallback")
+	}
+	if got, want := first.userFallbackSessionID("user-abc"), second.userFallbackSessionID("user-abc"); got != want {
+		t.Fatalf("per-user session id differs across identities: %q vs %q", got, want)
+	}
+	if got, want := first.userDeviceID("user-abc"), second.userDeviceID("user-abc"); got != want {
+		t.Fatalf("per-user device id differs across identities: %q vs %q", got, want)
 	}
 }

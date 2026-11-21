@@ -424,6 +424,7 @@ type proxyHandler struct {
 	claudeOAuth         claudeOAuthSessions
 	codexOAuth          codexOAuthSessions
 	zaiLogin            zaiLoginSessions
+	claudeIdentity      claudeIdentity
 	verificationRuntime verificationRuntimeCache
 
 	requestQueue         *fairQueue
@@ -4567,13 +4568,13 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 
 				// Pace requests per session to avoid burst patterns.
-				sessionID := ccSessionHeader(in, userID)
+				sessionID := h.claudeIdentity.sessionHeader(in, userID)
 				h.pacer.wait(sessionID)
 
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
+				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
 				if !bodyHasClaudeSystemBlocks(bodyObj) {
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
@@ -4631,11 +4632,11 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			strings.HasPrefix(access, "sk-ant-oat") {
 			var bodyObj map[string]any
 			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !ccIsGenuineClaudeCodeRequest(in, bodyObj) {
-				sessionID := ccSessionHeader(in, userID)
+				sessionID := h.claudeIdentity.sessionHeader(in, userID)
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
+				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
 				if _, ok := bodyObj["tools"]; !ok {
 					bodyObj["tools"] = []any{}
 				}

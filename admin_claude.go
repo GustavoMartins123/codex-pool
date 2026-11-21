@@ -246,7 +246,7 @@ func (h *proxyHandler) fetchClaudeOAuthProfile(accessToken string) (map[string]a
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
 	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
 	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", ccAccountSessionID(accessToken))
+	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.accountSessionID(accessToken))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
 	ccStainlessHeaders(req.Header.Set)
@@ -481,7 +481,7 @@ func (h *proxyHandler) handleClaudeExchange(w http.ResponseWriter, r *http.Reque
 		uuid = strings.TrimSpace(tokens.Account.UUID)
 	}
 	if uuid == "" {
-		uuid, err = FetchClaudeAccountUUID(r.Context(), tokens.AccessToken, h.transport)
+		uuid, err = FetchClaudeAccountUUID(r.Context(), tokens.AccessToken, h.transport, &h.claudeIdentity)
 	}
 	if err != nil || uuid == "" {
 		log.Printf("Claude account identification failed: %v", err)
@@ -600,7 +600,7 @@ func (h *proxyHandler) handleClaudeRefresh(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := RefreshClaudeAccountTokens(r.Context(), target, http.DefaultTransport); err != nil {
+	if err := RefreshClaudeAccountTokens(r.Context(), target, http.DefaultTransport, &h.claudeIdentity); err != nil {
 		respondJSONError(w, http.StatusInternalServerError, "refresh failed: "+err.Error())
 		return
 	}

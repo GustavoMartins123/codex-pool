@@ -419,6 +419,8 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	}
 	h.contextHandoff.registry = registry
 	h.poolAuto.registry = registry
+	claudeProvider.identity = &h.claudeIdentity
+	opencodeGoProvider.identity = &h.claudeIdentity
 	app.release = append(app.release, h.bruteForce.stop, h.accountLocks.stop)
 	if passport != nil && h.effortCap != nil {
 		passport.mu.RLock()
