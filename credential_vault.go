@@ -16,7 +16,8 @@ import (
 
 // credentialVault owns the store used by this application's account files.
 type credentialVault struct {
-	store credstore.Store
+	store  credstore.Store
+	writer atomicWriter
 }
 
 // buildCredentialStore requires a master key and accepts an explicitly configured rotation key.
@@ -74,23 +75,25 @@ var renameRetryDelays = []time.Duration{
 	800 * time.Millisecond,
 }
 
-// writeFileAtomicRetryHook, when non-nil, fires after each failed rename
-// attempt. Tests use it to coordinate releasing a simulated lock exactly
-// after the writer has observed it.
-var writeFileAtomicRetryHook func()
+type atomicWriter struct {
+	// retryHook, when non-nil, fires after each failed rename attempt. Tests
+	// use it to coordinate releasing a simulated lock exactly after the writer
+	// has observed it.
+	retryHook func()
+}
 
 // renameWithRetry replaces oldPath with newPath, retrying transient
 // destination locks (Windows only) with a bounded backoff. Permanent locks
 // still fail, after at most the total retry budget.
-func renameWithRetry(oldPath, newPath string) error {
+func (w atomicWriter) renameWithRetry(oldPath, newPath string) error {
 	var err error
 	for attempt := 0; ; attempt++ {
 		err = atomicfile.Replace(oldPath, newPath)
 		if err == nil || !atomicfile.IsTransientRenameError(err) || attempt >= len(renameRetryDelays) {
 			return err
 		}
-		if writeFileAtomicRetryHook != nil {
-			writeFileAtomicRetryHook()
+		if w.retryHook != nil {
+			w.retryHook()
 		}
 		time.Sleep(renameRetryDelays[attempt])
 	}
@@ -99,7 +102,7 @@ func renameWithRetry(oldPath, newPath string) error {
 // writeFileAtomic replaces path with payload via a temp file in the same
 // directory plus rename, so a crash mid-write can never truncate an existing
 // credential file. The payload is written verbatim (already at-rest form).
-func writeFileAtomic(path string, payload []byte) error {
+func (w atomicWriter) writeFileAtomic(path string, payload []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "*.tmp")
 	if err != nil {
@@ -119,7 +122,7 @@ func writeFileAtomic(path string, payload []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return renameWithRetry(tmpName, path)
+	return w.renameWithRetry(tmpName, path)
 }
 
 // writeAccountFile encodes plaintext JSON into its at-rest form and writes it
@@ -134,7 +137,7 @@ func (v credentialVault) writeAccountFile(path string, plaintext []byte) error {
 	if err != nil {
 		return fmt.Errorf("encode credential file %s: %w", path, err)
 	}
-	return writeFileAtomic(path, payload)
+	return v.writer.writeFileAtomic(path, payload)
 }
 
 func (v credentialVault) atomicWriteJSON(path string, data any) error {
@@ -177,7 +180,7 @@ func (v credentialVault) migrateCredentialFiles(poolDir string) (int, int, error
 			if err != nil {
 				return fmt.Errorf("encrypt %s: %w", path, err)
 			}
-			if err := writeFileAtomic(path, atRest); err != nil {
+			if err := v.writer.writeFileAtomic(path, atRest); err != nil {
 				return fmt.Errorf("write %s: %w", path, err)
 			}
 			encrypted++
@@ -200,7 +203,7 @@ func (v credentialVault) migrateCredentialFiles(poolDir string) (int, int, error
 		if err != nil {
 			return fmt.Errorf("re-encrypt %s: %w", path, err)
 		}
-		if err := writeFileAtomic(path, atRest); err != nil {
+		if err := v.writer.writeFileAtomic(path, atRest); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		rotated++
@@ -235,7 +238,7 @@ func (v credentialVault) decryptCredentialFiles(poolDir string) (int, error) {
 		if err != nil {
 			return fmt.Errorf("decrypt %s: %w", path, err)
 		}
-		if err := writeFileAtomic(path, plain); err != nil {
+		if err := v.writer.writeFileAtomic(path, plain); err != nil {
 			return err
 		}
 		count++

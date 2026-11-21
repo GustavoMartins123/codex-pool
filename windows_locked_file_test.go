@@ -36,22 +36,20 @@ func openAuditFileExclusive(path string) (syscall.Handle, error) {
 // holds the destination open without FILE_SHARE_DELETE. The handle is
 // released only after the writer has hit the lock at least once, proving the
 // writer survives the transient window instead of failing fast or hanging.
-func runWriterUnderTransientLock(t *testing.T, hold func() (release func()), write func() error) {
+func runWriterUnderTransientLock(t *testing.T, hold func() (release func()), write func(retryHook func()) error) {
 	t.Helper()
 	retried := make(chan struct{}, 32)
-	previous := writeFileAtomicRetryHook
-	writeFileAtomicRetryHook = func() {
+	retryHook := func() {
 		select {
 		case retried <- struct{}{}:
 		default:
 		}
 	}
-	t.Cleanup(func() { writeFileAtomicRetryHook = previous })
 
 	release := hold()
 	type outcome struct{ err error }
 	done := make(chan outcome, 1)
-	go func() { done <- outcome{write()} }()
+	go func() { done <- outcome{write(retryHook)} }()
 
 	select {
 	case <-retried:
@@ -87,8 +85,10 @@ func TestAuditWriteFileAtomicSurvivesTransientExclusiveHolder(t *testing.T) {
 			}
 			return func() { syscall.CloseHandle(handle) }
 		},
-		func() error {
-			return plainTestVault().writeAccountFile(path, []byte(`{"tokens":{"access_token":"new"}}`))
+		func(retryHook func()) error {
+			v := plainTestVault()
+			v.writer.retryHook = retryHook
+			return v.writeAccountFile(path, []byte(`{"tokens":{"access_token":"new"}}`))
 		})
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -117,8 +117,10 @@ func TestAuditWriteFileAtomicSurvivesTransientGoReader(t *testing.T) {
 			}
 			return func() { f.Close() }
 		},
-		func() error {
-			return plainTestVault().writeAccountFile(path, []byte(`{"v":2}`))
+		func(retryHook func()) error {
+			v := plainTestVault()
+			v.writer.retryHook = retryHook
+			return v.writeAccountFile(path, []byte(`{"v":2}`))
 		})
 	raw, err := os.ReadFile(path)
 	if err != nil {
