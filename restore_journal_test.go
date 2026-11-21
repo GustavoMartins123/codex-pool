@@ -9,16 +9,16 @@ import (
 
 func TestRestoreProcessInterruption(t *testing.T) {
 	if os.Getenv("RESTORE_CRASH_STEP") != "" {
-		restoreCheckpoint = func(step string) {
+		r := pairedRestorer{checkpoint: func(step string) {
 			if step == os.Getenv("RESTORE_CRASH_STEP") {
 				os.Exit(73)
 			}
-		}
+		}}
 		if os.Getenv("RESTORE_RECOVER_ONLY") == "1" {
-			if err := recoverPairedRestore(os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
+			if err := r.recoverPairedRestore(os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := (pairedRestorer{}).restorePairedBackup(os.Getenv("RESTORE_MANIFEST"), os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
+		} else if err := r.restorePairedBackup(os.Getenv("RESTORE_MANIFEST"), os.Getenv("RESTORE_BOLT"), os.Getenv("RESTORE_DUCK")); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -42,10 +42,10 @@ func TestRestoreProcessInterruption(t *testing.T) {
 			if step == "bolt-swapped" || step == "duck-swapped" {
 				crash("recovered:"+filepath.Base(bolt), true)
 			}
-			if err := recoverPairedRestore(bolt, duck); err != nil {
+			if err := (pairedRestorer{}).recoverPairedRestore(bolt, duck); err != nil {
 				t.Fatal(err)
 			}
-			if err := recoverPairedRestore(bolt, duck); err != nil {
+			if err := (pairedRestorer{}).recoverPairedRestore(bolt, duck); err != nil {
 				t.Fatal(err)
 			}
 			want := "after"
@@ -68,7 +68,7 @@ func TestRestoreJournalFailsClosed(t *testing.T) {
 	if err := os.WriteFile(bolt+".restore-journal", []byte(`{"format":1,"files":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverPairedRestore(bolt, duck); err == nil {
+	if err := (pairedRestorer{}).recoverPairedRestore(bolt, duck); err == nil {
 		t.Fatal("invalid journal accepted")
 	}
 	if readBoltProof(t, bolt) != "after" || readDuckProof(t, duck) != "after" {
@@ -96,7 +96,7 @@ func TestRestoreRejectsDamagedSnapshotBeforeChangingEitherStore(t *testing.T) {
 	if err := os.WriteFile(duck+".prerestore", []byte("damaged"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverPairedRestore(bolt, duck); err == nil {
+	if err := (pairedRestorer{}).recoverPairedRestore(bolt, duck); err == nil {
 		t.Fatal("damaged snapshot accepted")
 	}
 	if readBoltProof(t, bolt) != "after" || readDuckProof(t, duck) != "after" {

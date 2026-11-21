@@ -145,6 +145,8 @@ type pairedRestorer struct {
 	// rename is indirected so tests can deterministically fail the
 	// first or second swap and prove the rollback restores both stores.
 	rename func(oldPath, newPath string) error
+	// checkpoint, when non-nil, runs at each durable restore step.
+	checkpoint func(step string)
 }
 
 func (r pairedRestorer) swap(oldPath, newPath string) error {
@@ -154,8 +156,14 @@ func (r pairedRestorer) swap(oldPath, newPath string) error {
 	return os.Rename(oldPath, newPath)
 }
 
+func (r pairedRestorer) markCheckpoint(step string) {
+	if r.checkpoint != nil {
+		r.checkpoint(step)
+	}
+}
+
 func (r pairedRestorer) restorePairedBackup(manifestPath, boltPath, duckPath string) error {
-	if err := recoverPairedRestore(boltPath, duckPath); err != nil {
+	if err := r.recoverPairedRestore(boltPath, duckPath); err != nil {
 		return err
 	}
 	encoded, err := os.ReadFile(manifestPath)
@@ -232,25 +240,25 @@ func (r pairedRestorer) restorePairedBackup(manifestPath, boltPath, duckPath str
 		cleanupStaging()
 		return err
 	}
-	restoreCheckpoint("prepared")
+	r.markCheckpoint("prepared")
 	if err := r.swap(boltTemp, boltPath); err != nil {
-		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
+		if recoveryErr := r.recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
 			return fmt.Errorf("restore Bolt: %v; recovery: %w", err, recoveryErr)
 		}
 		return fmt.Errorf("restore Bolt store: %w", err)
 	}
-	restoreCheckpoint("bolt-swapped")
+	r.markCheckpoint("bolt-swapped")
 	if err := r.swap(duckTemp, duckPath); err != nil {
-		if recoveryErr := recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
+		if recoveryErr := r.recoverPairedRestore(boltPath, duckPath); recoveryErr != nil {
 			return fmt.Errorf("restore DuckDB: %v; recovery: %w", err, recoveryErr)
 		}
 		return fmt.Errorf("restore DuckDB store: %w (stores rolled back)", err)
 	}
-	restoreCheckpoint("duck-swapped")
+	r.markCheckpoint("duck-swapped")
 	journal.Committed = true
 	if err := writeRestoreJournal(journalPath, journal); err != nil {
 		return err
 	}
-	restoreCheckpoint("committed")
-	return recoverPairedRestore(boltPath, duckPath)
+	r.markCheckpoint("committed")
+	return r.recoverPairedRestore(boltPath, duckPath)
 }

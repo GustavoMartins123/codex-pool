@@ -51,7 +51,7 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 	duckPath := getenv("DUCKDB_PATH", "./data/usage.duckdb")
 	cfg.duckPath = duckPath
 	var restorer pairedRestorer
-	if err := recoverPairedRestore(cfg.storePath, duckPath); err != nil {
+	if err := restorer.recoverPairedRestore(cfg.storePath, duckPath); err != nil {
 		return false, fmt.Errorf("recover paired restore: %w", err)
 	}
 	if cfg.rotatePassportKey {
