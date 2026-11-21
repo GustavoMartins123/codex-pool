@@ -52,6 +52,57 @@ func TestAntigravityQuotaFamiliesSeparateGeminiFromThirdParty(t *testing.T) {
 	}
 }
 
+// A paid Pro plan reports Gemini 4 Argon as its own group with a weekly limit
+// only, and a Claude/GPT group whose 5-hour bucket is disabled once the weekly
+// limit is hit.
+func TestAntigravityQuotaFamiliesSplitArgonOnPaidPro(t *testing.T) {
+	now := time.Date(2026, 11, 21, 14, 0, 0, 0, time.UTC)
+	body := []byte(`{"groups":[
+	 {"displayName":"Gemini Models","buckets":[
+	  {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.7038,"resetTime":"2026-11-28T14:00:00Z"},
+	  {"bucketId":"gemini-5h","window":"5h","resetTime":"2026-11-21T17:00:00Z"}]},
+	 {"displayName":"Claude and GPT models","buckets":[
+	  {"bucketId":"3p-weekly","window":"weekly","resetTime":"2026-11-27T00:39:00Z"},
+	  {"bucketId":"3p-5h","window":"5h","disabled":true,"resetTime":"2026-11-21T17:00:00Z"}]},
+	 {"displayName":"Gemini 4 Argon","buckets":[
+	  {"bucketId":"gemini-4-argon-weekly","window":"weekly","remainingFraction":0.7053,"resetTime":"2026-11-28T14:00:00Z"}]}]}`)
+	summary, err := parseAntigravityQuotaSummary(body, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	families := antigravityQuotaFamilies(&summary, now)
+	if len(families) != 3 || families[0].ID != "gemini" || families[1].ID != "argon" || families[2].ID != "3p" {
+		t.Fatalf("families = %+v", families)
+	}
+	gemini, argon, thirdParty := families[0], families[1], families[2]
+	if gemini.Weekly.UsedPct < 29.6 || gemini.Weekly.UsedPct > 29.7 {
+		t.Fatalf("gemini weekly = %+v", gemini.Weekly)
+	}
+	// The Gemini 5-hour bucket omits its fraction, which means exhausted.
+	if gemini.FiveHour == nil || gemini.FiveHour.UsedPct != 100 {
+		t.Fatalf("gemini 5h = %+v", gemini.FiveHour)
+	}
+	if argon.Label != "Gemini 4 Argon" || argon.FiveHour != nil || argon.Weekly == nil || argon.Weekly.UsedPct < 29.4 || argon.Weekly.UsedPct > 29.5 {
+		t.Fatalf("argon = %+v", argon)
+	}
+	if thirdParty.Weekly.UsedPct != 100 || thirdParty.FiveHour != nil {
+		t.Fatalf("third-party = %+v / 5h %+v", thirdParty.Weekly, thirdParty.FiveHour)
+	}
+}
+
+func TestAntigravityQuotaFamiliesKeepUnknownGroups(t *testing.T) {
+	now := time.Date(2026, 11, 21, 14, 0, 0, 0, time.UTC)
+	half := 0.5
+	summary := &AntigravityQuotaSummary{Groups: []AntigravityQuotaGroup{
+		{DisplayName: "Gemini Models", Buckets: []AntigravityQuotaBucket{{BucketID: "gemini-weekly", Window: "weekly", RemainingFraction: &half, ResetTime: now.Add(time.Hour)}}},
+		{DisplayName: "Image Models", Buckets: []AntigravityQuotaBucket{{BucketID: "image-weekly", Window: "weekly", RemainingFraction: &half, ResetTime: now.Add(time.Hour)}}},
+	}}
+	families := antigravityQuotaFamilies(summary, now)
+	if len(families) != 2 || families[1].ID != "image-models" || families[1].Label != "Image Models" {
+		t.Fatalf("families = %+v", families)
+	}
+}
+
 func TestAntigravityQuotaFamiliesTreatPassedResetAsRefilled(t *testing.T) {
 	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	spent := 0.0
