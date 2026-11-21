@@ -170,12 +170,6 @@ func (s *usageStore) openAccountingGap(at time.Time, cause error) {
 	s.persistActiveAccountingGapSidecarLocked(s.analyticsGap)
 }
 
-// accountingGapCloseHook, when non-nil, runs inside closeAccountingGap while
-// analyticsReliabilityMu is held, after the closed gap has been durably
-// persisted and before it is cleared. Tests use it to freeze the close
-// mid-flight; it must not call back into the store (the lock is held).
-var accountingGapCloseHook func()
-
 func (s *usageStore) closeAccountingGap(at time.Time) {
 	// The persist, the in-memory clear, and the sidecar removal run under ONE
 	// lock hold. Releasing the lock between them let a failure arriving in
@@ -194,8 +188,8 @@ func (s *usageStore) closeAccountingGap(at time.Time) {
 	}
 	gap.EndedAt = &ended
 	if s.persistAccountingGap(gap) == nil {
-		if accountingGapCloseHook != nil {
-			accountingGapCloseHook()
+		if s.accountingGapCloseHook != nil {
+			s.accountingGapCloseHook()
 		}
 		if s.analyticsGap != nil && s.analyticsGap.StartedAt.Equal(gap.StartedAt) {
 			s.analyticsGap = nil

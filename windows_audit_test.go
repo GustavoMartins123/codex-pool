@@ -316,15 +316,13 @@ func TestAuditAnalyticsGapOpenDuringCloseIsNotLost(t *testing.T) {
 
 	closeEntered := make(chan struct{})
 	closeProceed := make(chan struct{})
-	previous := accountingGapCloseHook
-	accountingGapCloseHook = func() {
+	s.accountingGapCloseHook = func() {
 		select {
 		case closeEntered <- struct{}{}:
 		default:
 		}
 		<-closeProceed
 	}
-	t.Cleanup(func() { accountingGapCloseHook = previous })
 
 	// Freeze the close after persisting gap A, before clearing it.
 	closeDone := make(chan struct{})

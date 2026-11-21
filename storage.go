@@ -134,6 +134,11 @@ type usageStore struct {
 	analyticsReservePath   string
 	analyticsGapPath       string
 	analyticsGap           *AccountingGap
+	// accountingGapCloseHook, when non-nil, runs inside closeAccountingGap while
+	// analyticsReliabilityMu is held, after the closed gap has been durably
+	// persisted and before it is cleared. Tests use it to freeze the close
+	// mid-flight; it must not call back into the store (the lock is held).
+	accountingGapCloseHook func()
 }
 
 type rateLimitSnapshot struct {
