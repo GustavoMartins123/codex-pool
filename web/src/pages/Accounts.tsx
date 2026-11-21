@@ -4,6 +4,7 @@ import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
 import { Sparkline } from "../charts";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
+import { type AccountSort, type AccountSortKey, nextAccountSort, parseAccountSort, sortAccounts } from "../accountSort";
 import { queryValue, updateURL } from "../navigation";
 import { AccountResetWindows, Instrument, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
 import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
@@ -36,6 +37,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [selected, setSelected] = useState<string | null>(() => queryValue("account"));
   const [query, setQuery] = useState("");
   const [attentionOnly, setAttentionOnly] = useState(() => queryValue("accounts") === "attention");
+  const [sort, setSort] = useState<AccountSort | null>(() => parseAccountSort(queryValue("sort"), queryValue("dir")));
   const [mobileInspector, setMobileInspector] = useState(() => window.matchMedia("(max-width: 1300px)").matches);
   const [contributing, setContributing] = useState(false);
   const [reloginAccountID, setReloginAccountID] = useState<string | null>(null);
@@ -64,10 +66,12 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
   useEffect(() => updateURL({ account: selected }, "replace"), [selected]);
   useEffect(() => updateURL({ accounts: attentionOnly ? "attention" : null }, "replace"), [attentionOnly]);
+  useEffect(() => updateURL({ sort: sort?.key ?? null, dir: sort?.direction ?? null }, "replace"), [sort]);
   useEffect(() => {
     const restoreAccountState = () => {
       selectAccount(queryValue("account"));
       setAttentionOnly(queryValue("accounts") === "attention");
+      setSort(parseAccountSort(queryValue("sort"), queryValue("dir")));
     };
     window.addEventListener("popstate", restoreAccountState);
     return () => window.removeEventListener("popstate", restoreAccountState);
@@ -127,12 +131,25 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
 
   const needsAttention = (account: AccountStats) => account.status !== "healthy" || (account.secondary_window_available && account.secondary_window_used_pct >= 80);
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredAccounts = stats.accounts.filter((account) => {
+  const displayID = (account: AccountStats) => adminAccounts.find((candidate) => candidate.public_id === account.id)?.id ?? account.id;
+  const filteredAccounts = sortAccounts(stats.accounts.filter((account) => {
     if (attentionOnly && !needsAttention(account)) return false;
     if (!normalizedQuery) return true;
     const provider = providerDisplay(account.type);
     return [provider.label, account.type, account.plan_type, account.id].some((value) => value?.toLowerCase().includes(normalizedQuery));
-  });
+  }), sort, displayID);
+  const sortHeader = (key: AccountSortKey, label: string) => {
+    const active = sort?.key === key;
+    return (
+      <button
+        type="button"
+        className={classNames("sort-header", active && "active")}
+        aria-label={`Sort by ${label.toLowerCase()}`}
+        onClick={() => setSort(nextAccountSort(sort, key))}
+      >{label}<i aria-hidden="true">{active ? (sort.direction === "asc" ? "▲" : "▼") : "↕"}</i></button>
+    );
+  };
+  const ariaSort = (key: AccountSortKey) => sort?.key === key ? (sort.direction === "asc" ? "ascending" : "descending") : undefined;
   const attentionCount = stats.accounts.filter(needsAttention).length;
   const selectedAdmin = adminAccounts.find((account) => account.id === selected) ?? null;
   const selectedAccount = stats.accounts.find((account) => {
@@ -282,8 +299,14 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
       </section>
       <div className={classNames("accounts-layout", selected && "inspecting")}>
         <div className="account-table" role="list" aria-label="Provider accounts" aria-hidden={mobileInspector && Boolean(selected) ? true : undefined}>
-          <div className="account-row account-head" aria-hidden="true">
-            <span>Provider / plan / account</span><span>State</span><span>Weekly pace</span><span>Reset windows</span><span>24h burn</span><span>API value</span><span>Trend</span>
+          <div className="account-row account-head" role="presentation">
+            <span className="sort-group">{sortHeader("provider", "Provider")}{sortHeader("plan", "Plan")}{sortHeader("account", "Account")}</span>
+            <span aria-sort={ariaSort("state")}>{sortHeader("state", "State")}</span>
+            <span aria-sort={ariaSort("pace")}>{sortHeader("pace", "Weekly pace")}</span>
+            <span aria-sort={ariaSort("reset")}>{sortHeader("reset", "Reset windows")}</span>
+            <span aria-sort={ariaSort("burn")}>{sortHeader("burn", "24h burn")}</span>
+            <span aria-sort={ariaSort("value")}>{sortHeader("value", "API value")}</span>
+            <span aria-hidden="true">Trend</span>
           </div>
           {filteredAccounts.length === 0 && <div className="empty-state">{stats.accounts.length === 0 ? "No provider accounts are connected." : "No accounts match this filter."}</div>}
           {filteredAccounts.map((account) => {
