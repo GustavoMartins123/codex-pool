@@ -1,3 +1,4 @@
+import { focusedQuotaAccount } from "./quotaFocus";
 import type { AccountStats, HourlyUsage, ModelDailyUsage, OriginWeeklyUsage, Provider } from "./types";
 
 export interface CapacityForecast {
@@ -114,7 +115,7 @@ export function capacityForecasts(accounts: AccountStats[], bufferRatio = 0.2): 
   return providers.flatMap((provider) => {
     const rows = accounts.filter((account) => account.type === provider);
     const activeAccounts = rows.filter((account) => !account.health_blocked && (account.status === "healthy" || account.status === "degraded")).length;
-    const measured = rows.flatMap((account) => {
+    const measured = rows.map(focusedQuotaAccount).flatMap((account) => {
       if (account.status === "dead" || account.status === "verification_required" || account.health_blocked || !account.secondary_window_available || account.secondary_window_used_pct < 0) return [];
       const estimate = weeklyQuotaEstimate(account);
       if (!estimate) return [];
@@ -184,7 +185,7 @@ export function dailyDemandSeries(hourly: HourlyUsage[]): DailyDemandPoint[] {
 }
 
 export function accountFlow(accounts: AccountStats[]): AccountFlow[] {
-  return accounts.flatMap((account) => {
+  return accounts.map(focusedQuotaAccount).flatMap((account) => {
     if (account.status === "dead" || account.status === "verification_required" || account.health_blocked || !account.secondary_window_available) return [];
     const estimate = weeklyQuotaEstimate(account);
     if (!estimate) return [];

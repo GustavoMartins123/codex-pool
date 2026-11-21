@@ -2,14 +2,14 @@ import { Area, AreaChart, Bar, BarChart, Grid, Legend, Line, LineChart, Sparklin
 import { accountFlow, capacityForecasts, dailyDemandSeries, demandSummary, modelMix, originConcentration, peakHeatmap, type AccountFlow, type CapacityForecast } from "../insights";
 import { type AccountStats, type HourlyUsage, type ModelDailyUsage, type ModelQuotaEfficiency, type OriginWeeklyUsage, type PoolStats, type Provider, type QuotaCapacityPoint, type RecentError, type ResetObservation, type SignalAnalytics } from "../types";
 import { INSIGHT_MODES, queryValue, type InsightMode, updateURL } from "../navigation";
-import { EmptyChart, Instrument, SignalPanel, SignalSkeleton, accountThroughput, classNames, compact, formatReset, formatTokens, money, originHandle, poolSurplus, preciseMoney, providerDisplay, tokenThroughput } from "../ui";
+import { EmptyChart, Instrument, SignalPanel, SignalSkeleton, accountThroughput, classNames, compact, focusedQuotaAccount, formatReset, formatTokens, money, originHandle, poolSurplus, preciseMoney, providerDisplay, tokenThroughput } from "../ui";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 export function Pulse({ stats, signal, recentErrors, onAccounts }: { stats: PoolStats | null; signal: SignalAnalytics | null; recentErrors: RecentError[]; onAccounts: () => void }) {
   if (!stats || !signal) return <SignalSkeleton />;
   const surplus = poolSurplus(stats.aggregate);
   const burn = burnSummary(signal.hourly);
-  const intervention = stats.accounts.filter((account) => account.status !== "healthy" || account.secondary_window_used_pct >= 80);
+  const intervention = stats.accounts.map(focusedQuotaAccount).filter((account) => account.status !== "healthy" || account.secondary_window_used_pct >= 80);
 
   const generated = new Date(stats.generated_at);
   const healthCopy = intervention.length === 0
@@ -175,7 +175,8 @@ function ProviderLanes({ accounts }: { accounts: AccountStats[] }) {
         <span>Provider</span><span>Weekly capacity</span><span>API value</span><span>Spend</span><span>Return</span><span>Trend</span><span>State</span>
       </div>
       {groups.map(({ provider, rows, display }) => {
-        const used = rows.filter((row) => row.secondary_window_available).reduce((sum, row) => sum + row.secondary_window_used_pct, 0) / Math.max(1, rows.filter((row) => row.secondary_window_available).length);
+        const weekly = rows.map(focusedQuotaAccount).filter((row) => row.secondary_window_available);
+        const used = weekly.reduce((sum, row) => sum + row.secondary_window_used_pct, 0) / Math.max(1, weekly.length);
         const value = rows.reduce((sum, row) => sum + row.api_cost_estimate, 0);
         const spend = rows.reduce((sum, row) => sum + row.subscription_spend, 0);
         const roi = spend ? value / spend : 0;
@@ -507,7 +508,7 @@ type CalendarEvent = { id: string; at: Date; provider: Provider | string; kind: 
 function ResetCalendar({ stats, forecasts, observations }: { stats: PoolStats; forecasts: CapacityForecast[]; observations: ResetObservation[] }) {
   const generated = new Date(stats.generated_at).valueOf();
   const events: CalendarEvent[] = [];
-  for (const account of stats.accounts) {
+  for (const account of stats.accounts.map(focusedQuotaAccount)) {
     if (account.secondary_window_available && account.secondary_reset_minutes >= 0) {
       events.push({ id: `${account.id}-weekly`, at: new Date(generated + account.secondary_reset_minutes * 60000), provider: account.type, kind: "WEEKLY RESET", detail: `${account.secondary_window_used_pct.toFixed(0)}% used · ${account.id.slice(-5)}`, tone: "future" });
     }
