@@ -254,11 +254,9 @@ func failRenameTo(target string) func(string, string) error {
 // windows_restore_audit_test.go.
 func TestAuditRestorePairedBackupRollsBackWhenSecondSwapFails(t *testing.T) {
 	manifest, boltPath, duckPath := buildPairedRestoreFixture(t)
-	previous := restoreRename
-	restoreRename = failRenameTo(duckPath)
-	t.Cleanup(func() { restoreRename = previous })
+	r := pairedRestorer{rename: failRenameTo(duckPath)}
 
-	err := restorePairedBackup(manifest, boltPath, duckPath)
+	err := r.restorePairedBackup(manifest, boltPath, duckPath)
 	if err == nil {
 		t.Fatal("restore unexpectedly succeeded with an injected DuckDB swap failure")
 	}
@@ -279,11 +277,9 @@ func TestAuditRestorePairedBackupRollsBackWhenSecondSwapFails(t *testing.T) {
 // remain exactly as they were.
 func TestAuditRestorePairedBackupLeavesStoresUntouchedWhenFirstSwapFails(t *testing.T) {
 	manifest, boltPath, duckPath := buildPairedRestoreFixture(t)
-	previous := restoreRename
-	restoreRename = failRenameTo(boltPath)
-	t.Cleanup(func() { restoreRename = previous })
+	r := pairedRestorer{rename: failRenameTo(boltPath)}
 
-	if err := restorePairedBackup(manifest, boltPath, duckPath); err == nil {
+	if err := r.restorePairedBackup(manifest, boltPath, duckPath); err == nil {
 		t.Fatal("restore unexpectedly succeeded with an injected Bolt swap failure")
 	}
 	if value := readBoltProof(t, boltPath); value != "after" {
@@ -313,7 +309,7 @@ func TestAuditRestorePairedBackupFailsCleanlyWhenDuckPathBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := restorePairedBackup(manifest, boltPath, duckPath); err == nil {
+	if err := (pairedRestorer{}).restorePairedBackup(manifest, boltPath, duckPath); err == nil {
 		t.Fatal("restore unexpectedly succeeded with a directory at the DuckDB path")
 	}
 	if value := readBoltProof(t, boltPath); value != "after" {

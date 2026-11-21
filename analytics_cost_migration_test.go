@@ -190,7 +190,7 @@ func TestDuckCostMigrationPreservesHistoryAndCutover(t *testing.T) {
 	}
 	target := t.TempDir()
 	boltRestored, duckRestored := filepath.Join(target, "proxy.db"), filepath.Join(target, "usage.duckdb")
-	if err := restorePairedBackup(manifest, boltRestored, duckRestored); err != nil {
+	if err := (pairedRestorer{}).restorePairedBackup(manifest, boltRestored, duckRestored); err != nil {
 		t.Fatal(err)
 	}
 	restoredStore, err := newUsageStore(boltRestored, 30)

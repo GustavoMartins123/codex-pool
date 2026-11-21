@@ -50,7 +50,8 @@ func (app *proxyServer) close() {
 func prepareProxyStartup(cfg *config) (bool, error) {
 	duckPath := getenv("DUCKDB_PATH", "./data/usage.duckdb")
 	cfg.duckPath = duckPath
-	if err := recoverPairedRestore(cfg.storePath, duckPath); err != nil {
+	var restorer pairedRestorer
+	if err := restorer.recoverPairedRestore(cfg.storePath, duckPath); err != nil {
 		return false, fmt.Errorf("recover paired restore: %w", err)
 	}
 	if cfg.rotatePassportKey {
@@ -76,7 +77,7 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		return true, nil
 	}
 	if cfg.restoreManifest != "" {
-		if err := restorePairedBackup(cfg.restoreManifest, cfg.storePath, duckPath); err != nil {
+		if err := restorer.restorePairedBackup(cfg.restoreManifest, cfg.storePath, duckPath); err != nil {
 			return false, fmt.Errorf("restore paired backup: %w", err)
 		}
 		log.Printf("paired backup restored from %s", cfg.restoreManifest)

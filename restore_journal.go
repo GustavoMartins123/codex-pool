@@ -22,8 +22,6 @@ type restoreJournal struct {
 	Files     []restoreJournalFile `json:"files"`
 }
 
-var restoreCheckpoint = func(string) {}
-
 func writeRestoreJournal(path string, journal restoreJournal) error {
 	data, err := json.Marshal(journal)
 	if err != nil {
@@ -70,7 +68,7 @@ func prepareRestoreJournal(boltPath, duckPath string) (restoreJournal, error) {
 	return j, nil
 }
 
-func recoverPairedRestore(boltPath, duckPath string) error {
+func (r pairedRestorer) recoverPairedRestore(boltPath, duckPath string) error {
 	journalPath := boltPath + ".restore-journal"
 	data, err := os.ReadFile(journalPath)
 	if os.IsNotExist(err) {
@@ -121,7 +119,7 @@ func recoverPairedRestore(boltPath, duckPath string) error {
 					return fmt.Errorf("recover store: %w", err)
 				}
 			}
-			restoreCheckpoint("recovered:" + filepath.Base(entry.Path))
+			r.markCheckpoint("recovered:" + filepath.Base(entry.Path))
 		}
 		if err := os.Remove(journalPath); err != nil {
 			return err

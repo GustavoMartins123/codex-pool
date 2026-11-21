@@ -69,7 +69,7 @@ func TestPairedBackupManifestRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := restorePairedBackup(manifest, boltPath, duckPath); err != nil {
+	if err := (pairedRestorer{}).restorePairedBackup(manifest, boltPath, duckPath); err != nil {
 		t.Fatal(err)
 	}
 	bolt, err = bbolt.Open(boltPath, 0o600, nil)
