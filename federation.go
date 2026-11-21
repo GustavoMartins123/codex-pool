@@ -54,7 +54,6 @@ func NewFederatedProvider(name string, cfg FederationNodeConfig) (*FederatedProv
 		name: name, accountType: AccountType("federation:" + name), base: base,
 		tokenEnv: strings.TrimSpace(cfg.TokenEnv), interval: interval, models: make(map[string]string),
 	}
-	markGenericProviderType(provider.accountType)
 	return provider, nil
 }
 

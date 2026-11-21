@@ -28,12 +28,13 @@ func TestParseProviderModelsReadsSlugWhenIDMissing(t *testing.T) {
 
 func TestCodexModelsURLUsesDesktopClientVersion(t *testing.T) {
 	wham, _ := url.Parse("https://chatgpt.com/backend-api")
-	target, ok := providerModelsURL(NewCodexProvider(wham, wham, nil))
+	codex := NewCodexProvider(wham, wham, nil)
+	target, ok := providerModelsURL(codex)
 	if !ok {
 		t.Fatal("expected Codex model discovery URL")
 	}
 	got := target.Query().Get("client_version")
-	want := currentCodexFingerprint().AppVersion
+	want := codex.fingerprint.current().AppVersion
 	if got != want {
 		t.Fatalf("client_version = %q, want desktop app version %q", got, want)
 	}
@@ -50,7 +51,7 @@ func TestSyncCodexModelsSetsCyberFromDaybreak(t *testing.T) {
 	registry := NewProviderRegistry(codex, nil, nil)
 	account := &Account{ID: "cont", Type: AccountTypeCodex, vault: plainTestVault(), File: path, AccessToken: "a"}
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Query().Get("client_version") != currentCodexFingerprint().AppVersion {
+		if req.URL.Query().Get("client_version") != codex.fingerprint.current().AppVersion {
 			t.Fatalf("client_version = %q", req.URL.Query().Get("client_version"))
 		}
 		return &http.Response{

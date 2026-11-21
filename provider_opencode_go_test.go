@@ -449,17 +449,19 @@ func TestOpencodeGoCuteModelsUseMatchingProtocols(t *testing.T) {
 func TestOpencodeGoSessionHeader(t *testing.T) {
 	t.Parallel()
 
+	provider := &OpencodeGoProvider{}
+
 	// Client-supplied value wins.
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set("x-opencode-session", "ses-client")
-	if got := opencodeGoSessionHeader(req, "conv-1", "user-1"); got != "ses-client" {
+	if got := provider.sessionHeader(req, "conv-1", "user-1"); got != "ses-client" {
 		t.Fatalf("client session = %q, want ses-client", got)
 	}
 
 	// Conversation ID yields a stable, header-safe derived value.
 	req.Header.Del("x-opencode-session")
-	derived := opencodeGoSessionHeader(req, "conv-1", "user-1")
-	again := opencodeGoSessionHeader(req, "conv-1", "user-1")
+	derived := provider.sessionHeader(req, "conv-1", "user-1")
+	again := provider.sessionHeader(req, "conv-1", "user-1")
 	if derived == "" || derived != again {
 		t.Fatalf("derived session not stable: %q vs %q", derived, again)
 	}
@@ -467,12 +469,12 @@ func TestOpencodeGoSessionHeader(t *testing.T) {
 		t.Fatalf("derived session contains unsafe characters: %q", derived)
 	}
 	// Different conversations must not collapse to the same session.
-	if other := opencodeGoSessionHeader(req, "conv-2", "user-1"); other == derived {
+	if other := provider.sessionHeader(req, "conv-2", "user-1"); other == derived {
 		t.Fatalf("distinct conversations share session %q", derived)
 	}
 
 	// With no conversation, fall back to the pool user (still non-empty).
-	if fallback := opencodeGoSessionHeader(req, "", "user-1"); fallback == "" {
+	if fallback := provider.sessionHeader(req, "", "user-1"); fallback == "" {
 		t.Fatal("expected non-empty fallback for user with no conversation")
 	}
 }
@@ -522,7 +524,7 @@ func TestProxyRequestStampsOpencodeGoSession(t *testing.T) {
 	if gotSession == "" {
 		t.Fatal("outbound request is missing x-opencode-session")
 	}
-	if want := ccDerivedHexID("conv-abc", "opencode-go-session", ccProcessSessionID); gotSession != want {
+	if want := ccDerivedHexID("conv-abc", "opencode-go-session", ""); gotSession != want {
 		t.Fatalf("x-opencode-session = %q, want %q", gotSession, want)
 	}
 }

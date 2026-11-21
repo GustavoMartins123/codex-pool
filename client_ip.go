@@ -22,10 +22,10 @@ func splitCommaEntries(raw string) []string {
 	return list
 }
 
-// localSubnetCache caches the subnets of this process's own network
+// subnetCache caches the subnets of this process's own network
 // interfaces so same-subnet trust checks stay cheap. Container networks do
 // not change while the process runs; a short TTL covers interface changes.
-var localSubnetCache struct {
+type subnetCache struct {
 	mu   sync.Mutex
 	at   time.Time
 	nets []*net.IPNet
@@ -33,12 +33,7 @@ var localSubnetCache struct {
 
 const localSubnetCacheTTL = 30 * time.Second
 
-func localInterfaceSubnets() []*net.IPNet {
-	localSubnetCache.mu.Lock()
-	defer localSubnetCache.mu.Unlock()
-	if time.Since(localSubnetCache.at) < localSubnetCacheTTL && localSubnetCache.nets != nil {
-		return localSubnetCache.nets
-	}
+func interfaceSubnets() []*net.IPNet {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -57,8 +52,20 @@ func localInterfaceSubnets() []*net.IPNet {
 			nets = append(nets, ipNet)
 		}
 	}
-	localSubnetCache.nets = nets
-	localSubnetCache.at = time.Now()
+	return nets
+}
+
+func (c *subnetCache) subnets() []*net.IPNet {
+	if c == nil {
+		return interfaceSubnets()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.at) < localSubnetCacheTTL && c.nets != nil {
+		return c.nets
+	}
+	nets := interfaceSubnets()
+	c.nets, c.at = nets, time.Now()
 	return nets
 }
 
@@ -96,8 +103,8 @@ func ipSharesSubnetWithAny(ip net.IP, nets []*net.IPNet) bool {
 // this process's own non-loopback interfaces. This is what makes reverse
 // proxy containers (Traefik, nginx, Caddy) on the same Docker network trusted
 // without hardcoding their dynamic container IPs.
-func sameSubnetAsSelf(ip net.IP) bool {
-	return ipSharesSubnetWithAny(ip, localInterfaceSubnets())
+func (s ipAccessSettings) sameSubnetAsSelf(ip net.IP) bool {
+	return ipSharesSubnetWithAny(ip, s.subnets.subnets())
 }
 
 // parseTrustedProxies rejects malformed entries before replacing any policy.
@@ -135,7 +142,7 @@ func (s ipAccessSettings) isTrustedProxy(ip net.IP) bool {
 			return true
 		}
 	}
-	if s.trustSameSubnet && sameSubnetAsSelf(ip) {
+	if s.trustSameSubnet && s.sameSubnetAsSelf(ip) {
 		return true
 	}
 	return false

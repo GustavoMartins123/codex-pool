@@ -79,7 +79,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		// Codex accounts can carry stale dead state from an earlier transient
 		// refresh failure. Let the provider usage endpoint revalidate them; all
 		// other OAuth providers retain the existing dead-account skip behavior.
-		if !hasToken || (dead && !accountUsesStaticAPIKey(accType) && accType != AccountTypeCodex) {
+		if !hasToken || (dead && !accountUsesStaticAPIKey(accType, h.registry) && accType != AccountTypeCodex) {
 			continue
 		}
 		if accType == AccountTypeCodex {
@@ -123,7 +123,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		// Configured generic providers have no quota endpoint; their own health
 		// poller validates the key. Falling through would probe the Codex usage
 		// API with a foreign key and retire the account on the resulting 401.
-		if isGenericProviderType(accType) {
+		if h.registry.isGenericType(accType) {
 			continue
 		}
 
@@ -775,7 +775,7 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
 	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
 	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", ccAccountSessionID(a.ID))
+	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.accountSessionID(a.ID))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
 	ccStainlessHeaders(req.Header.Set)

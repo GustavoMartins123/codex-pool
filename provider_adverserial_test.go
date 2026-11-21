@@ -313,11 +313,11 @@ func TestAdverserialProviderParseUsage(t *testing.T) {
 func TestAdverserialAccountUsesStaticAPIKey(t *testing.T) {
 	// A proxied 401/403 must not retire a static-key account: model access and
 	// request shape are rejected with the same status.
-	if !accountUsesStaticAPIKey(AccountTypeAdverserial) {
+	if !accountUsesStaticAPIKey(AccountTypeAdverserial, nil) {
 		t.Error("adverserial accounts use static API keys")
 	}
 	acc := &Account{Type: AccountTypeAdverserial}
-	if markedDead, _ := applyProxyAuthFailure(acc, false); markedDead {
+	if markedDead, _ := applyProxyAuthFailure(acc, false, nil); markedDead {
 		t.Error("a proxied auth failure must not mark a static-key account dead")
 	}
 }

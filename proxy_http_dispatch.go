@@ -361,7 +361,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 				acc.mu.Unlock()
 
 			case ErrorClassAuth:
-				markedDead, penaltyNow := applyProxyAuthFailure(acc, refreshFailed)
+				markedDead, penaltyNow := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 				if markedDead {
 					log.Printf("[%s] account %s DEAD: %d refresh failed, body=%s", reqID, acc.ID, resp.StatusCode, safeText(errBody))
 					if err := saveAccount(h.pool.antigravity, acc); err != nil {

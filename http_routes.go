@@ -242,7 +242,7 @@ func (h *proxyHandler) handlePoolCatalog(w http.ResponseWriter, r *http.Request)
 	if h.passport != nil {
 		var loadErr error
 		loadErr = h.passport.db.View(func(tx *bbolt.Tx) error {
-			visible.catalogVerifications, loadErr = readModelVerifications(tx, time.Now().UTC())
+			visible.catalogVerifications, loadErr = h.readModelVerifications(tx, time.Now().UTC())
 			return loadErr
 		})
 		if loadErr != nil {

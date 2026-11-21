@@ -424,6 +424,8 @@ type proxyHandler struct {
 	claudeOAuth         claudeOAuthSessions
 	codexOAuth          codexOAuthSessions
 	zaiLogin            zaiLoginSessions
+	claudeIdentity      claudeIdentity
+	verificationRuntime verificationRuntimeCache
 
 	requestQueue         *fairQueue
 	cfg                  *config
@@ -2603,7 +2605,7 @@ func (h *proxyHandler) applyWebSocketStatusEffects(reqID string, acc *Account, u
 		acc.Penalty += 1.0
 		acc.mu.Unlock()
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
@@ -3247,7 +3249,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		if provider.WireFormat() == WireResponses && upstreamTokenRevoked(resp) {
 			h.disableAccountPermanently(acc, reqID, "upstream token revoked")
 		}
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
@@ -3277,7 +3279,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		// Replace body so client still gets the error
 		resp.Body = io.NopCloser(bytes.NewReader(errBody))
 
-		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed)
+		markedDead, _ := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 		if markedDead {
 			if err := saveAccount(h.pool.antigravity, acc); err != nil {
 				log.Printf("[%s] warning: failed to save dead account %s: %v", reqID, acc.ID, err)
@@ -4566,13 +4568,13 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 
 				// Pace requests per session to avoid burst patterns.
-				sessionID := ccSessionHeader(in, userID)
+				sessionID := h.claudeIdentity.sessionHeader(in, userID)
 				h.pacer.wait(sessionID)
 
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
+				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
 				if !bodyHasClaudeSystemBlocks(bodyObj) {
 					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
@@ -4630,11 +4632,11 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			strings.HasPrefix(access, "sk-ant-oat") {
 			var bodyObj map[string]any
 			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !ccIsGenuineClaudeCodeRequest(in, bodyObj) {
-				sessionID := ccSessionHeader(in, userID)
+				sessionID := h.claudeIdentity.sessionHeader(in, userID)
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				ccInjectMetadata(bodyObj, accUUID, userID, sessionID)
+				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
 				if _, ok := bodyObj["tools"]; !ok {
 					bodyObj["tools"] = []any{}
 				}

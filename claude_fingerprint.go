@@ -56,11 +56,34 @@ const (
 	betaExtendedCacheTTL  = "extended-cache-ttl-2025-04-11"
 )
 
-var (
-	ccProcessSessionID = uuid.NewString()
-	ccProcessDeviceID  = hex.EncodeToString([]byte(uuid.New().String() + uuid.New().String()))[:64]
-	ccMetaMu           sync.Mutex
-)
+type claudeIdentity struct {
+	once      sync.Once
+	sessionID string
+	deviceID  string
+}
+
+func (id *claudeIdentity) mint() {
+	id.once.Do(func() {
+		id.sessionID = uuid.NewString()
+		id.deviceID = hex.EncodeToString([]byte(uuid.New().String() + uuid.New().String()))[:64]
+	})
+}
+
+func (id *claudeIdentity) session() string {
+	if id == nil {
+		return ""
+	}
+	id.mint()
+	return id.sessionID
+}
+
+func (id *claudeIdentity) device() string {
+	if id == nil {
+		return ""
+	}
+	id.mint()
+	return id.deviceID
+}
 
 // ccFingerprintSalt is the hardcoded salt from Claude Code's backend validation.
 // See free-code/src/utils/fingerprint.ts FINGERPRINT_SALT.
@@ -69,7 +92,7 @@ const ccFingerprintSalt = "59cf53e54c78"
 // ccDerivedID returns a stable deterministic UUID-style identifier derived from
 // a per-user seed and a label. We use this so the same pool user emits the same
 // device_id / session_id every time without leaking a single shared value
-// across the whole pool. Empty seed falls back to the process-wide value.
+// across the whole pool. Empty seed falls back to the identity's random value.
 func ccDerivedID(seed, label, fallback string) string {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
@@ -104,25 +127,25 @@ func formatUUIDFromHash(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", clone[0:4], clone[4:6], clone[6:8], clone[8:10], clone[10:16])
 }
 
-// ccUserDeviceID returns a stable 64-char hex device id for the given pool user.
-func ccUserDeviceID(userID string) string {
-	return ccDerivedHexID(userID, "device", ccProcessDeviceID)
+// userDeviceID returns a stable 64-char hex device id for the given pool user.
+func (id *claudeIdentity) userDeviceID(userID string) string {
+	return ccDerivedHexID(userID, "device", id.device())
 }
 
-// ccUserFallbackSessionID returns a stable per-user session id used only when
+// userFallbackSessionID returns a stable per-user session id used only when
 // the client did not supply its own session id. Real Claude Code clients send
 // X-Claude-Code-Session-Id; for everything else we want a stable value rather
 // than a random per-request one so traffic still looks like one user with many
 // turns instead of thousands of one-shot strangers.
-func ccUserFallbackSessionID(userID string) string {
-	return ccDerivedID(userID, "session", ccProcessSessionID)
+func (id *claudeIdentity) userFallbackSessionID(userID string) string {
+	return ccDerivedID(userID, "session", id.session())
 }
 
-// ccAccountSessionID returns a stable per-account session id, used for internal
+// accountSessionID returns a stable per-account session id, used for internal
 // proxy-originated calls (profile fetch, usage poll, OAuth refresh) where there
 // is no downstream user.
-func ccAccountSessionID(accountID string) string {
-	return ccDerivedID(accountID, "account-session", ccProcessSessionID)
+func (id *claudeIdentity) accountSessionID(accountID string) string {
+	return ccDerivedID(accountID, "account-session", id.session())
 }
 
 // ccUserAgent returns the User-Agent string matching Claude Code's format.
@@ -196,7 +219,7 @@ func ccRequestHasTaskBudget(bodyObj map[string]any) bool {
 	return false
 }
 
-func ccSessionHeader(req *http.Request, userID string) string {
+func (id *claudeIdentity) sessionHeader(req *http.Request, userID string) string {
 	if req != nil {
 		for _, key := range []string{"X-Claude-Code-Session-Id", "x-claude-code-session-id", "X-Anthropic-Session-Id", "anthropic-session-id"} {
 			if v := strings.TrimSpace(req.Header.Get(key)); v != "" {
@@ -204,20 +227,17 @@ func ccSessionHeader(req *http.Request, userID string) string {
 			}
 		}
 	}
-	return ccUserFallbackSessionID(userID)
+	return id.userFallbackSessionID(userID)
 }
 
-func ccInjectMetadata(bodyObj map[string]any, accountUUID, userID, sessionID string) {
+func (id *claudeIdentity) injectMetadata(bodyObj map[string]any, accountUUID, userID, sessionID string) {
 	if bodyObj == nil {
 		return
 	}
 
-	ccMetaMu.Lock()
-	defer ccMetaMu.Unlock()
-
-	deviceID := ccUserDeviceID(userID)
+	deviceID := id.userDeviceID(userID)
 	if sessionID == "" {
-		sessionID = ccUserFallbackSessionID(userID)
+		sessionID = id.userFallbackSessionID(userID)
 	}
 
 	// Honour an existing metadata.user_id but always carry a session id forward

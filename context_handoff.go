@@ -137,8 +137,9 @@ func conversationScopedKey(owner, conversationID string) conversationKey {
 }
 
 type conversationHandoffStore struct {
-	mu      sync.Mutex
-	records map[conversationKey]conversationHandoffRecord
+	mu       sync.Mutex
+	records  map[conversationKey]conversationHandoffRecord
+	registry *ProviderRegistry
 }
 
 func newConversationHandoffStore() *conversationHandoffStore {
@@ -1348,7 +1349,7 @@ func (s *conversationHandoffStore) Prepare(key conversationKey, target AccountTy
 	if switched {
 		probe := record.State
 		probe.IR = conversationIRFromMessages(mergeConversationMessages(record.State.Messages, current), key.conversationID, record.State.TransitionEpoch+1)
-		plan := CanTransition(probe, fromProvider, target)
+		plan := CanTransition(probe, fromProvider, target, s.registry)
 		if !plan.Allowed {
 			return nil, contextHandoffResult{Switched: true, From: fromProvider, Mode: plan.Mode, Warnings: plan.Warnings}, fmt.Errorf("provider transition %s->%s is incompatible: %s", fromProvider, target, strings.Join(plan.Warnings, ","))
 		}

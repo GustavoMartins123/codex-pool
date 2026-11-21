@@ -35,7 +35,7 @@ func TestApplyProxyAuthFailure(t *testing.T) {
 	t.Run("codex proxy auth failure stays lightweight", func(t *testing.T) {
 		acc := &Account{Type: AccountTypeCodex}
 
-		markedDead, penaltyNow := applyProxyAuthFailure(acc, false)
+		markedDead, penaltyNow := applyProxyAuthFailure(acc, false, nil)
 
 		if markedDead {
 			t.Fatal("codex account should not be marked dead from proxy auth failure")
@@ -51,7 +51,7 @@ func TestApplyProxyAuthFailure(t *testing.T) {
 	t.Run("static API key proxy auth failure never retires account", func(t *testing.T) {
 		for _, accountType := range []AccountType{AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi} {
 			acc := &Account{Type: accountType}
-			markedDead, penaltyNow := applyProxyAuthFailure(acc, true)
+			markedDead, penaltyNow := applyProxyAuthFailure(acc, true, nil)
 			if markedDead || acc.Dead {
 				t.Fatalf("%s account should require provider validation before being marked dead", accountType)
 			}
@@ -64,7 +64,7 @@ func TestApplyProxyAuthFailure(t *testing.T) {
 	t.Run("non-codex proxy auth failure stays severe before refresh failure", func(t *testing.T) {
 		acc := &Account{Type: AccountTypeClaude}
 
-		markedDead, penaltyNow := applyProxyAuthFailure(acc, false)
+		markedDead, penaltyNow := applyProxyAuthFailure(acc, false, nil)
 
 		if markedDead {
 			t.Fatal("account should not be marked dead before refresh failure")
@@ -80,7 +80,7 @@ func TestApplyProxyAuthFailure(t *testing.T) {
 	t.Run("non-codex refresh failure marks account dead", func(t *testing.T) {
 		acc := &Account{Type: AccountTypeClaude}
 
-		markedDead, penaltyNow := applyProxyAuthFailure(acc, true)
+		markedDead, penaltyNow := applyProxyAuthFailure(acc, true, nil)
 
 		if !markedDead {
 			t.Fatal("expected account to be marked dead after refresh failure")

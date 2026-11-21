@@ -35,6 +35,7 @@ type CodexProvider struct {
 	realtimeBase  *url.URL
 	whamBase      *url.URL
 	refreshBase   *url.URL
+	fingerprint   codexFingerprintStore
 }
 
 // NewCodexProvider creates a new Codex provider.
@@ -61,7 +62,7 @@ func (p *CodexProvider) ModelDiscoveryURL() *url.URL {
 		return nil
 	}
 	query := target.Query()
-	query.Set("client_version", currentCodexFingerprint().AppVersion)
+	query.Set("client_version", p.fingerprint.current().AppVersion)
 	target.RawQuery = query.Encode()
 	return target
 }
@@ -138,7 +139,7 @@ func (p *CodexProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	if chatgptAccID != "" {
 		req.Header.Set("ChatGPT-Account-ID", chatgptAccID)
 	}
-	applyCodexRequestFingerprint(req, acc)
+	p.fingerprint.applyRequest(req, acc)
 }
 
 func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {

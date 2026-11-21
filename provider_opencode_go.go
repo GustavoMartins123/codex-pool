@@ -29,6 +29,7 @@ import (
 // existing provider.
 type OpencodeGoProvider struct {
 	opencodeGoBase *url.URL
+	identity       *claudeIdentity
 }
 
 // NewOpencodeGoProvider creates a new OpenCode Go provider.
@@ -42,10 +43,10 @@ func (p *OpencodeGoProvider) ModelDiscoveryURL() *url.URL {
 
 func (*OpencodeGoProvider) WireFormat() WireFormat { return WireUnknown }
 
-func (*OpencodeGoProvider) RequestPreparation() requestPreparation {
+func (p *OpencodeGoProvider) RequestPreparation() requestPreparation {
 	return requestPreparation{
 		conversationHeaders: func(req *http.Request, conversationID, userID string) {
-			req.Header.Set("x-opencode-session", opencodeGoSessionHeader(req, conversationID, userID))
+			req.Header.Set("x-opencode-session", p.sessionHeader(req, conversationID, userID))
 		},
 	}
 }
@@ -87,13 +88,13 @@ func (p *OpencodeGoProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	req.Header.Set("X-Api-Key", acc.AccessToken)
 }
 
-// opencodeGoSessionHeader returns the value for the `x-opencode-session`
+// sessionHeader returns the value for the `x-opencode-session`
 // header. Go's router hard-requires this header and rejects every request
 // without it (HTTP 400 "MissingSessionID"), so we always send one. Prefer the
 // client's own value when present; otherwise derive a stable ID from the
 // conversation (or pool user) so routing and prompt caching stay consistent
 // across the turns of one conversation.
-func opencodeGoSessionHeader(r *http.Request, conversationID, userID string) string {
+func (p *OpencodeGoProvider) sessionHeader(r *http.Request, conversationID, userID string) string {
 	if r != nil {
 		if v := strings.TrimSpace(r.Header.Get("x-opencode-session")); v != "" {
 			return v
@@ -103,7 +104,7 @@ func opencodeGoSessionHeader(r *http.Request, conversationID, userID string) str
 	if seed == "" {
 		seed = strings.TrimSpace(userID)
 	}
-	return ccDerivedHexID(seed, "opencode-go-session", ccProcessSessionID)
+	return ccDerivedHexID(seed, "opencode-go-session", p.identity.session())
 }
 
 func (p *OpencodeGoProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {

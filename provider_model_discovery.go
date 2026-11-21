@@ -450,7 +450,7 @@ func discoveredModelsForPool(pool *poolState) []poolModelDescriptor {
 			protocol = "openai"
 		} else if entry.model.Protocol != "" {
 			protocol = entry.model.Protocol
-		} else if isGenericProviderType(entry.provider) {
+		} else if pool.registry.isGenericType(entry.provider) {
 			protocol = "openai"
 		}
 		capabilities := map[string]bool{"reasoning": entry.model.Reasoning, "tools": true}

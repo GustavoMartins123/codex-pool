@@ -11,21 +11,21 @@ import (
 func TestCanTransitionAccountsForHistoryAndCurrentContent(t *testing.T) {
 	state := ConversationState{ActiveProvider: AccountTypeCodex}
 	state.IR = conversationIRFromMessages([]Message{transitionText("user", "hello")}, "conv", 0)
-	if plan := CanTransition(state, AccountTypeCodex, AccountTypeCodex); !plan.Allowed || plan.Cost != 0 || plan.Mode != TransitionNative {
+	if plan := CanTransition(state, AccountTypeCodex, AccountTypeCodex, nil); !plan.Allowed || plan.Cost != 0 || plan.Mode != TransitionNative {
 		t.Fatalf("native plan=%+v", plan)
 	}
-	if plan := CanTransition(state, AccountTypeCodex, AccountTypeAntigravity); !plan.Allowed || plan.Cost != 0.3 || plan.Mode != TransitionSafeHistory {
+	if plan := CanTransition(state, AccountTypeCodex, AccountTypeAntigravity, nil); !plan.Allowed || plan.Cost != 0.3 || plan.Mode != TransitionSafeHistory {
 		t.Fatalf("safe plan=%+v", plan)
 	}
-	if plan := CanTransition(state, AccountTypeClaude, AccountTypeZAI); !plan.Allowed || plan.Cost != 0.1 || plan.Mode != TransitionFullHistory {
+	if plan := CanTransition(state, AccountTypeClaude, AccountTypeZAI, nil); !plan.Allowed || plan.Cost != 0.1 || plan.Mode != TransitionFullHistory {
 		t.Fatalf("full plan=%+v", plan)
 	}
 	state.IR = conversationIRFromMessages([]Message{{Role: "user", Parts: []MessagePart{{Type: "image", ImageURL: "data:image/png;base64,aGVsbG8="}}}}, "conv", 0)
-	if plan := CanTransition(state, AccountTypeCodex, AccountTypeZAI); plan.Allowed || plan.Mode != TransitionSummary {
+	if plan := CanTransition(state, AccountTypeCodex, AccountTypeZAI, nil); plan.Allowed || plan.Mode != TransitionSummary {
 		t.Fatalf("unsupported current image allowed: %+v", plan)
 	}
 	state.IR = conversationIRFromMessages([]Message{{Role: "tool", Parts: []MessagePart{{Type: "tool_result", ToolID: "call", Text: "done"}}}}, "conv", 0)
-	if plan := CanTransition(state, AccountTypeCodex, AccountType("unknown")); plan.Allowed {
+	if plan := CanTransition(state, AccountTypeCodex, AccountType("unknown"), nil); plan.Allowed {
 		t.Fatalf("orphan current tool result allowed: %+v", plan)
 	}
 }

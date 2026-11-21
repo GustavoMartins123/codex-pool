@@ -22,7 +22,7 @@ func TestProviderCapabilitiesMatchWireAndHandoffContract(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(string(test.provider.Type()), func(t *testing.T) {
-			caps := capabilitiesFor(test.provider.Type())
+			caps := capabilitiesFor(test.provider.Type(), nil)
 			if caps.WireFormat != test.wire || requestFormatForCodec(test.provider) != test.target || caps.SupportsFullHistoryHandoff != test.full || caps.SupportsNativeReplay != test.replay {
 				t.Fatalf("capabilities=%+v target=%s", caps, requestFormatForCodec(test.provider))
 			}
@@ -31,7 +31,7 @@ func TestProviderCapabilitiesMatchWireAndHandoffContract(t *testing.T) {
 			}
 		})
 	}
-	unknown := capabilitiesFor(AccountType("unregistered"))
+	unknown := capabilitiesFor(AccountType("unregistered"), nil)
 	if unknown.WireFormat != WireUnknown || unknown.SupportsForeignHistory || unknown.SupportsFullHistoryHandoff {
 		t.Fatalf("unknown provider was assumed compatible: %+v", unknown)
 	}

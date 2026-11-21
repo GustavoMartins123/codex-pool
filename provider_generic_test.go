@@ -43,7 +43,9 @@ func TestGenericProviderRoutesNamespacedModelAndHidesSecret(t *testing.T) {
 	if request.Header.Get("Authorization") != "Bearer secret-vllm-token" {
 		t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
 	}
-	descriptors := poolModelDescriptors(newPoolState([]*Account{account}, false))
+	pool := newPoolState([]*Account{account}, false)
+	pool.registry = NewProviderRegistry(nil, nil, nil, provider)
+	descriptors := poolModelDescriptors(pool)
 	var encoded bytes.Buffer
 	if err := json.NewEncoder(&encoded).Encode(descriptors); err != nil {
 		t.Fatal(err)
@@ -59,6 +61,24 @@ func TestGenericProviderRoutesNamespacedModelAndHidesSecret(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("generic descriptor missing or incorrect: %s", encoded.String())
+	}
+}
+
+func TestGenericProviderTypeIsScopedToItsRegistry(t *testing.T) {
+	provider, account := testGenericProvider(t)
+	withDriver := NewProviderRegistry(nil, nil, nil, provider)
+	withoutDriver := NewProviderRegistry(nil, nil, nil)
+	if !withDriver.isGenericType(account.Type) {
+		t.Fatalf("%s is not generic in its own registry", account.Type)
+	}
+	if withoutDriver.isGenericType(account.Type) {
+		t.Fatalf("%s is generic in a registry without the driver", account.Type)
+	}
+	if got := capabilitiesFor(account.Type, withDriver).WireFormat; got != WireOpenAI {
+		t.Fatalf("wire format with driver = %q", got)
+	}
+	if got := capabilitiesFor(account.Type, withoutDriver).WireFormat; got != WireUnknown {
+		t.Fatalf("wire format without driver = %q", got)
 	}
 }
 
@@ -95,6 +115,7 @@ func TestGenericProviderParticipatesInProxyRouting(t *testing.T) {
 		recent:    newRecentErrors(5),
 		aliases:   newModelAliases(nil),
 	}
+	handler.pool.registry = handler.registry
 	body := `{"model":"local-vllm/qwen","stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("generic-routing-secret", "client"))

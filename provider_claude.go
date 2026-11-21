@@ -21,6 +21,7 @@ type claudeAccountState struct {
 
 type ClaudeProvider struct {
 	claudeBase *url.URL
+	identity   *claudeIdentity
 }
 
 // NewClaudeProvider creates a new Claude provider.
@@ -137,7 +138,7 @@ func (p *ClaudeProvider) RefreshToken(ctx context.Context, acc *Account, transpo
 		return nil
 	}
 
-	return RefreshClaudeAccountTokens(ctx, acc, transport)
+	return RefreshClaudeAccountTokens(ctx, acc, transport, p.identity)
 }
 
 func (p *ClaudeProvider) ParseUsage(obj map[string]any) *RequestUsage {

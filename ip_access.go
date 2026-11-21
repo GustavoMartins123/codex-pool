@@ -10,6 +10,7 @@ import (
 type ipAccessPolicy struct {
 	mu       sync.RWMutex
 	settings ipAccessSettings
+	subnets  subnetCache
 }
 
 type ipAccessSettings struct {
@@ -17,6 +18,7 @@ type ipAccessSettings struct {
 	trustedProxies  []*net.IPNet
 	trustAllProxies bool
 	trustSameSubnet bool
+	subnets         *subnetCache
 }
 
 func parseIPNetList(field string, entries []string) ([]*net.IPNet, error) {
@@ -73,8 +75,10 @@ func (p *ipAccessPolicy) install(settings ipAccessSettings) {
 
 func (p *ipAccessPolicy) snapshot() ipAccessSettings {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.settings
+	settings := p.settings
+	p.mu.RUnlock()
+	settings.subnets = &p.subnets
+	return settings
 }
 
 func (s ipAccessSettings) restricted() bool {
