@@ -81,11 +81,11 @@ type antigravityOAuthSession struct {
 	TargetOrigin     string
 }
 
-var antigravityOAuthSessions = struct {
-	sync.Mutex
+type antigravityOAuthSessionStore struct {
+	mu      sync.Mutex
 	byID    map[string]*antigravityOAuthSession
 	byState map[string]*antigravityOAuthSession
-}{byID: make(map[string]*antigravityOAuthSession), byState: make(map[string]*antigravityOAuthSession)}
+}
 
 func newAntigravityOAuthSession() (*antigravityOAuthSession, error) {
 	random := func(size int) (string, error) {
@@ -165,16 +165,21 @@ func (h *proxyHandler) startAntigravityOAuth(w http.ResponseWriter, r *http.Requ
 	query.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
 	query.Set("code_challenge_method", "S256")
 	u.RawQuery = query.Encode()
-	antigravityOAuthSessions.Lock()
-	antigravityOAuthSessions.byID[session.ID] = session
-	antigravityOAuthSessions.byState[session.State] = session
-	for id, candidate := range antigravityOAuthSessions.byID {
+	sessions := &h.antigravityOAuth
+	sessions.mu.Lock()
+	if sessions.byID == nil {
+		sessions.byID = make(map[string]*antigravityOAuthSession)
+		sessions.byState = make(map[string]*antigravityOAuthSession)
+	}
+	sessions.byID[session.ID] = session
+	sessions.byState[session.State] = session
+	for id, candidate := range sessions.byID {
 		if time.Since(candidate.CreatedAt) > 30*time.Minute {
-			delete(antigravityOAuthSessions.byID, id)
-			delete(antigravityOAuthSessions.byState, candidate.State)
+			delete(sessions.byID, id)
+			delete(sessions.byState, candidate.State)
 		}
 	}
-	antigravityOAuthSessions.Unlock()
+	sessions.mu.Unlock()
 	callbackMode := "public"
 	if isAntigravityLoopbackRedirect(redirectURI) {
 		callbackMode = "manual"
@@ -233,13 +238,13 @@ func (h *proxyHandler) handleAntigravityStatus(w http.ResponseWriter, r *http.Re
 		respondJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	antigravityOAuthSessions.Lock()
-	session := antigravityOAuthSessions.byID[input.SessionID]
+	h.antigravityOAuth.mu.Lock()
+	session := h.antigravityOAuth.byID[input.SessionID]
 	var status, accountID, sessionError string
 	if session != nil {
 		status, accountID, sessionError = session.Status, session.AccountID, session.Error
 	}
-	antigravityOAuthSessions.Unlock()
+	h.antigravityOAuth.mu.Unlock()
 	if session == nil || time.Since(session.CreatedAt) > 30*time.Minute {
 		respondJSONError(w, http.StatusNotFound, "OAuth session expired")
 		return
@@ -262,9 +267,9 @@ func (h *proxyHandler) handleAntigravityExchange(w http.ResponseWriter, r *http.
 		respondJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	antigravityOAuthSessions.Lock()
-	session := antigravityOAuthSessions.byID[input.SessionID]
-	antigravityOAuthSessions.Unlock()
+	h.antigravityOAuth.mu.Lock()
+	session := h.antigravityOAuth.byID[input.SessionID]
+	h.antigravityOAuth.mu.Unlock()
 	if session == nil || time.Since(session.CreatedAt) > 30*time.Minute {
 		respondJSONError(w, http.StatusBadRequest, "invalid or expired OAuth session")
 		return
@@ -307,17 +312,17 @@ func (h *proxyHandler) handleAntigravityCallback(w http.ResponseWriter, r *http.
 		return
 	}
 	state := strings.TrimSpace(r.URL.Query().Get("state"))
-	antigravityOAuthSessions.Lock()
-	session := antigravityOAuthSessions.byState[state]
-	antigravityOAuthSessions.Unlock()
+	h.antigravityOAuth.mu.Lock()
+	session := h.antigravityOAuth.byState[state]
+	h.antigravityOAuth.mu.Unlock()
 	if session == nil || time.Since(session.CreatedAt) > 30*time.Minute {
 		h.renderAntigravityCallback(w, nil, "error", "", "invalid or expired OAuth state")
 		return
 	}
 	if upstreamError := strings.TrimSpace(r.URL.Query().Get("error")); upstreamError != "" {
-		antigravityOAuthSessions.Lock()
+		h.antigravityOAuth.mu.Lock()
 		session.Status, session.Error = "error", upstreamError
-		antigravityOAuthSessions.Unlock()
+		h.antigravityOAuth.mu.Unlock()
 		h.renderAntigravityCallback(w, session, "error", "", upstreamError)
 		return
 	}
@@ -349,10 +354,10 @@ func (h *proxyHandler) renderAntigravityCallback(w http.ResponseWriter, session 
 	_, _ = fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Antigravity sign-in</title><p>%s</p><script>const payload=JSON.parse(atob(%q));if(window.opener){window.opener.postMessage(payload,%q)}window.close()</script>`, template.HTMLEscapeString(status), encodedPayload, targetOrigin)
 }
 
-var antigravityLoopback = struct {
-	sync.Mutex
+type antigravityLoopbackListeners struct {
+	mu        sync.Mutex
 	listeners map[string]net.Listener
-}{listeners: make(map[string]net.Listener)}
+}
 
 func isAntigravityLoopbackRedirect(raw string) bool {
 	parsed, err := url.Parse(raw)
@@ -390,9 +395,13 @@ func ensureAntigravityLoopbackListener(h *proxyHandler, rawRedirect string) erro
 		return errors.New("Antigravity OAuth redirect is not a loopback URL with a port")
 	}
 	key := parsed.Host
-	antigravityLoopback.Lock()
-	defer antigravityLoopback.Unlock()
-	if antigravityLoopback.listeners[key] != nil {
+	loopback := &h.antigravityLoopback
+	loopback.mu.Lock()
+	defer loopback.mu.Unlock()
+	if loopback.listeners == nil {
+		loopback.listeners = make(map[string]net.Listener)
+	}
+	if loopback.listeners[key] != nil {
 		return nil
 	}
 	address := net.JoinHostPort("127.0.0.1", parsed.Port())
@@ -403,14 +412,14 @@ func ensureAntigravityLoopbackListener(h *proxyHandler, rawRedirect string) erro
 	mux := http.NewServeMux()
 	mux.HandleFunc(parsed.Path, h.handleAntigravityCallback)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	antigravityLoopback.listeners[key] = listener
+	loopback.listeners[key] = listener
 	go func() {
 		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			// The status poll and manual callback paste remain available if the listener exits.
 		}
-		antigravityLoopback.Lock()
-		delete(antigravityLoopback.listeners, key)
-		antigravityLoopback.Unlock()
+		loopback.mu.Lock()
+		delete(loopback.listeners, key)
+		loopback.mu.Unlock()
 	}()
 	return nil
 }
@@ -499,23 +508,23 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 	if code == "" {
 		return "", errors.New("Google callback did not contain an authorization code")
 	}
-	antigravityOAuthSessions.Lock()
+	h.antigravityOAuth.mu.Lock()
 	if session.Status == "complete" {
 		accountID := session.AccountID
-		antigravityOAuthSessions.Unlock()
+		h.antigravityOAuth.mu.Unlock()
 		return accountID, nil
 	}
 	if session.Status != "pending" || time.Since(session.CreatedAt) > 30*time.Minute {
-		antigravityOAuthSessions.Unlock()
+		h.antigravityOAuth.mu.Unlock()
 		return "", errors.New("OAuth session is already being exchanged")
 	}
 	session.Status = "exchanging"
-	antigravityOAuthSessions.Unlock()
+	h.antigravityOAuth.mu.Unlock()
 
 	fail := func(err error) (string, error) {
-		antigravityOAuthSessions.Lock()
+		h.antigravityOAuth.mu.Lock()
 		session.Status, session.Error = "error", err.Error()
-		antigravityOAuthSessions.Unlock()
+		h.antigravityOAuth.mu.Unlock()
 		return "", err
 	}
 	token, err := h.exchangeAntigravityCode(ctx, code, session.Verifier, session.RedirectURI)
@@ -581,9 +590,9 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 				log.Printf("record provider relogin audit: %v", err)
 			}
 		}
-		antigravityOAuthSessions.Lock()
+		h.antigravityOAuth.mu.Lock()
 		session.Status, session.AccountID, session.Error = "complete", target.ID, ""
-		antigravityOAuthSessions.Unlock()
+		h.antigravityOAuth.mu.Unlock()
 		return target.ID, nil
 	}
 	accountID, err = h.persistContribution(session.ActorID, AccountTypeAntigravity, email, func(path string) error {
@@ -596,9 +605,9 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		return fail(err)
 	}
 
-	antigravityOAuthSessions.Lock()
+	h.antigravityOAuth.mu.Lock()
 	session.Status, session.AccountID, session.Error = "complete", accountID, ""
-	antigravityOAuthSessions.Unlock()
+	h.antigravityOAuth.mu.Unlock()
 	return accountID, nil
 }
 

@@ -414,10 +414,12 @@ func main() {
 }
 
 type proxyHandler struct {
-	passportConfig  passportConfig
-	ipAccess        ipAccessPolicy
-	qwenCloudTokens qwenCloudTokenCache
-	qwenLogin       qwenLoginSessions
+	passportConfig      passportConfig
+	ipAccess            ipAccessPolicy
+	qwenCloudTokens     qwenCloudTokenCache
+	qwenLogin           qwenLoginSessions
+	antigravityOAuth    antigravityOAuthSessionStore
+	antigravityLoopback antigravityLoopbackListeners
 
 	requestQueue         *fairQueue
 	cfg                  *config
