@@ -66,6 +66,10 @@ it("shows the Gemini weekly quota in the row and both families in the hover brea
   expect(popover.textContent).toContain("Claude / GPT");
   expect(popover.textContent).toContain("100%");
 
+  // The stylesheet opens the popover from the weekly pace cell through this
+  // sibling relationship, so the pace cell must directly precede the windows cell.
+  expect(container.querySelector(".account-pace + .account-windows .quota-family-popover")).not.toBeNull();
+
   // Argon reports a weekly limit only, so no empty 5-hour row is listed for it.
   const argon = [...popover.querySelectorAll(".quota-family")].find((node) => node.textContent?.includes("Gemini 4 Argon"))!;
   expect(argon.querySelectorAll(".quota-family-window")).toHaveLength(1);
