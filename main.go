@@ -424,6 +424,7 @@ type proxyHandler struct {
 	claudeOAuth         claudeOAuthSessions
 	codexOAuth          codexOAuthSessions
 	zaiLogin            zaiLoginSessions
+	verificationRuntime verificationRuntimeCache
 
 	requestQueue         *fairQueue
 	cfg                  *config

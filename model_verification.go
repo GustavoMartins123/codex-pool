@@ -37,29 +37,32 @@ type modelVerification struct {
 }
 
 var verificationVersionPattern = regexp.MustCompile(`^[a-zA-Z0-9 ._+()/-]{1,80}$`)
-var verificationRuntimeOnce sync.Once
-var verificationRuntime string
-var verificationRuntimeErr error
 
-func modelVerificationRuntime() (string, error) {
-	verificationRuntimeOnce.Do(func() {
+type verificationRuntimeCache struct {
+	once    sync.Once
+	runtime string
+	err     error
+}
+
+func (c *verificationRuntimeCache) get() (string, error) {
+	c.once.Do(func() {
 		var path string
-		path, verificationRuntimeErr = os.Executable()
-		if verificationRuntimeErr != nil {
+		path, c.err = os.Executable()
+		if c.err != nil {
 			return
 		}
 		var file *os.File
-		file, verificationRuntimeErr = os.Open(path)
-		if verificationRuntimeErr != nil {
+		file, c.err = os.Open(path)
+		if c.err != nil {
 			return
 		}
 		defer file.Close()
 		hash := sha256.New()
-		if _, verificationRuntimeErr = io.Copy(hash, file); verificationRuntimeErr == nil {
-			verificationRuntime = hex.EncodeToString(hash.Sum(nil))
+		if _, c.err = io.Copy(hash, file); c.err == nil {
+			c.runtime = hex.EncodeToString(hash.Sum(nil))
 		}
 	})
-	return verificationRuntime, verificationRuntimeErr
+	return c.runtime, c.err
 }
 
 func (v modelVerification) validate() error {
@@ -88,8 +91,8 @@ func (v modelVerification) validate() error {
 	return nil
 }
 
-func readModelVerifications(tx *bbolt.Tx, now time.Time) (map[string]modelVerification, error) {
-	runtime, err := modelVerificationRuntime()
+func (h *proxyHandler) readModelVerifications(tx *bbolt.Tx, now time.Time) (map[string]modelVerification, error) {
+	runtime, err := h.verificationRuntime.get()
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +123,7 @@ func (h *proxyHandler) handleVerificationTarget(w http.ResponseWriter, r *http.R
 	if !h.requirePoolCredential(w, r) {
 		return
 	}
-	runtime, err := modelVerificationRuntime()
+	runtime, err := h.verificationRuntime.get()
 	if err != nil {
 		respondJSONError(w, 503, "verification runtime unavailable")
 		return
@@ -157,7 +160,7 @@ func (h *proxyHandler) handleModelVerification(w http.ResponseWriter, r *http.Re
 		return
 	}
 	now := time.Now().UTC()
-	runtime, err := modelVerificationRuntime()
+	runtime, err := h.verificationRuntime.get()
 	if err != nil {
 		respondJSONError(w, 503, "verification runtime unavailable")
 		return

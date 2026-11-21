@@ -13,7 +13,7 @@ import (
 
 func testModelVerification(t *testing.T) modelVerification {
 	t.Helper()
-	runtime, err := modelVerificationRuntime()
+	runtime, err := (&verificationRuntimeCache{}).get()
 	if err != nil {
 		t.Fatal(err)
 	}

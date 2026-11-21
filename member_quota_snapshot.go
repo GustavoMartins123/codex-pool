@@ -39,7 +39,7 @@ func (h *proxyHandler) memberQuotaSnapshot(identity string, now time.Time) (*poo
 	var verifications map[string]modelVerification
 	err = h.passport.db.View(func(tx *bbolt.Tx) error {
 		var err error
-		verifications, err = readModelVerifications(tx, now)
+		verifications, err = h.readModelVerifications(tx, now)
 		if err != nil {
 			return err
 		}

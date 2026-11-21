@@ -17,7 +17,7 @@ func TestMemberQuotasBrowserE2E(t *testing.T) {
 	h, id, session, csrf, operator, opCSRF := memberQuotaFixture(t)
 	server := httptest.NewServer(h)
 	defer server.Close()
-	runtime, err := modelVerificationRuntime()
+	runtime, err := (&verificationRuntimeCache{}).get()
 	if err != nil {
 		t.Fatal(err)
 	}
