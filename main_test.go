@@ -728,7 +728,7 @@ func (r *chunkedReadCloser) Close() error { return nil }
 
 func TestClaudeToolNameReadCloserRestoresSplitNames(t *testing.T) {
 	body := &chunkedReadCloser{chunks: []string{`{"content":[{"name":"t_123`, `45678"}]}`}}
-	reader := newClaudeToolNameReadCloser(body, map[string]string{"t_12345678": "Bash"})
+	reader := claudecode.NewToolNameReadCloser(body, map[string]string{"t_12345678": "Bash"})
 	out, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("read response: %v", err)

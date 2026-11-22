@@ -397,7 +397,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 	captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 	if resp != nil && len(claudeToolNameMapper) > 0 {
 		resp.Header.Del("Content-Length")
-		resp.Body = newClaudeToolNameReadCloser(resp.Body, claudeToolNameMapper)
+		resp.Body = claudecode.NewToolNameReadCloser(resp.Body, claudeToolNameMapper)
 	}
 	if err != nil {
 		if provider.Type() == AccountTypeClaude && h.cfg.claudeTraceEnabled() {
@@ -444,7 +444,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				captureCodexResponseState(h.pool.antigravity, acc, resp, reqID)
 				if resp != nil && len(claudeToolNameMapper) > 0 {
 					resp.Header.Del("Content-Length")
-					resp.Body = newClaudeToolNameReadCloser(resp.Body, claudeToolNameMapper)
+					resp.Body = claudecode.NewToolNameReadCloser(resp.Body, claudeToolNameMapper)
 				}
 				if err != nil {
 					if provider.Type() == AccountTypeClaude && h.cfg.claudeTraceEnabled() {

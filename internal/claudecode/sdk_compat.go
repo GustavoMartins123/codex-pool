@@ -1,4 +1,4 @@
-package main
+package claudecode
 
 import (
 	"crypto/sha256"
@@ -6,8 +6,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-
-	"codex-pool-proxy/internal/claudecode"
 )
 
 func transformClaudeSDKRequest(body []byte, userID, sessionID string) ([]byte, map[string]string) {
@@ -50,7 +48,7 @@ func moveNonCoreSystemToFirstUser(obj map[string]any) {
 }
 
 func isCoreClaudeSystemText(text string) bool {
-	return strings.HasPrefix(text, "x-anthropic-billing-header:") || strings.Contains(text, claudecode.SystemPrefix)
+	return strings.HasPrefix(text, "x-anthropic-billing-header:") || strings.Contains(text, SystemPrefix)
 }
 
 func prependTextToFirstUser(obj map[string]any, prefix string) {
@@ -257,7 +255,7 @@ type claudeToolNameReadCloser struct {
 	readErr      error
 }
 
-func newClaudeToolNameReadCloser(body io.ReadCloser, mapper map[string]string) io.ReadCloser {
+func NewToolNameReadCloser(body io.ReadCloser, mapper map[string]string) io.ReadCloser {
 	if len(mapper) == 0 {
 		return body
 	}
