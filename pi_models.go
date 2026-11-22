@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
 type piModelsConfig struct {
@@ -380,4 +382,17 @@ func opencodeGoCuteModels(baseURL, apiKey string) []cuteCodeModelConfig {
 		}
 	}
 	return result
+}
+
+func advertisedModelCost(model string, now time.Time) *piModelCost {
+	prices, ok := pricing.PublishedModelPricing(now)[pricing.CanonicalPricingModel(model)]
+	if !ok {
+		return &piModelCost{}
+	}
+	return &piModelCost{
+		Input:      prices.InputCostPerToken * 1_000_000,
+		Output:     prices.OutputCostPerToken * 1_000_000,
+		CacheRead:  prices.CacheReadCost * 1_000_000,
+		CacheWrite: prices.CacheWriteCost * 1_000_000,
+	}
 }

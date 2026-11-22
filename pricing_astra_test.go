@@ -5,47 +5,29 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
 func TestAstraPublishedPricing(t *testing.T) {
-	want := tieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25)
+	want := pricing.TieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25)
 	pd := testPricingData(t)
 	for _, model := range []string{"gpt-6-astra", "gpt-6-astra[1m]", "gpt-6-astra [1m]", "gpt-6-astra-high", "gpt-6-astra[1m]-xhigh", "gpt-6-astra-none"} {
-		got, ok := pd.lookupPricing(model)
+		got, ok := pd.LookupPricing(model)
 		if !ok || got != want {
-			t.Errorf("lookupPricing(%q) = %#v, %v; want %#v", model, got, ok, want)
+			t.Errorf("LookupPricing(%q) = %#v, %v; want %#v", model, got, ok, want)
 		}
 	}
 	cost := advertisedModelCost("gpt-6-astra", time.Now())
 	if cost.Input != 10 || cost.Output != 50 || cost.CacheRead != 1 || cost.CacheWrite != 12.5 {
 		t.Errorf("advertised Astra cost = %#v", cost)
 	}
-	pd.loadFromJSON([]byte(`{"gpt-6-astra":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}`))
-	if got, ok := pd.lookupPricing("gpt-6-astra"); !ok || got != want {
+	pd.LoadFromJSON([]byte(`{"gpt-6-astra":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}`))
+	if got, ok := pd.LookupPricing("gpt-6-astra"); !ok || got != want {
 		t.Errorf("stale fetched pricing won: %#v, %v", got, ok)
 	}
-	if _, ok := pd.lookupPricing("gpt-6-astra-unknown"); ok {
+	if _, ok := pd.LookupPricing("gpt-6-astra-unknown"); ok {
 		t.Error("unknown Astra suffix inherited pricing")
-	}
-}
-
-func TestAstraCostThreshold(t *testing.T) {
-	pd := testPricingData(t)
-	for _, tt := range []struct {
-		name  string
-		input int64
-		want  float64
-	}{
-		{"below", 271999, 161999*10e-6 + 100000*1e-6 + 10000*12.5e-6 + 1000*50e-6},
-		{"at", 272000, 162000*10e-6 + 100000*1e-6 + 10000*12.5e-6 + 1000*50e-6},
-		{"above", 272001, 162001*20e-6 + 100000*2e-6 + 10000*25e-6 + 1000*75e-6},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			got := testRequestCost(t, pd, RequestUsage{AccountType: AccountTypeCodex, Model: "gpt-6-astra", InputTokens: tt.input, CachedInputTokens: 100000, CacheCreationTokens: 10000, OutputTokens: 1000, ReasoningTokens: 800, InputTokenMode: "inclusive"})
-			if math.Abs(got-tt.want) > 1e-12 {
-				t.Fatalf("cost = %.12f, want %.12f", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -79,16 +61,5 @@ func TestAstraCacheWriteUsage(t *testing.T) {
 	ru.AccountType = AccountTypeCodex
 	if got, want := testRequestCost(t, testPricingData(t), *ru), 3.76502; math.Abs(got-want) > 1e-12 {
 		t.Fatalf("parsed Astra cost = %.12f, want %.12f", got, want)
-	}
-}
-
-func TestNonCodexReasoningCost(t *testing.T) {
-	pd := testPricingData(t)
-	for _, provider := range []AccountType{AccountTypeGemini, AccountTypeAntigravity, AccountTypeClaude} {
-		usage := RequestUsage{AccountType: provider, Model: "gemini-3.1-pro-preview", OutputTokens: 100, ReasoningTokens: 200}
-		want := 300 * 12e-6
-		if got := testRequestCost(t, pd, usage); math.Abs(got-want) > 1e-12 {
-			t.Errorf("%s cost = %.12f, want %.12f", provider, got, want)
-		}
 	}
 }

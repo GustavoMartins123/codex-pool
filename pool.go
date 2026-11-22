@@ -11,27 +11,28 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/account"
 	"codex-pool-proxy/internal/accountstate"
 	"codex-pool-proxy/internal/routing"
+	"codex-pool-proxy/internal/usage"
 )
 
-// AccountType distinguishes between different API backends.
-type AccountType string
+type AccountType = account.AccountType
 
 const (
-	AccountTypeCodex       AccountType = "codex"
-	AccountTypeGemini      AccountType = "gemini"
-	AccountTypeAntigravity AccountType = "antigravity"
-	AccountTypeClaude      AccountType = "claude"
-	AccountTypeKimi        AccountType = "kimi"
-	AccountTypeMinimax     AccountType = "minimax"
-	AccountTypeZAI         AccountType = "zai"
-	AccountTypeXiaomi      AccountType = "xiaomi"
-	AccountTypeGrok        AccountType = "grok"
-	AccountTypeAdverserial AccountType = "adverserial"
-	AccountTypeOpencodeGo  AccountType = "opencode_go"
-	AccountTypeQwen        AccountType = "qwen"
-	AccountTypeAIStudio    AccountType = "aistudio"
+	AccountTypeCodex       = account.AccountTypeCodex
+	AccountTypeGemini      = account.AccountTypeGemini
+	AccountTypeAntigravity = account.AccountTypeAntigravity
+	AccountTypeClaude      = account.AccountTypeClaude
+	AccountTypeKimi        = account.AccountTypeKimi
+	AccountTypeMinimax     = account.AccountTypeMinimax
+	AccountTypeZAI         = account.AccountTypeZAI
+	AccountTypeXiaomi      = account.AccountTypeXiaomi
+	AccountTypeGrok        = account.AccountTypeGrok
+	AccountTypeAdverserial = account.AccountTypeAdverserial
+	AccountTypeOpencodeGo  = account.AccountTypeOpencodeGo
+	AccountTypeQwen        = account.AccountTypeQwen
+	AccountTypeAIStudio    = account.AccountTypeAIStudio
 )
 
 type Account struct {
@@ -174,41 +175,7 @@ type UsageSnapshot struct {
 	creditsSet             bool
 }
 
-// RequestUsage captures per-request token consumption parsed from SSE events.
-type RequestUsage struct {
-	PricingUnavailable  bool `json:"pricing_unavailable,omitempty"`
-	Timestamp           time.Time
-	AccountID           string
-	PlanType            string
-	UserID              string
-	OriginID            string
-	PromptCacheKey      string
-	RequestID           string
-	ProxyRequestID      string
-	ClientCredentialID  string
-	UsageSequence       int
-	AttemptNumber       int
-	UsageCompleteness   string
-	InputTokens         int64
-	CachedInputTokens   int64  // cache_read_input_tokens (cheap reads from cache)
-	CacheCreationTokens int64  // cache_creation_input_tokens (expensive writes to cache)
-	InputTokenMode      string // "inclusive" when InputTokens contains cached tokens; "exclusive" when it does not
-	OutputTokens        int64
-	ReasoningTokens     int64
-	BillableTokens      int64
-	// Rate limit snapshot after this request
-	PrimaryUsedPct   float64
-	SecondaryUsedPct float64
-	// Reset metadata snapshots let analytics compare observed quota rollovers
-	// with the schedule advertised when the request was served.
-	PrimaryResetAt         time.Time
-	SecondaryResetAt       time.Time
-	PrimaryWindowMinutes   int
-	SecondaryWindowMinutes int
-	// Model and provider info
-	Model       string      `json:"model,omitempty"`        // e.g., "claude-sonnet-4-5-20250929", "o4-mini"
-	AccountType AccountType `json:"account_type,omitempty"` // "claude", "codex", "gemini"
-}
+type RequestUsage = usage.RequestUsage
 
 // AccountUsage stores aggregates for an account with time windows.
 type AccountUsage struct {
@@ -557,11 +524,6 @@ func accountTier(accType AccountType, planType string) int {
 	return 2
 }
 
-// normalizeCodexPlanType maps Codex plan variants to their canonical form.
-// Business/self-serve variants such as "self_serve_business_prolite" carry
-// the same quota as Pro Lite, so they normalize to "prolite". Matching is
-// substring-based so future "business_prolite" variants work without a new
-// special case.
 const accountPlanCheckInterval = time.Hour
 
 func accountPlanCheckDue(a *Account, now time.Time) bool {
@@ -588,18 +550,10 @@ func updateAccountPlan(rt *antigravityRuntime, a *Account, plan string) {
 	}
 }
 
-func normalizeCodexPlanType(planType string) string {
-	p := strings.ToLower(strings.TrimSpace(planType))
-	if strings.Contains(p, "prolite") {
-		return "prolite"
-	}
-	return p
-}
-
 const codexPlanProMax = "promax"
 
 func isCodexProAccessPlan(planType string) bool {
-	switch normalizeCodexPlanType(planType) {
+	switch account.NormalizeCodexPlanType(planType) {
 	case "pro", codexPlanProMax, "prolite":
 		return true
 	default:
@@ -868,7 +822,7 @@ func planMatchesRequired(planType, requiredPlan string) bool {
 	}
 	plan := strings.ToLower(strings.TrimSpace(planType))
 	required := strings.ToLower(strings.TrimSpace(requiredPlan))
-	if normalizeCodexPlanType(plan) == normalizeCodexPlanType(required) {
+	if account.NormalizeCodexPlanType(plan) == account.NormalizeCodexPlanType(required) {
 		return true
 	}
 	if required == requiredPlanClaudePremium {

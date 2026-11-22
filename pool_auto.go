@@ -5,6 +5,7 @@ import (
 	"math"
 	"sync"
 
+	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -141,10 +142,10 @@ func (o *PoolAutoOrchestrator) Orchestrate(
 	conversationID string,
 	pool *poolState,
 	cb *routing.CircuitBreakerManager,
-	pricing *PricingData,
+	prices *pricing.PricingData,
 	metrics *metrics,
 ) (AutoDecision, error) {
-	return o.OrchestrateWithTransition(profile, caps, conversationID, pool, cb, pricing, metrics, nil)
+	return o.OrchestrateWithTransition(profile, caps, conversationID, pool, cb, prices, metrics, nil)
 }
 
 func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
@@ -153,7 +154,7 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 	conversationID string,
 	pool *poolState,
 	cb *routing.CircuitBreakerManager,
-	pricing *PricingData,
+	prices *pricing.PricingData,
 	metrics *metrics,
 	conversation *ConversationState,
 ) (AutoDecision, error) {
@@ -327,8 +328,8 @@ func (o *PoolAutoOrchestrator) OrchestrateWithTransition(
 
 		// SIGNAL 6: Estimated Economic Cost (10%)
 		costScore := 0.70
-		if pricing != nil {
-			if pr, ok := pricing.lookupPricing(candID); ok {
+		if prices != nil {
+			if pr, ok := prices.LookupPricing(candID); ok {
 				blendedCost := (pr.InputCostPerToken*1e6 + pr.OutputCostPerToken*1e6) / 2.0
 				if blendedCost <= 1.0 {
 					costScore = 1.0

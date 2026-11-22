@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
 type SignalEconomicsPoint struct {
@@ -101,7 +103,7 @@ func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoi
 	accountIDs := make([]string, 0)
 	for _, account := range h.pool.allAccounts() {
 		account.mu.Lock()
-		monthly, _ := getSubscriptionCost(account.Type, accountPlanForSubscription(account.PlanType))
+		monthly, _ := pricing.SubscriptionCost(account.Type, accountPlanForSubscription(account.PlanType))
 		currentAccounts[account.ID] = subscription{monthly: monthly}
 		accountIDs = append(accountIDs, account.ID)
 		account.mu.Unlock()
@@ -159,7 +161,7 @@ func (h *proxyHandler) buildSignalEconomics(now time.Time) ([]SignalEconomicsPoi
 		for _, sub := range currentAccounts {
 			spend := sub.monthly
 			if !sub.firstSeen.IsZero() {
-				spend, _ = estimateSubscriptionSpend(sub.monthly, sub.firstSeen, endOfDay)
+				spend, _ = pricing.EstimateSubscriptionSpend(sub.monthly, sub.firstSeen, endOfDay)
 			}
 			cumulativeSpend += spend
 		}

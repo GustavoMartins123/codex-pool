@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/transport"
 	"golang.org/x/net/http2"
 )
@@ -354,7 +355,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	}
 
 	// Initialize pricing data
-	pricing, err := newPricingData()
+	prices, err := pricing.New()
 	if err != nil {
 		return nil, fmt.Errorf("initialize pricing: %w", err)
 	}
@@ -401,7 +402,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		store:                store,
 		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
-		pricing:              pricing,
+		pricing:              prices,
 		aliases:              newModelAliases(cfg.modelAliases),
 		effortCap:            newEffortCap(cfg.maxReasoningEffortByUser, cfg.maxReasoningEffortByOrigin),
 		bruteForce:           newBruteForceTracker(),
