@@ -381,3 +381,16 @@ func opencodeGoCuteModels(baseURL, apiKey string) []cuteCodeModelConfig {
 	}
 	return result
 }
+
+func advertisedModelCost(model string, now time.Time) *piModelCost {
+	pricing, ok := publishedModelPricing(now)[canonicalPricingModel(model)]
+	if !ok {
+		return &piModelCost{}
+	}
+	return &piModelCost{
+		Input:      pricing.InputCostPerToken * 1_000_000,
+		Output:     pricing.OutputCostPerToken * 1_000_000,
+		CacheRead:  pricing.CacheReadCost * 1_000_000,
+		CacheWrite: pricing.CacheWriteCost * 1_000_000,
+	}
+}
