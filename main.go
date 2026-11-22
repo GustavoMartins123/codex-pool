@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
@@ -51,7 +52,7 @@ type proxyHandler struct {
 	claudeOAuth         claudeOAuthSessions
 	codexOAuth          codexOAuthSessions
 	zaiLogin            zaiLoginSessions
-	claudeIdentity      claudeIdentity
+	claudeIdentity      claudecode.Identity
 	verificationRuntime verificationRuntimeCache
 
 	requestQueue         *fairQueue

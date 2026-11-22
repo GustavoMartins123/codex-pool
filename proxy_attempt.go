@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/wire"
 	"github.com/google/uuid"
 )
@@ -188,7 +189,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		if provider.Type() == AccountTypeClaude && translateDir == wire.TranslateNone && strings.HasPrefix(access, "sk-ant-oat") {
-			outReq.Header.Set("anthropic-beta", appendAnthropicBeta(outReq.Header.Get("anthropic-beta"), betaOAuth))
+			outReq.Header.Set("anthropic-beta", claudecode.AppendAnthropicBeta(outReq.Header.Get("anthropic-beta"), claudecode.BetaOAuth))
 		}
 
 		// When translating, body size changes — remove the client's Content-Length
@@ -253,15 +254,15 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 
 				// Pace requests per session to avoid burst patterns.
-				sessionID := h.claudeIdentity.sessionHeader(in, userID)
+				sessionID := h.claudeIdentity.SessionHeader(in, userID)
 				h.pacer.wait(sessionID)
 
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
-				if !bodyHasClaudeSystemBlocks(bodyObj) {
-					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
+				h.claudeIdentity.InjectMetadata(bodyObj, accUUID, userID, sessionID)
+				if !claudecode.HasSystemBlocks(bodyObj) {
+					bodyBytes = claudecode.InjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
 				if reordered, err := wire.MarshalAnthropicRequest(bodyObj); err == nil {
@@ -276,12 +277,12 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 					bodyModel = requestedModel
 				}
 
-				outReq.Header.Set("anthropic-version", ccAnthropicVersion)
-				hasStructuredOutputs := ccRequestHasStructuredOutputs(bodyObj)
-				hasTaskBudget := ccRequestHasTaskBudget(bodyObj)
-				outReq.Header.Set("anthropic-beta", ccBetaHeader(bodyModel, isOAuth, is1M, isFastMode, hasStructuredOutputs, hasTaskBudget))
+				outReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
+				hasStructuredOutputs := claudecode.RequestHasStructuredOutputs(bodyObj)
+				hasTaskBudget := claudecode.RequestHasTaskBudget(bodyObj)
+				outReq.Header.Set("anthropic-beta", claudecode.BetaHeader(bodyModel, isOAuth, is1M, isFastMode, hasStructuredOutputs, hasTaskBudget))
 				outReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-				outReq.Header.Set("User-Agent", ccUserAgent())
+				outReq.Header.Set("User-Agent", claudecode.UserAgent())
 				outReq.Header.Set("X-Claude-Code-Session-Id", sessionID)
 				outReq.Header.Set("X-App", "cli")
 				outReq.Header.Set("x-client-request-id", uuid.NewString())
@@ -289,12 +290,12 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				outReq.Header.Set("Accept-Language", "*")
 				outReq.Header.Set("Content-Type", "application/json")
 				outReq.Header.Set("Sec-Fetch-Mode", "cors")
-				ccStainlessHeaders(outReq.Header.Set)
+				claudecode.StainlessHeaders(outReq.Header.Set)
 			} else {
 				// ZAI and other Anthropic-compatible providers should receive a clean
 				// Messages API request without Claude OAuth fingerprint headers.
 				if outReq.Header.Get("anthropic-version") == "" {
-					outReq.Header.Set("anthropic-version", ccAnthropicVersion)
+					outReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 				}
 				outReq.Header.Set("Accept", acceptHeader)
 				outReq.Header.Set("Content-Type", "application/json")
@@ -316,20 +317,20 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			translateDir == wire.TranslateNone &&
 			strings.HasPrefix(access, "sk-ant-oat") {
 			var bodyObj map[string]any
-			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !ccIsGenuineClaudeCodeRequest(in, bodyObj) {
-				sessionID := h.claudeIdentity.sessionHeader(in, userID)
+			if json.Unmarshal(bodyBytes, &bodyObj) == nil && !claudecode.IsGenuineClaudeCodeRequest(in, bodyObj) {
+				sessionID := h.claudeIdentity.SessionHeader(in, userID)
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
 				acc.mu.Unlock()
-				h.claudeIdentity.injectMetadata(bodyObj, accUUID, userID, sessionID)
+				h.claudeIdentity.InjectMetadata(bodyObj, accUUID, userID, sessionID)
 				if _, ok := bodyObj["tools"]; !ok {
 					bodyObj["tools"] = []any{}
 				}
 				if _, ok := bodyObj["temperature"]; !ok {
 					bodyObj["temperature"] = 1
 				}
-				if !bodyHasClaudeSystemBlocks(bodyObj) {
-					bodyBytes = ccInjectSystemBlocks(bodyObj, bodyBytes)
+				if !claudecode.HasSystemBlocks(bodyObj) {
+					bodyBytes = claudecode.InjectSystemBlocks(bodyObj, bodyBytes)
 					_ = json.Unmarshal(bodyBytes, &bodyObj)
 				}
 				if reordered, err := wire.MarshalAnthropicRequest(bodyObj); err == nil {
@@ -337,16 +338,16 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 
 				model, _ := bodyObj["model"].(string)
-				outReq.Header.Set("anthropic-version", ccAnthropicVersion)
-				outReq.Header.Set("anthropic-beta", ccBetaHeader(model, true, false, false, ccRequestHasStructuredOutputs(bodyObj), ccRequestHasTaskBudget(bodyObj)))
+				outReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
+				outReq.Header.Set("anthropic-beta", claudecode.BetaHeader(model, true, false, false, claudecode.RequestHasStructuredOutputs(bodyObj), claudecode.RequestHasTaskBudget(bodyObj)))
 				outReq.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-				outReq.Header.Set("User-Agent", ccUserAgent())
+				outReq.Header.Set("User-Agent", claudecode.UserAgent())
 				outReq.Header.Set("X-Claude-Code-Session-Id", sessionID)
 				outReq.Header.Set("X-App", "cli")
 				outReq.Header.Set("x-client-request-id", uuid.NewString())
 				outReq.Header.Set("Accept-Language", "*")
 				outReq.Header.Set("Sec-Fetch-Mode", "cors")
-				ccStainlessHeaders(outReq.Header.Set)
+				claudecode.StainlessHeaders(outReq.Header.Set)
 			}
 		}
 

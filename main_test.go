@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
@@ -799,7 +800,7 @@ func TestClaudePoolTokenAcceptedViaXAPIKeyPreservesNativeClaudeRequest(t *testin
 	if upstreamAPIKey != "" {
 		t.Fatalf("upstream X-Api-Key leaked pool token: %q", upstreamAPIKey)
 	}
-	for _, beta := range []string{betaClaudeCode, betaOAuth, betaInterleavedThink, betaCacheScope} {
+	for _, beta := range []string{claudecode.BetaClaudeCode, claudecode.BetaOAuth, claudecode.BetaInterleavedThink, claudecode.BetaCacheScope} {
 		if !strings.Contains(upstreamBeta, beta) {
 			t.Fatalf("upstream anthropic-beta = %q, missing %q", upstreamBeta, beta)
 		}
@@ -812,7 +813,7 @@ func TestClaudePoolTokenAcceptedViaXAPIKeyPreservesNativeClaudeRequest(t *testin
 	if text, _ := systemBlock["text"].(string); !strings.Contains(text, "x-anthropic-billing-header") {
 		t.Fatalf("billing system block missing: %#v", systemBlock)
 	}
-	if len(system) != 3 || system[1].(map[string]any)["text"] != ccSystemPrefix {
+	if len(system) != 3 || system[1].(map[string]any)["text"] != claudecode.SystemPrefix {
 		t.Fatalf("Claude Code system shape missing: %#v", system)
 	}
 	tools, _ := upstreamBody["tools"].([]any)

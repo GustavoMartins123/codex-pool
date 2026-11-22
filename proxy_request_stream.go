@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -615,7 +616,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	// For Claude, ensure required headers are set
 	if providerType == AccountTypeClaude {
 		if outReq.Header.Get("anthropic-version") == "" {
-			outReq.Header.Set("anthropic-version", ccAnthropicVersion)
+			outReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 		}
 	}
 

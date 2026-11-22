@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 const (
@@ -389,7 +391,7 @@ func (h *proxyHandler) validateZAICodingPlanKey(ctx context.Context, apiKey stri
 	}
 	req.Header.Set("X-Api-Key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	client, err := h.zaiHTTPClient()
 	if err != nil {
 		return err

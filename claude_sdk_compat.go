@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func transformClaudeSDKRequest(body []byte, userID, sessionID string) ([]byte, map[string]string) {
@@ -48,7 +50,7 @@ func moveNonCoreSystemToFirstUser(obj map[string]any) {
 }
 
 func isCoreClaudeSystemText(text string) bool {
-	return strings.HasPrefix(text, "x-anthropic-billing-header:") || strings.Contains(text, ccSystemPrefix)
+	return strings.HasPrefix(text, "x-anthropic-billing-header:") || strings.Contains(text, claudecode.SystemPrefix)
 }
 
 func prependTextToFirstUser(obj map[string]any, prefix string) {

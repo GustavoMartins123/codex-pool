@@ -16,6 +16,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 // ClaudeAuth provides OAuth functionality for Anthropic Claude accounts.
@@ -229,7 +231,7 @@ type ClaudeProfileInfo struct {
 }
 
 // FetchClaudeProfile calls /api/oauth/profile to get the account's plan info.
-func FetchClaudeProfile(ctx context.Context, accessToken string, transport http.RoundTripper, identity *claudeIdentity) (*ClaudeProfileInfo, error) {
+func FetchClaudeProfile(ctx context.Context, accessToken string, transport http.RoundTripper, identity *claudecode.Identity) (*ClaudeProfileInfo, error) {
 	if transport == nil {
 		return nil, errors.New("Claude OAuth transport is required")
 	}
@@ -241,14 +243,14 @@ func FetchClaudeProfile(ctx context.Context, accessToken string, transport http.
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
-	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", identity.accountSessionID(accessToken))
+	req.Header.Set("anthropic-beta", claudecode.MinimalBetaHeader())
+	req.Header.Set("User-Agent", claudecode.ClaudeCodeUserAgent())
+	req.Header.Set("X-Claude-Code-Session-Id", identity.AccountSessionID(accessToken))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
-	ccStainlessHeaders(req.Header.Set)
+	claudecode.StainlessHeaders(req.Header.Set)
 
 	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
 	resp, err := client.Do(req)
@@ -303,7 +305,7 @@ func extractProfileInfo(profile map[string]any) *ClaudeProfileInfo {
 // FetchClaudeAccountUUID probes Anthropic's OAuth profile endpoint to
 // discover the real account UUID for an OAuth token. This UUID is injected
 // into metadata.user_id to match real Claude Code traffic.
-func FetchClaudeAccountUUID(ctx context.Context, accessToken string, transport http.RoundTripper, identity *claudeIdentity) (string, error) {
+func FetchClaudeAccountUUID(ctx context.Context, accessToken string, transport http.RoundTripper, identity *claudecode.Identity) (string, error) {
 	if transport == nil {
 		return "", errors.New("Claude OAuth transport is required")
 	}
@@ -315,14 +317,14 @@ func FetchClaudeAccountUUID(ctx context.Context, accessToken string, transport h
 		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
-	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", identity.accountSessionID(accessToken))
+	req.Header.Set("anthropic-beta", claudecode.MinimalBetaHeader())
+	req.Header.Set("User-Agent", claudecode.ClaudeCodeUserAgent())
+	req.Header.Set("X-Claude-Code-Session-Id", identity.AccountSessionID(accessToken))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
-	ccStainlessHeaders(req.Header.Set)
+	claudecode.StainlessHeaders(req.Header.Set)
 
 	client := &http.Client{Transport: transport, Timeout: claudeOAuthHTTPTimeout}
 	resp, err := client.Do(req)
@@ -472,7 +474,7 @@ func saveClaudeAccount(a *Account) error {
 }
 
 // RefreshClaudeAccountTokens refreshes tokens for a Claude account and updates it.
-func RefreshClaudeAccountTokens(ctx context.Context, acc *Account, transport http.RoundTripper, identity *claudeIdentity) error {
+func RefreshClaudeAccountTokens(ctx context.Context, acc *Account, transport http.RoundTripper, identity *claudecode.Identity) error {
 	if acc == nil {
 		return errors.New("nil account")
 	}

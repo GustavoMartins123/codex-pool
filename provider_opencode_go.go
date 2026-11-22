@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -29,7 +30,7 @@ import (
 // existing provider.
 type OpencodeGoProvider struct {
 	opencodeGoBase *url.URL
-	identity       *claudeIdentity
+	identity       *claudecode.Identity
 }
 
 // NewOpencodeGoProvider creates a new OpenCode Go provider.
@@ -104,7 +105,7 @@ func (p *OpencodeGoProvider) sessionHeader(r *http.Request, conversationID, user
 	if seed == "" {
 		seed = strings.TrimSpace(userID)
 	}
-	return ccDerivedHexID(seed, "opencode-go-session", p.identity.session())
+	return claudecode.DerivedHexID(seed, "opencode-go-session", p.identity.Session())
 }
 
 func (p *OpencodeGoProvider) RefreshToken(ctx context.Context, acc *Account, transport http.RoundTripper) error {

@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func (h *proxyHandler) serveZAIAdmin(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +68,7 @@ func (h *proxyHandler) handleZAIAdd(w http.ResponseWriter, r *http.Request) {
 	validReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, validationURL, strings.NewReader(string(bodyBytes)))
 	validReq.Header.Set("X-Api-Key", apiKey)
 	validReq.Header.Set("Content-Type", "application/json")
-	validReq.Header.Set("anthropic-version", ccAnthropicVersion)
+	validReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(validReq)
 	if err != nil {

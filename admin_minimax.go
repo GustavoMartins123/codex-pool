@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 // serveMinimaxAdmin routes MiniMax admin requests (auth already checked by router)
@@ -73,7 +75,7 @@ func (h *proxyHandler) handleMinimaxAdd(w http.ResponseWriter, r *http.Request) 
 	validReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, validationURL, bytes.NewReader(bodyBytes))
 	validReq.Header.Set("Authorization", "Bearer "+apiKey)
 	validReq.Header.Set("Content-Type", "application/json")
-	validReq.Header.Set("anthropic-version", ccAnthropicVersion)
+	validReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(validReq)
 	if err != nil {
