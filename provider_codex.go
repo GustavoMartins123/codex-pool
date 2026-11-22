@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/account"
 )
 
 // CodexProvider handles OpenAI Codex accounts.
@@ -107,7 +109,7 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 	}
 	acc.PlanType = claims.PlanType
 	if aj.PlanType != "" {
-		acc.PlanType = normalizeCodexPlanType(aj.PlanType)
+		acc.PlanType = account.NormalizeCodexPlanType(aj.PlanType)
 	}
 	acc.ExpiresAt = parseCodexClaims(aj.Tokens.AccessToken).ExpiresAt
 	if acc.ExpiresAt.IsZero() {
@@ -468,7 +470,7 @@ func parseCodexClaims(idToken string) codexJWTClaims {
 			out.ChatGPTAccountID = acc
 		}
 		if plan, ok := auth["chatgpt_plan_type"].(string); ok {
-			out.PlanType = normalizeCodexPlanType(plan)
+			out.PlanType = account.NormalizeCodexPlanType(plan)
 		}
 	}
 	if out.PlanType == "" {

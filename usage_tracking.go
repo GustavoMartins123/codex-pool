@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/account"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -485,7 +486,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 		whamSnap.CreditsBalance, _ = readFloatFromMap(credits, "balance")
 	}
 	if planType, ok := payload["plan_type"].(string); ok && planType != "" {
-		updateAccountPlan(h.pool.antigravity, a, normalizeCodexPlanType(planType))
+		updateAccountPlan(h.pool.antigravity, a, account.NormalizeCodexPlanType(planType))
 	}
 	log.Printf("usage fetch %s: 5hr=%.1f%% weekly=%.1f%%", a.ID, usagePrimaryUsed(whamSnap)*100, usageSecondaryUsed(whamSnap)*100)
 	a.mu.Lock()

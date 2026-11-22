@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/account"
 )
 
 //go:embed pricing_catalog.json
@@ -82,7 +84,7 @@ var subscriptionCosts = map[subscriptionKey]struct {
 func getSubscriptionCost(accType AccountType, planType string) (monthly float64, label string) {
 	planType = strings.ToLower(strings.TrimSpace(planType))
 	if accType == AccountTypeCodex {
-		planType = normalizeCodexPlanType(planType)
+		planType = account.NormalizeCodexPlanType(planType)
 	}
 	// Try exact match first
 	if info, ok := subscriptionCosts[subscriptionKey{accType, planType}]; ok {
