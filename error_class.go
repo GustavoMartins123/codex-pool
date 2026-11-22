@@ -203,3 +203,11 @@ func (c ErrorClass) String() string {
 		return "unknown"
 	}
 }
+
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "rate limited") || strings.Contains(msg, "too many requests") || strings.Contains(msg, "429")
+}

@@ -1,13 +1,18 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"codex-pool-proxy/internal/routing"
 	"github.com/BurntSushi/toml"
@@ -369,4 +374,365 @@ func getConfigBool(envKey string, configValue bool, defaultValue bool) bool {
 		return true
 	}
 	return defaultValue
+}
+
+type config struct {
+	vault                  credentialVault
+	ipAccess               ipAccessSettings
+	passport               passportConfig
+	configPath             string
+	listenAddr             string
+	responsesBase          *url.URL
+	realtimeBase           *url.URL
+	whamBase               *url.URL
+	refreshBase            *url.URL
+	geminiBase             *url.URL // Gemini CloudCode endpoint (for OAuth/Code Assist mode)
+	geminiAPIBase          *url.URL // Gemini API endpoint (for API key mode)
+	antigravityDailyBase   *url.URL
+	antigravityProdBase    *url.URL
+	antigravityOnboardBase *url.URL
+	claudeBase             *url.URL // Claude API endpoint
+	kimiBase               *url.URL // Kimi API endpoint
+	minimaxBase            *url.URL // MiniMax API endpoint
+	zaiBase                *url.URL // Z.ai Anthropic-compatible endpoint
+	xiaomiBase             *url.URL // Xiaomi MiMo Token Plan Anthropic-compatible endpoint
+	grokBase               *url.URL // Grok Code OpenAI-compatible endpoint
+	adverserialBase        *url.URL // platform.adverserial.ai Anthropic-compatible endpoint
+	opencodeGoBase         *url.URL // OpenCode Go subscription endpoint (zen/go/v1)
+	qwenBase               *url.URL
+	aistudioBase           *url.URL
+	qwenPlanBase           *url.URL
+	poolDir                string
+
+	disableRefresh  bool
+	refreshProxyURL string // HTTP proxy URL for refresh operations
+
+	debug                      atomic.Bool
+	logBodies                  bool
+	bodyLogLimit               int64
+	claudeTraceDir             string
+	claudeTraceBodyLimit       int64
+	claudeTraceSecrets         bool
+	maxInMemoryBodyBytes       int64
+	maxSpoolBodyBytes          int64
+	flushInterval              time.Duration
+	usageRefresh               time.Duration
+	maxAttempts                int
+	exhaustionWait             time.Duration // Hold requests while all accounts of a type are usage-exhausted (0 = fail fast)
+	ipPrivacy                  bool          // Drop raw client IPs from persistence and traces (hash only)
+	originHashWindow           time.Duration // Rotate the origin hash salt per window (0 = stable forever)
+	originRetention            time.Duration // Retain origin metadata at most this long (0 = unlimited)
+	storePath                  string
+	retentionDays              int
+	metricsToken               string
+	adminToken                 string
+	backupDir                  string
+	restoreManifest            string
+	decryptCredentials         bool
+	checkCredentials           bool
+	rotatePassportKey          bool
+	duckPath                   string
+	requestTimeout             time.Duration // Timeout for non-streaming requests (0 = no timeout)
+	streamTimeout              time.Duration // Timeout for streaming/SSE requests (0 = no timeout)
+	streamIdleTimeout          time.Duration // Kill SSE streams idle for this long (0 = no idle timeout)
+	websocketIdleTimeout       time.Duration // Kill websocket relays idle for this long (0 = no idle timeout)
+	websocketHeartbeatInterval time.Duration // Send downstream app-level websocket heartbeats this often (0 = disabled)
+	websocketReadLimit         int64         // Maximum websocket message size
+	websocketCompression       bool          // Enable per-message websocket compression (off by default for latency)
+	shutdownGrace              time.Duration // Let active websocket turns finish before forcing a restart close
+	tierThreshold              float64       // Secondary usage % at which we stop preferring a tier (default 0.50)
+	routing                    RoutingConfigFile
+	modelAliases               map[string]string
+	maxReasoningEffortByUser   map[string]string
+	maxReasoningEffortByOrigin map[string]string
+	clientPolicies             map[string]ClientPolicy
+	genericProviders           map[string]GenericProviderConfig
+	experiments                ExperimentsConfig
+	federation                 FederationConfig
+
+	// hotMu guards the fields above that the config watcher republishes at
+	// runtime while request goroutines read them.
+	hotMu sync.RWMutex
+}
+
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func mustParse(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		log.Fatalf("invalid URL %q: %v", raw, err)
+	}
+	return u
+}
+
+func parseInt64(s string) (int64, error) { return strconv.ParseInt(s, 10, 64) }
+func parseBoolEnv(key string, def bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return def
+	}
+	value, err := configBoolValue(raw)
+	if err != nil {
+		log.Fatalf("invalid %s: %v", key, err)
+	}
+	return value
+}
+func parseBoolEnvPtr(key string, cfg *bool, def bool) bool {
+	if _, ok := os.LookupEnv(key); ok {
+		return parseBoolEnv(key, def)
+	}
+	if cfg != nil {
+		return *cfg
+	}
+	return def
+}
+
+// validateSecretStrength enforces fail-closed minimum lengths for the
+// symmetric secrets that gate the deployment. A short POOL_JWT_SECRET lets
+// attackers forge pool credentials; a short break-glass ADMIN_TOKEN or
+// POOL_AUTH_ENCRYPTION_KEY weakens admin access and sealed token storage.
+// Refuse to start instead of silently running with a guessable secret.
+func validateSecretStrength(cfg *config) error {
+	if secret := cfg.passport.jwtSecret; secret != "" && len(secret) < 32 {
+		return fmt.Errorf("POOL_JWT_SECRET must be at least 32 characters (generate one with: openssl rand -hex 32)")
+	}
+	if key := os.Getenv("POOL_AUTH_ENCRYPTION_KEY"); key != "" && len(key) < 32 {
+		return fmt.Errorf("POOL_AUTH_ENCRYPTION_KEY must be at least 32 characters (generate one with: openssl rand -hex 32)")
+	}
+	if cfg.metricsToken != "" && (len(cfg.metricsToken) < 32 || strings.ContainsAny(cfg.metricsToken, " \t\r\n")) {
+		return fmt.Errorf("MONITORING_METRICS_TOKEN must be at least 32 characters without whitespace")
+	}
+	if cfg.adminToken != "" && len(cfg.adminToken) < 16 {
+		return fmt.Errorf("ADMIN_TOKEN must be at least 16 characters (generate one with: openssl rand -hex 16)")
+	}
+	return nil
+}
+
+func configFilePath() string {
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		return v
+	}
+	return "config.toml"
+}
+
+func buildConfig() *config {
+	cfg := &config{}
+	path, configFile, err := loadStartupConfiguration()
+	cfg.configPath = path
+	if err != nil {
+		log.Fatalf("invalid config file %s: %v (refusing to start with defaults)", path, err)
+	}
+	if err := validateConfigEnvironment(); err != nil {
+		log.Fatalf("invalid configuration environment: %v", err)
+	}
+	var fileCfg ConfigFile
+	if configFile != nil {
+		fileCfg = *configFile
+	}
+
+	cfg.passport = resolvePassportConfig(fileCfg)
+	cfg.modelAliases = fileCfg.ModelAliases
+	cfg.maxReasoningEffortByUser = fileCfg.MaxReasoningEffortByUser
+	cfg.maxReasoningEffortByOrigin = fileCfg.MaxReasoningEffortByOrigin
+
+	cfg.listenAddr = getConfigString("PROXY_LISTEN_ADDR", fileCfg.ListenAddr, "127.0.0.1:8989")
+	cfg.responsesBase = mustParse(getenv("UPSTREAM_RESPONSES_BASE", "https://chatgpt.com/backend-api/codex"))
+	// Realtime is served by the public OpenAI API, not the ChatGPT Codex
+	// Responses backend. Codex OAuth access tokens are accepted there.
+	cfg.realtimeBase = mustParse(getenv("UPSTREAM_REALTIME_BASE", "https://api.openai.com"))
+	cfg.whamBase = mustParse(getenv("UPSTREAM_WHAM_BASE", "https://chatgpt.com/backend-api"))
+	cfg.refreshBase = mustParse(getenv("UPSTREAM_REFRESH_BASE", "https://auth.openai.com"))
+	cfg.geminiBase = mustParse(getenv("UPSTREAM_GEMINI_BASE", "https://cloudcode-pa.googleapis.com"))
+	cfg.geminiAPIBase = mustParse(getenv("UPSTREAM_GEMINI_API_BASE", "https://generativelanguage.googleapis.com"))
+	cfg.antigravityDailyBase = mustParse(getenv("UPSTREAM_ANTIGRAVITY_DAILY_BASE", "https://daily-cloudcode-pa.googleapis.com"))
+	cfg.antigravityProdBase = mustParse(getenv("UPSTREAM_ANTIGRAVITY_BASE", "https://cloudcode-pa.googleapis.com"))
+	cfg.antigravityOnboardBase = mustParse(getenv("UPSTREAM_ANTIGRAVITY_ONBOARD_BASE", "https://daily-cloudcode-pa.googleapis.com"))
+	cfg.claudeBase = mustParse(getenv("UPSTREAM_CLAUDE_BASE", "https://api.anthropic.com"))
+	cfg.kimiBase = mustParse(getenv("UPSTREAM_KIMI_BASE", "https://api.kimi.com/coding"))
+	cfg.minimaxBase = mustParse(getenv("UPSTREAM_MINIMAX_BASE", "https://api.minimax.io/anthropic"))
+	cfg.zaiBase = mustParse(getenv("UPSTREAM_ZAI_BASE", "https://api.z.ai/api/anthropic"))
+	cfg.xiaomiBase = mustParse(getenv("UPSTREAM_XIAOMI_BASE", "https://token-plan-sgp.xiaomimimo.com/anthropic"))
+	cfg.grokBase = mustParse(getConfigString("UPSTREAM_GROK_BASE", fileCfg.GrokBase, "https://cli-chat-proxy.grok.com/v1"))
+	cfg.adverserialBase = mustParse(getenv("UPSTREAM_ADVERSERIAL_BASE", "https://platform.adverserial.ai/api"))
+	cfg.opencodeGoBase = mustParse(getenv("UPSTREAM_OPENCODE_GO_BASE", "https://opencode.ai/zen/go/v1"))
+	cfg.qwenBase = mustParse(getenv("UPSTREAM_QWEN_BASE", defaultQwenBase))
+	cfg.aistudioBase = mustParse(getenv("UPSTREAM_AISTUDIO_BASE", defaultAIStudioBase))
+	cfg.qwenPlanBase = mustParse(getenv("UPSTREAM_QWEN_PLAN_BASE", defaultQwenPlanBase))
+	cfg.poolDir = getConfigString("POOL_DIR", fileCfg.PoolDir, "pool")
+
+	// Refresh often fails for some auth.json fixtures; allow opting out.
+	cfg.disableRefresh = getConfigBool("PROXY_DISABLE_REFRESH", fileCfg.DisableRefresh, false)
+	cfg.refreshProxyURL = getConfigString("REFRESH_PROXY_URL", fileCfg.RefreshProxyURL, "")
+
+	cfg.debug.Store(getConfigBool("PROXY_DEBUG", fileCfg.Debug, false))
+	cfg.logBodies = parseBoolEnv("PROXY_LOG_BODIES", false)
+	cfg.bodyLogLimit = 16 * 1024 // 16 KiB
+	if v := getenv("PROXY_BODY_LOG_LIMIT", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.bodyLogLimit = n
+		} else {
+			log.Fatalf("invalid PROXY_BODY_LOG_LIMIT: malformed or out-of-range integer")
+		}
+	}
+	cfg.claudeTraceDir = strings.TrimSpace(getenv("PROXY_CLAUDE_TRACE_DIR", ""))
+	cfg.claudeTraceBodyLimit = 256 * 1024
+	if v := getenv("PROXY_CLAUDE_TRACE_BODY_LIMIT", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.claudeTraceBodyLimit = n
+		} else {
+			log.Fatalf("invalid PROXY_CLAUDE_TRACE_BODY_LIMIT: malformed or out-of-range integer")
+		}
+	}
+	cfg.claudeTraceSecrets = parseBoolEnv("PROXY_CLAUDE_TRACE_INCLUDE_SECRETS", false)
+	cfg.maxInMemoryBodyBytes = 16 * 1024 * 1024 // 16 MiB
+	if v := getenv("PROXY_MAX_INMEM_BODY_BYTES", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.maxInMemoryBodyBytes = n
+		} else {
+			log.Fatalf("invalid PROXY_MAX_INMEM_BODY_BYTES: malformed or out-of-range integer")
+		}
+	}
+	cfg.maxSpoolBodyBytes = 1024 * 1024 * 1024 // 1 GiB disk-backed request ceiling
+	if v := getenv("PROXY_MAX_SPOOL_BODY_BYTES", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.maxSpoolBodyBytes = n
+		} else {
+			log.Fatalf("invalid PROXY_MAX_SPOOL_BODY_BYTES: malformed or out-of-range integer")
+		}
+	}
+	cfg.flushInterval = 0
+	if v := getenv("PROXY_FLUSH_INTERVAL_MS", ""); v != "" {
+		if ms, err := parseInt64(v); err == nil && ms >= 0 {
+			cfg.flushInterval = time.Duration(ms) * time.Millisecond
+		} else {
+			log.Fatalf("invalid PROXY_FLUSH_INTERVAL_MS: malformed or out-of-range integer")
+		}
+	}
+	cfg.usageRefresh = 5 * time.Minute
+	if v := getenv("PROXY_USAGE_REFRESH_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.usageRefresh = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_USAGE_REFRESH_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.maxAttempts = getConfigInt("PROXY_MAX_ATTEMPTS", fileCfg.MaxAttempts, 3)
+	// Hold requests when every account of a type sits at the usage hard-exclude
+	// thresholds, instead of failing fast with 503. 0 disables the hold.
+	cfg.exhaustionWait = 15 * time.Minute
+	if v := getenv("PROXY_EXHAUSTION_WAIT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.exhaustionWait = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_EXHAUSTION_WAIT_SECONDS: malformed or out-of-range integer")
+		}
+	} else if fileCfg.ExhaustionWaitSeconds > 0 {
+		cfg.exhaustionWait = time.Duration(fileCfg.ExhaustionWaitSeconds) * time.Second
+	}
+	// IP privacy: stop persisting raw client IPs (and wipe previously stored
+	// ones at startup). Origin analytics keep working on salted hashes.
+	// Enabled unless the operator explicitly opts out, because the roadmap
+	// requires raw IP persistence to be off by default.
+	cfg.ipPrivacy = parseBoolEnvPtr("PROXY_IP_PRIVACY", fileCfg.IPPrivacy, true)
+	cfg.originHashWindow = time.Duration(getConfigInt("PROXY_ORIGIN_HASH_WINDOW_HOURS", fileCfg.OriginHashWindowHours, 0)) * time.Hour
+	cfg.originRetention = time.Duration(getConfigInt("PROXY_ORIGIN_RETENTION_DAYS", fileCfg.OriginRetentionDays, 0)) * 24 * time.Hour
+	cfg.storePath = getConfigString("PROXY_DB_PATH", fileCfg.DBPath, "./data/proxy.db")
+	cfg.adminToken = getConfigString("ADMIN_TOKEN", fileCfg.AdminToken, "")
+	cfg.metricsToken = os.Getenv("MONITORING_METRICS_TOKEN")
+	cfg.retentionDays = 30
+	if v := getenv("PROXY_USAGE_RETENTION_DAYS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.retentionDays = int(n)
+		} else {
+			log.Fatalf("invalid PROXY_USAGE_RETENTION_DAYS: malformed or out-of-range integer")
+		}
+	}
+	ipAllow, ipDeny := effectiveIPPolicy(&fileCfg)
+	cfg.ipAccess, err = parseIPAccessSettings(ipAllow, ipDeny, effectiveTrustedProxies(fileCfg.TrustedProxies), parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
+	if err != nil {
+		log.Fatalf("invalid ip access policy: %v", err)
+	}
+	if cfg.ipAccess.restricted() {
+		log.Printf("ip access policy active: allow=%v deny=%v", ipAllow, ipDeny)
+	}
+
+	// Request and stream timeouts default to disabled so long-running jobs can finish.
+	// Set a positive value to enable a hard timeout.
+	cfg.requestTimeout = 0
+	if v := getenv("PROXY_REQUEST_TIMEOUT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.requestTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_REQUEST_TIMEOUT_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.streamTimeout = 0
+	if v := getenv("PROXY_STREAM_TIMEOUT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.streamTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_STREAM_TIMEOUT_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.streamIdleTimeout = 0
+	if v := getenv("STREAM_IDLE_TIMEOUT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.streamIdleTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid STREAM_IDLE_TIMEOUT_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.websocketIdleTimeout = 0
+	if v := getenv("WEBSOCKET_IDLE_TIMEOUT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.websocketIdleTimeout = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid WEBSOCKET_IDLE_TIMEOUT_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.websocketHeartbeatInterval = heartbeatInterval
+	if v := getenv("WEBSOCKET_HEARTBEAT_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.websocketHeartbeatInterval = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid WEBSOCKET_HEARTBEAT_SECONDS: malformed or out-of-range integer")
+		}
+	}
+	cfg.websocketReadLimit = 64 * 1024 * 1024
+	if v := getenv("WEBSOCKET_READ_LIMIT_BYTES", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n > 0 {
+			cfg.websocketReadLimit = n
+		} else {
+			log.Fatalf("invalid WEBSOCKET_READ_LIMIT_BYTES: malformed or out-of-range integer")
+		}
+	}
+	cfg.websocketCompression = parseBoolEnv("WEBSOCKET_COMPRESSION", false)
+	cfg.shutdownGrace = 30 * time.Second
+	if v := getenv("PROXY_SHUTDOWN_GRACE_SECONDS", ""); v != "" {
+		if n, err := parseInt64(v); err == nil && n >= 0 {
+			cfg.shutdownGrace = time.Duration(n) * time.Second
+		} else {
+			log.Fatalf("invalid PROXY_SHUTDOWN_GRACE_SECONDS: malformed or out-of-range integer")
+		}
+	}
+
+	// Tier threshold: secondary usage % at which we stop preferring a tier (default 50%)
+	cfg.tierThreshold = getConfigFloat64("TIER_THRESHOLD", fileCfg.TierThreshold, 0.50)
+	cfg.routing = fileCfg.Routing
+	cfg.clientPolicies = fileCfg.ClientPolicies
+	cfg.genericProviders = fileCfg.Providers
+	cfg.experiments = fileCfg.Experiments
+	cfg.federation = fileCfg.Federation
+	if err := validateRoutingConfig(cfg.routing); err != nil {
+		log.Fatalf("invalid routing config: %v", err)
+	}
+
+	registerStartupFlags(flag.CommandLine, cfg)
+	flag.Parse()
+	return cfg
 }
