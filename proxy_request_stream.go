@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -39,7 +40,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	}
 
 	requiredPlan := requiredPlanForRequest(accountType, r, "")
-	clientIP := getClientIP(r)
+	clientIP := clientip.Get(r)
 	requestedModel := ""
 	if spooled != nil {
 		requestedModel = spooled.Model

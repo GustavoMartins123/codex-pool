@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"go.etcd.io/bbolt"
 )
 
@@ -365,7 +366,7 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return

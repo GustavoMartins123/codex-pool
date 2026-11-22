@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/routing"
 	"go.etcd.io/bbolt"
 )
@@ -373,7 +374,7 @@ func (h *proxyHandler) recordRoutingShadow(r *http.Request, assignment *experime
 		requiredPlan := requiredPlanForRequest(accountType, r, assignment.Rule.Candidate)
 		selected = h.pool.selectRoute(routing.Request{
 			UserID: "shadow-probe", Provider: string(accountType), RequiredPlan: requiredPlan,
-			ClientIP: getClientIP(r), Model: assignment.Rule.Candidate,
+			ClientIP: clientip.Get(r), Model: assignment.Rule.Candidate,
 		}).Account
 	}
 	if provider == nil || selected == nil {

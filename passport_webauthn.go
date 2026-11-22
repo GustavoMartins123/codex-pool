@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"github.com/go-webauthn/webauthn/protocol"
 	wa "github.com/go-webauthn/webauthn/webauthn"
 	"go.etcd.io/bbolt"
@@ -477,7 +478,7 @@ func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.R
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return

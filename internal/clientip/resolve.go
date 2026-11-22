@@ -1,4 +1,5 @@
-package main
+// Package clientip resolves a request's client IP and applies the IP access policy.
+package clientip
 
 import (
 	"context"
@@ -103,12 +104,12 @@ func ipSharesSubnetWithAny(ip net.IP, nets []*net.IPNet) bool {
 // this process's own non-loopback interfaces. This is what makes reverse
 // proxy containers (Traefik, nginx, Caddy) on the same Docker network trusted
 // without hardcoding their dynamic container IPs.
-func (s ipAccessSettings) sameSubnetAsSelf(ip net.IP) bool {
+func (s Settings) sameSubnetAsSelf(ip net.IP) bool {
 	return ipSharesSubnetWithAny(ip, s.subnets.subnets())
 }
 
-// parseTrustedProxies rejects malformed entries before replacing any policy.
-func parseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
+// ParseTrustedProxies rejects malformed entries before replacing any policy.
+func ParseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
 	var nets []*net.IPNet
 	trustAll := false
 	for _, entry := range entries {
@@ -117,7 +118,7 @@ func parseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
 			trustAll = true
 			continue
 		}
-		parsed, err := parseIPNetList("trusted_proxies", []string{entry})
+		parsed, err := ParseNetList("trusted_proxies", []string{entry})
 		if err != nil {
 			return nil, false, err
 		}
@@ -126,8 +127,8 @@ func parseTrustedProxies(entries []string) ([]*net.IPNet, bool, error) {
 	return nets, trustAll, nil
 }
 
-// isTrustedProxy returns true if the remote peer IP is a trusted proxy.
-func (s ipAccessSettings) isTrustedProxy(ip net.IP) bool {
+// IsTrustedProxy returns true if the remote peer IP is a trusted proxy.
+func (s Settings) IsTrustedProxy(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
@@ -142,15 +143,15 @@ func (s ipAccessSettings) isTrustedProxy(ip net.IP) bool {
 			return true
 		}
 	}
-	if s.trustSameSubnet && s.sameSubnetAsSelf(ip) {
+	if s.TrustSameSubnet && s.sameSubnetAsSelf(ip) {
 		return true
 	}
 	return false
 }
 
-// resolveClientIP attributes a request to its peer unless that peer is a
+// ResolveClientIP attributes a request to its peer unless that peer is a
 // trusted proxy. A supplied canonical forwarding header must be valid.
-func (s ipAccessSettings) resolveClientIP(r *http.Request) (string, error) {
+func (s Settings) ResolveClientIP(r *http.Request) (string, error) {
 	if r == nil {
 		return "", errors.New("request missing")
 	}
@@ -162,7 +163,7 @@ func (s ipAccessSettings) resolveClientIP(r *http.Request) (string, error) {
 	if peer == nil {
 		return "", errors.New("invalid remote peer IP")
 	}
-	if !s.isTrustedProxy(peer) {
+	if !s.IsTrustedProxy(peer) {
 		return peer.String(), nil
 	}
 	single := func(name, raw string) (string, error) {
@@ -190,7 +191,7 @@ func (s ipAccessSettings) resolveClientIP(r *http.Request) (string, error) {
 		// Walk from the immediate proxy toward the client. Any addresses to
 		// the left of the first untrusted hop may have been supplied by it.
 		for i := len(ips) - 1; i >= 0; i-- {
-			if !s.isTrustedProxy(ips[i]) || i == 0 {
+			if !s.IsTrustedProxy(ips[i]) || i == 0 {
 				return ips[i].String(), nil
 			}
 		}
@@ -206,11 +207,11 @@ func (s ipAccessSettings) resolveClientIP(r *http.Request) (string, error) {
 
 type requestClientIPKey struct{}
 
-func withClientIP(r *http.Request, ip string) *http.Request {
+func With(r *http.Request, ip string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), requestClientIPKey{}, ip))
 }
 
-func requestClientIP(r *http.Request) (string, error) {
+func Require(r *http.Request) (string, error) {
 	if r == nil {
 		return "", errors.New("request missing")
 	}
@@ -221,7 +222,7 @@ func requestClientIP(r *http.Request) (string, error) {
 	return ip, nil
 }
 
-func getClientIP(r *http.Request) string {
-	ip, _ := requestClientIP(r)
+func Get(r *http.Request) string {
+	ip, _ := Require(r)
 	return ip
 }

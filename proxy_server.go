@@ -391,7 +391,6 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	}
 	h := &proxyHandler{
 		passportConfig:       cfg.passport,
-		ipAccess:             ipAccessPolicy{settings: cfg.ipAccess},
 		cfg:                  cfg,
 		transport:            upstream,
 		antigravityTransport: antigravityTransport,
@@ -419,6 +418,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		pacer:                pacer,
 		largeReplayBodies:    make(chan struct{}, 1),
 	}
+	h.ipAccess.Install(cfg.ipAccess)
 	h.contextHandoff.registry = registry
 	h.poolAuto.registry = registry
 	claudeProvider.identity = &h.claudeIdentity

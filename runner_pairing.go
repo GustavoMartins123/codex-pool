@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/runnerproto"
 	"github.com/google/uuid"
 	"go.etcd.io/bbolt"
@@ -431,7 +432,7 @@ func (h *proxyHandler) handleRunnerPairing(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		ip, err := requestClientIP(r)
+		ip, err := clientip.Require(r)
 		if err != nil {
 			respondJSONError(w, 400, "invalid client address")
 			return

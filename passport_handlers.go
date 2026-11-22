@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"github.com/coder/websocket"
 	"go.etcd.io/bbolt"
 )
@@ -150,7 +151,7 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		respondJSONError(w, 503, "accounts unavailable")
 		return nil
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		h.metrics.incPassport("sign_in_outcomes", "banned")
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
@@ -201,7 +202,7 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 
 func (h *proxyHandler) passwordLoginFailed(w http.ResponseWriter, r *http.Request) {
 	if h.bruteForce != nil {
-		h.bruteForce.recordFailure(getClientIP(r))
+		h.bruteForce.recordFailure(clientip.Get(r))
 	}
 	h.metrics.incPassport("sign_in_outcomes", "failed")
 	respondJSONError(w, 401, "email or password is incorrect")
@@ -209,7 +210,7 @@ func (h *proxyHandler) passwordLoginFailed(w http.ResponseWriter, r *http.Reques
 
 func (h *proxyHandler) passwordLoginSucceeded(r *http.Request) {
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(getClientIP(r))
+		h.bruteForce.recordSuccess(clientip.Get(r))
 	}
 	h.metrics.incPassport("sign_in_outcomes", "succeeded")
 }

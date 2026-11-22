@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
@@ -43,7 +44,7 @@ func main() {
 
 type proxyHandler struct {
 	passportConfig      passportConfig
-	ipAccess            ipAccessPolicy
+	ipAccess            clientip.Policy
 	qwenCloudTokens     qwenCloudTokenCache
 	qwenLogin           qwenLoginSessions
 	antigravityOAuth    antigravityOAuthSessionStore

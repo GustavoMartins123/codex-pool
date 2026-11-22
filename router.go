@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/clientip"
 )
 
 func normalizeNoopPath(path string) string {
@@ -199,7 +200,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	// is refused before the comparison, otherwise the ban would not stop it
 	// from guessing the token.
 	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") != "" {
-		ip := getClientIP(r)
+		ip := clientip.Get(r)
 		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 			respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 			return false
@@ -226,7 +227,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 			return true
 		}
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return false
@@ -265,7 +266,7 @@ func (h *proxyHandler) checkMemberOrAdminAuth(w http.ResponseWriter, r *http.Req
 			return false
 		}
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return false
@@ -317,39 +318,6 @@ func (h *proxyHandler) checkProviderContributionAuth(w http.ResponseWriter, r *h
 func providerContributionActor(r *http.Request) string {
 	actor, _ := r.Context().Value(providerContributionActorKey{}).(string)
 	return actor
-}
-
-// localHealthProbe permits only read-only health routes from a direct local
-// peer whose forwarded client identity is also local.
-func localHealthProbe(r *http.Request, clientIP string) bool {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		return false
-	}
-	switch r.URL.Path {
-	case "/healthz", "/healthz/", "/livez", "/livez/", "/readyz", "/readyz/":
-	default:
-		return false
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return false
-	}
-	peer, client := net.ParseIP(host), net.ParseIP(clientIP)
-	return peer != nil && client != nil && peer.IsLoopback() && client.IsLoopback()
-}
-
-func (p *ipAccessPolicy) authorizeRequest(w http.ResponseWriter, r *http.Request) *http.Request {
-	settings := p.snapshot()
-	clientIP, err := settings.resolveClientIP(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return nil
-	}
-	if settings.restricted() && !localHealthProbe(r, clientIP) && !settings.permitted(clientIP) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return nil
-	}
-	return withClientIP(r, clientIP)
 }
 
 func (h *proxyHandler) handleRouteTrace(w http.ResponseWriter, r *http.Request) {

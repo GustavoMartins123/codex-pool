@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/wire"
 	"github.com/google/uuid"
 )
@@ -126,7 +127,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 			authAccount = contextAuthSnapshot(acc)
 			bodyBytes = contextBody
 			if contextObject != nil {
-				prepared, changed, err := h.prepareContextObject(userID, getClientIP(in), contextObject, authAccount)
+				prepared, changed, err := h.prepareContextObject(userID, clientip.Get(in), contextObject, authAccount)
 				if err != nil {
 					return nil, err
 				}
@@ -138,7 +139,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				}
 			} else {
 				var err error
-				bodyBytes, err = h.prepareContextFrame(userID, getClientIP(in), contextBody, authAccount)
+				bodyBytes, err = h.prepareContextFrame(userID, clientip.Get(in), contextBody, authAccount)
 				if err != nil {
 					return nil, err
 				}

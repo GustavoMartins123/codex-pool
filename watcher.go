@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/pathmatch"
 	"github.com/fsnotify/fsnotify"
 )
@@ -210,7 +211,7 @@ func (pw *poolWatcher) reloadConfigCandidate() error {
 	newDebug := getConfigBool("PROXY_DEBUG", cfg.Debug, false)
 	threshold := getConfigFloat64("TIER_THRESHOLD", cfg.TierThreshold, 0.50)
 	allow, deny := effectiveIPPolicy(cfg)
-	network, err := parseIPAccessSettings(allow, deny, effectiveTrustedProxies(cfg.TrustedProxies), h.ipAccess.snapshot().trustSameSubnet)
+	network, err := clientip.ParseSettings(allow, deny, effectiveTrustedProxies(cfg.TrustedProxies), h.ipAccess.Snapshot().TrustSameSubnet)
 	if err != nil {
 		return err
 	}
@@ -222,7 +223,7 @@ func (pw *poolWatcher) reloadConfigCandidate() error {
 		}
 	}
 	// Install prepared policies without a fallible step after publication.
-	h.ipAccess.install(network)
+	h.ipAccess.Install(network)
 	h.pool.configureRouting(cfg.Routing)
 	h.pool.mu.Lock()
 	h.pool.debug = newDebug

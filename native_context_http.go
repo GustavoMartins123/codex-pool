@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/clientip"
 )
 
 type contextFrameKey struct{}
@@ -103,7 +105,7 @@ func (h *proxyHandler) proxyNativeContext(w http.ResponseWriter, r *http.Request
 		return h.acquireAccountSlot(userID, conversationPinKey(userID, session), a)
 	}
 	ctx = context.WithValue(ctx, nativeAccountAdmissionKey{}, admit)
-	result, err := h.nativeContext.relay(ctx, contextScope(userID), getClientIP(r), r.URL.Path, r.Header, body)
+	result, err := h.nativeContext.relay(ctx, contextScope(userID), clientip.Get(r), r.URL.Path, r.Header, body)
 	if err != nil {
 		var blocked *policyError
 		if errors.As(err, &blocked) {
