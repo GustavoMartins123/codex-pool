@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -2545,7 +2546,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 			as := &stats.Accounts[i]
 			realID := accountIDMap[as.ID]
 
-			subCost, subLabel := getSubscriptionCost(AccountType(as.Type), accountPlanForSubscription(as.PlanType))
+			subCost, subLabel := pricing.SubscriptionCost(AccountType(as.Type), accountPlanForSubscription(as.PlanType))
 			if acc := h.pool.getLocked(realID); acc != nil {
 				acc.mu.Lock()
 				if acc.MonthlyCost > 0 {
@@ -2570,7 +2571,7 @@ func (h *proxyHandler) handlePoolStats(w http.ResponseWriter, r *http.Request) {
 				spendStart = stats.GeneratedAt
 			}
 			as.CostTrackingStartedAt = spendStart.UTC().Format(time.RFC3339)
-			as.SubscriptionSpend, as.SubscriptionBillingCycles = estimateSubscriptionSpend(subCost, spendStart, stats.GeneratedAt)
+			as.SubscriptionSpend, as.SubscriptionBillingCycles = pricing.EstimateSubscriptionSpend(subCost, spendStart, stats.GeneratedAt)
 			if as.SubscriptionSpend > 0 {
 				as.ROI = as.APICostEstimate / as.SubscriptionSpend
 			}

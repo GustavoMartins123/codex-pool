@@ -5,26 +5,28 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
 func TestAstraPublishedPricing(t *testing.T) {
-	want := tieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25)
+	want := pricing.TieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25)
 	pd := testPricingData(t)
 	for _, model := range []string{"gpt-6-astra", "gpt-6-astra[1m]", "gpt-6-astra [1m]", "gpt-6-astra-high", "gpt-6-astra[1m]-xhigh", "gpt-6-astra-none"} {
-		got, ok := pd.lookupPricing(model)
+		got, ok := pd.LookupPricing(model)
 		if !ok || got != want {
-			t.Errorf("lookupPricing(%q) = %#v, %v; want %#v", model, got, ok, want)
+			t.Errorf("LookupPricing(%q) = %#v, %v; want %#v", model, got, ok, want)
 		}
 	}
 	cost := advertisedModelCost("gpt-6-astra", time.Now())
 	if cost.Input != 10 || cost.Output != 50 || cost.CacheRead != 1 || cost.CacheWrite != 12.5 {
 		t.Errorf("advertised Astra cost = %#v", cost)
 	}
-	pd.loadFromJSON([]byte(`{"gpt-6-astra":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}`))
-	if got, ok := pd.lookupPricing("gpt-6-astra"); !ok || got != want {
+	pd.LoadFromJSON([]byte(`{"gpt-6-astra":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}`))
+	if got, ok := pd.LookupPricing("gpt-6-astra"); !ok || got != want {
 		t.Errorf("stale fetched pricing won: %#v, %v", got, ok)
 	}
-	if _, ok := pd.lookupPricing("gpt-6-astra-unknown"); ok {
+	if _, ok := pd.LookupPricing("gpt-6-astra-unknown"); ok {
 		t.Error("unknown Astra suffix inherited pricing")
 	}
 }

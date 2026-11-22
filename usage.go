@@ -338,7 +338,7 @@ func (h *proxyHandler) recordUsage(a *Account, ru RequestUsage, admissions ...*p
 	// analytics fact and raw request commit together.
 	var costUSD float64
 	if h.pricing != nil {
-		price, err := h.pricing.calculateCost(ru)
+		price, err := h.pricing.CalculateCost(ru)
 		if err != nil {
 			ru.PricingUnavailable = true
 			log.Printf("pricing: %v", err)

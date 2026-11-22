@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -334,7 +335,7 @@ func TestGrokFastRoutingAndReasoning(t *testing.T) {
 			t.Fatalf("%s model or reasoning changed: %s", id, rewritten)
 		}
 	}
-	prices := publishedModelPricing(time.Now())
+	prices := pricing.PublishedModelPricing(time.Now())
 	regular, fast := prices["grok-4.7"], prices["grok-4.7-build-fast"]
 	if fast.InputCostPerToken != 2*regular.InputCostPerToken || fast.OutputCostPerToken != 2*regular.OutputCostPerToken || fast.CacheReadCost != 2*regular.CacheReadCost {
 		t.Fatalf("Fast pricing does not double regular pricing: %+v / %+v", fast, regular)

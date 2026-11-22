@@ -1,0 +1,128 @@
+package pricing
+
+import "time"
+
+var forcePublishedPricing = map[string]bool{
+	"gpt-6-astra":               true,
+	"claude-fable-5-1":          true,
+	"claude-sonnet-5":           true,
+	"k3":                        true,
+	"k3-256k":                   true,
+	"kimi-for-coding":           true,
+	"kimi-for-coding-highspeed": true,
+	"MiniMax-M3":                true,
+	"MiniMax-M2.7":              true,
+	"MiniMax-M2.7-highspeed":    true,
+	"glm-5.3":                   true,
+	"glm-5.3-flash":             true,
+	"mimo-v2.5-pro":             true,
+	"mimo-v2.5":                 true,
+	"grok-4.7":                  true,
+	"grok-4.7-build-fast":       true,
+	"grok-4.6":                  true,
+	"grok-4.5":                  true,
+	"lordx64/cyberkimi":         true,
+}
+
+// PublishedModelPricing is the source of truth for models the pool advertises
+// itself or whose pool-facing ID is not present in LiteLLM's catalog. Values
+// are USD per token; advertisedModelCost converts them to the per-million-token
+// units used by client model catalogs.
+//
+// Sources verified 2026-08-18:
+//   - OpenAI: https://developers.openai.com/api/docs/models
+//   - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+//   - Kimi: https://platform.kimi.ai/docs/pricing/chat
+//   - MiniMax: https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise
+//   - Z.ai: https://docs.z.ai/guides/overview/pricing
+//   - Xiaomi: https://mimo.mi.com/docs/zh-CN/price/pay-as-you-go
+//   - xAI: https://docs.x.ai/developers/models/grok-4.5
+//   - Google: https://ai.google.dev/gemini-api/docs/pricing
+func PublishedModelPricing(now time.Time) map[string]ModelPricing {
+	prices := map[string]ModelPricing{
+		// OpenAI GPT-6 Astra model page, verified 2026-09-04; long rates cover the full request.
+		"gpt-6-astra": TieredPricing(10, 50, 1, 12.5, 272000, 20, 75, 2, 25),
+		// GPT-6.1-Sol has no published API rate yet (2026-09); mirror GPT-5.6-Sol
+		// until LiteLLM lists one (not in forcePublishedPricing).
+		"gpt-6.1-sol":         TieredPricing(5, 30, 0.5, 6.25, 272000, 10, 45, 1, 12.5),
+		"gpt-5.6-sol":         TieredPricing(5, 30, 0.5, 6.25, 272000, 10, 45, 1, 12.5),
+		"gpt-5.6-terra":       TieredPricing(2, 12, 0.2, 2.5, 272000, 4, 18, 0.4, 5),
+		"gpt-5.6-luna":        TieredPricing(0.2, 1.2, 0.02, 0.25, 272000, 0.4, 1.8, 0.04, 0.5),
+		"gpt-5.5":             TieredPricing(5, 30, 0.5, 0, 272000, 10, 45, 1, 0),
+		"gpt-5.4":             TieredPricing(2.5, 15, 0.25, 0, 272000, 5, 22.5, 0.5, 0),
+		"gpt-5.4-mini":        FlatPricing(0.75, 4.5, 0.075, 0),
+		"gpt-5.3-codex-spark": FlatPricing(1.75, 14, 0.175, 0),
+
+		"claude-fable-5-1": FlatPricing(10, 50, 0.25, 12.5),
+		"claude-fable-5":   FlatPricing(10, 50, 1, 12.5),
+		// Anthropic pricing page, verified 2026-10-06; cache writes use the 5-minute rate.
+		"claude-opus-5-5":            FlatPricing(4, 20, 0.2, 5),
+		"claude-sonnet-5-5":          FlatPricing(2, 10, 0.2, 2.5),
+		"claude-opus-5":              FlatPricing(5, 25, 0.5, 6.25),
+		"claude-opus-4-8":            FlatPricing(5, 25, 0.5, 6.25),
+		"claude-opus-4-7":            FlatPricing(5, 25, 0.5, 6.25),
+		"claude-opus-4-6":            FlatPricing(5, 25, 0.5, 6.25),
+		"claude-opus-4-5-20251101":   FlatPricing(5, 25, 0.5, 6.25),
+		"claude-opus-4-1-20250805":   FlatPricing(15, 75, 1.5, 18.75),
+		"claude-sonnet-4-6":          FlatPricing(3, 15, 0.3, 3.75),
+		"claude-sonnet-4-5-20250929": FlatPricing(3, 15, 0.3, 3.75),
+		"claude-haiku-4-5-20251001":  FlatPricing(1, 5, 0.1, 1.25),
+
+		"k3":                        FlatPricing(3, 15, 0.3, 0),
+		"k3-256k":                   FlatPricing(3, 15, 0.3, 0),
+		"kimi-for-coding":           FlatPricing(0.95, 4, 0.19, 0),
+		"kimi-for-coding-highspeed": FlatPricing(1.9, 8, 0.38, 0),
+		"MiniMax-M3":                TieredPricing(0.3, 1.2, 0.06, 0, 512000, 0.6, 2.4, 0.12, 0),
+		"MiniMax-M2.7":              FlatPricing(0.3, 1.2, 0.06, 0.375),
+		"MiniMax-M2.7-highspeed":    FlatPricing(0.6, 2.4, 0.06, 0.375),
+		"glm-5.3":                   FlatPricing(1.4, 4.4, 0.26, 0),
+		"glm-5.3-flash":             FlatPricing(0.14, 0.44, 0.026, 0),
+		"glm-5.3-flashx":            FlatPricing(0.14, 0.44, 0.026, 0),
+		"glm-5.2":                   FlatPricing(1.4, 4.4, 0.26, 0),
+		"glm-5.1":                   FlatPricing(1.4, 4.4, 0.26, 0),
+		"glm-5":                     FlatPricing(1.4, 4.4, 0.26, 0),
+		"glm-5-turbo":               FlatPricing(0.5, 2.0, 0.1, 0),
+		"glm-4.7":                   FlatPricing(1.0, 3.0, 0.2, 0),
+		"glm-4.6":                   FlatPricing(1.0, 3.0, 0.2, 0),
+		"glm-4.5":                   FlatPricing(0.8, 2.0, 0.15, 0),
+		"glm-4.5-air":               FlatPricing(0.2, 0.8, 0.05, 0),
+		"mimo-v2.5-pro":             FlatPricing(0.435, 0.87, 0.0036, 0),
+		"mimo-v2.5":                 FlatPricing(0.14, 0.28, 0.0028, 0),
+		"grok-4.7":                  FlatPricing(2, 6, 0.3, 0),
+		"grok-4.7-build-fast":       FlatPricing(4, 12, 0.6, 0), // CLI model discovery lists Fast at twice the regular 4.7 price.
+		"grok-4.6":                  FlatPricing(2, 6, 0.3, 0),
+		"grok-4.5":                  FlatPricing(2, 6, 0.3, 0),
+		"lordx64/cyberkimi":         FlatPricing(3, 15, 0.3, 0), // Kimi K3 API-equivalent value; provider has no public rate.
+
+		"gemini-3.1-pro-preview": TieredPricing(2, 12, 0.2, 0, 200000, 4, 18, 0.4, 0),
+		"gemini-3-flash-preview": FlatPricing(0.5, 3, 0.05, 0),
+		"gemini-3.5-flash":       FlatPricing(1.5, 9, 0.15, 0),
+		"gemini-3.5-flash-lite":  FlatPricing(0.3, 2.5, 0.03, 0),
+		"gemini-3.6-flash":       FlatPricing(1.5, 7.5, 0.15, 0),
+		"gemini-3.7-flash":       FlatPricing(0.75, 3.75, 0.075, 0),
+		// Gemini 3.8 Flash has no published API rate yet (2026-09); mirror 3.7 Flash.
+		"gemini-3.8-flash": FlatPricing(0.75, 3.75, 0.075, 0),
+	}
+
+	prices["claude-sonnet-5"] = FlatPricing(2, 10, 0.2, 2.5)
+	return prices
+}
+
+func FlatPricing(input, output, cacheRead, cacheWrite float64) ModelPricing {
+	return ModelPricing{
+		InputCostPerToken:  input / 1_000_000,
+		OutputCostPerToken: output / 1_000_000,
+		CacheReadCost:      cacheRead / 1_000_000,
+		CacheWriteCost:     cacheWrite / 1_000_000,
+	}
+}
+
+func TieredPricing(input, output, cacheRead, cacheWrite float64, threshold int64, longInput, longOutput, longCacheRead, longCacheWrite float64) ModelPricing {
+	pricing := FlatPricing(input, output, cacheRead, cacheWrite)
+	pricing.LongContextThreshold = threshold
+	pricing.LongInputCost = longInput / 1_000_000
+	pricing.LongOutputCost = longOutput / 1_000_000
+	pricing.LongCacheReadCost = longCacheRead / 1_000_000
+	pricing.LongCacheWriteCost = longCacheWrite / 1_000_000
+	return pricing
+}

@@ -82,7 +82,7 @@ func (h *proxyHandler) refreshQuotaIntelligence() {
 	}
 	var costFor func(RequestUsage) (float64, error)
 	if h.pricing != nil {
-		costFor = h.pricing.calculateCost
+		costFor = h.pricing.CalculateCost
 	}
 	capacity, modelEfficiency, resetEvents := inferQuotaIntelligence(requests, metadata, costFor)
 	h.quotaIntelMu.Lock()

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
 func TestCodexJSONResponsesRecordUsage(t *testing.T) {
@@ -42,11 +44,11 @@ func TestCodexJSONResponsesRecordUsage(t *testing.T) {
 			h.cfg.maxSpoolBodyBytes = 1 << 20
 			h.store = testUsageStore(t)
 			h.duckAnalytics = testDuckCosts(t, h.store)
-			pricing, err := newPricingData()
+			prices, err := pricing.New()
 			if err != nil {
 				t.Fatal(err)
 			}
-			h.pricing = pricing
+			h.pricing = prices
 
 			stream := "false"
 			if tc.spool {

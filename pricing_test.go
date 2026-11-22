@@ -4,20 +4,22 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/pricing"
 )
 
-func testPricingData(t *testing.T) *PricingData {
+func testPricingData(t *testing.T) *pricing.PricingData {
 	t.Helper()
-	pricing, err := newPricingData()
+	pd, err := pricing.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pricing
+	return pd
 }
 
-func testRequestCost(t *testing.T, pricing *PricingData, usage RequestUsage) float64 {
+func testRequestCost(t *testing.T, pd *pricing.PricingData, usage RequestUsage) float64 {
 	t.Helper()
-	cost, err := pricing.calculateCost(usage)
+	cost, err := pd.CalculateCost(usage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,13 +27,13 @@ func testRequestCost(t *testing.T, pricing *PricingData, usage RequestUsage) flo
 }
 
 func TestPricingRequiresCanonicalData(t *testing.T) {
-	pricing := testPricingData(t)
+	pd := testPricingData(t)
 	for _, model := range []string{"", "gpt-5.5-20991101"} {
-		if _, err := pricing.calculateCost(RequestUsage{Model: model}); err == nil {
+		if _, err := pd.CalculateCost(RequestUsage{Model: model}); err == nil {
 			t.Fatalf("pricing %q succeeded without a catalog entry", model)
 		}
 	}
-	if err := pricing.loadFromJSON([]byte("{}")); err == nil {
+	if err := pd.LoadFromJSON([]byte("{}")); err == nil {
 		t.Fatal("empty catalog was accepted")
 	}
 }
@@ -40,9 +42,9 @@ func TestCodexProLiteSubscriptionCost(t *testing.T) {
 	t.Parallel()
 
 	for _, plan := range []string{"prolite", "PROLITE", " ProLite "} {
-		monthly, label := getSubscriptionCost(AccountTypeCodex, plan)
+		monthly, label := pricing.SubscriptionCost(AccountTypeCodex, plan)
 		if monthly != 100 || label != "Codex Pro Lite" {
-			t.Fatalf("getSubscriptionCost(codex, %q) = (%v, %q), want (100, %q)", plan, monthly, label, "Codex Pro Lite")
+			t.Fatalf("pricing.SubscriptionCost(codex, %q) = (%v, %q), want (100, %q)", plan, monthly, label, "Codex Pro Lite")
 		}
 	}
 }
@@ -58,9 +60,9 @@ func TestUnknownTokenPlanTierDoesNotInventSubscriptionSpend(t *testing.T) {
 		{AccountTypeKimi, "kimi", "Kimi Token Plan"},
 		{AccountTypeMinimax, "minimax", "MiniMax Token Plan"},
 	} {
-		monthly, label := getSubscriptionCost(test.accountType, test.plan)
+		monthly, label := pricing.SubscriptionCost(test.accountType, test.plan)
 		if monthly != 0 || label != test.label {
-			t.Fatalf("getSubscriptionCost(%s, %q) = (%v, %q), want (0, %q)", test.accountType, test.plan, monthly, label, test.label)
+			t.Fatalf("pricing.SubscriptionCost(%s, %q) = (%v, %q), want (0, %q)", test.accountType, test.plan, monthly, label, test.label)
 		}
 	}
 }
@@ -80,9 +82,9 @@ func TestEstimateSubscriptionSpendUsesObservedBillingCycles(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spend, cycles := estimateSubscriptionSpend(200, tt.firstSeen, now)
+			spend, cycles := pricing.EstimateSubscriptionSpend(200, tt.firstSeen, now)
 			if spend != tt.wantSpend || cycles != tt.wantCycles {
-				t.Fatalf("estimateSubscriptionSpend() = (%v, %d), want (%v, %d)", spend, cycles, tt.wantSpend, tt.wantCycles)
+				t.Fatalf("pricing.EstimateSubscriptionSpend() = (%v, %d), want (%v, %d)", spend, cycles, tt.wantSpend, tt.wantCycles)
 			}
 		})
 	}
@@ -105,7 +107,7 @@ func TestClaudeSonnet5PricingDoesNotIncreaseAfterLaunch(t *testing.T) {
 		time.Date(2026, time.August, 31, 23, 59, 59, 0, time.UTC),
 		time.Date(2026, time.September, 2, 0, 0, 0, 0, time.UTC),
 	} {
-		got := publishedModelPricing(date)["claude-sonnet-5"]
+		got := pricing.PublishedModelPricing(date)["claude-sonnet-5"]
 		if math.Abs(got.InputCostPerToken-2e-6) > 1e-12 ||
 			math.Abs(got.OutputCostPerToken-10e-6) > 1e-12 ||
 			math.Abs(got.CacheReadCost-0.2e-6) > 1e-12 ||
@@ -119,14 +121,14 @@ func TestLookupPricingUsesClaudeSonnet5Aliases(t *testing.T) {
 	t.Parallel()
 
 	pd := testPricingData(t)
-	want, ok := pd.lookupPricing("claude-sonnet-5")
+	want, ok := pd.LookupPricing("claude-sonnet-5")
 	if !ok {
 		t.Fatal("missing Claude Sonnet 5 pricing")
 	}
 	for _, model := range []string{"claude-sonnet-5 [1m]", "claude-sonnet-5[1m]"} {
-		got, ok := pd.lookupPricing(model)
+		got, ok := pd.LookupPricing(model)
 		if !ok || got != want {
-			t.Fatalf("lookupPricing(%q) = %#v, %v; want %#v, true", model, got, ok, want)
+			t.Fatalf("LookupPricing(%q) = %#v, %v; want %#v, true", model, got, ok, want)
 		}
 	}
 }
@@ -135,7 +137,7 @@ func TestLookupPricingIncludesClaudeFable51Fallback(t *testing.T) {
 	t.Parallel()
 
 	pd := testPricingData(t)
-	got, ok := pd.lookupPricing("claude-fable-5-1")
+	got, ok := pd.LookupPricing("claude-fable-5-1")
 	if !ok {
 		t.Fatal("missing Claude Fable 5.1 fallback pricing")
 	}
@@ -148,7 +150,7 @@ func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 	t.Parallel()
 
 	pd := testPricingData(t)
-	got, ok := pd.lookupPricing("claude-opus-5")
+	got, ok := pd.LookupPricing("claude-opus-5")
 	if !ok {
 		t.Fatal("missing Claude Opus 5 fallback pricing")
 	}
@@ -156,8 +158,8 @@ func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 		t.Fatalf("Claude Opus 5 pricing = %#v", got)
 	}
 	for _, model := range []string{"claude-opus-5 [1m]", "claude-opus-5[1m]"} {
-		if aliased, ok := pd.lookupPricing(model); !ok || aliased != got {
-			t.Fatalf("lookupPricing(%q) = %#v, %v; want %#v, true", model, aliased, ok, got)
+		if aliased, ok := pd.LookupPricing(model); !ok || aliased != got {
+			t.Fatalf("LookupPricing(%q) = %#v, %v; want %#v, true", model, aliased, ok, got)
 		}
 	}
 }
@@ -165,14 +167,14 @@ func TestLookupPricingIncludesClaudeOpus5Fallback(t *testing.T) {
 func TestClaude55PricingAndContextAliases(t *testing.T) {
 	t.Parallel()
 	pd := testPricingData(t)
-	for model, want := range map[string]ModelPricing{
-		"claude-opus-5-5":   flatPricing(4, 20, 0.2, 5),
-		"claude-sonnet-5-5": flatPricing(2, 10, 0.2, 2.5),
+	for model, want := range map[string]pricing.ModelPricing{
+		"claude-opus-5-5":   pricing.FlatPricing(4, 20, 0.2, 5),
+		"claude-sonnet-5-5": pricing.FlatPricing(2, 10, 0.2, 2.5),
 	} {
 		for _, id := range []string{model, model + "[1m]", model + " [1m]"} {
-			got, ok := pd.lookupPricing(id)
+			got, ok := pd.LookupPricing(id)
 			if !ok || got != want {
-				t.Fatalf("lookupPricing(%q) = %#v, %v; want %#v", id, got, ok, want)
+				t.Fatalf("LookupPricing(%q) = %#v, %v; want %#v", id, got, ok, want)
 			}
 			advertised := advertisedModelCost(id, time.Now())
 			if advertised.Input != want.InputCostPerToken*1e6 || advertised.CacheRead != want.CacheReadCost*1e6 {
@@ -186,7 +188,7 @@ func TestLookupPricingGLM53UsesPublishedRates(t *testing.T) {
 	t.Parallel()
 
 	pd := testPricingData(t)
-	want := ModelPricing{
+	want := pricing.ModelPricing{
 		InputCostPerToken:  1.4e-6,
 		OutputCostPerToken: 4.4e-6,
 		CacheReadCost:      0.26e-6,
@@ -194,29 +196,29 @@ func TestLookupPricingGLM53UsesPublishedRates(t *testing.T) {
 	// "zai.glm-5.3" must not fall through the prefix search to "zai.glm-5",
 	// which is priced at the cheaper GLM-5 rates.
 	for _, model := range []string{"glm-5.3", "zai.glm-5.3", "glm-5.2", "zai.glm-5.2"} {
-		got, ok := pd.lookupPricing(model)
+		got, ok := pd.LookupPricing(model)
 		if !ok {
 			t.Fatalf("missing pricing for %q", model)
 		}
 		if got != want {
-			t.Fatalf("lookupPricing(%q) = %#v, want %#v", model, got, want)
+			t.Fatalf("LookupPricing(%q) = %#v, want %#v", model, got, want)
 		}
 	}
 
-	wantFlash := ModelPricing{
+	wantFlash := pricing.ModelPricing{
 		InputCostPerToken:  0.14e-6,
 		OutputCostPerToken: 0.44e-6,
 		CacheReadCost:      0.026e-6,
 	}
 	for _, model := range []string{"glm-5.3-flash", "zai.glm-5.3-flash"} {
-		got, ok := pd.lookupPricing(model)
+		got, ok := pd.LookupPricing(model)
 		if !ok {
 			t.Fatalf("missing pricing for %q", model)
 		}
 		if got.InputCostPerToken != wantFlash.InputCostPerToken ||
 			got.OutputCostPerToken != wantFlash.OutputCostPerToken ||
 			math.Abs(got.CacheReadCost-wantFlash.CacheReadCost) > 1e-12 {
-			t.Fatalf("lookupPricing(%q) = %#v, want %#v", model, got, wantFlash)
+			t.Fatalf("LookupPricing(%q) = %#v, want %#v", model, got, wantFlash)
 		}
 	}
 }
@@ -246,8 +248,8 @@ func TestAdvertisedPoolModelsHavePricing(t *testing.T) {
 func TestLoadFromJSONParsesLongContextRates(t *testing.T) {
 	t.Parallel()
 
-	pd := &PricingData{}
-	pd.loadFromJSON([]byte(`{
+	pd := &pricing.PricingData{}
+	pd.LoadFromJSON([]byte(`{
 		"tiered-test": {
 			"input_cost_per_token": 0.000001,
 			"output_cost_per_token": 0.000002,
@@ -257,7 +259,7 @@ func TestLoadFromJSONParsesLongContextRates(t *testing.T) {
 			"cache_read_input_token_cost_above_200k_tokens": 0.0000002
 		}
 	}`))
-	got, ok := pd.lookupPricing("tiered-test")
+	got, ok := pd.LookupPricing("tiered-test")
 	if !ok {
 		t.Fatal("missing parsed tiered pricing")
 	}
@@ -336,11 +338,11 @@ func TestAntigravityAliasesUseAPIEquivalentPricing(t *testing.T) {
 		"gemini-3.8-flash-tiered":    "gemini-3.8-flash",
 		"gpt-oss-120b-medium":        "openai.gpt-oss-120b-1:0",
 	} {
-		got, ok := pd.lookupPricing(alias)
+		got, ok := pd.LookupPricing(alias)
 		if !ok {
 			t.Fatalf("missing pricing for %q", alias)
 		}
-		want, ok := pd.lookupPricing(canonical)
+		want, ok := pd.LookupPricing(canonical)
 		if !ok || got != want {
 			t.Fatalf("pricing for %q = %#v, want %q %#v", alias, got, canonical, want)
 		}
@@ -351,7 +353,7 @@ func TestLookupPricingDoesNotGuessByPrefix(t *testing.T) {
 	t.Parallel()
 
 	pd := testPricingData(t)
-	if _, ok := pd.lookupPricing("zai.glm-5.99"); ok {
+	if _, ok := pd.LookupPricing("zai.glm-5.99"); ok {
 		t.Fatal("unknown model inherited a price by prefix")
 	}
 }

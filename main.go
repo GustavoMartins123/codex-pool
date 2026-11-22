@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -66,7 +67,7 @@ type proxyHandler struct {
 	contextHandoff       *conversationHandoffStore
 	analyticsStore       costAnalyticsRepository
 	duckAnalytics        *DuckAnalytics
-	pricing              *PricingData
+	pricing              *pricing.PricingData
 	aliases              *modelAliases
 	effortCap            *effortCap
 	bruteForce           *bruteForceTracker

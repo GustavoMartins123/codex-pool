@@ -1,4 +1,5 @@
-package main
+// Package pricing owns per-token model rates and subscription spend estimates.
+package pricing
 
 import (
 	_ "embed"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/account"
+	"codex-pool-proxy/internal/usage"
 )
 
 //go:embed pricing_catalog.json
@@ -37,7 +39,7 @@ type PricingData struct {
 
 // subscriptionCosts maps (account_type, plan_type) to monthly cost in USD.
 type subscriptionKey struct {
-	accountType AccountType
+	accountType account.AccountType
 	planType    string
 }
 
@@ -45,45 +47,45 @@ var subscriptionCosts = map[subscriptionKey]struct {
 	monthly float64
 	label   string
 }{
-	{AccountTypeClaude, "pro"}:                    {20, "Claude Pro"},
-	{AccountTypeClaude, "max_5x"}:                 {100, "Claude Max 5x"},
-	{AccountTypeClaude, "default_claude_max_5x"}:  {100, "Claude Max 5x"},
-	{AccountTypeClaude, "max_20x"}:                {200, "Claude Max 20x"},
-	{AccountTypeClaude, "default_claude_max_20x"}: {200, "Claude Max 20x"},
-	{AccountTypeClaude, "team"}:                   {25, "Claude Team"},
-	{AccountTypeCodex, "plus"}:                    {20, "Codex Plus"},
-	{AccountTypeCodex, "prolite"}:                 {100, "Codex Pro Lite"},
-	{AccountTypeCodex, "pro"}:                     {200, "Codex Pro"},
-	{AccountTypeCodex, "team"}:                    {25, "Codex Team"},
-	{AccountTypeGemini, "api"}:                    {0, "Gemini API"},
-	{AccountTypeAntigravity, "antigravity"}:       {0, "Google Antigravity"},
+	{account.AccountTypeClaude, "pro"}:                    {20, "Claude Pro"},
+	{account.AccountTypeClaude, "max_5x"}:                 {100, "Claude Max 5x"},
+	{account.AccountTypeClaude, "default_claude_max_5x"}:  {100, "Claude Max 5x"},
+	{account.AccountTypeClaude, "max_20x"}:                {200, "Claude Max 20x"},
+	{account.AccountTypeClaude, "default_claude_max_20x"}: {200, "Claude Max 20x"},
+	{account.AccountTypeClaude, "team"}:                   {25, "Claude Team"},
+	{account.AccountTypeCodex, "plus"}:                    {20, "Codex Plus"},
+	{account.AccountTypeCodex, "prolite"}:                 {100, "Codex Pro Lite"},
+	{account.AccountTypeCodex, "pro"}:                     {200, "Codex Pro"},
+	{account.AccountTypeCodex, "team"}:                    {25, "Codex Team"},
+	{account.AccountTypeGemini, "api"}:                    {0, "Gemini API"},
+	{account.AccountTypeAntigravity, "antigravity"}:       {0, "Google Antigravity"},
 	// The provider auth files identify Kimi and MiniMax token-plan credentials,
 	// but not their paid tier. Reporting a guessed $49 or $5 monthly spend made
 	// ROI look precise while being unrelated to the account's actual plan.
-	{AccountTypeKimi, "kimi"}:               {0, "Kimi Token Plan"},
-	{AccountTypeKimi, ""}:                   {0, "Kimi Token Plan"},
-	{AccountTypeMinimax, "minimax"}:         {0, "MiniMax Token Plan"},
-	{AccountTypeMinimax, ""}:                {0, "MiniMax Token Plan"},
-	{AccountTypeZAI, "coding_plan"}:         {15, "Z.ai Coding Plan"},
-	{AccountTypeZAI, "coding"}:              {15, "Z.ai Coding Plan"},
-	{AccountTypeZAI, "pro"}:                 {30, "Z.ai Pro Plan"},
-	{AccountTypeZAI, "team"}:                {50, "Z.ai Team Plan"},
-	{AccountTypeZAI, "lite"}:                {5, "Z.ai Lite Plan"},
-	{AccountTypeZAI, "standard"}:            {15, "Z.ai Standard Plan"},
-	{AccountTypeZAI, "zai"}:                 {15, "Z.ai Coding Plan"},
-	{AccountTypeZAI, ""}:                    {15, "Z.ai Coding Plan"},
-	{AccountTypeXiaomi, "xiaomi"}:           {0, "Xiaomi MiMo Token Plan"},
-	{AccountTypeXiaomi, ""}:                 {0, "Xiaomi MiMo Token Plan"},
-	{AccountTypeAdverserial, "adverserial"}: {0, "Adverserial Platform"},
-	{AccountTypeAdverserial, ""}:            {0, "Adverserial Platform"},
-	{AccountTypeOpencodeGo, "opencode_go"}:  {10, "OpenCode Go"},
-	{AccountTypeOpencodeGo, ""}:             {10, "OpenCode Go"},
+	{account.AccountTypeKimi, "kimi"}:               {0, "Kimi Token Plan"},
+	{account.AccountTypeKimi, ""}:                   {0, "Kimi Token Plan"},
+	{account.AccountTypeMinimax, "minimax"}:         {0, "MiniMax Token Plan"},
+	{account.AccountTypeMinimax, ""}:                {0, "MiniMax Token Plan"},
+	{account.AccountTypeZAI, "coding_plan"}:         {15, "Z.ai Coding Plan"},
+	{account.AccountTypeZAI, "coding"}:              {15, "Z.ai Coding Plan"},
+	{account.AccountTypeZAI, "pro"}:                 {30, "Z.ai Pro Plan"},
+	{account.AccountTypeZAI, "team"}:                {50, "Z.ai Team Plan"},
+	{account.AccountTypeZAI, "lite"}:                {5, "Z.ai Lite Plan"},
+	{account.AccountTypeZAI, "standard"}:            {15, "Z.ai Standard Plan"},
+	{account.AccountTypeZAI, "zai"}:                 {15, "Z.ai Coding Plan"},
+	{account.AccountTypeZAI, ""}:                    {15, "Z.ai Coding Plan"},
+	{account.AccountTypeXiaomi, "xiaomi"}:           {0, "Xiaomi MiMo Token Plan"},
+	{account.AccountTypeXiaomi, ""}:                 {0, "Xiaomi MiMo Token Plan"},
+	{account.AccountTypeAdverserial, "adverserial"}: {0, "Adverserial Platform"},
+	{account.AccountTypeAdverserial, ""}:            {0, "Adverserial Platform"},
+	{account.AccountTypeOpencodeGo, "opencode_go"}:  {10, "OpenCode Go"},
+	{account.AccountTypeOpencodeGo, ""}:             {10, "OpenCode Go"},
 }
 
-// getSubscriptionCost returns monthly cost and label for an account.
-func getSubscriptionCost(accType AccountType, planType string) (monthly float64, label string) {
+// SubscriptionCost returns monthly cost and label for an account.
+func SubscriptionCost(accType account.AccountType, planType string) (monthly float64, label string) {
 	planType = strings.ToLower(strings.TrimSpace(planType))
-	if accType == AccountTypeCodex {
+	if accType == account.AccountTypeCodex {
 		planType = account.NormalizeCodexPlanType(planType)
 	}
 	// Try exact match first
@@ -93,9 +95,9 @@ func getSubscriptionCost(accType AccountType, planType string) (monthly float64,
 	return 0, string(accType)
 }
 
-// estimateSubscriptionSpend counts the initial paid month plus one billing
+// EstimateSubscriptionSpend counts the initial paid month plus one billing
 // cycle for each completed 30-day period covered by the API-cost analytics.
-func estimateSubscriptionSpend(monthly float64, firstSeen, now time.Time) (spend float64, billingCycles int) {
+func EstimateSubscriptionSpend(monthly float64, firstSeen, now time.Time) (spend float64, billingCycles int) {
 	if monthly <= 0 || firstSeen.IsZero() {
 		return 0, 0
 	}
@@ -106,16 +108,16 @@ func estimateSubscriptionSpend(monthly float64, firstSeen, now time.Time) (spend
 	return monthly * float64(billingCycles), billingCycles
 }
 
-func newPricingData() (*PricingData, error) {
+func New() (*PricingData, error) {
 	pd := &PricingData{}
-	if err := pd.loadFromJSON(pricingCatalogJSON); err != nil {
+	if err := pd.LoadFromJSON(pricingCatalogJSON); err != nil {
 		return nil, fmt.Errorf("load pricing catalog: %w", err)
 	}
 	return pd, nil
 }
 
-// loadFromJSON parses the LiteLLM pricing JSON format into the models map.
-func (pd *PricingData) loadFromJSON(data []byte) error {
+// LoadFromJSON parses the LiteLLM pricing JSON format into the models map.
+func (pd *PricingData) LoadFromJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -163,8 +165,8 @@ func (pd *PricingData) loadFromJSON(data []byte) error {
 			mp.LongCacheReadCost = mp.CacheReadCost
 			mp.LongCacheWriteCost = mp.CacheWriteCost
 			for key, rate := range map[string]*float64{
-				"output_cost_per_token": &mp.LongOutputCost,
-				"cache_read_input_token_cost": &mp.LongCacheReadCost,
+				"output_cost_per_token":           &mp.LongOutputCost,
+				"cache_read_input_token_cost":     &mp.LongCacheReadCost,
 				"cache_creation_input_token_cost": &mp.LongCacheWriteCost,
 			} {
 				if override, ok := pricingJSONFloat(entry, key+"_above_"+threshold.suffix+"_tokens"); ok {
@@ -180,7 +182,7 @@ func (pd *PricingData) loadFromJSON(data []byte) error {
 	}
 	// Fill IDs absent from LiteLLM and override the small set whose pool-facing
 	// name, promotion schedule, or provider rate cannot be represented there.
-	for id, pricing := range publishedModelPricing(time.Now()) {
+	for id, pricing := range PublishedModelPricing(time.Now()) {
 		if _, present := models[id]; !present || forcePublishedPricing[id] {
 			models[id] = pricing
 		}
@@ -256,7 +258,7 @@ var pricingModelAliases = map[string]string{
 	"cyberkimi":                  "lordx64/cyberkimi",
 }
 
-func canonicalPricingModel(model string) string {
+func CanonicalPricingModel(model string) string {
 	model = strings.TrimSpace(model)
 	model = strings.TrimPrefix(model, "antigravity/")
 	if alias, ok := pricingModelAliases[model]; ok {
@@ -274,11 +276,11 @@ func canonicalPricingModel(model string) string {
 	return model
 }
 
-// lookupPricing uses exact IDs and explicit aliases. It deliberately avoids
+// LookupPricing uses exact IDs and explicit aliases. It deliberately avoids
 // arbitrary prefix matching: "zai.glm-5.3" previously matched "zai.glm-5"
 // and silently used the wrong rate.
-func (pd *PricingData) lookupPricing(model string) (ModelPricing, bool) {
-	model = canonicalPricingModel(model)
+func (pd *PricingData) LookupPricing(model string) (ModelPricing, bool) {
+	model = CanonicalPricingModel(model)
 	if model == "" {
 		return ModelPricing{}, false
 	}
@@ -290,11 +292,11 @@ func (pd *PricingData) lookupPricing(model string) (ModelPricing, bool) {
 	return mp, ok
 }
 
-func (pd *PricingData) calculateCost(ru RequestUsage) (float64, error) {
+func (pd *PricingData) CalculateCost(ru usage.RequestUsage) (float64, error) {
 	if strings.TrimSpace(ru.Model) == "" {
 		return 0, errors.New("model is required to calculate request cost")
 	}
-	mp, ok := pd.lookupPricing(ru.Model)
+	mp, ok := pd.LookupPricing(ru.Model)
 	if !ok {
 		return 0, fmt.Errorf("pricing is unavailable for model %q", ru.Model)
 	}
@@ -325,14 +327,14 @@ func (pd *PricingData) calculateCost(ru RequestUsage) (float64, error) {
 	cost += float64(ru.CacheCreationTokens) * cacheWriteCost
 	outputTokens := ru.OutputTokens
 	// Codex reports reasoning inside output_tokens; Gemini reports it separately.
-	if ru.AccountType != AccountTypeCodex {
+	if ru.AccountType != account.AccountTypeCodex {
 		outputTokens += ru.ReasoningTokens
 	}
 	cost += float64(outputTokens) * outputCost
 	return cost, nil
 }
 
-func inputTokensExcludeCached(ru RequestUsage) bool {
+func inputTokensExcludeCached(ru usage.RequestUsage) bool {
 	switch ru.InputTokenMode {
 	case "exclusive":
 		return true
@@ -342,7 +344,7 @@ func inputTokensExcludeCached(ru RequestUsage) bool {
 	// Historical records predate InputTokenMode. These providers expose the
 	// Anthropic usage shape, where input_tokens is uncached input only.
 	switch ru.AccountType {
-	case AccountTypeClaude, AccountTypeKimi, AccountTypeMinimax, AccountTypeZAI, AccountTypeXiaomi, AccountTypeAdverserial, AccountTypeOpencodeGo:
+	case account.AccountTypeClaude, account.AccountTypeKimi, account.AccountTypeMinimax, account.AccountTypeZAI, account.AccountTypeXiaomi, account.AccountTypeAdverserial, account.AccountTypeOpencodeGo:
 		return true
 	default:
 		return false
