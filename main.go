@@ -379,14 +379,6 @@ func (h *proxyHandler) logRateLimitResponseHeaders(reqID string, accountType Acc
 	log.Printf("[%s] upstream %s rate-limit headers: %s", reqID, accountType, strings.Join(parts, ", "))
 }
 
-func isRateLimitError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "rate limited") || strings.Contains(msg, "too many requests") || strings.Contains(msg, "429")
-}
-
 func parseRetryAfter(h http.Header) (time.Duration, bool) {
 	if h == nil {
 		return 0, false
