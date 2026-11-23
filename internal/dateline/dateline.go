@@ -1,4 +1,5 @@
-package main
+// Package dateline normalizes Anthropic dateline fingerprints in request bodies.
+package dateline
 
 import (
 	"encoding/json"
@@ -181,7 +182,7 @@ func normalizeAnthropicBlocks(raw json.RawMessage, normalize func(string) (strin
 	return encoded, hits, true
 }
 
-func normalizeAnthropicDateline(body []byte) ([]byte, []anthropicDatelineHit, bool) {
+func Normalize(body []byte) ([]byte, []anthropicDatelineHit, bool) {
 	if len(body) == 0 {
 		return body, nil, false
 	}

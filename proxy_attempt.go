@@ -15,6 +15,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/dateline"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 	"github.com/google/uuid"
@@ -354,7 +355,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		if provider.Type() == AccountTypeClaude && strings.HasPrefix(access, "sk-ant-oat") {
-			if normalized, hits, changed := normalizeAnthropicDateline(bodyBytes); changed {
+			if normalized, hits, changed := dateline.Normalize(bodyBytes); changed {
 				bodyBytes = normalized
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] normalized %d Anthropic dateline fingerprint(s)", reqID, len(hits))
