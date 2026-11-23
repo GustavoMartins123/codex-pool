@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/fsperm"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/transport"
@@ -128,7 +129,7 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		return false, fmt.Errorf("credential vault: %w", err)
 	}
 	cfg.vault = vault
-	if problems := verifySensitiveFilePermissions(cfg.poolDir); len(problems) > 0 {
+	if problems := fsperm.Verify(cfg.poolDir); len(problems) > 0 {
 		return false, fmt.Errorf("credential vault: %d path(s) holding upstream credentials are group/world accessible, refusing to start:\n  %s\nFix with: chmod 0600 <file> (or chown to the pool user), then restart.",
 			len(problems), strings.Join(problems, "\n  "))
 	}

@@ -1,4 +1,5 @@
-package main
+// Package fsperm audits credential file permissions in the pool directory.
+package fsperm
 
 import (
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"strings"
 )
 
-// verifySensitiveFilePermissions audits the pool directory on POSIX systems:
+// Verify audits the pool directory on POSIX systems:
 // credential files must not be readable beyond their owner. Returns the list
 // of problems found. On Windows the permission model does not map to POSIX
 // modes, so the check is skipped.
@@ -20,7 +21,7 @@ import (
 // apply; a directory that cannot be tightened is still reported. Permissive
 // credential *files* are never auto-fixed: the caller fails startup so the
 // operator decides whether the file or its ownership needs to change.
-func verifySensitiveFilePermissions(poolDir string) []string {
+func Verify(poolDir string) []string {
 	if runtime.GOOS == "windows" || strings.TrimSpace(poolDir) == "" {
 		return nil
 	}
