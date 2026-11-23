@@ -19,6 +19,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -542,7 +543,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if conversationID == "" && len(respSample) > 0 {
-			conversationID = extractConversationIDFromSSE(respSample)
+			conversationID = requestjson.ConversationIDFromSSE(respSample)
 		}
 		if conversationID != "" && !cyberPinned {
 			h.pool.pin(conversationPinKey(userID, conversationID), acc.ID)

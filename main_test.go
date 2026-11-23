@@ -17,6 +17,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
@@ -493,7 +494,7 @@ func TestDecodeZstdRequestBodyEnablesGrokRouting(t *testing.T) {
 		NewGeminiProvider(base, base),
 		NewGrokProvider(base),
 	)}
-	model := extractRequestedModelFromJSON(decoded)
+	model := requestjson.RequestedModel(decoded)
 	provider, _, rewritten := handler.modelRouteOverride("/backend-api/codex/responses", model, decoded)
 	if provider == nil || provider.Type() != AccountTypeGrok {
 		t.Fatalf("zstd Grok request routed to %v, want grok", provider)
@@ -1363,7 +1364,7 @@ func TestUpdateUsageFromBodyRecordsChatCompletions(t *testing.T) {
 
 func TestExtractRequestedModelFromJSON(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.3-codex-spark","input":"hi"}`)
-	got := extractRequestedModelFromJSON(body)
+	got := requestjson.RequestedModel(body)
 	if got != "gpt-5.3-codex-spark" {
 		t.Fatalf("model=%q", got)
 	}

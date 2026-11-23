@@ -1,4 +1,5 @@
-package main
+// Package requestjson inspects and rewrites JSON request bodies.
+package requestjson
 
 import (
 	"bytes"
@@ -8,7 +9,7 @@ import (
 	"strings"
 )
 
-func extractConversationIDFromJSON(blob []byte) string {
+func ConversationID(blob []byte) string {
 	if len(blob) == 0 {
 		return ""
 	}
@@ -16,10 +17,10 @@ func extractConversationIDFromJSON(blob []byte) string {
 	if err := json.Unmarshal(blob, &obj); err != nil {
 		return ""
 	}
-	return extractConversationIDFromObject(obj)
+	return ConversationIDFromObject(obj)
 }
 
-func extractConversationIDFromObject(obj map[string]any) string {
+func ConversationIDFromObject(obj map[string]any) string {
 	for _, key := range []string{"conversation_id", "conversation", "session_id", "prompt_cache_key"} {
 		if v, ok := obj[key].(string); ok && v != "" {
 			return v
@@ -37,7 +38,7 @@ func extractConversationIDFromObject(obj map[string]any) string {
 	return ""
 }
 
-func extractRequestedModelFromJSON(blob []byte) string {
+func RequestedModel(blob []byte) string {
 	if len(blob) == 0 {
 		return ""
 	}
@@ -51,7 +52,7 @@ func extractRequestedModelFromJSON(blob []byte) string {
 	return ""
 }
 
-func readBodyPrefix(body io.Reader, limit int64) ([]byte, error) {
+func ReadBodyPrefix(body io.Reader, limit int64) ([]byte, error) {
 	var buf bytes.Buffer
 	_, err := io.CopyN(&buf, body, limit)
 	if err == io.EOF {
@@ -60,20 +61,20 @@ func readBodyPrefix(body io.Reader, limit int64) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-type prefixReadCloser struct {
-	r io.Reader
-	c io.Closer
+type PrefixReadCloser struct {
+	R io.Reader
+	C io.Closer
 }
 
-func (p *prefixReadCloser) Read(b []byte) (int, error) {
-	return p.r.Read(b)
+func (p *PrefixReadCloser) Read(b []byte) (int, error) {
+	return p.R.Read(b)
 }
 
-func (p *prefixReadCloser) Close() error {
-	return p.c.Close()
+func (p *PrefixReadCloser) Close() error {
+	return p.C.Close()
 }
 
-func replaceJSONStringToken(prefix []byte, start, end int, value string) ([]byte, int, error) {
+func ReplaceStringToken(prefix []byte, start, end int, value string) ([]byte, int, error) {
 	if start < 0 || end < start || end > len(prefix) {
 		return nil, 0, fmt.Errorf("invalid JSON string bounds")
 	}
@@ -88,7 +89,7 @@ func replaceJSONStringToken(prefix []byte, start, end int, value string) ([]byte
 	return out, len(encoded) - (end - start), nil
 }
 
-func findTopLevelJSONStringField(blob []byte, field string) (value string, valueStart int, valueEnd int, ok bool) {
+func FindTopLevelStringField(blob []byte, field string) (value string, valueStart int, valueEnd int, ok bool) {
 	i := skipJSONWhitespace(blob, 0)
 	if i >= len(blob) || blob[i] != '{' {
 		return "", 0, 0, false
@@ -227,8 +228,8 @@ func skipJSONValue(blob []byte, i int) (int, bool) {
 	return 0, false
 }
 
-// rewriteModelInBody replaces the "model" field in a JSON request body.
-func rewriteModelInBody(body []byte, newModel string) []byte {
+// RewriteModel replaces the "model" field in a JSON request body.
+func RewriteModel(body []byte, newModel string) []byte {
 	if len(body) == 0 {
 		return nil
 	}
@@ -247,7 +248,7 @@ func rewriteModelInBody(body []byte, newModel string) []byte {
 	return rewritten
 }
 
-func extractConversationIDFromSSE(sample []byte) string {
+func ConversationIDFromSSE(sample []byte) string {
 	// Best-effort: scan lines for JSON fragments and grab conversation_id/conversation.
 	for _, line := range bytes.Split(sample, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -260,7 +261,7 @@ func extractConversationIDFromSSE(sample []byte) string {
 		if len(line) == 0 || bytes.Equal(line, []byte("[DONE]")) {
 			continue
 		}
-		if id := extractConversationIDFromJSON(line); id != "" {
+		if id := ConversationID(line); id != "" {
 			return id
 		}
 	}

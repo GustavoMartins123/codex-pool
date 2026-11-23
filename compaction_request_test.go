@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/requestjson"
 )
 
 func TestPrepareCompactRequest(t *testing.T) {
@@ -86,7 +88,7 @@ func TestCompactInvalidRequest(t *testing.T) {
 func TestCompactSessionAffinity(t *testing.T) {
 	const session = "123e4567-e89b-12d3-a456-426614174000"
 	body := []byte(`{"client_metadata":{"session_id":"` + session + `"},"reasoning":{"context":"all_turns"}}`)
-	if got := extractConversationIDFromJSON(body); got != session {
+	if got := requestjson.ConversationID(body); got != session {
 		t.Fatalf("conversation ID = %q, want client_metadata.session_id", got)
 	}
 }
