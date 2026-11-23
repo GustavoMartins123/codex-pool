@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -46,7 +47,7 @@ func TestStreamingHostedFilterSplits(t *testing.T) {
 			stream := "event: response.output_item.added" + a + `data: {"type":"response.output_item.added","item":{"type":"mcp_call","id":"hidden-item"}}` + a + a + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}" + b + b
 			for split := 0; split <= len(stream); split++ {
 				var out bytes.Buffer
-				w := &hostedMCPResponseFilterWriter{w: &out}
+				w := &hostedmcp.ResponseFilterWriter{W: &out}
 				_, err := io.WriteString(w, stream[:split])
 				if err != nil {
 					t.Fatal(err)
@@ -88,7 +89,7 @@ func TestStreamingDownstreamErrors(t *testing.T) {
 		{"suppression", response, func(w io.Writer) io.Writer {
 			return &sseInterceptWriter{w: w, onEvent: func([]byte) (bool, bool) { return false, false }}
 		}},
-		{"hosted-filter", response, func(w io.Writer) io.Writer { return &hostedMCPResponseFilterWriter{w: w} }},
+		{"hosted-filter", response, func(w io.Writer) io.Writer { return &hostedmcp.ResponseFilterWriter{W: w} }},
 		{"responses-chat", response, func(w io.Writer) io.Writer { return wire.NewResponsesToOpenAIChatStream(w, wire.StreamOptions{}) }},
 		{"responses-completions", response, func(w io.Writer) io.Writer {
 			return wire.NewResponsesToOpenAICompletionsStream(w, wire.StreamOptions{})

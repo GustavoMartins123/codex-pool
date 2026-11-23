@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -597,7 +598,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			_ = s.h.contextHandoff.RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
-	filtered, _, drop, changed := filterHostedMCPResponseJSON(data)
+	filtered, _, drop, changed := hostedmcp.FilterResponseJSON(data)
 	if drop {
 		return []byte{}, nil
 	}
@@ -679,7 +680,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 
 	data = applyModelAliasToJSONFrame(s.h, s.opts.ReqID, data)
 	data = applyEffortCapToJSONFrame(s.h, s.opts.ReqID, s.opts.UserID, s.opts.ClientIP, data)
-	filtered, changed, err := filterHostedMCPRequestJSON(data)
+	filtered, changed, err := hostedmcp.FilterRequestJSON(data)
 	if err != nil {
 		return nil, err
 	}

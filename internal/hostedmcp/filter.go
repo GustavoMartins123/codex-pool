@@ -1,4 +1,5 @@
-package main
+// Package hostedmcp strips OpenAI-hosted MCP tools and items from Responses traffic.
+package hostedmcp
 
 import (
 	"bytes"
@@ -11,7 +12,7 @@ import (
 	"codex-pool-proxy/internal/sse"
 )
 
-const hostedMCPToolType = "mcp"
+const ToolType = "mcp"
 
 var hostedMCPItemTypes = map[string]struct{}{
 	"mcp_list_tools":        {},
@@ -20,7 +21,7 @@ var hostedMCPItemTypes = map[string]struct{}{
 	"mcp_approval_response": {},
 }
 
-func isHostedMCPItemType(value any) bool {
+func IsItemType(value any) bool {
 	typ, ok := value.(string)
 	if !ok {
 		return false
@@ -29,17 +30,17 @@ func isHostedMCPItemType(value any) bool {
 	return ok
 }
 
-// stripHostedMCPFromResponsesRequest removes only OpenAI-hosted MCP tools and
+// StripFromRequest removes only OpenAI-hosted MCP tools and
 // MCP transcript items. Codex's local MCP tools use function/namespace tool
 // definitions, so exact type matching preserves them along with web_search and
 // tool_search.
-func stripHostedMCPFromResponsesRequest(request map[string]any) bool {
+func StripFromRequest(request map[string]any) bool {
 	changed := false
 	if tools, ok := request["tools"].([]any); ok {
 		kept := tools[:0]
 		for _, raw := range tools {
 			tool, _ := raw.(map[string]any)
-			if typ, _ := tool["type"].(string); strings.TrimSpace(typ) == hostedMCPToolType {
+			if typ, _ := tool["type"].(string); strings.TrimSpace(typ) == ToolType {
 				changed = true
 				continue
 			}
@@ -52,7 +53,7 @@ func stripHostedMCPFromResponsesRequest(request map[string]any) bool {
 		kept := input[:0]
 		for _, raw := range input {
 			item, _ := raw.(map[string]any)
-			if isHostedMCPItemType(item["type"]) {
+			if IsItemType(item["type"]) {
 				changed = true
 				continue
 			}
@@ -62,23 +63,23 @@ func stripHostedMCPFromResponsesRequest(request map[string]any) bool {
 	}
 
 	if choice, ok := request["tool_choice"].(map[string]any); ok {
-		if typ, _ := choice["type"].(string); strings.TrimSpace(typ) == hostedMCPToolType {
+		if typ, _ := choice["type"].(string); strings.TrimSpace(typ) == ToolType {
 			delete(request, "tool_choice")
 			changed = true
 		}
-	} else if choice, ok := request["tool_choice"].(string); ok && strings.TrimSpace(choice) == hostedMCPToolType {
+	} else if choice, ok := request["tool_choice"].(string); ok && strings.TrimSpace(choice) == ToolType {
 		delete(request, "tool_choice")
 		changed = true
 	}
 	return changed
 }
 
-func filterHostedMCPRequestJSON(data []byte) ([]byte, bool, error) {
+func FilterRequestJSON(data []byte) ([]byte, bool, error) {
 	var request map[string]any
 	if err := json.Unmarshal(data, &request); err != nil {
 		return data, false, nil
 	}
-	if !stripHostedMCPFromResponsesRequest(request) {
+	if !StripFromRequest(request) {
 		return data, false, nil
 	}
 	filtered, err := json.Marshal(request)
@@ -93,7 +94,7 @@ func stripHostedMCPItems(items []any) ([]any, bool) {
 	changed := false
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
-		if isHostedMCPItemType(item["type"]) {
+		if IsItemType(item["type"]) {
 			changed = true
 			continue
 		}
@@ -102,19 +103,19 @@ func stripHostedMCPItems(items []any) ([]any, bool) {
 	return kept, changed
 }
 
-// filterHostedMCPResponseJSON removes hosted MCP output items from either an
+// FilterResponseJSON removes hosted MCP output items from either an
 // SSE/WebSocket event envelope or a non-streaming Responses API response.
 // It returns drop=true when the entire event represents an MCP item.
-func filterHostedMCPResponseJSON(data []byte) (filtered []byte, response map[string]any, drop bool, changed bool) {
+func FilterResponseJSON(data []byte) (filtered []byte, response map[string]any, drop bool, changed bool) {
 	var event map[string]any
 	if err := json.Unmarshal(data, &event); err != nil {
 		return data, nil, false, false
 	}
 
-	if eventType, _ := event["type"].(string); strings.HasPrefix(eventType, "response.mcp_") || isHostedMCPItemType(eventType) {
+	if eventType, _ := event["type"].(string); strings.HasPrefix(eventType, "response.mcp_") || IsItemType(eventType) {
 		return nil, nil, true, true
 	}
-	if item, _ := event["item"].(map[string]any); item != nil && isHostedMCPItemType(item["type"]) {
+	if item, _ := event["item"].(map[string]any); item != nil && IsItemType(item["type"]) {
 		return nil, nil, true, true
 	}
 
@@ -142,7 +143,7 @@ func filterHostedMCPResponseJSON(data []byte) (filtered []byte, response map[str
 	return filtered, event, false, true
 }
 
-func filterHostedMCPNonStreamingResponse(resp *http.Response) (map[string]any, error) {
+func FilterNonStreamingResponse(resp *http.Response) (map[string]any, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
@@ -151,7 +152,7 @@ func filterHostedMCPNonStreamingResponse(resp *http.Response) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
-	filtered, response, drop, _ := filterHostedMCPResponseJSON(body)
+	filtered, response, drop, _ := FilterResponseJSON(body)
 	if drop {
 		filtered = []byte(`{}`)
 	}
@@ -163,14 +164,14 @@ func filterHostedMCPNonStreamingResponse(resp *http.Response) (map[string]any, e
 
 const hostedMCPMaxSSEEventBytes = 512 * 1024 * 1024
 
-type hostedMCPResponseFilterWriter struct {
-	w      io.Writer
+type ResponseFilterWriter struct {
+	W      io.Writer
 	buf    []byte
 	framer sse.Framer
 	err    error
 }
 
-func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
+func (fw *ResponseFilterWriter) Write(p []byte) (int, error) {
 	if fw.err != nil {
 		return 0, fw.err
 	}
@@ -187,7 +188,7 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 		rawEvent := fw.buf[:advance]
 		fw.buf = fw.buf[advance:]
 		eventName, data := sse.ParseEvent(event)
-		filtered, _, drop, changed := filterHostedMCPResponseJSON(bytes.TrimSpace(data))
+		filtered, _, drop, changed := FilterResponseJSON(bytes.TrimSpace(data))
 		if drop {
 			continue
 		}
@@ -198,7 +199,7 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 				rawEvent = []byte(fmt.Sprintf("data: %s\n\n", filtered))
 			}
 		}
-		sse.Write(fw.w, rawEvent, &fw.err)
+		sse.Write(fw.W, rawEvent, &fw.err)
 		if fw.err != nil {
 			fw.buf = nil
 			return len(p), fw.err
@@ -206,12 +207,12 @@ func (fw *hostedMCPResponseFilterWriter) Write(p []byte) (int, error) {
 	}
 }
 
-func filterHostedMCPResponseSample(data []byte, isSSE bool) []byte {
+func FilterResponseSample(data []byte, isSSE bool) []byte {
 	if len(data) == 0 {
 		return data
 	}
 	if !isSSE {
-		filtered, _, drop, changed := filterHostedMCPResponseJSON(data)
+		filtered, _, drop, changed := FilterResponseJSON(data)
 		if drop {
 			return nil
 		}
@@ -221,7 +222,7 @@ func filterHostedMCPResponseSample(data []byte, isSSE bool) []byte {
 		return data
 	}
 	var safe bytes.Buffer
-	filter := &hostedMCPResponseFilterWriter{w: &safe}
+	filter := &ResponseFilterWriter{W: &safe}
 	if _, err := filter.Write(data); err != nil {
 		return nil
 	}

@@ -19,6 +19,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -327,7 +328,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	isSSE := provider.DetectsSSE(r.URL.Path, respContentType)
 	var codexJSON bool
 	if !isSSE && provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) {
-		response, err := filterHostedMCPNonStreamingResponse(resp)
+		response, err := hostedmcp.FilterNonStreamingResponse(resp)
 		if err != nil {
 			http.Error(w, "hosted MCP response filtering error", http.StatusBadGateway)
 			return
@@ -470,7 +471,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			writer = &sseInterceptWriter{w: writer, onEvent: suppressor.onEvent}
 		}
 		if provider.WireFormat() == WireResponses {
-			writer = &hostedMCPResponseFilterWriter{w: writer}
+			writer = &hostedmcp.ResponseFilterWriter{W: writer}
 		}
 		interceptWriter.w = writer
 		writer = interceptWriter
@@ -534,7 +535,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	respSample := sampleBuf.Bytes()
 	if h.cfg.logBodies && len(respSample) > 0 {
 		if provider.WireFormat() == WireResponses {
-			respSample = filterHostedMCPResponseSample(respSample, isSSE)
+			respSample = hostedmcp.FilterResponseSample(respSample, isSSE)
 		}
 		log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
 	}
@@ -677,7 +678,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 		defer fw.stop()
 	}
 	if isSSE && providerType == AccountTypeCodex {
-		writer = &hostedMCPResponseFilterWriter{w: writer}
+		writer = &hostedmcp.ResponseFilterWriter{W: writer}
 	}
 
 	// Wrap response body with idle timeout to kill zombie SSE connections.

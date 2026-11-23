@@ -17,6 +17,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
@@ -376,7 +377,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	}
 	if providerType == AccountTypeCodex {
 		relayOpts.TransformUpstreamMessage = func(data []byte) ([]byte, error) {
-			filtered, _, drop, _ := filterHostedMCPResponseJSON(data)
+			filtered, _, drop, _ := hostedmcp.FilterResponseJSON(data)
 			if drop {
 				return []byte{}, nil
 			}
@@ -386,7 +387,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 			if !isCodexResponseCreate(data) {
 				return data, nil
 			}
-			filtered, _, err := filterHostedMCPRequestJSON(data)
+			filtered, _, err := hostedmcp.FilterRequestJSON(data)
 			return filtered, err
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 )
@@ -116,7 +117,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		r = r.Clone(r.Context())
 		r.URL.Path = path
 		if isCodexResponsesPath(path) {
-			bodyBytes, _, err = filterHostedMCPRequestJSON(bodyBytes)
+			bodyBytes, _, err = hostedmcp.FilterRequestJSON(bodyBytes)
 			if err != nil {
 				http.Error(w, "hosted MCP request filtering error: "+err.Error(), http.StatusBadRequest)
 				return
@@ -227,7 +228,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		isSSE = false
 	}
 	if providerType == AccountTypeCodex && isCodexResponsesPath(r.URL.Path) && !isSSE {
-		if _, err := filterHostedMCPNonStreamingResponse(resp); err != nil {
+		if _, err := hostedmcp.FilterNonStreamingResponse(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -246,14 +247,14 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		w.Header().Del("Content-Length")
 		if passthroughTranslateDir == wire.TranslateCompletionsToResponses {
 			bufWriter := wire.NewResponsesToOpenAICompletionsBuffer(wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
-			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
+			_, _ = io.Copy(&hostedmcp.ResponseFilterWriter{W: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
 			return
 		}
 		if passthroughTranslateDir == wire.TranslateChatToResponses {
 			bufWriter := wire.NewResponsesToOpenAIChatBuffer(wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
-			_, _ = io.Copy(&hostedMCPResponseFilterWriter{w: bufWriter}, resp.Body)
+			_, _ = io.Copy(&hostedmcp.ResponseFilterWriter{W: bufWriter}, resp.Body)
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bufWriter.Result())
 			return
@@ -308,7 +309,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		writer = wire.NewResponsesToOpenAIChatStream(writer, wire.StreamOptions{Debug: h.cfg.debug.Load(), RequestID: reqID})
 	}
 	if isSSE && providerType == AccountTypeCodex {
-		writer = &hostedMCPResponseFilterWriter{w: writer}
+		writer = &hostedmcp.ResponseFilterWriter{W: writer}
 	}
 
 	// Wrap response body with idle timeout to kill zombie SSE connections.
