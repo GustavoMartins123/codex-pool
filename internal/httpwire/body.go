@@ -1,4 +1,4 @@
-package main
+package httpwire
 
 import (
 	"errors"
@@ -6,9 +6,9 @@ import (
 	"net/http"
 )
 
-// shouldStreamBody returns true when the request body should be streamed directly
+// ShouldStreamBody returns true when the request body should be streamed directly
 // instead of fully buffered in memory.
-func shouldStreamBody(r *http.Request, maxInMem int64) bool {
+func ShouldStreamBody(r *http.Request, maxInMem int64) bool {
 	if r == nil {
 		return false
 	}
@@ -21,24 +21,24 @@ func shouldStreamBody(r *http.Request, maxInMem int64) bool {
 	return r.ContentLength > maxInMem
 }
 
-var errReplayBodyTooLarge = errors.New("request body exceeds replay buffer limit")
+var ErrReplayBodyTooLarge = errors.New("request body exceeds replay buffer limit")
 
-// readBodyForReplay reads a bounded body for paths that need retries or JSON
+// ReadBodyForReplay reads a bounded body for paths that need retries or JSON
 // rewriting. Reading without a limit lets one client reserve the entire host.
-func readBodyForReplay(body io.ReadCloser, maxBytes int64, wantSample bool, sampleLimit int64) (full []byte, sample []byte, err error) {
+func ReadBodyForReplay(body io.ReadCloser, maxBytes int64, wantSample bool, sampleLimit int64) (full []byte, sample []byte, err error) {
 	if body == nil {
 		return nil, nil, nil
 	}
 	defer body.Close()
 	if maxBytes <= 0 {
-		return nil, nil, errReplayBodyTooLarge
+		return nil, nil, ErrReplayBodyTooLarge
 	}
 	full, err = io.ReadAll(io.LimitReader(body, maxBytes+1))
 	if err != nil {
 		return nil, nil, err
 	}
 	if int64(len(full)) > maxBytes {
-		return nil, nil, errReplayBodyTooLarge
+		return nil, nil, ErrReplayBodyTooLarge
 	}
 	if wantSample && sampleLimit > 0 {
 		if int64(len(full)) > sampleLimit {

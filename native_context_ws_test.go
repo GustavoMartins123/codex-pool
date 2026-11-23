@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 )
 
@@ -33,7 +34,7 @@ func TestNativeContextWSSwap(t *testing.T) {
 			var seenA, seenB [][]byte
 			var h *proxyHandler
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !isWebSocketUpgradeRequest(r) {
+				if !httpwire.IsWebSocketUpgradeRequest(r) {
 					_, _ = io.WriteString(w, `{"encrypted_output":"native-a"}`)
 					return
 				}

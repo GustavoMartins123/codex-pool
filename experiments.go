@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"go.etcd.io/bbolt"
 )
@@ -300,7 +301,7 @@ func (w *experimentResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error)
 }
 
 func shadowSafeRequest(r *http.Request, body []byte) bool {
-	if r == nil || r.Method != http.MethodPost || len(body) == 0 || len(body) > 1<<20 || isWebSocketUpgradeRequest(r) {
+	if r == nil || r.Method != http.MethodPost || len(body) == 0 || len(body) > 1<<20 || httpwire.IsWebSocketUpgradeRequest(r) {
 		return false
 	}
 	var object map[string]any

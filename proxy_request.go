@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -91,7 +92,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		http.Error(w, "traffic shadow principal mismatch", http.StatusForbidden)
 		return
 	}
-	if r.Method != http.MethodGet && !isWebSocketUpgradeRequest(r) {
+	if r.Method != http.MethodGet && !httpwire.IsWebSocketUpgradeRequest(r) {
 		release, err := h.admitQueuedRequest(r, principalID)
 		if err != nil {
 			respondPolicyError(w, err)
@@ -164,7 +165,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 	accountType := provider.Type()
 
-	if isWebSocketUpgradeRequest(r) {
+	if httpwire.IsWebSocketUpgradeRequest(r) {
 		if admission.hasTokenBudget() {
 			respondPolicyError(w, unboundedPolicyRequest())
 			return
@@ -173,7 +174,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 
-	streamBody := shouldStreamBody(r, h.cfg.maxInMemoryBodyBytes)
+	streamBody := httpwire.ShouldStreamBody(r, h.cfg.maxInMemoryBodyBytes)
 	if streamBody || shouldPeekStreamedModelRoute(r) {
 		var err error
 		provider, targetBase, err = h.applyStreamedModelRoute(r, provider, targetBase, reqID)
@@ -294,9 +295,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	defer releaseLargeBody()
-	bodyBytes, bodySample, err := readBodyForReplay(r.Body, h.cfg.maxInMemoryBodyBytes, h.cfg.logBodies, h.cfg.bodyLogLimit)
+	bodyBytes, bodySample, err := httpwire.ReadBodyForReplay(r.Body, h.cfg.maxInMemoryBodyBytes, h.cfg.logBodies, h.cfg.bodyLogLimit)
 	if err != nil {
-		if errors.Is(err, errReplayBodyTooLarge) {
+		if errors.Is(err, httpwire.ErrReplayBodyTooLarge) {
 			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		} else {
 			http.Error(w, err.Error(), http.StatusBadRequest)

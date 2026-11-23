@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -64,8 +65,8 @@ func (h *proxyHandler) handleImagesGenerationFanout(w http.ResponseWriter, r *ht
 					results[i].err = err
 					return
 				}
-				req.Header = cloneHeader(r.Header)
-				removeHopByHopHeaders(req.Header)
+				req.Header = httpwire.CloneHeader(r.Header)
+				httpwire.RemoveHopByHopHeaders(req.Header)
 				removeConflictingProxyHeaders(req.Header)
 				req.Header.Del("Accept-Encoding")
 				req.Header.Del("Content-Length")

@@ -18,6 +18,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -173,8 +174,8 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	outReq.Host = targetBase.Host
-	outReq.Header = cloneHeader(r.Header)
-	removeHopByHopHeaders(outReq.Header)
+	outReq.Header = httpwire.CloneHeader(r.Header)
+	httpwire.RemoveHopByHopHeaders(outReq.Header)
 	removeConflictingProxyHeaders(outReq.Header)
 	// Single-account path has no retry, but the next request may pin this
 	// session elsewhere; never hand this account a known foreign echo.
@@ -336,8 +337,8 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Write response to client.
-	copyHeader(w.Header(), resp.Header)
-	removeHopByHopHeaders(w.Header())
+	httpwire.CopyHeader(w.Header(), resp.Header)
+	httpwire.RemoveHopByHopHeaders(w.Header())
 	h.replaceUsageHeaders(w.Header())
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		// Single-account path commits here; every exit below writes to the
@@ -604,8 +605,8 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	}
 
 	outReq.Host = targetBase.Host
-	outReq.Header = cloneHeader(r.Header)
-	removeHopByHopHeaders(outReq.Header)
+	outReq.Header = httpwire.CloneHeader(r.Header)
+	httpwire.RemoveHopByHopHeaders(outReq.Header)
 	removeConflictingProxyHeaders(outReq.Header)
 	if r.ContentLength >= 0 {
 		outReq.ContentLength = r.ContentLength
@@ -656,8 +657,8 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	}
 
 	// Write response to client
-	copyHeader(w.Header(), resp.Header)
-	removeHopByHopHeaders(w.Header())
+	httpwire.CopyHeader(w.Header(), resp.Header)
+	httpwire.RemoveHopByHopHeaders(w.Header())
 	h.logRateLimitResponseHeaders(reqID, providerType, resp.Header)
 	h.replaceUsageHeaders(w.Header())
 	w.WriteHeader(resp.StatusCode)

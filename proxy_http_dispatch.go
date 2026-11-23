@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -373,7 +374,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 					// of dumping them: the response may carry Set-Cookie or
 					// provider token headers that must never reach the log.
 					log.Printf("[%s] account %s got %d, penalty now %.1f, body=%s, resp_headers=%v",
-						reqID, acc.ID, resp.StatusCode, penaltyNow, safeText(errBody), debugHeaderSummary(resp.Header))
+						reqID, acc.ID, resp.StatusCode, penaltyNow, safeText(errBody), httpwire.DebugHeaderSummary(resp.Header))
 				}
 
 			case ErrorClassPayment:

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -39,11 +40,11 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	}
 
 	targetBase := provider.UpstreamURL(path)
-	if isWebSocketUpgradeRequest(r) {
+	if httpwire.IsWebSocketUpgradeRequest(r) {
 		h.proxyPassthroughWebSocket(w, r, reqID, providerType, provider, targetBase, start, rt)
 		return
 	}
-	streamBody := shouldStreamBody(r, h.cfg.maxInMemoryBodyBytes)
+	streamBody := httpwire.ShouldStreamBody(r, h.cfg.maxInMemoryBodyBytes)
 	if providerType == AccountTypeCodex && (codexPassthroughNeedsBodyRewrite(path) || isCodexResponsesPath(path)) {
 		streamBody = false
 	}
@@ -61,9 +62,9 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer releaseLargeBody()
-	bodyBytes, bodySample, err := readBodyForReplay(r.Body, h.cfg.maxInMemoryBodyBytes, h.cfg.logBodies, h.cfg.bodyLogLimit)
+	bodyBytes, bodySample, err := httpwire.ReadBodyForReplay(r.Body, h.cfg.maxInMemoryBodyBytes, h.cfg.logBodies, h.cfg.bodyLogLimit)
 	if err != nil {
-		if errors.Is(err, errReplayBodyTooLarge) {
+		if errors.Is(err, httpwire.ErrReplayBodyTooLarge) {
 			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		} else {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -178,8 +179,8 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	}
 
 	outReq.Host = targetBase.Host
-	outReq.Header = cloneHeader(r.Header)
-	removeHopByHopHeaders(outReq.Header)
+	outReq.Header = httpwire.CloneHeader(r.Header)
+	httpwire.RemoveHopByHopHeaders(outReq.Header)
 	removeConflictingProxyHeaders(outReq.Header)
 
 	// Force uncompressed responses — SSE streams break with on-the-fly decompression.
@@ -282,8 +283,8 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Write response to client
-	copyHeader(w.Header(), resp.Header)
-	removeHopByHopHeaders(w.Header())
+	httpwire.CopyHeader(w.Header(), resp.Header)
+	httpwire.RemoveHopByHopHeaders(w.Header())
 	h.logRateLimitResponseHeaders(reqID, providerType, resp.Header)
 	h.replaceUsageHeaders(w.Header())
 	if isSSE && passthroughTranslateDir != wire.TranslateNone {
