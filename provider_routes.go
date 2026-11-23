@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"codex-pool-proxy/internal/requestjson"
+)
 
 type providerModelRoute struct {
 	accountType AccountType
@@ -20,24 +24,24 @@ func (route providerModelRoute) modelID(model string) string {
 func configuredModelRoutes() (buffered, streamed []providerModelRoute) {
 	qwen := providerModelRoute{
 		accountType: AccountTypeQwen, matches: isQwenModel, canonical: strings.TrimSpace,
-		rewrite: rewriteModelInBody, discover: true,
+		rewrite: requestjson.RewriteModel, discover: true,
 	}
 	claude := providerModelRoute{
 		accountType: AccountTypeClaude, matches: isClaudeModel,
-		canonical: claudeCanonicalModel, rewrite: rewriteModelInBody,
+		canonical: claudeCanonicalModel, rewrite: requestjson.RewriteModel,
 	}
 	kimi := providerModelRoute{accountType: AccountTypeKimi, matches: isKimiModel}
 	minimax := providerModelRoute{
 		accountType: AccountTypeMinimax, matches: isMinimaxModel,
-		canonical: minimaxCanonicalModel, rewrite: rewriteModelInBody,
+		canonical: minimaxCanonicalModel, rewrite: requestjson.RewriteModel,
 	}
 	zai := providerModelRoute{
 		accountType: AccountTypeZAI, matches: isZAIModel,
-		canonical: zaiCanonicalModel, rewrite: rewriteModelInBody,
+		canonical: zaiCanonicalModel, rewrite: requestjson.RewriteModel,
 	}
 	xiaomi := providerModelRoute{
 		accountType: AccountTypeXiaomi, matches: isXiaomiModel,
-		canonical: xiaomiCanonicalModel, rewrite: rewriteModelInBody,
+		canonical: xiaomiCanonicalModel, rewrite: requestjson.RewriteModel,
 	}
 	grok := providerModelRoute{
 		accountType: AccountTypeGrok, matches: isGrokModel,
@@ -60,7 +64,7 @@ func configuredModelRoutes() (buffered, streamed []providerModelRoute) {
 
 func (r *ProviderRegistry) resolveBufferedModel(pool *poolState, model string, body []byte) (ProviderDriver, []byte) {
 	if provider, canonical, ok := r.ResolveModel(model); ok {
-		return provider, rewriteModelInBody(body, canonical)
+		return provider, requestjson.RewriteModel(body, canonical)
 	}
 	for _, route := range r.bufferedModelRoutes {
 		if !route.matches(model) {

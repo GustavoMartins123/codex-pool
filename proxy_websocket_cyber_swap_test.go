@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/requestjson"
 	"github.com/coder/websocket"
 )
 
@@ -327,10 +328,10 @@ func TestCodexWebSocketPinsEveryConversationToTheResponseChainAccount(t *testing
 
 	firstTurn := <-turns
 	secondTurn := <-turns
-	if got := extractConversationIDFromObject(firstTurn); got != "conv-first" {
+	if got := requestjson.ConversationIDFromObject(firstTurn); got != "conv-first" {
 		t.Fatalf("first upstream conversation = %q, want conv-first", got)
 	}
-	if got := extractConversationIDFromObject(secondTurn); got != "conv-second" {
+	if got := requestjson.ConversationIDFromObject(secondTurn); got != "conv-second" {
 		t.Fatalf("second upstream conversation = %q, want conv-second", got)
 	}
 	if got, _ := secondTurn["previous_response_id"].(string); got != "resp_first" {

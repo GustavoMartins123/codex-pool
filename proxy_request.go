@@ -17,6 +17,7 @@ import (
 
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -347,7 +348,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	originalModel = strings.TrimSpace(originalModel)
 	originalStream, _ := originalObject["stream"].(bool)
 	intent := requestIntent{stream: originalStream, image: valueHasImageGenerationTool(originalObject)}
-	conversationID := extractConversationIDFromObject(originalObject)
+	conversationID := requestjson.ConversationIDFromObject(originalObject)
 	if conversationID == "" {
 		conversationID = extractConversationIDFromHeaders(r.Header)
 	}
@@ -407,7 +408,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		experiment = h.experiments.Assign(requestedModel, experimentKey)
 		if experiment != nil && experiment.Model != requestedModel {
 			requestedModel = experiment.Model
-			if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
+			if rewritten := requestjson.RewriteModel(bodyBytes, requestedModel); rewritten != nil {
 				bodyBytes = rewritten
 			}
 		}
@@ -470,7 +471,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}) {
 			return
 		}
-		if rewritten := rewriteModelInBody(bodyBytes, requestedModel); rewritten != nil {
+		if rewritten := requestjson.RewriteModel(bodyBytes, requestedModel); rewritten != nil {
 			bodyBytes = rewritten
 		}
 		if h.cfg.debug.Load() {
@@ -543,7 +544,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		if hasSuffix {
 			requestedModel = baseName
 			// Rewrite model in body to the base name for model routing to work.
-			if rewritten := rewriteModelInBody(bodyBytes, baseName); rewritten != nil {
+			if rewritten := requestjson.RewriteModel(bodyBytes, baseName); rewritten != nil {
 				bodyBytes = rewritten
 			}
 		}

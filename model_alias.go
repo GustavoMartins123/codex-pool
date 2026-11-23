@@ -4,6 +4,8 @@ import (
 	"log"
 	"strings"
 	"sync"
+
+	"codex-pool-proxy/internal/requestjson"
 )
 
 // defaultModelAliases are always registered unless overridden by config.toml
@@ -74,13 +76,13 @@ func (m *modelAliases) reload(cfg map[string]string) {
 }
 
 // applyModelAlias resolves the model alias and rewrites the body if needed.
-// Uses the existing rewriteModelInBody from main.go.
+// Uses requestjson.RewriteModel.
 func applyModelAlias(aliases *modelAliases, model string, body []byte, debug bool, reqID string) (string, []byte) {
 	resolved, aliased := aliases.resolve(model)
 	if !aliased {
 		return model, body
 	}
-	if rewritten := rewriteModelInBody(body, resolved); rewritten != nil {
+	if rewritten := requestjson.RewriteModel(body, resolved); rewritten != nil {
 		if debug {
 			log.Printf("[%s] model alias: %s -> %s", reqID, model, resolved)
 		}

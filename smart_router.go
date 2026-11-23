@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -522,7 +523,7 @@ func resolveRequestRouting(pool *poolState, r *http.Request, model string, body 
 			aliasModel = pool.routingDefaultModel()
 		}
 		model = aliasModel
-		if rewritten := rewriteModelInBody(body, model); rewritten != nil {
+		if rewritten := requestjson.RewriteModel(body, model); rewritten != nil {
 			body = rewritten
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/ids"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -842,7 +843,7 @@ func safeAntigravityAccountID(email string) string {
 	id := antigravityAccountIDPattern.ReplaceAllString(strings.ToLower(strings.TrimSpace(email)), "-")
 	id = strings.Trim(id, "-.")
 	if id == "" {
-		return "antigravity-" + randomID()
+		return "antigravity-" + ids.Random()
 	}
 	return "antigravity-" + id
 }

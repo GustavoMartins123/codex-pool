@@ -19,6 +19,7 @@ import (
 
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
 	"go.etcd.io/bbolt"
 )
@@ -540,7 +541,7 @@ func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool, acco
 // "-traffic-shadow" request id for separate accounting, and — unless
 // detach_from_client is set — cancellation together with the client request.
 func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt proxyRuntime) {
-	shadowBody := rewriteModelInBody(body, assignment.Rule.Candidate)
+	shadowBody := requestjson.RewriteModel(body, assignment.Rule.Candidate)
 	if shadowBody == nil {
 		return
 	}

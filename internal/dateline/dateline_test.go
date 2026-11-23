@@ -1,4 +1,4 @@
-package main
+package dateline
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ func TestNormalizeAnthropicDatelineScopesChanges(t *testing.T) {
 		]
 	}`)
 
-	out, hits, changed := normalizeAnthropicDateline(body)
+	out, hits, changed := Normalize(body)
 	if !changed {
 		t.Fatal("expected a change")
 	}
@@ -82,7 +82,7 @@ func TestNormalizeAnthropicDatelineScopesChanges(t *testing.T) {
 
 func TestNormalizeAnthropicDatelineTopLevelSystemString(t *testing.T) {
 	body := []byte(`{"system":"prefix Today’s date is 2026/07/01. suffix","messages":[]}`)
-	out, hits, changed := normalizeAnthropicDateline(body)
+	out, hits, changed := Normalize(body)
 	if !changed || len(hits) != 1 {
 		t.Fatalf("changed=%v hits=%+v", changed, hits)
 	}
@@ -93,7 +93,7 @@ func TestNormalizeAnthropicDatelineTopLevelSystemString(t *testing.T) {
 
 func TestNormalizeAnthropicDatelinePreservesUnchangedBytes(t *testing.T) {
 	body := []byte("{ \n \"messages\" : [{\"content\":\"Today’s date is 2026/07/01.\"}], \"extra\": 1e3 }\n")
-	out, hits, changed := normalizeAnthropicDateline(body)
+	out, hits, changed := Normalize(body)
 	if changed || hits != nil {
 		t.Fatalf("changed=%v hits=%+v", changed, hits)
 	}
@@ -104,12 +104,12 @@ func TestNormalizeAnthropicDatelinePreservesUnchangedBytes(t *testing.T) {
 
 func TestNormalizeAnthropicDatelineInvalidAndEmptyBodies(t *testing.T) {
 	invalid := []byte(`{"system":`)
-	out, hits, changed := normalizeAnthropicDateline(invalid)
+	out, hits, changed := Normalize(invalid)
 	if changed || hits != nil || !bytes.Equal(out, invalid) {
 		t.Fatalf("invalid JSON changed: changed=%v hits=%+v out=%q", changed, hits, out)
 	}
 
-	out, hits, changed = normalizeAnthropicDateline(nil)
+	out, hits, changed = Normalize(nil)
 	if changed || hits != nil || out != nil {
 		t.Fatalf("nil body changed: changed=%v hits=%+v out=%q", changed, hits, out)
 	}
@@ -117,11 +117,11 @@ func TestNormalizeAnthropicDatelineInvalidAndEmptyBodies(t *testing.T) {
 
 func TestNormalizeAnthropicDatelineIsIdempotent(t *testing.T) {
 	body := []byte(`{"messages":[{"content":"<system-reminder>Today’s date is 2026/07/01.</system-reminder>"}]}`)
-	first, _, changed := normalizeAnthropicDateline(body)
+	first, _, changed := Normalize(body)
 	if !changed {
 		t.Fatal("first pass did not change")
 	}
-	second, hits, changed := normalizeAnthropicDateline(first)
+	second, hits, changed := Normalize(first)
 	if changed || hits != nil || !bytes.Equal(second, first) {
 		t.Fatalf("second pass changed: changed=%v hits=%+v first=%s second=%s", changed, hits, first, second)
 	}

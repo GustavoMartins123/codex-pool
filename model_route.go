@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"codex-pool-proxy/internal/requestjson"
 )
 
 func stripCodexModelSuffixes(model string) (base string, reasoningEffort string, serviceTier string) {
@@ -144,16 +146,16 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 		return provider, targetBase, nil
 	}
 
-	prefix, err := readBodyPrefix(r.Body, streamedModelRoutePeekBytes)
+	prefix, err := requestjson.ReadBodyPrefix(r.Body, streamedModelRoutePeekBytes)
 	if err != nil {
-		r.Body = &prefixReadCloser{r: bytes.NewReader(prefix), c: r.Body}
+		r.Body = &requestjson.PrefixReadCloser{R: bytes.NewReader(prefix), C: r.Body}
 		return provider, targetBase, err
 	}
 	restoreBody := func(replacement []byte) {
-		r.Body = &prefixReadCloser{r: io.MultiReader(bytes.NewReader(replacement), r.Body), c: r.Body}
+		r.Body = &requestjson.PrefixReadCloser{R: io.MultiReader(bytes.NewReader(replacement), r.Body), C: r.Body}
 	}
 
-	model, valueStart, valueEnd, ok := findTopLevelJSONStringField(prefix, "model")
+	model, valueStart, valueEnd, ok := requestjson.FindTopLevelStringField(prefix, "model")
 	if !ok {
 		restoreBody(prefix)
 		return provider, targetBase, nil
@@ -184,7 +186,7 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 	rewrittenPrefix := prefix
 	delta := 0
 	if canonicalModel != requestedModel {
-		rewrittenPrefix, delta, err = replaceJSONStringToken(prefix, valueStart, valueEnd, canonicalModel)
+		rewrittenPrefix, delta, err = requestjson.ReplaceStringToken(prefix, valueStart, valueEnd, canonicalModel)
 	}
 	if err != nil {
 		restoreBody(prefix)

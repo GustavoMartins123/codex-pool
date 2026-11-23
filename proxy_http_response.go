@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -304,7 +305,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		}
 		if opts.conversationID == "" {
 			if sampleBuf != nil && sampleBuf.Len() > 0 {
-				opts.conversationID = extractConversationIDFromSSE(sampleBuf.Bytes())
+				opts.conversationID = requestjson.ConversationIDFromSSE(sampleBuf.Bytes())
 			}
 		}
 		if opts.conversationID != "" && !opts.cyberPinned {

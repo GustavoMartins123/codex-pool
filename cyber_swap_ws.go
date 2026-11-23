@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -684,7 +685,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 	if changed {
 		data = filtered
 	}
-	conversationID := extractConversationIDFromJSON(data)
+	conversationID := requestjson.ConversationID(data)
 	if conversationID == "" {
 		conversationID = s.activeConversationID
 	}
@@ -918,7 +919,7 @@ func applyModelAliasToJSONFrame(h *proxyHandler, reqID string, data []byte) []by
 	if h == nil || h.aliases == nil || len(data) == 0 {
 		return data
 	}
-	model := extractRequestedModelFromJSON(data)
+	model := requestjson.RequestedModel(data)
 	if model == "" {
 		return data
 	}
@@ -926,7 +927,7 @@ func applyModelAliasToJSONFrame(h *proxyHandler, reqID string, data []byte) []by
 	if !ok || resolved == model {
 		return data
 	}
-	if rewritten := rewriteModelInBody(data, resolved); rewritten != nil {
+	if rewritten := requestjson.RewriteModel(data, resolved); rewritten != nil {
 		if h.cfg != nil && h.cfg.debug.Load() {
 			log.Printf("[%s] ws model alias: %s -> %s", reqID, model, resolved)
 		}
@@ -1408,7 +1409,7 @@ func isCodexResponseCreate(data []byte) bool {
 // extractCodexWebSocketRequestedModel reads model from either the flat HTTP
 // Responses shape or the nested Codex websocket response.create envelope.
 func extractCodexWebSocketRequestedModel(data []byte) string {
-	if model := extractRequestedModelFromJSON(data); model != "" {
+	if model := requestjson.RequestedModel(data); model != "" {
 		return model
 	}
 	var nested struct {

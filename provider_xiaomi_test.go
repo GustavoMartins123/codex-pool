@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/requestjson"
 )
 
 func TestXiaomiModelRoutingUsesLongContextCanonicalModel(t *testing.T) {
@@ -131,11 +132,11 @@ func TestFindTopLevelJSONStringFieldFindsOnlyTopLevelModel(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{"messages":[{"model":"nested"}],"model":"mimo-v2.5-pro[1m]","max_tokens":1}`)
-	value, start, end, ok := findTopLevelJSONStringField(body, "model")
+	value, start, end, ok := requestjson.FindTopLevelStringField(body, "model")
 	if !ok || value != "mimo-v2.5-pro[1m]" {
 		t.Fatalf("field = %q ok=%v, want top-level Xiaomi model", value, ok)
 	}
-	rewritten, _, err := replaceJSONStringToken(body, start, end, "mimo-v2.5-pro")
+	rewritten, _, err := requestjson.ReplaceStringToken(body, start, end, "mimo-v2.5-pro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestFindTopLevelJSONStringFieldFindsOnlyTopLevelModel(t *testing.T) {
 		t.Fatalf("rewritten model = %v", rewrittenBody["model"])
 	}
 
-	if value, _, _, ok := findTopLevelJSONStringField([]byte(`{"messages":[{"model":"nested"}],"max_tokens":1}`), "model"); ok || value != "" {
+	if value, _, _, ok := requestjson.FindTopLevelStringField([]byte(`{"messages":[{"model":"nested"}],"max_tokens":1}`), "model"); ok || value != "" {
 		t.Fatalf("unexpected nested model match: value=%q ok=%v", value, ok)
 	}
 }
