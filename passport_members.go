@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"go.etcd.io/bbolt"
 )
 
@@ -545,7 +546,7 @@ func (h *proxyHandler) handleMemberRecoveryStatus(w http.ResponseWriter, r *http
 	}
 	// Rate limit: banned IPs are refused, but status probes never count as
 	// failures themselves (a stale link must not lock its owner out).
-	if ip := getClientIP(r); h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if ip := clientip.Get(r); h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
@@ -583,7 +584,7 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return

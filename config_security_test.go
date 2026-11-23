@@ -81,7 +81,7 @@ func TestConfigReloadRejectsWholeCandidate(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
 			h := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false), aliases: newModelAliases(map[string]string{"probe": "previous"})}
 			h.cfg.setHotReloadable(.7, RoutingConfigFile{}, map[string]ClientPolicy{"old": {}}, ExperimentsConfig{})
-			h.ipAccess.install(testIPAccessSettings(t, []string{"192.0.2.0/24"}, nil, []string{"198.51.100.1"}))
+			h.ipAccess.Install(testIPAccessSettings(t, []string{"192.0.2.0/24"}, nil, []string{"198.51.100.1"}))
 			content := "debug=true\ntier_threshold=.2\n" + bad
 			// TOML floating point literals require a leading zero.
 			content = strings.ReplaceAll(content, "=.2", "=0.2")
@@ -98,7 +98,7 @@ func TestConfigReloadRejectsWholeCandidate(t *testing.T) {
 			if _, ok := h.cfg.hotClientPolicies()["old"]; !ok {
 				t.Fatal("rejected reload changed policy")
 			}
-			if h.ipAccess.snapshot().permitted("203.0.113.1") || !h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
+			if h.ipAccess.Snapshot().Permitted("203.0.113.1") || !h.ipAccess.Snapshot().IsTrustedProxy(net.ParseIP("198.51.100.1")) {
 				t.Fatal("rejected reload changed network policy")
 			}
 		})
@@ -114,7 +114,7 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 	if err := pw.reloadConfigCandidate(); err != nil {
 		t.Fatal(err)
 	}
-	if !h.cfg.debug.Load() || h.ipAccess.snapshot().permitted("203.0.113.1") || !h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
+	if !h.cfg.debug.Load() || h.ipAccess.Snapshot().Permitted("203.0.113.1") || !h.ipAccess.Snapshot().IsTrustedProxy(net.ParseIP("198.51.100.1")) {
 		t.Fatal("valid reload not applied")
 	}
 	if err := os.WriteFile(path, []byte("debug=false"), 0600); err != nil {
@@ -131,7 +131,7 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if h.cfg.debug.Load() || h.ipAccess.snapshot().restricted() || h.ipAccess.snapshot().isTrustedProxy(net.ParseIP("198.51.100.1")) {
+	if h.cfg.debug.Load() || h.ipAccess.Snapshot().Restricted() || h.ipAccess.Snapshot().IsTrustedProxy(net.ParseIP("198.51.100.1")) {
 		t.Fatal("empty network lists retained prior policy")
 	}
 	if err := os.Remove(path); err != nil {
@@ -143,7 +143,7 @@ func TestConfigReloadAppliesAndClearsNetworkPolicies(t *testing.T) {
 }
 func TestIPAccessLoopbackOnlyBypassesReadOnlyHealth(t *testing.T) {
 	h := &proxyHandler{pool: newPoolState(nil, false)}
-	h.ipAccess.install(testIPAccessSettings(t, nil, []string{"127.0.0.0/8", "::1", "203.0.113.1"}, nil))
+	h.ipAccess.Install(testIPAccessSettings(t, nil, []string{"127.0.0.0/8", "::1", "203.0.113.1"}, nil))
 	for _, peer := range []string{"127.0.0.1:1234", "[::1]:1234"} {
 		for _, tc := range []struct {
 			method, path, xff string
@@ -172,22 +172,23 @@ func TestIPAccessForwardingChainUsesNearestUntrustedHop(t *testing.T) {
 	r := httptest.NewRequest("GET", "/livez", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
 	r.Header.Set("X-Forwarded-For", "127.0.0.1, 203.0.113.1, 10.0.0.2")
-	if ip, err := policy.resolveClientIP(r); err != nil || ip != "203.0.113.1" {
+	if ip, err := policy.ResolveClientIP(r); err != nil || ip != "203.0.113.1" {
 		t.Fatalf("spoofed leftmost origin accepted: %s %v", ip, err)
 	}
 	r.Header.Set("CF-Connecting-IP", "invalid")
 	r.Header.Set("X-Real-IP", "127.0.0.1")
-	if ip, err := policy.resolveClientIP(r); err == nil || ip != "" {
+	if ip, err := policy.ResolveClientIP(r); err == nil || ip != "" {
 		t.Fatalf("invalid canonical header selected secondary origin: %s %v", ip, err)
 	}
-	h := &proxyHandler{ipAccess: ipAccessPolicy{settings: policy}}
+	h := &proxyHandler{}
+	h.ipAccess.Install(policy)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid forwarding attribution: %d", w.Code)
 	}
 	r.RemoteAddr = "198.51.100.1:1234"
-	if ip, err := policy.resolveClientIP(r); err != nil || ip != "198.51.100.1" {
+	if ip, err := policy.ResolveClientIP(r); err != nil || ip != "198.51.100.1" {
 		t.Fatalf("untrusted peer used forwarding header: %s %v", ip, err)
 	}
 }

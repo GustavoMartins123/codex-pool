@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/clientip"
 )
 
 func poolHashSalt(legacySalt string) string {
@@ -17,7 +19,7 @@ func hashRequestOrigin(r *http.Request, salt string) string {
 	if r == nil {
 		return ""
 	}
-	ip := getClientIP(r)
+	ip := clientip.Get(r)
 	if ip == "" {
 		return ""
 	}

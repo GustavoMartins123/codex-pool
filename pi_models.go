@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/pricing"
 )
 
@@ -287,10 +288,10 @@ func piClaudeAlias(id, name string, contextWindow, maxTokens int, inputCost, out
 			CacheWrite: cacheWriteCost,
 		},
 	}
-	if ccModelSupportsEffort(id) {
+	if claudecode.ModelSupportsEffort(id) {
 		model.ThinkingLevelMap = map[string]string{"max": "max"}
 		model.Compat = &piModelCompat{ForceAdaptiveThinking: true}
-		canonical := ccCanonicalClaudeModel(id)
+		canonical := claudecode.CanonicalClaudeModel(id)
 		if strings.Contains(canonical, "opus-5") || strings.Contains(canonical, "opus-4-7") || strings.Contains(canonical, "fable-5") || strings.Contains(canonical, "sonnet-5") {
 			model.ThinkingLevelMap["xhigh"] = "xhigh"
 		}
@@ -318,10 +319,10 @@ func piModelsForProvider(accountType AccountType) []piModelConfig {
 		if accountType == AccountTypeCodex && (strings.HasPrefix(model.ID, defaultCodexModel) || strings.HasPrefix(model.ID, "gpt-6.1") || strings.HasPrefix(model.ID, "gpt-5.6-")) {
 			config.ThinkingLevelMap = map[string]string{"xhigh": "xhigh", "max": "max"}
 		}
-		if accountType == AccountTypeClaude && ccModelSupportsEffort(model.ID) {
+		if accountType == AccountTypeClaude && claudecode.ModelSupportsEffort(model.ID) {
 			config.ThinkingLevelMap = map[string]string{"max": "max"}
 			config.Compat = &piModelCompat{ForceAdaptiveThinking: true}
-			canonical := ccCanonicalClaudeModel(model.ID)
+			canonical := claudecode.CanonicalClaudeModel(model.ID)
 			if strings.Contains(canonical, "opus-5") || strings.Contains(canonical, "opus-4-7") || strings.Contains(canonical, "fable-5") || strings.Contains(canonical, "sonnet-5") {
 				config.ThinkingLevelMap["xhigh"] = "xhigh"
 			}

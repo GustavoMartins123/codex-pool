@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
@@ -38,7 +40,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	}
 
 	requiredPlan := requiredPlanForRequest(accountType, r, "")
-	clientIP := getClientIP(r)
+	clientIP := clientip.Get(r)
 	requestedModel := ""
 	if spooled != nil {
 		requestedModel = spooled.Model
@@ -615,7 +617,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	// For Claude, ensure required headers are set
 	if providerType == AccountTypeClaude {
 		if outReq.Header.Get("anthropic-version") == "" {
-			outReq.Header.Set("anthropic-version", ccAnthropicVersion)
+			outReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 		}
 	}
 

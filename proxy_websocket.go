@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -60,7 +62,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	}
 
 	requiredPlan := requiredPlanForRequest(accountType, r, "")
-	clientIP := getClientIP(r)
+	clientIP := clientip.Get(r)
 	routingProfile, ok := h.pool.resolveRoutingProfile(r.Header.Get("X-Pool-Routing"))
 	if !ok {
 		http.Error(w, fmt.Sprintf("unknown routing profile %q", r.Header.Get("X-Pool-Routing")), http.StatusBadRequest)
@@ -350,7 +352,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	upstreamHeaders := cloneHeader(r.Header)
 	removeConflictingProxyHeaders(upstreamHeaders)
 	if providerType == AccountTypeClaude && upstreamHeaders.Get("anthropic-version") == "" {
-		upstreamHeaders.Set("anthropic-version", ccAnthropicVersion)
+		upstreamHeaders.Set("anthropic-version", claudecode.AnthropicVersion)
 	}
 
 	if h.cfg.debug.Load() {

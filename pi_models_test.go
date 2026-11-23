@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func TestClaudeCanonicalModelHandlesShortOneMillionAliases(t *testing.T) {
@@ -128,7 +130,7 @@ func TestGeneratePiModelsJSON(t *testing.T) {
 		if _, ok := needClaudeIDs[model.ID]; ok {
 			needClaudeIDs[model.ID] = true
 		}
-		if !ccModelSupportsEffort(model.ID) {
+		if !claudecode.ModelSupportsEffort(model.ID) {
 			if model.Compat != nil || len(model.ThinkingLevelMap) != 0 {
 				t.Fatalf("claude model %q unexpectedly advertises adaptive thinking: %#v %#v", model.ID, model.Compat, model.ThinkingLevelMap)
 			}
@@ -137,7 +139,7 @@ func TestGeneratePiModelsJSON(t *testing.T) {
 		if model.Compat == nil || !model.Compat.ForceAdaptiveThinking || model.ThinkingLevelMap["max"] != "max" {
 			t.Fatalf("claude model %q missing adaptive max metadata: %#v %#v", model.ID, model.Compat, model.ThinkingLevelMap)
 		}
-		canonical := ccCanonicalClaudeModel(model.ID)
+		canonical := claudecode.CanonicalClaudeModel(model.ID)
 		wantXHigh := strings.Contains(canonical, "sonnet-5") || strings.Contains(canonical, "opus-5") || strings.Contains(canonical, "opus-4-7") || strings.Contains(canonical, "fable-5")
 		if gotXHigh := model.ThinkingLevelMap["xhigh"] == "xhigh"; gotXHigh != wantXHigh {
 			t.Fatalf("claude model %q xhigh support = %v, want %v", model.ID, gotXHigh, wantXHigh)

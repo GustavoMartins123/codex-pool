@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"go.etcd.io/bbolt"
 )
 
@@ -53,7 +54,7 @@ func testPoolProxyRequest(t *testing.T, h *proxyHandler, w http.ResponseWriter, 
 	if err := prepareTestPoolCredential(t, h, r); err != nil {
 		t.Fatal(err)
 	}
-	r = withClientIP(r, testResolvedClientIP(t, h.ipAccess.snapshot(), r))
+	r = clientip.With(r, testResolvedClientIP(t, h.ipAccess.Snapshot(), r))
 	h.proxyRequest(w, r, requestID, systemProxyRuntime())
 }
 

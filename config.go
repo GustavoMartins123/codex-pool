@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/routing"
 	"github.com/BurntSushi/toml"
 )
@@ -181,13 +182,13 @@ func validateConfigFile(cfg *ConfigFile) error {
 	if math.IsNaN(cfg.TierThreshold) || math.IsInf(cfg.TierThreshold, 0) || cfg.TierThreshold < 0 || cfg.TierThreshold > 1 {
 		return fmt.Errorf("tier_threshold must be between 0 and 1")
 	}
-	if _, err := parseIPNetList("ip_access_allow", cfg.IPAccessAllow); err != nil {
+	if _, err := clientip.ParseNetList("ip_access_allow", cfg.IPAccessAllow); err != nil {
 		return err
 	}
-	if _, err := parseIPNetList("ip_access_deny", cfg.IPAccessDeny); err != nil {
+	if _, err := clientip.ParseNetList("ip_access_deny", cfg.IPAccessDeny); err != nil {
 		return err
 	}
-	if _, _, err := parseTrustedProxies(cfg.TrustedProxies); err != nil {
+	if _, _, err := clientip.ParseTrustedProxies(cfg.TrustedProxies); err != nil {
 		return err
 	}
 	for model, rule := range cfg.Experiments.Canary {
@@ -277,12 +278,12 @@ func validateConfigEnvironment() error {
 			return fmt.Errorf("TIER_THRESHOLD must be between 0 and 1")
 		}
 	}
-	if _, _, err := parseTrustedProxies(effectiveTrustedProxies(nil)); err != nil {
+	if _, _, err := clientip.ParseTrustedProxies(effectiveTrustedProxies(nil)); err != nil {
 		return err
 	}
 	for _, key := range []string{"PROXY_IP_ALLOW", "PROXY_IP_DENY"} {
 		if raw, ok := os.LookupEnv(key); ok {
-			if _, err := parseIPNetList(key, strings.Split(raw, ",")); err != nil {
+			if _, err := clientip.ParseNetList(key, strings.Split(raw, ",")); err != nil {
 				return err
 			}
 		}
@@ -378,7 +379,7 @@ func getConfigBool(envKey string, configValue bool, defaultValue bool) bool {
 
 type config struct {
 	vault                  credentialVault
-	ipAccess               ipAccessSettings
+	ipAccess               clientip.Settings
 	passport               passportConfig
 	configPath             string
 	listenAddr             string
@@ -653,11 +654,11 @@ func buildConfig() *config {
 		}
 	}
 	ipAllow, ipDeny := effectiveIPPolicy(&fileCfg)
-	cfg.ipAccess, err = parseIPAccessSettings(ipAllow, ipDeny, effectiveTrustedProxies(fileCfg.TrustedProxies), parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
+	cfg.ipAccess, err = clientip.ParseSettings(ipAllow, ipDeny, effectiveTrustedProxies(fileCfg.TrustedProxies), parseBoolEnv("PROXY_TRUST_SAME_SUBNET", false))
 	if err != nil {
 		log.Fatalf("invalid ip access policy: %v", err)
 	}
-	if cfg.ipAccess.restricted() {
+	if cfg.ipAccess.Restricted() {
 		log.Printf("ip access policy active: allow=%v deny=%v", ipAllow, ipDeny)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -140,7 +141,7 @@ func (h *proxyHandler) writeClaudeTrace(
 		Response:     tracePayloadFromResponse(resp, respSample, h.cfg.claudeTraceBodyLimit, h.cfg.claudeTraceSecrets),
 	}
 	if incoming != nil {
-		record.ClientIP = getClientIP(incoming)
+		record.ClientIP = clientip.Get(incoming)
 	}
 	if acc != nil {
 		record.AccountID = acc.ID

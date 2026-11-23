@@ -79,37 +79,37 @@ func TestFingerprintedAssetsKeepCacheHeaders(t *testing.T) {
 func TestIPAccessPolicyPermitted(t *testing.T) {
 	p := testIPAccessSettings(t, nil, nil, nil)
 	for _, ip := range []string{"203.0.113.5", "10.0.0.1", "unknown-peer"} {
-		if !p.permitted(ip) {
+		if !p.Permitted(ip) {
 			t.Fatalf("unrestricted policy must permit %s", ip)
 		}
 	}
 
 	p = testIPAccessSettings(t, []string{"10.0.0.0/8", "192.168.1.5"}, nil, nil)
 	for _, ip := range []string{"10.1.2.3", "192.168.1.5"} {
-		if !p.permitted(ip) {
+		if !p.Permitted(ip) {
 			t.Fatalf("allow list must permit %s", ip)
 		}
 	}
 	for _, ip := range []string{"192.168.1.6", "203.0.113.5", "unknown-peer", "127.0.0.1", "::1"} {
-		if p.permitted(ip) {
+		if p.Permitted(ip) {
 			t.Fatalf("allow list must refuse %s", ip)
 		}
 	}
 
 	p = testIPAccessSettings(t, nil, []string{"203.0.113.0/24"}, nil)
-	if p.permitted("203.0.113.5") {
+	if p.Permitted("203.0.113.5") {
 		t.Fatal("deny list must refuse 203.0.113.5")
 	}
-	if !p.permitted("198.51.100.1") {
+	if !p.Permitted("198.51.100.1") {
 		t.Fatal("deny list must not affect 198.51.100.1")
 	}
 
 	// Deny wins over allow.
 	p = testIPAccessSettings(t, []string{"10.0.0.0/8"}, []string{"10.9.9.9"}, nil)
-	if p.permitted("10.9.9.9") {
+	if p.Permitted("10.9.9.9") {
 		t.Fatal("deny must win over allow")
 	}
-	if !p.permitted("10.1.1.1") {
+	if !p.Permitted("10.1.1.1") {
 		t.Fatal("allow must cover non-denied addresses")
 	}
 }
@@ -118,7 +118,7 @@ func TestServeHTTPRejectsDeniedIP(t *testing.T) {
 	base, _ := url.Parse("http://upstream.example")
 	fx := newCodexProxyFixture(t, base, nil)
 
-	fx.handler.ipAccess.install(testIPAccessSettings(t, nil, []string{"203.0.113.0/24"}, nil))
+	fx.handler.ipAccess.Install(testIPAccessSettings(t, nil, []string{"203.0.113.0/24"}, nil))
 
 	req, _ := http.NewRequest(http.MethodGet, fx.server.URL+"/healthz", nil)
 	req.RemoteAddr = "203.0.113.7:41234"

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func (h *proxyHandler) serveAdverserialAdmin(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +69,7 @@ func (h *proxyHandler) handleAdverserialAdd(w http.ResponseWriter, r *http.Reque
 	validReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, validationURL, bytes.NewReader(bodyBytes))
 	validReq.Header.Set("Authorization", "Bearer "+apiKey)
 	validReq.Header.Set("Content-Type", "application/json")
-	validReq.Header.Set("anthropic-version", ccAnthropicVersion)
+	validReq.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(validReq)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -21,7 +22,7 @@ type claudeAccountState struct {
 
 type ClaudeProvider struct {
 	claudeBase *url.URL
-	identity   *claudeIdentity
+	identity   *claudecode.Identity
 }
 
 // NewClaudeProvider creates a new Claude provider.

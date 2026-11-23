@@ -1,4 +1,4 @@
-package main
+package claudecode
 
 import (
 	"encoding/json"
@@ -8,12 +8,12 @@ import (
 )
 
 func TestClaudeCodeFingerprintProfileIsCoherent(t *testing.T) {
-	if got, want := ccUserAgent(), "claude-cli/2.1.280 (external, cli)"; got != want {
+	if got, want := UserAgent(), "claude-cli/2.1.280 (external, cli)"; got != want {
 		t.Fatalf("user agent = %q, want %q", got, want)
 	}
 
 	headers := make(http.Header)
-	ccStainlessHeaders(headers.Set)
+	StainlessHeaders(headers.Set)
 	if got := headers.Get("X-Stainless-Package-Version"); got != "0.94.0" {
 		t.Fatalf("SDK version = %q", got)
 	}
@@ -33,7 +33,7 @@ func TestClaudeCodeSystemMimicryUsesCurrentThreeBlockShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := ccInjectSystemBlocks(bodyObj, raw)
+	out := InjectSystemBlocks(bodyObj, raw)
 	if err := json.Unmarshal(out, &bodyObj); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestClaudeCodeSystemMimicryUsesCurrentThreeBlockShape(t *testing.T) {
 	if !strings.Contains(billing, "cc_entrypoint=cli;") || strings.Contains(billing, "cch=") {
 		t.Fatalf("unexpected billing block: %q", billing)
 	}
-	if got := system[1].(map[string]any)["text"]; got != ccSystemPrefix {
+	if got := system[1].(map[string]any)["text"]; got != SystemPrefix {
 		t.Fatalf("identity block = %#v", got)
 	}
 	if got := system[2].(map[string]any)["text"]; got != ccSystemExpansion {
@@ -62,24 +62,24 @@ func TestGenuineClaudeCodeDetectionRequiresUAAndMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("User-Agent", ccUserAgent())
+	req.Header.Set("User-Agent", UserAgent())
 	body := map[string]any{"metadata": map[string]any{"user_id": "session"}}
-	if !ccIsGenuineClaudeCodeRequest(req, body) {
+	if !IsGenuineClaudeCodeRequest(req, body) {
 		t.Fatal("expected genuine Claude Code request")
 	}
 	delete(body, "metadata")
-	if ccIsGenuineClaudeCodeRequest(req, body) {
+	if IsGenuineClaudeCodeRequest(req, body) {
 		t.Fatal("UA alone must not bypass mimicry")
 	}
 }
 
 func TestClaudeCodeOAuthBetasIncludeFullMimicrySet(t *testing.T) {
-	header := ccBetaHeader("claude-sonnet-4-6", true, false, false, false, false)
+	header := BetaHeader("claude-sonnet-4-6", true, false, false, false, false)
 	for _, beta := range []string{
-		betaClaudeCode,
-		betaOAuth,
-		betaInterleavedThink,
-		betaCacheScope,
+		BetaClaudeCode,
+		BetaOAuth,
+		BetaInterleavedThink,
+		BetaCacheScope,
 		betaEffort,
 		betaContextManagement,
 		betaExtendedCacheTTL,

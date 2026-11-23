@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -147,7 +148,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		}
 	}
 	originID := hashRequestOrigin(r, h.originHashSalt())
-	originIP := getClientIP(r)
+	originIP := clientip.Get(r)
 	if h.store != nil && originID != "" && originIP != "" {
 		storedIP := originIP
 		if h.cfg.ipPrivacy {

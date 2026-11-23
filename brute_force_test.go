@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/clientip"
 	"go.etcd.io/bbolt"
 )
 
@@ -62,8 +63,8 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	tracker := newTestBruteForceTracker(t)
 	h := &proxyHandler{cfg: &config{adminToken: "break-glass-admin-token"}, bruteForce: tracker}
 	req := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
-	req = withClientIP(req, testResolvedClientIP(t, h.ipAccess.snapshot(), req))
-	banForTest(tracker, getClientIP(req))
+	req = clientip.With(req, testResolvedClientIP(t, h.ipAccess.Snapshot(), req))
+	banForTest(tracker, clientip.Get(req))
 
 	req.Header.Set("X-Admin-Token", "break-glass-admin-token")
 	rr := httptest.NewRecorder()
@@ -73,12 +74,12 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", rr.Code)
 	}
-	if !tracker.isBanned(getClientIP(req)) {
+	if !tracker.isBanned(clientip.Get(req)) {
 		t.Fatal("a correct guess from a banned peer cleared the ban")
 	}
 
 	contribution := httptest.NewRequest(http.MethodPost, "/api/pool/accounts/codex/add", nil)
-	contribution = withClientIP(contribution, testResolvedClientIP(t, h.ipAccess.snapshot(), contribution))
+	contribution = clientip.With(contribution, testResolvedClientIP(t, h.ipAccess.Snapshot(), contribution))
 	contribution.Header.Set("X-Admin-Token", "break-glass-admin-token")
 	rr = httptest.NewRecorder()
 	if h.checkProviderContributionAuth(rr, contribution) || rr.Code != http.StatusTooManyRequests {

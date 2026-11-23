@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -119,7 +120,7 @@ func (p *ZAIProvider) SetAuthHeaders(req *http.Request, acc *Account) {
 	req.Header.Set("X-Api-Key", acc.AccessToken)
 	req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
 	if req.Header.Get("anthropic-version") == "" {
-		req.Header.Set("anthropic-version", ccAnthropicVersion)
+		req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	}
 }
 

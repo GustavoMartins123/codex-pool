@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"strings"
+
+	"codex-pool-proxy/internal/clientip"
 )
 
 func (h *proxyHandler) checkMetricsAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -14,7 +16,7 @@ func (h *proxyHandler) checkMetricsAuth(w http.ResponseWriter, r *http.Request) 
 		// The metrics bearer is a long-lived secret like the admin token, so it
 		// shares the brute-force ban: refuse banned peers before comparing and
 		// count every wrong guess.
-		ip := getClientIP(r)
+		ip := clientip.Get(r)
 		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
 			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return false

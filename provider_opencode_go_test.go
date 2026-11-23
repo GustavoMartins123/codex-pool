@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func TestOpencodeGoLoadAccount(t *testing.T) {
@@ -524,7 +526,7 @@ func TestProxyRequestStampsOpencodeGoSession(t *testing.T) {
 	if gotSession == "" {
 		t.Fatal("outbound request is missing x-opencode-session")
 	}
-	if want := ccDerivedHexID("conv-abc", "opencode-go-session", ""); gotSession != want {
+	if want := claudecode.DerivedHexID("conv-abc", "opencode-go-session", ""); gotSession != want {
 		t.Fatalf("x-opencode-session = %q, want %q", gotSession, want)
 	}
 }

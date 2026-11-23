@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 func TestXiaomiModelRoutingUsesLongContextCanonicalModel(t *testing.T) {
@@ -197,7 +199,7 @@ func TestProxyRequestStreamsLargeXiaomiBodyAfterModelPeek(t *testing.T) {
 			reqBody := []byte(`{"model":"` + model + `","max_tokens":32,"messages":[{"role":"user","content":"` + largeContent + `"}]}`)
 			req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(reqBody))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("anthropic-version", ccAnthropicVersion)
+			req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 			req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "xiaomi-user"))
 			rr := httptest.NewRecorder()
 
@@ -279,7 +281,7 @@ func TestProxyRequestRoutesXiaomiModelsToSingaporeLongContext(t *testing.T) {
 			reqBody := []byte(`{"model":"` + model + `","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}`)
 			req := httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(reqBody))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("anthropic-version", ccAnthropicVersion)
+			req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 			req.Header.Set("X-Api-Key", generateClaudePoolToken("test-secret", "xiaomi-user"))
 			rr := httptest.NewRecorder()
 

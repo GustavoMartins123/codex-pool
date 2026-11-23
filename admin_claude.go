@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/claudecode"
 )
 
 // Claude account admin handlers - JSON API only
@@ -242,14 +244,14 @@ func (h *proxyHandler) fetchClaudeOAuthProfile(accessToken string) (map[string]a
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
-	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.accountSessionID(accessToken))
+	req.Header.Set("anthropic-beta", claudecode.MinimalBetaHeader())
+	req.Header.Set("User-Agent", claudecode.ClaudeCodeUserAgent())
+	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.AccountSessionID(accessToken))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
-	ccStainlessHeaders(req.Header.Set)
+	claudecode.StainlessHeaders(req.Header.Set)
 
 	resp, err := h.transport.RoundTrip(req)
 	if err != nil {

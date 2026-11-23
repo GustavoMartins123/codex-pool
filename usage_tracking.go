@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/account"
+	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -772,14 +773,14 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 
 	// Set all the Claude Code headers
 	req.Header.Set("Authorization", "Bearer "+access)
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 	req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-	req.Header.Set("anthropic-beta", ccMinimalBetaHeader())
-	req.Header.Set("User-Agent", ccClaudeCodeUserAgent())
-	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.accountSessionID(a.ID))
+	req.Header.Set("anthropic-beta", claudecode.MinimalBetaHeader())
+	req.Header.Set("User-Agent", claudecode.ClaudeCodeUserAgent())
+	req.Header.Set("X-Claude-Code-Session-Id", h.claudeIdentity.AccountSessionID(a.ID))
 	req.Header.Set("X-App", "cli")
 	req.Header.Set("Accept", "application/json")
-	ccStainlessHeaders(req.Header.Set)
+	claudecode.StainlessHeaders(req.Header.Set)
 
 	resp, err := h.transport.RoundTrip(req)
 	if err != nil {
@@ -1331,7 +1332,7 @@ func (h *proxyHandler) seedMinimaxUsage(now time.Time, a *Account) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, seedURL, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+access)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(req)
 	if err != nil {
@@ -1376,7 +1377,7 @@ func (h *proxyHandler) syncZAIUsage(now time.Time, a *Account) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	req.Header.Set("X-Api-Key", access)
 	req.Header.Set("Authorization", "Bearer "+access)
-	req.Header.Set("anthropic-version", ccAnthropicVersion)
+	req.Header.Set("anthropic-version", claudecode.AnthropicVersion)
 
 	resp, err := h.transport.RoundTrip(req)
 	if err != nil {

@@ -1,4 +1,5 @@
-package main
+// Package claudecode reproduces the Claude Code CLI request fingerprint.
+package claudecode
 
 import (
 	"bytes"
@@ -33,8 +34,8 @@ const (
 	// ccSDKVersion is the @anthropic-ai/sdk package version for X-Stainless-Package-Version.
 	ccSDKVersion = "0.94.0"
 
-	// ccAnthropicVersion is the Anthropic API version header.
-	ccAnthropicVersion = "2023-06-01"
+	// AnthropicVersion is the Anthropic API version header.
+	AnthropicVersion = "2023-06-01"
 
 	// ccNodeVersion is the Node.js version reported in X-Stainless-Runtime-Version.
 	ccNodeVersion = "v24.3.0"
@@ -42,34 +43,34 @@ const (
 
 // Claude Code beta header constants — each maps to a constant in betas.ts.
 const (
-	betaClaudeCode        = "claude-code-20250219"
-	betaOAuth             = "oauth-2025-04-20"
+	BetaClaudeCode        = "claude-code-20250219"
+	BetaOAuth             = "oauth-2025-04-20"
 	betaContext1M         = "context-1m-2025-08-07"
-	betaInterleavedThink  = "interleaved-thinking-2025-05-14"
+	BetaInterleavedThink  = "interleaved-thinking-2025-05-14"
 	betaRedactThinking    = "redact-thinking-2026-02-12"
 	betaContextManagement = "context-management-2025-06-27"
 	betaEffort            = "effort-2025-11-24"
-	betaCacheScope        = "prompt-caching-scope-2026-01-05"
+	BetaCacheScope        = "prompt-caching-scope-2026-01-05"
 	betaFastMode          = "fast-mode-2026-02-01"
 	betaStructuredOutputs = "structured-outputs-2025-12-15"
 	betaTaskBudgets       = "task-budgets-2026-03-13"
 	betaExtendedCacheTTL  = "extended-cache-ttl-2025-04-11"
 )
 
-type claudeIdentity struct {
+type Identity struct {
 	once      sync.Once
 	sessionID string
 	deviceID  string
 }
 
-func (id *claudeIdentity) mint() {
+func (id *Identity) mint() {
 	id.once.Do(func() {
 		id.sessionID = uuid.NewString()
 		id.deviceID = hex.EncodeToString([]byte(uuid.New().String() + uuid.New().String()))[:64]
 	})
 }
 
-func (id *claudeIdentity) session() string {
+func (id *Identity) Session() string {
 	if id == nil {
 		return ""
 	}
@@ -77,7 +78,7 @@ func (id *claudeIdentity) session() string {
 	return id.sessionID
 }
 
-func (id *claudeIdentity) device() string {
+func (id *Identity) device() string {
 	if id == nil {
 		return ""
 	}
@@ -102,10 +103,10 @@ func ccDerivedID(seed, label, fallback string) string {
 	return formatUUIDFromHash(h[:16])
 }
 
-// ccDerivedHexID returns a stable deterministic 64-char hex identifier derived
+// DerivedHexID returns a stable deterministic 64-char hex identifier derived
 // from a per-user seed and a label. Matches Claude Code's device_id format
 // (randomBytes(32).toString('hex')).
-func ccDerivedHexID(seed, label, fallback string) string {
+func DerivedHexID(seed, label, fallback string) string {
 	seed = strings.TrimSpace(seed)
 	if seed == "" {
 		return fallback
@@ -128,8 +129,8 @@ func formatUUIDFromHash(b []byte) string {
 }
 
 // userDeviceID returns a stable 64-char hex device id for the given pool user.
-func (id *claudeIdentity) userDeviceID(userID string) string {
-	return ccDerivedHexID(userID, "device", id.device())
+func (id *Identity) userDeviceID(userID string) string {
+	return DerivedHexID(userID, "device", id.device())
 }
 
 // userFallbackSessionID returns a stable per-user session id used only when
@@ -137,42 +138,42 @@ func (id *claudeIdentity) userDeviceID(userID string) string {
 // X-Claude-Code-Session-Id; for everything else we want a stable value rather
 // than a random per-request one so traffic still looks like one user with many
 // turns instead of thousands of one-shot strangers.
-func (id *claudeIdentity) userFallbackSessionID(userID string) string {
-	return ccDerivedID(userID, "session", id.session())
+func (id *Identity) userFallbackSessionID(userID string) string {
+	return ccDerivedID(userID, "session", id.Session())
 }
 
-// accountSessionID returns a stable per-account session id, used for internal
+// AccountSessionID returns a stable per-account session id, used for internal
 // proxy-originated calls (profile fetch, usage poll, OAuth refresh) where there
 // is no downstream user.
-func (id *claudeIdentity) accountSessionID(accountID string) string {
-	return ccDerivedID(accountID, "account-session", id.session())
+func (id *Identity) AccountSessionID(accountID string) string {
+	return ccDerivedID(accountID, "account-session", id.Session())
 }
 
-// ccUserAgent returns the User-Agent string matching Claude Code's format.
-func ccUserAgent() string {
+// UserAgent returns the User-Agent string matching Claude Code's format.
+func UserAgent() string {
 	return "claude-cli/" + ccVersion + " (external, cli)"
 }
 
-func ccClaudeCodeUserAgent() string {
+func ClaudeCodeUserAgent() string {
 	return "claude-code/" + ccVersion
 }
 
-func ccCanonicalClaudeModel(model string) string {
+func CanonicalClaudeModel(model string) string {
 	modelLower := strings.ToLower(strings.TrimSpace(model))
 	modelLower = strings.ReplaceAll(modelLower, "[1m]", "")
 	return strings.TrimSpace(modelLower)
 }
 
 func ccModelSupportsISP(model string) bool {
-	return !strings.Contains(ccCanonicalClaudeModel(model), "claude-3-")
+	return !strings.Contains(CanonicalClaudeModel(model), "claude-3-")
 }
 
 func ccModelSupportsContextManagement(model string) bool {
-	return !strings.Contains(ccCanonicalClaudeModel(model), "claude-3-")
+	return !strings.Contains(CanonicalClaudeModel(model), "claude-3-")
 }
 
-func ccModelSupportsEffort(model string) bool {
-	m := ccCanonicalClaudeModel(model)
+func ModelSupportsEffort(model string) bool {
+	m := CanonicalClaudeModel(model)
 	return strings.Contains(m, "opus-5") ||
 		strings.Contains(m, "opus-4-6") ||
 		strings.Contains(m, "opus-4-7") ||
@@ -183,7 +184,7 @@ func ccModelSupportsEffort(model string) bool {
 }
 
 func ccModelSupportsStructuredOutputs(model string) bool {
-	m := ccCanonicalClaudeModel(model)
+	m := CanonicalClaudeModel(model)
 	return strings.Contains(m, "claude-sonnet-5") ||
 		strings.Contains(m, "claude-opus-5") ||
 		strings.Contains(m, "claude-sonnet-4-6") ||
@@ -196,7 +197,7 @@ func ccModelSupportsStructuredOutputs(model string) bool {
 		strings.Contains(m, "claude-haiku-4-5")
 }
 
-func ccRequestHasStructuredOutputs(bodyObj map[string]any) bool {
+func RequestHasStructuredOutputs(bodyObj map[string]any) bool {
 	if bodyObj == nil {
 		return false
 	}
@@ -208,7 +209,7 @@ func ccRequestHasStructuredOutputs(bodyObj map[string]any) bool {
 	return hasTopLevelOutputFormat
 }
 
-func ccRequestHasTaskBudget(bodyObj map[string]any) bool {
+func RequestHasTaskBudget(bodyObj map[string]any) bool {
 	if bodyObj == nil {
 		return false
 	}
@@ -219,7 +220,7 @@ func ccRequestHasTaskBudget(bodyObj map[string]any) bool {
 	return false
 }
 
-func (id *claudeIdentity) sessionHeader(req *http.Request, userID string) string {
+func (id *Identity) SessionHeader(req *http.Request, userID string) string {
 	if req != nil {
 		for _, key := range []string{"X-Claude-Code-Session-Id", "x-claude-code-session-id", "X-Anthropic-Session-Id", "anthropic-session-id"} {
 			if v := strings.TrimSpace(req.Header.Get(key)); v != "" {
@@ -230,7 +231,7 @@ func (id *claudeIdentity) sessionHeader(req *http.Request, userID string) string
 	return id.userFallbackSessionID(userID)
 }
 
-func (id *claudeIdentity) injectMetadata(bodyObj map[string]any, accountUUID, userID, sessionID string) {
+func (id *Identity) InjectMetadata(bodyObj map[string]any, accountUUID, userID, sessionID string) {
 	if bodyObj == nil {
 		return
 	}
@@ -262,10 +263,10 @@ func (id *claudeIdentity) injectMetadata(bodyObj map[string]any, accountUUID, us
 	}
 }
 
-// ccBetaHeader builds the anthropic-beta header value that Claude Code would
+// BetaHeader builds the anthropic-beta header value that Claude Code would
 // send for the given request context. The logic mirrors the external 1P path in
 // free-code's getAllModelBetas(), plus per-request additions for output config.
-func appendAnthropicBeta(existing string, beta string) string {
+func AppendAnthropicBeta(existing string, beta string) string {
 	if beta == "" {
 		return existing
 	}
@@ -281,25 +282,25 @@ func appendAnthropicBeta(existing string, beta string) string {
 	return existing + "," + beta
 }
 
-func ccBetaHeader(model string, isOAuth bool, is1MContext bool, isFastMode bool, hasStructuredOutputs bool, hasTaskBudget bool) string {
+func BetaHeader(model string, isOAuth bool, is1MContext bool, isFastMode bool, hasStructuredOutputs bool, hasTaskBudget bool) string {
 	betas := make([]string, 0, 10)
 
 	// Agentic queries always include claude-code beta, including Haiku.
-	betas = append(betas, betaClaudeCode)
+	betas = append(betas, BetaClaudeCode)
 
 	if isOAuth {
-		betas = append(betas, betaOAuth)
+		betas = append(betas, BetaOAuth)
 	}
 	if is1MContext {
 		betas = append(betas, betaContext1M)
 	}
 	if ccModelSupportsISP(model) {
-		betas = append(betas, betaInterleavedThink)
+		betas = append(betas, BetaInterleavedThink)
 	}
 	if ccModelSupportsContextManagement(model) {
 		betas = append(betas, betaContextManagement)
 	}
-	if ccModelSupportsEffort(model) {
+	if ModelSupportsEffort(model) {
 		betas = append(betas, betaEffort)
 	}
 	if hasStructuredOutputs && ccModelSupportsStructuredOutputs(model) {
@@ -308,7 +309,7 @@ func ccBetaHeader(model string, isOAuth bool, is1MContext bool, isFastMode bool,
 	if hasTaskBudget {
 		betas = append(betas, betaTaskBudgets)
 	}
-	betas = append(betas, betaCacheScope)
+	betas = append(betas, BetaCacheScope)
 	betas = append(betas, betaExtendedCacheTTL)
 	if isFastMode {
 		betas = append(betas, betaFastMode)
@@ -317,9 +318,9 @@ func ccBetaHeader(model string, isOAuth bool, is1MContext bool, isFastMode bool,
 	return strings.Join(betas, ",")
 }
 
-// ccStainlessHeaders sets the X-Stainless-* SDK fingerprint headers on a request.
+// StainlessHeaders sets the X-Stainless-* SDK fingerprint headers on a request.
 // These are injected by the Anthropic JS SDK and expected by the API.
-func ccStainlessHeaders(set func(key, value string)) {
+func StainlessHeaders(set func(key, value string)) {
 	set("X-Stainless-Lang", "js")
 	set("X-Stainless-Runtime", "node")
 	set("X-Stainless-Runtime-Version", ccNodeVersion)
@@ -331,10 +332,10 @@ func ccStainlessHeaders(set func(key, value string)) {
 	set("X-Stainless-Helper-Method", "stream")
 }
 
-// ccMinimalBetaHeader returns the compact beta header used by Claude Code's
+// MinimalBetaHeader returns the compact beta header used by Claude Code's
 // lightweight OAuth endpoints.
-func ccMinimalBetaHeader() string {
-	return betaOAuth
+func MinimalBetaHeader() string {
+	return BetaOAuth
 }
 
 // ccComputeFingerprint computes the 3-char hex fingerprint that Claude Code
@@ -383,8 +384,8 @@ func ccReplaceCCHPlaceholder(body []byte) []byte {
 	return out
 }
 
-// ccSystemPrefix is the default Claude Code identity prefix.
-const ccSystemPrefix = "You are Claude Code, Anthropic's official CLI for Claude."
+// SystemPrefix is the default Claude Code identity prefix.
+const SystemPrefix = "You are Claude Code, Anthropic's official CLI for Claude."
 
 const ccSystemExpansion = `You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
 
@@ -398,7 +399,7 @@ IMPORTANT: You must NEVER generate or guess URLs for the user unless you are con
  - When referencing GitHub issues or pull requests, use the owner/repo#123 format (e.g. anthropics/claude-code#100) so they render as clickable links.
  - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.`
 
-func ccIsGenuineClaudeCodeRequest(req *http.Request, bodyObj map[string]any) bool {
+func IsGenuineClaudeCodeRequest(req *http.Request, bodyObj map[string]any) bool {
 	if req == nil || !strings.HasPrefix(strings.ToLower(req.UserAgent()), "claude-cli/") {
 		return false
 	}
@@ -450,12 +451,12 @@ func ccExtractFirstUserMessage(bodyObj map[string]any) string {
 	return ""
 }
 
-// ccInjectSystemBlocks converts the translated request body's "system" field
+// InjectSystemBlocks converts the translated request body's "system" field
 // into the block-array format that real Claude Code sends, prepending the
 // attribution header and CC identity prefix. If the body already has a
 // block-array system, it prepends to it. Modifies bodyObj in-place and
 // returns the re-marshaled body bytes.
-func ccInjectSystemBlocks(bodyObj map[string]any, bodyBytes []byte) []byte {
+func InjectSystemBlocks(bodyObj map[string]any, bodyBytes []byte) []byte {
 	// Build the system text for fingerprinting
 	existingSystem := ""
 
@@ -480,13 +481,13 @@ func ccInjectSystemBlocks(bodyObj map[string]any, bodyBytes []byte) []byte {
 	cache := map[string]any{"type": "ephemeral", "ttl": "5m"}
 	blocks := []any{
 		map[string]any{"type": "text", "text": attrHeader},
-		map[string]any{"type": "text", "text": ccSystemPrefix},
+		map[string]any{"type": "text", "text": SystemPrefix},
 		map[string]any{"type": "text", "text": ccSystemExpansion, "cache_control": cache},
 	}
 
 	if strings.TrimSpace(existingSystem) != "" &&
-		strings.TrimSpace(existingSystem) != ccSystemPrefix &&
-		!strings.Contains(existingSystem, ccSystemPrefix) {
+		strings.TrimSpace(existingSystem) != SystemPrefix &&
+		!strings.Contains(existingSystem, SystemPrefix) {
 		instructions := map[string]any{
 			"role": "user",
 			"content": []any{
@@ -511,11 +512,11 @@ func ccInjectSystemBlocks(bodyObj map[string]any, bodyBytes []byte) []byte {
 	return out
 }
 
-// bodyHasClaudeSystemBlocks checks if the request body already contains
+// HasSystemBlocks checks if the request body already contains
 // Claude Code system blocks (attribution header or identity prefix).
 // Returns true if the body should NOT be modified — the client already
 // sent proper Claude Code system formatting.
-func bodyHasClaudeSystemBlocks(bodyObj map[string]any) bool {
+func HasSystemBlocks(bodyObj map[string]any) bool {
 	if bodyObj == nil {
 		return false
 	}
@@ -528,7 +529,7 @@ func bodyHasClaudeSystemBlocks(bodyObj map[string]any) bool {
 	switch v := sys.(type) {
 	case string:
 		// Check if plain string contains Claude Code markers
-		return strings.Contains(v, ccSystemPrefix) || strings.Contains(v, "x-anthropic-billing-header")
+		return strings.Contains(v, SystemPrefix) || strings.Contains(v, "x-anthropic-billing-header")
 	case []any:
 		// Block array — check each block's text
 		for _, b := range v {
@@ -537,7 +538,7 @@ func bodyHasClaudeSystemBlocks(bodyObj map[string]any) bool {
 				continue
 			}
 			text, _ := block["text"].(string)
-			if strings.Contains(text, ccSystemPrefix) || strings.Contains(text, "x-anthropic-billing-header") {
+			if strings.Contains(text, SystemPrefix) || strings.Contains(text, "x-anthropic-billing-header") {
 				return true
 			}
 		}
