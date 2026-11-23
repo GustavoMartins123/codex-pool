@@ -1,11 +1,12 @@
-package main
+// Package grokjson checks Grok spool JSON without decoding payload strings.
+package grokjson
 
 import (
 	"errors"
 	"strconv"
 )
 
-var errGrokOpaqueJSON = errors.New("Grok JSON cannot be decoded by the buffered sanitizer")
+var ErrOpaqueJSON = errors.New("Grok JSON cannot be decoded by the buffered sanitizer")
 
 // encoding/json's scanner rejects nesting beyond this depth. Each checked
 // field value already sits inside the request's root object.
@@ -15,7 +16,7 @@ const grokJSONMaxDepth = 10000
 // escapes verbatim. Preserve the old sanitizer's no-op for invalid escapes and
 // numbers that encoding/json cannot represent as float64, without decoding a
 // payload string. Primitive storage matches jsonLex's existing 256-byte bound.
-type grokJSONCheck struct {
+type Check struct {
 	quoted  bool
 	escape  bool
 	hex     int
@@ -25,7 +26,7 @@ type grokJSONCheck struct {
 	n       int
 }
 
-func (c *grokJSONCheck) Write(p []byte) (int, error) {
+func (c *Check) Write(p []byte) (int, error) {
 	for _, b := range p {
 		if c.quoted {
 			switch {
@@ -84,7 +85,7 @@ func (c *grokJSONCheck) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (c *grokJSONCheck) flushNumber() {
+func (c *Check) flushNumber() {
 	if c.n == 0 {
 		return
 	}
@@ -94,10 +95,10 @@ func (c *grokJSONCheck) flushNumber() {
 	c.n = 0
 }
 
-func (c *grokJSONCheck) finish() error {
+func (c *Check) Finish() error {
 	c.flushNumber()
 	if c.invalid || c.quoted || c.escape || c.hex != 0 {
-		return errGrokOpaqueJSON
+		return ErrOpaqueJSON
 	}
 	return nil
 }

@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"unicode"
+
+	"codex-pool-proxy/internal/grokjson"
 )
 
 // Keep disk offsets, not decoded values. Even tool schemas, keys and effort
@@ -58,11 +60,11 @@ func (b *grokNameCapture) Write(p []byte) (int, error) {
 
 func (c *grokSpoolCursor) name() (string, error) {
 	var capture grokNameCapture
-	var check grokJSONCheck
+	var check grokjson.Check
 	if _, err := c.lex.copyString(io.MultiWriter(&capture, &check), 0); err != nil {
 		return "", err
 	}
-	if err := check.finish(); err != nil {
+	if err := check.Finish(); err != nil {
 		return "", err
 	}
 	if capture.full {
@@ -106,11 +108,11 @@ func (c *grokSpoolCursor) fields(visit func(string, grokJSONSpan) error) error {
 			return err
 		}
 		span := grokJSONSpan{start: c.pos()}
-		var check grokJSONCheck
+		var check grokjson.Check
 		if err := c.lex.copyValue(&check); err != nil {
 			return err
 		}
-		if err := check.finish(); err != nil {
+		if err := check.Finish(); err != nil {
 			return err
 		}
 		span.end = c.pos()
@@ -540,7 +542,7 @@ func rewriteGrokSpool(s *streamedResponsesRequest) error {
 		probe:  newGrokSpoolCursor(s.File, s.Size),
 	}
 	if err := g.plan(); err != nil {
-		if errors.Is(err, errGrokOpaqueJSON) {
+		if errors.Is(err, grokjson.ErrOpaqueJSON) {
 			_, err = s.File.Seek(0, io.SeekStart)
 		}
 		return err
