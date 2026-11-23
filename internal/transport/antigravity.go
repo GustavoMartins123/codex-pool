@@ -1,11 +1,11 @@
-package main
+package transport
 
 import (
 	"crypto/tls"
 	"net/http"
 )
 
-func cloneAntigravityHTTP11Transport(base *http.Transport) *http.Transport {
+func CloneAntigravityHTTP11(base *http.Transport) *http.Transport {
 	if base == nil {
 		return nil
 	}

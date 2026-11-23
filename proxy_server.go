@@ -270,7 +270,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		MaxIdleConnsPerHost:   50,
 	}
 	_ = http2.ConfigureTransport(standardTransport)
-	antigravityTransport := cloneAntigravityHTTP11Transport(standardTransport)
+	antigravityTransport := transport.CloneAntigravityHTTP11(standardTransport)
 
 	// Anthropic traffic defaults to the Node.js 24.x uTLS profile used by Claude
 	// Code. Other providers retain their existing transports.
