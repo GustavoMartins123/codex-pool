@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/httpapi"
+	"codex-pool-proxy/internal/ids"
 	"go.etcd.io/bbolt"
 )
 
@@ -25,7 +26,7 @@ func (register httpRouteRegister) subtree(path string, root, children http.Handl
 }
 
 func (h *proxyRoutes) newHTTPApp() *httpapi.App {
-	app := httpapi.New(h.applySecurityHeaders, h.ipAccess.AuthorizeRequest, randomID, h.logIncomingRequest(h.serveGatewayTraffic))
+	app := httpapi.New(h.applySecurityHeaders, h.ipAccess.AuthorizeRequest, ids.Random, h.logIncomingRequest(h.serveGatewayTraffic))
 
 	early := httpRouteRegister(app.HandleFunc)
 	early("/api/runner/catalog", h.handleRunnerCatalog)
