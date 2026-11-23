@@ -1,4 +1,5 @@
-package main
+// Package boltguard validates bbolt store files before they are memory-mapped.
+package boltguard
 
 // Crash-safety guard for opening the bbolt usage store.
 //
@@ -45,13 +46,13 @@ import (
 const (
 	boltMagic = uint32(0xED0CDAED)
 	boltVer   = uint32(2)
-	// boltPageHeaderSize matches bbolt's page struct (id, flags, count,
+	// PageHeaderSize matches bbolt's page struct (id, flags, count,
 	// overflow); a meta page is the header followed by the 64-byte meta
 	// struct whose last field is the FNV-64a checksum.
-	boltPageHeaderSize = 16
-	boltMetaSize       = 64
-	boltMinPageSize    = 512
-	boltMaxPageSize    = 1024 << 14 // 16 MiB — mirrors bbolt's own scan cap
+	PageHeaderSize  = 16
+	MetaSize        = 64
+	boltMinPageSize = 512
+	boltMaxPageSize = 1024 << 14 // 16 MiB — mirrors bbolt's own scan cap
 )
 
 // ErrBoltCorrupt is returned (wrapped) when the usage store file fails the
@@ -62,19 +63,19 @@ func boltCorruptError(path, detail string) error {
 	return fmt.Errorf("%w: %s: %s; restore it from a passport backup (see -restore-manifest) or delete the file to start a fresh store", ErrBoltCorrupt, path, detail)
 }
 
-// boltMetaView is the decoded subset of bbolt's on-disk meta page needed for
+// MetaView is the decoded subset of bbolt's on-disk meta page needed for
 // the bounds proof.
-type boltMetaView struct {
-	pageSize uint32
+type MetaView struct {
+	PageSize uint32
 	freelist uint64
-	pgid     uint64
-	txid     uint64
+	Pgid     uint64
+	Txid     uint64
 }
 
-// validateBoltFileBounds returns nil for nonexistent or empty files (fresh
+// ValidateFileBounds returns nil for nonexistent or empty files (fresh
 // stores) and for files whose active meta page only references in-file
 // pages. It must never panic: every read is a bounded, length-checked probe.
-func validateBoltFileBounds(path string) error {
+func ValidateFileBounds(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -117,21 +118,21 @@ func validateBoltFileBounds(path string) error {
 	// meta 0 valid but old (small page count that fits the truncated file),
 	// meta 1 valid and newer with a page count beyond EOF — bbolt would use
 	// meta 1 and fault.
-	meta0, ok0 := readBoltMetaAt(file, 0)
-	meta1, ok1 := readBoltMetaAt(file, int64(pageSize))
-	chosen := chooseBoltMeta(meta0, ok0, meta1, ok1)
+	meta0, ok0 := ReadMetaAt(file, 0)
+	meta1, ok1 := ReadMetaAt(file, int64(pageSize))
+	chosen := ChooseMeta(meta0, ok0, meta1, ok1)
 	if chosen == nil {
 		return nil
 	}
 
-	if chosen.pgid == 0 || uint64(chosen.pgid)*uint64(pageSize) > uint64(size) {
-		return boltCorruptError(path, fmt.Sprintf("meta page count %d exceeds file size %d", chosen.pgid, size))
+	if chosen.Pgid == 0 || uint64(chosen.Pgid)*uint64(pageSize) > uint64(size) {
+		return boltCorruptError(path, fmt.Sprintf("meta page count %d exceeds file size %d", chosen.Pgid, size))
 	}
 	if chosen.freelist == 0 {
 		return nil
 	}
-	if chosen.freelist >= chosen.pgid {
-		return boltCorruptError(path, fmt.Sprintf("freelist page %d outside page count %d", chosen.freelist, chosen.pgid))
+	if chosen.freelist >= chosen.Pgid {
+		return boltCorruptError(path, fmt.Sprintf("freelist page %d outside page count %d", chosen.freelist, chosen.Pgid))
 	}
 	header, ok := readBoltPageHeader(file, chosen.freelist, pageSize)
 	if !ok {
@@ -145,7 +146,7 @@ func validateBoltFileBounds(path string) error {
 	}
 	// freelist.read copies count ids (with one slot skipped when count is the
 	// 0xFFFF overflow sentinel); both must fit inside the page chain.
-	maxIDs := (pages*uint64(pageSize) - boltPageHeaderSize) / 8
+	maxIDs := (pages*uint64(pageSize) - PageHeaderSize) / 8
 	ids := uint64(count)
 	if ids == 0xFFFF {
 		ids = readBoltFreelistCount(file, chosen.freelist, pageSize)
@@ -162,27 +163,27 @@ func validateBoltFileBounds(path string) error {
 // candidate page size (1 KiB doubling to 16 MiB, bounded by the file size).
 // The bool is false when no valid meta exists anywhere bbolt would look.
 func discoverBoltPageSize(file *os.File, size int64) (uint32, bool) {
-	if m, ok := readBoltMetaAt(file, 0); ok && plausibleBoltPageSize(m.pageSize) {
-		return m.pageSize, true
+	if m, ok := ReadMetaAt(file, 0); ok && plausibleBoltPageSize(m.PageSize) {
+		return m.PageSize, true
 	}
 	for i := 0; i <= 14; i++ {
 		pos := int64(1024) << uint(i)
 		if pos >= size-1024 {
 			break
 		}
-		if m, ok := readBoltMetaAt(file, pos); ok && plausibleBoltPageSize(m.pageSize) {
-			return m.pageSize, true
+		if m, ok := ReadMetaAt(file, pos); ok && plausibleBoltPageSize(m.PageSize) {
+			return m.PageSize, true
 		}
 	}
 	return 0, false
 }
 
-// chooseBoltMeta mirrors bbolt's DB.meta(): among the checksum-valid meta
+// ChooseMeta mirrors bbolt's DB.meta(): among the checksum-valid meta
 // pages, the one with the highest txid represents the database's current
 // state; an invalid higher-txid meta falls back to the older valid one.
-func chooseBoltMeta(meta0 *boltMetaView, ok0 bool, meta1 *boltMetaView, ok1 bool) *boltMetaView {
+func ChooseMeta(meta0 *MetaView, ok0 bool, meta1 *MetaView, ok1 bool) *MetaView {
 	chosen, chosenOK := meta0, ok0
-	if ok1 && (!ok0 || meta1.txid > meta0.txid) {
+	if ok1 && (!ok0 || meta1.Txid > meta0.Txid) {
 		chosen, chosenOK = meta1, true
 	}
 	if !chosenOK {
@@ -191,12 +192,12 @@ func chooseBoltMeta(meta0 *boltMetaView, ok0 bool, meta1 *boltMetaView, ok1 bool
 	return chosen
 }
 
-// readBoltMetaAt decodes and checksum-verifies the meta page whose page
+// ReadMetaAt decodes and checksum-verifies the meta page whose page
 // starts at the given byte offset. Mirrors bbolt's validate(): magic,
 // version, FNV-64a checksum over the first 56 meta bytes.
-func readBoltMetaAt(file *os.File, pageOffset int64) (*boltMetaView, bool) {
-	raw := make([]byte, boltMetaSize)
-	if _, err := file.ReadAt(raw, pageOffset+boltPageHeaderSize); err != nil {
+func ReadMetaAt(file *os.File, pageOffset int64) (*MetaView, bool) {
+	raw := make([]byte, MetaSize)
+	if _, err := file.ReadAt(raw, pageOffset+PageHeaderSize); err != nil {
 		// io.EOF (short file) and anything else: not decodable, not our call.
 		return nil, false
 	}
@@ -208,11 +209,11 @@ func readBoltMetaAt(file *os.File, pageOffset int64) (*boltMetaView, bool) {
 	if sum.Sum64() != binary.LittleEndian.Uint64(raw[56:64]) {
 		return nil, false
 	}
-	return &boltMetaView{
-		pageSize: binary.LittleEndian.Uint32(raw[8:12]),
+	return &MetaView{
+		PageSize: binary.LittleEndian.Uint32(raw[8:12]),
 		freelist: binary.LittleEndian.Uint64(raw[32:40]),
-		pgid:     binary.LittleEndian.Uint64(raw[40:48]),
-		txid:     binary.LittleEndian.Uint64(raw[48:56]),
+		Pgid:     binary.LittleEndian.Uint64(raw[40:48]),
+		Txid:     binary.LittleEndian.Uint64(raw[48:56]),
 	}, true
 }
 
@@ -232,7 +233,7 @@ func readBoltPageHeader(file *os.File, page uint64, pageSize uint32) ([16]byte, 
 // count field holds the 0xFFFF sentinel.
 func readBoltFreelistCount(file *os.File, page uint64, pageSize uint32) uint64 {
 	var raw [8]byte
-	if _, err := file.ReadAt(raw[:], int64(page)*int64(pageSize)+boltPageHeaderSize); err != nil {
+	if _, err := file.ReadAt(raw[:], int64(page)*int64(pageSize)+PageHeaderSize); err != nil {
 		return 1 << 62 // unreadable count: force rejection via the bound check
 	}
 	return binary.LittleEndian.Uint64(raw[:])

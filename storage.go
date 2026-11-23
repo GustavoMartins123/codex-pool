@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/boltguard"
 	"go.etcd.io/bbolt"
 )
 
@@ -185,10 +186,10 @@ func newUsageStore(path string, retentionDays int) (store *usageStore, err error
 			if db != nil {
 				_ = db.Close()
 			}
-			store, err = nil, fmt.Errorf("%w: %s: bbolt panic: %v; restore it from a passport backup (see -restore-manifest) or delete the file to start a fresh store", ErrBoltCorrupt, path, r)
+			store, err = nil, fmt.Errorf("%w: %s: bbolt panic: %v; restore it from a passport backup (see -restore-manifest) or delete the file to start a fresh store", boltguard.ErrBoltCorrupt, path, r)
 		}
 	}()
-	if err := validateBoltFileBounds(path); err != nil {
+	if err := boltguard.ValidateFileBounds(path); err != nil {
 		return nil, err
 	}
 	db, err = bbolt.Open(path, 0o600, &bbolt.Options{Timeout: 2 * time.Second})

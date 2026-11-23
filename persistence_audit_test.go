@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"codex-pool-proxy/internal/boltguard"
 	"go.etcd.io/bbolt"
 )
 
@@ -45,7 +46,7 @@ func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
 		if err == nil {
 			t.Fatal("opening a truncated Bolt store unexpectedly succeeded")
 		}
-		if !errors.Is(err, ErrBoltCorrupt) {
+		if !errors.Is(err, boltguard.ErrBoltCorrupt) {
 			t.Fatalf("expected a corruption error, got: %v", err)
 		}
 		if !strings.Contains(err.Error(), "passport backup") {
@@ -69,7 +70,7 @@ func TestAuditUsageStoreTruncatedBoltFailsGracefully(t *testing.T) {
 				store.Close()
 				t.Fatalf("%d-byte file opened a store unexpectedly", size)
 			}
-			if !errors.Is(err, ErrBoltCorrupt) {
+			if !errors.Is(err, boltguard.ErrBoltCorrupt) {
 				t.Fatalf("%d-byte file: expected ErrBoltCorrupt, got: %v", size, err)
 			}
 			t.Logf("size %d: %v", size, err)
@@ -150,8 +151,8 @@ func readRawBoltMeta(t *testing.T, path string, slot int, pageSize uint32) []byt
 		t.Fatal(err)
 	}
 	defer file.Close()
-	raw := make([]byte, boltMetaSize)
-	if _, err := file.ReadAt(raw, int64(slot)*int64(pageSize)+boltPageHeaderSize); err != nil {
+	raw := make([]byte, boltguard.MetaSize)
+	if _, err := file.ReadAt(raw, int64(slot)*int64(pageSize)+boltguard.PageHeaderSize); err != nil {
 		t.Fatal(err)
 	}
 	return raw
@@ -196,8 +197,8 @@ func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	smallMeta0, ok0 := readBoltMetaAt(smallFile, 0)
-	smallMeta1, ok1 := readBoltMetaAt(smallFile, int64(smallMeta0.pageSize))
+	smallMeta0, ok0 := boltguard.ReadMetaAt(smallFile, 0)
+	smallMeta1, ok1 := boltguard.ReadMetaAt(smallFile, int64(smallMeta0.PageSize))
 	smallInfo, err := smallFile.Stat()
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +207,7 @@ func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
 	if !ok0 || !ok1 {
 		t.Fatal("setup: small store metas must both be valid")
 	}
-	pageSize := smallMeta0.pageSize
+	pageSize := smallMeta0.PageSize
 
 	// The big store's higher-txid meta is the one bbolt's DB.meta() would
 	// pick; it must be valid and much newer than the small store's metas.
@@ -214,10 +215,10 @@ func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bigMeta0, bok0 := readBoltMetaAt(bigFile, 0)
-	bigMeta1, bok1 := readBoltMetaAt(bigFile, int64(pageSize))
+	bigMeta0, bok0 := boltguard.ReadMetaAt(bigFile, 0)
+	bigMeta1, bok1 := boltguard.ReadMetaAt(bigFile, int64(pageSize))
 	bigFile.Close()
-	bigChosen := chooseBoltMeta(bigMeta0, bok0, bigMeta1, bok1)
+	bigChosen := boltguard.ChooseMeta(bigMeta0, bok0, bigMeta1, bok1)
 	if bigChosen == nil {
 		t.Fatal("setup: big store meta unreadable")
 	}
@@ -227,12 +228,12 @@ func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
 	} else {
 		bigRawSlot = 1
 	}
-	smallChosen := chooseBoltMeta(smallMeta0, true, smallMeta1, true)
-	if bigChosen.txid < smallChosen.txid+10 {
-		t.Fatalf("setup: big txid %d not safely above small txid %d", bigChosen.txid, smallChosen.txid)
+	smallChosen := boltguard.ChooseMeta(smallMeta0, true, smallMeta1, true)
+	if bigChosen.Txid < smallChosen.Txid+10 {
+		t.Fatalf("setup: big txid %d not safely above small txid %d", bigChosen.Txid, smallChosen.Txid)
 	}
-	if uint64(bigChosen.pgid)*uint64(pageSize) <= uint64(smallInfo.Size()) {
-		t.Fatalf("setup: big page count %d fits the small file (%d bytes) — fixture proves nothing", bigChosen.pgid, smallInfo.Size())
+	if uint64(bigChosen.Pgid)*uint64(pageSize) <= uint64(smallInfo.Size()) {
+		t.Fatalf("setup: big page count %d fits the small file (%d bytes) — fixture proves nothing", bigChosen.Pgid, smallInfo.Size())
 	}
 
 	forged := filepath.Join(dir, fmt.Sprintf("forged-newer-in-%d.db", newerSlot))
@@ -243,7 +244,7 @@ func forgeSplitMetaStore(t *testing.T, dir string, newerSlot int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := out.WriteAt(readRawBoltMeta(t, bigPath, bigRawSlot, pageSize), int64(newerSlot)*int64(pageSize)+boltPageHeaderSize); err != nil {
+	if _, err := out.WriteAt(readRawBoltMeta(t, bigPath, bigRawSlot, pageSize), int64(newerSlot)*int64(pageSize)+boltguard.PageHeaderSize); err != nil {
 		t.Fatal(err)
 	}
 	if err := out.Close(); err != nil {
@@ -278,7 +279,7 @@ func TestAuditUsageStoreSplitMetaTornBoltFailsGracefully(t *testing.T) {
 		if err == nil {
 			t.Fatal("opening a split-meta torn Bolt store unexpectedly succeeded")
 		}
-		if !errors.Is(err, ErrBoltCorrupt) {
+		if !errors.Is(err, boltguard.ErrBoltCorrupt) {
 			t.Fatalf("expected a corruption error, got: %v", err)
 		}
 		return
@@ -292,7 +293,7 @@ func TestAuditUsageStoreSplitMetaTornBoltFailsGracefully(t *testing.T) {
 		forged := forgeSplitMetaStore(t, dir, newerSlot)
 
 		// The guard itself must reject in-process (it never mmaps).
-		if err := validateBoltFileBounds(forged); !errors.Is(err, ErrBoltCorrupt) {
+		if err := boltguard.ValidateFileBounds(forged); !errors.Is(err, boltguard.ErrBoltCorrupt) {
 			t.Fatalf("newer-in-slot-%d: guard did not reject the torn split-meta store: %v", newerSlot, err)
 		}
 
