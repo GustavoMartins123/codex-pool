@@ -17,6 +17,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/logredact"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
@@ -260,7 +261,7 @@ func (h *proxyHandler) wrapBufferedSSEWithCyberDetector(under io.Writer, account
 	return &sseInterceptWriter{
 		w: under,
 		onEvent: func(eventData []byte) (bool, bool) {
-			if !isCyberPolicyError(eventData) {
+			if !errclass.IsCyberPolicy(eventData) {
 				return false, false
 			}
 			if h.metrics != nil {

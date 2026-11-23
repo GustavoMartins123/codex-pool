@@ -16,6 +16,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/dateline"
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 	"github.com/google/uuid"
@@ -87,7 +88,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
 		if err := h.refreshAccount(ctx, acc); err != nil {
-			if isRateLimitError(err) {
+			if errclass.IsRateLimit(err) {
 				h.applyRateLimit(acc, nil)
 			}
 			if h.cfg.debug.Load() {
@@ -471,7 +472,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 				// the account is truly dead (fresh token still rejected)
 			} else {
 				errStr := err.Error()
-				if isRateLimitError(err) {
+				if errclass.IsRateLimit(err) {
 					h.applyRateLimit(acc, nil)
 				} else if isPermanentRefreshTokenError(err) {
 					if retireAfterRefreshFail(acc, err, time.Now()) {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"codex-pool-proxy/internal/errclass"
 )
 
 const refreshMinInterval = 5 * time.Second
@@ -100,7 +102,7 @@ func (h *proxyHandler) refreshAccount(ctx context.Context, a *Account) error {
 			a.mu.Lock()
 			a.RefreshBlocked = false
 			a.mu.Unlock()
-		case !isPermanentRefreshTokenError(err) && !isRateLimitError(err) && !errors.Is(err, context.Canceled):
+		case !isPermanentRefreshTokenError(err) && !errclass.IsRateLimit(err) && !errors.Is(err, context.Canceled):
 			// A transient refresh failure leaves the existing access token in use.
 			a.mu.Lock()
 			a.RefreshBlocked = true

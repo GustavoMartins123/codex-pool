@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -305,8 +306,8 @@ func TestRouteTraceFallbackAndCircuitState(t *testing.T) {
 
 func TestCircuitBreakersEndpoint(t *testing.T) {
 	cb := routing.NewCircuitBreakerManager()
-	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit.Retryable())
-	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, ErrorClassRateLimit.Retryable())
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, errclass.RateLimit.Retryable())
+	cb.RecordFailure("codex", "acc_1", "gpt-6-astra", nil, errclass.RateLimit.Retryable())
 
 	h := &proxyHandler{
 		cfg:             &config{adminToken: "operator-pass"},

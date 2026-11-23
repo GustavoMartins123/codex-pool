@@ -16,6 +16,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
@@ -118,7 +119,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	refreshFailed := false
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
 		if err := h.refreshAccount(r.Context(), acc); err != nil {
-			if isRateLimitError(err) {
+			if errclass.IsRateLimit(err) {
 				h.applyRateLimit(acc, nil)
 			} else {
 				refreshFailed = true

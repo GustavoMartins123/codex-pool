@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/wire"
@@ -351,7 +352,7 @@ func (opts *proxyHTTPResponse) translatedSSEUsage(h *proxyHandler) func([]byte) 
 		if sampleBuf != nil {
 			sampleBuf.Write(data)
 		}
-		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 			if h.pinConversationToCyberAccess(opts.conversationID, opts.accountType, opts.requiredPlan, opts.originIP, acc.ID, opts.requestID) {
 				opts.cyberPinned = true
 			}
@@ -469,7 +470,7 @@ func (h *proxyHandler) writeProxyHTTPBody(
 	var claudeAccum *RequestUsage
 
 	usageCallback := func(data []byte) {
-		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 			if h.pinConversationToCyberAccess(opts.conversationID, opts.accountType, opts.requiredPlan, opts.originIP, acc.ID, opts.requestID) {
 				opts.cyberPinned = true
 				cancel()

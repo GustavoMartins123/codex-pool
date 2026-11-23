@@ -1,12 +1,12 @@
-package main
+package errclass
 
 import "testing"
 
 func TestClassifyAnthropicOverloadedAsTransient(t *testing.T) {
 	t.Parallel()
 
-	if got := classifyStatus(529); got != ErrorClassTransient {
-		t.Fatalf("classifyStatus(529) = %s, want %s", got, ErrorClassTransient)
+	if got := Classify(529); got != Transient {
+		t.Fatalf("Classify(529) = %s, want %s", got, Transient)
 	}
 }
 
@@ -44,9 +44,9 @@ func TestIsClaudeOrganizationDisabled(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := isClaudeOrganizationDisabled([]byte(tc.body))
+			got := IsClaudeOrganizationDisabled([]byte(tc.body))
 			if got != tc.want {
-				t.Fatalf("isClaudeOrganizationDisabled()=%v want %v", got, tc.want)
+				t.Fatalf("IsClaudeOrganizationDisabled()=%v want %v", got, tc.want)
 			}
 		})
 	}
@@ -92,8 +92,8 @@ func TestIsCyberPolicyError(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isCyberPolicyError([]byte(tc.body)); got != tc.want {
-				t.Fatalf("isCyberPolicyError(%q) = %v, want %v", tc.body, got, tc.want)
+			if got := IsCyberPolicy([]byte(tc.body)); got != tc.want {
+				t.Fatalf("IsCyberPolicy(%q) = %v, want %v", tc.body, got, tc.want)
 			}
 		})
 	}

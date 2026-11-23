@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
@@ -241,9 +242,9 @@ func (h *proxyHandler) dispatchProxyHTTP(
 
 		reqCaps := extractRequestCapabilities(r.URL.Path, inputs.body, r.Header)
 		if err != nil {
-			errClass := ErrorClassTransient
+			errClass := errclass.Transient
 			if ctx.Err() != nil || isContextError(err) {
-				errClass = ErrorClassNone
+				errClass = errclass.None
 			}
 			h.pool.circuitBreakers.RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, errClass.Retryable())
 			if isContextError(err) {
@@ -268,24 +269,24 @@ func (h *proxyHandler) dispatchProxyHTTP(
 		lastStatus = resp.StatusCode
 
 		// --- Error classification & handling ---
-		errClass := classifyStatus(resp.StatusCode)
+		errClass := errclass.Classify(resp.StatusCode)
 		recordClass := errClass
-		if errClass == ErrorClassNone {
+		if errClass == errclass.None {
 			h.pool.circuitBreakers.RecordSuccess(string(accountType), acc.ID, requestedModel, reqCaps.Modalities)
 		}
-		if errClass != ErrorClassNone {
+		if errClass != errclass.None {
 			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			resp.Body.Close()
 			errBody = bodyForInspection(nil, errBody)
 			errBodyStr := string(errBody)
-			if provider.WireFormat() == WireResponses && resp.StatusCode == http.StatusNotFound && isCodexItemReferenceError(errBody) {
-				errClass = ErrorClassInvalid
-				recordClass = ErrorClassNone
+			if provider.WireFormat() == WireResponses && resp.StatusCode == http.StatusNotFound && errclass.IsCodexItemReference(errBody) {
+				errClass = errclass.Invalid
+				recordClass = errclass.None
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] reclassified codex 404 as item-reference error (invalid input) for account %s", reqID, acc.ID)
 				}
 			}
-			if recordClass != ErrorClassNone {
+			if recordClass != errclass.None {
 				h.pool.circuitBreakers.RecordFailure(string(accountType), acc.ID, requestedModel, reqCaps.Modalities, recordClass.Retryable())
 			}
 			if resp.StatusCode == http.StatusTooManyRequests {
@@ -293,11 +294,11 @@ func (h *proxyHandler) dispatchProxyHTTP(
 				if providerErr.Class != ProviderErrorQuota {
 					// A bare 429 is not proof of exhausted quota. Preserve the
 					// original status without cooling or rerouting the account.
-					errClass = ErrorClassFatal
+					errClass = errclass.Fatal
 				}
 			}
 
-			if provider.WireFormat() == WireResponses && isCyberPolicyError(errBody) && !acc.codex.CyberAccess {
+			if provider.WireFormat() == WireResponses && errclass.IsCyberPolicy(errBody) && !acc.codex.CyberAccess {
 				cyberAccessRetry = true
 				lastErr = fmt.Errorf("upstream %s from non-cyber-access account %s: %s", resp.Status, acc.ID, safeText(errBody))
 				h.recent.add(lastErr.Error())
@@ -311,13 +312,13 @@ func (h *proxyHandler) dispatchProxyHTTP(
 			}
 
 			// Refine classification with body content.
-			if provider.WireFormat() == WireResponses && errClass == ErrorClassInvalid && isCodexModelUnavailableError(errBody) {
-				errClass = ErrorClassNotFound
+			if provider.WireFormat() == WireResponses && errClass == errclass.Invalid && errclass.IsCodexModelUnavailable(errBody) {
+				errClass = errclass.NotFound
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] reclassified codex 400 as model/account mismatch for account %s", reqID, acc.ID)
 				}
 			}
-			if acc.Type == AccountTypeClaude && isClaudeOrganizationDisabled(errBody) {
+			if acc.Type == AccountTypeClaude && errclass.IsClaudeOrganizationDisabled(errBody) {
 				h.disableAccountPermanently(acc, reqID, safeText(errBody))
 				lastErr = fmt.Errorf("claude organization disabled for account %s", acc.ID)
 				h.recent.add(lastErr.Error())
@@ -328,19 +329,19 @@ func (h *proxyHandler) dispatchProxyHTTP(
 				// AVAS voice entitlement is account-independent for this pool. Retrying
 				// every account only delays the same terminal response and leaves the
 				// caller holding a Location header without a valid SDP answer.
-				errClass = ErrorClassInvalid
+				errClass = errclass.Invalid
 			}
 
 			// Cloudflare bot challenges return 403 with HTML — not an auth failure.
 			// Reclassify as transient so accounts don't accumulate auth penalties.
-			if errClass == ErrorClassAuth && isCloudflareChallenge(errBody, resp.Header) {
-				errClass = ErrorClassTransient
+			if errClass == errclass.Auth && errclass.IsCloudflareChallenge(errBody, resp.Header) {
+				errClass = errclass.Transient
 				if h.cfg.debug.Load() {
 					log.Printf("[%s] reclassified 403 as cloudflare challenge for account %s", reqID, acc.ID)
 				}
 			}
 
-			if errClass == ErrorClassPayment && isDeactivatedWorkspace(errBody) {
+			if errClass == errclass.Payment && errclass.IsDeactivatedWorkspace(errBody) {
 				acc.mu.Lock()
 				acc.Dead = true
 				acc.Penalty += 100.0
@@ -355,13 +356,13 @@ func (h *proxyHandler) dispatchProxyHTTP(
 			}
 
 			switch errClass {
-			case ErrorClassRateLimit:
+			case errclass.RateLimit:
 				h.applyRateLimitResponse(acc, resp.Header, errBody)
 				acc.mu.Lock()
 				acc.Penalty += 0.2
 				acc.mu.Unlock()
 
-			case ErrorClassAuth:
+			case errclass.Auth:
 				markedDead, penaltyNow := applyProxyAuthFailure(acc, refreshFailed, h.registry)
 				if markedDead {
 					log.Printf("[%s] account %s DEAD: %d refresh failed, body=%s", reqID, acc.ID, resp.StatusCode, safeText(errBody))
@@ -377,18 +378,18 @@ func (h *proxyHandler) dispatchProxyHTTP(
 						reqID, acc.ID, resp.StatusCode, penaltyNow, safeText(errBody), httpwire.DebugHeaderSummary(resp.Header))
 				}
 
-			case ErrorClassPayment:
+			case errclass.Payment:
 				// Non-deactivated payment error — heavy penalty but not dead.
 				acc.mu.Lock()
 				acc.Penalty += 50.0
 				acc.mu.Unlock()
 
-			case ErrorClassTransient:
+			case errclass.Transient:
 				acc.mu.Lock()
 				acc.Penalty += 0.3
 				acc.mu.Unlock()
 
-			case ErrorClassNotFound:
+			case errclass.NotFound:
 				acc.mu.Lock()
 				acc.Penalty += 0.1
 				acc.mu.Unlock()

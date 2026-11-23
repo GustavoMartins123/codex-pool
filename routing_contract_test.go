@@ -5,6 +5,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -52,7 +53,7 @@ func TestAccountRoutingContract(t *testing.T) {
 					{ID: "open", Type: AccountTypeClaude, PlanType: "max"},
 				}, false)
 				for i := 0; i < 3; i++ {
-					pool.circuitBreakers.RecordFailure("claude", "open", "", nil, ErrorClassTransient.Retryable())
+					pool.circuitBreakers.RecordFailure("claude", "open", "", nil, errclass.Transient.Retryable())
 				}
 				account := pool.selectRoute(routing.Request{
 					UserID: "alice", Provider: string(AccountTypeClaude), ClientIP: "127.0.0.1",

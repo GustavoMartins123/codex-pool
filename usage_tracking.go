@@ -18,6 +18,7 @@ import (
 
 	"codex-pool-proxy/internal/account"
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/ratelimit"
 )
 
@@ -99,7 +100,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		if accType == AccountTypeGrok {
 			if !h.cfg.disableRefresh && h.needsRefresh(a) {
 				if err := h.refreshAccount(context.Background(), a); err != nil {
-					if isRateLimitError(err) {
+					if errclass.IsRateLimit(err) {
 						h.applyRateLimit(a, nil)
 					}
 					if h.cfg.debug.Load() {
@@ -160,7 +161,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 		if accType == AccountTypeGemini || accType == AccountTypeAntigravity {
 			if !h.cfg.disableRefresh && h.needsRefresh(a) {
 				if err := h.refreshAccount(context.Background(), a); err != nil {
-					if isRateLimitError(err) {
+					if errclass.IsRateLimit(err) {
 						h.applyRateLimit(a, nil)
 						continue
 					}
@@ -235,7 +236,7 @@ func (h *proxyHandler) pollUpstreamUsage() {
 			// Proactive refresh for OAuth tokens
 			if !h.cfg.disableRefresh && h.needsRefresh(a) {
 				if err := h.refreshAccount(context.Background(), a); err != nil {
-					if isRateLimitError(err) {
+					if errclass.IsRateLimit(err) {
 						h.applyRateLimit(a, nil)
 						continue
 					}
@@ -345,7 +346,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 			if h.cfg.debug.Load() {
 				log.Printf("proactive refresh for %s failed: %v", a.ID, errStr)
 			}
-			if isRateLimitError(err) {
+			if errclass.IsRateLimit(err) {
 				h.applyRateLimit(a, nil)
 				return nil
 			}
@@ -444,7 +445,7 @@ func (h *proxyHandler) fetchUsage(now time.Time, a *Account) error {
 				}
 			} else {
 				// Refresh failed - check if it's a permanent failure
-				if isRateLimitError(err) {
+				if errclass.IsRateLimit(err) {
 					h.applyRateLimit(a, nil)
 					return nil
 				}
@@ -796,7 +797,7 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		inspected := bodyForInspection(nil, errBody)
-		if isClaudeOrganizationDisabled(inspected) {
+		if errclass.IsClaudeOrganizationDisabled(inspected) {
 			h.disableAccountPermanently(a, "", safeText(inspected))
 			return fmt.Errorf("claude organization disabled")
 		}
@@ -828,7 +829,7 @@ func (h *proxyHandler) fetchClaudeUsage(now time.Time, a *Account) error {
 					return err
 				}
 				defer resp.Body.Close()
-			} else if isRateLimitError(err) {
+			} else if errclass.IsRateLimit(err) {
 				h.applyRateLimit(a, nil)
 				return nil
 			}

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -623,7 +624,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			return nil, &reconnectPendingErr{next: cand, conversationID: turn.conversationID, reason: "account quota exhausted"}
 		}
 	}
-	if !isCyberPolicyError(data) {
+	if !errclass.IsCyberPolicy(data) {
 		s.observeTurnEvent(turn, data)
 		// An error before response.created rejects the request outright: no
 		// terminal event follows, and a turn left pending would block every
@@ -1178,7 +1179,7 @@ type cyberPolicyHTTPSuppressor struct {
 }
 
 func (c *cyberPolicyHTTPSuppressor) onEvent(eventData []byte) (drop bool, terminate bool) {
-	if !isCyberPolicyError(eventData) {
+	if !errclass.IsCyberPolicy(eventData) {
 		return false, false
 	}
 	log.Printf("[%s] cyber_policy SSE event from account %s; pinning conversation, forwarding error", c.reqID, c.accountID)

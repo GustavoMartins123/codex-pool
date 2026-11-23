@@ -18,6 +18,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -100,7 +101,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	refreshFailed := false
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
 		if err := h.refreshAccount(ctx, acc); err != nil {
-			if isRateLimitError(err) {
+			if errclass.IsRateLimit(err) {
 				h.applyRateLimit(acc, nil)
 			} else {
 				refreshFailed = true
@@ -396,7 +397,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		interceptWriter := &sseInterceptWriter{
 			w: writer,
 			callback: func(data []byte) {
-				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, clientIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
