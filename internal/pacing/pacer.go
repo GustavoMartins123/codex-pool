@@ -1,4 +1,5 @@
-package main
+// Package pacing enforces a minimum gap between requests for the same session.
+package pacing
 
 import (
 	"context"
@@ -6,26 +7,26 @@ import (
 	"time"
 )
 
-// requestPacer enforces a minimum time gap between requests for the same session.
+// Pacer enforces a minimum time gap between requests for the same session.
 // This prevents burst patterns that could fingerprint the proxy as non-human traffic.
-type requestPacer struct {
+type Pacer struct {
 	mu      sync.Mutex
 	lastReq map[string]time.Time
 	minGap  time.Duration
 }
 
-// newRequestPacer creates a pacer with the given minimum gap between requests
+// New creates a pacer with the given minimum gap between requests
 // for the same session ID. If minGap is zero, the pacer is a no-op.
-func newRequestPacer(minGap time.Duration) *requestPacer {
-	return &requestPacer{
+func New(minGap time.Duration) *Pacer {
+	return &Pacer{
 		lastReq: make(map[string]time.Time),
 		minGap:  minGap,
 	}
 }
 
-// wait blocks until at least minGap has elapsed since the last request for the
+// Wait blocks until at least minGap has elapsed since the last request for the
 // given session ID. If sessionID is empty, this is a no-op.
-func (p *requestPacer) wait(sessionID string) {
+func (p *Pacer) Wait(sessionID string) {
 	if p == nil || p.minGap == 0 || sessionID == "" {
 		return
 	}
@@ -48,7 +49,7 @@ func (p *requestPacer) wait(sessionID string) {
 
 // cleanup removes entries older than maxAge from the pacer's tracking map.
 // Call this periodically to prevent unbounded memory growth.
-func (p *requestPacer) cleanup(maxAge time.Duration) {
+func (p *Pacer) cleanup(maxAge time.Duration) {
 	if p == nil {
 		return
 	}
@@ -65,7 +66,7 @@ func (p *requestPacer) cleanup(maxAge time.Duration) {
 }
 
 // size returns the number of tracked sessions (for diagnostics).
-func (p *requestPacer) size() int {
+func (p *Pacer) size() int {
 	if p == nil {
 		return 0
 	}
@@ -74,7 +75,7 @@ func (p *requestPacer) size() int {
 	return len(p.lastReq)
 }
 
-func (p *requestPacer) startCleanup(ctx context.Context) {
+func (p *Pacer) StartCleanup(ctx context.Context) {
 	if p == nil {
 		return
 	}

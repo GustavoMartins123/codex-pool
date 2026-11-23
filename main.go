@@ -18,6 +18,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
@@ -84,7 +85,7 @@ type proxyHandler struct {
 	recent               *recentErrors
 	inflight             int64
 	startTime            time.Time
-	pacer                *requestPacer // Per-session request pacing
+	pacer                *pacing.Pacer // Per-session request pacing
 	webSocketRegistryMu  sync.Mutex
 	webSockets           *webSocketRegistry
 	runnerBroker         *sessionBroker

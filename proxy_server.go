@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/transport"
 	"golang.org/x/net/http2"
@@ -380,9 +381,9 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 			return nil, errors.New("invalid CODEX_REQUEST_PACE_MS: malformed or out-of-range integer")
 		}
 	}
-	var pacer *requestPacer
+	var pacer *pacing.Pacer
 	if paceMs > 0 {
-		pacer = newRequestPacer(time.Duration(paceMs) * time.Millisecond)
+		pacer = pacing.New(time.Duration(paceMs) * time.Millisecond)
 	}
 
 	trafficShadow, err := newTrafficShadowRuntime(store.db, cfg.experiments.Traffic)
@@ -471,7 +472,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 
 	// Background cleanup for request pacer (every 5 minutes)
 	if pacer != nil {
-		pacer.startCleanup(shutdownCtx)
+		pacer.StartCleanup(shutdownCtx)
 	}
 
 	// Start file watcher for hot-reload of pool directory and config.
