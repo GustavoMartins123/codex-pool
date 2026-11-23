@@ -1,4 +1,4 @@
-package main
+package transport
 
 import (
 	"crypto/tls"
@@ -8,7 +8,7 @@ import (
 
 func TestCloneAntigravityTransportForcesHTTP11(t *testing.T) {
 	base := &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{NextProtos: []string{"h2", "http/1.1"}}}
-	clone := cloneAntigravityHTTP11Transport(base)
+	clone := CloneAntigravityHTTP11(base)
 	if clone == base {
 		t.Fatal("transport was not cloned")
 	}

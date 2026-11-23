@@ -1,4 +1,4 @@
-package main
+package fsperm
 
 import (
 	"os"
@@ -22,7 +22,7 @@ func TestVerifySensitiveFilePermissions(t *testing.T) {
 	if err := os.WriteFile(strict, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if problems := verifySensitiveFilePermissions(dir); len(problems) != 0 {
+	if problems := Verify(dir); len(problems) != 0 {
 		t.Fatalf("0600 file must not warn, got %v", problems)
 	}
 
@@ -30,7 +30,7 @@ func TestVerifySensitiveFilePermissions(t *testing.T) {
 	if err := os.WriteFile(lax, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	problems := verifySensitiveFilePermissions(dir)
+	problems := Verify(dir)
 	if len(problems) != 1 || problems[0] != lax {
 		t.Fatalf("0644 credential file must warn, got %v", problems)
 	}
@@ -59,7 +59,7 @@ func TestVerifySensitiveFilePermissionsRemediatesDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	problems := verifySensitiveFilePermissions(dir)
+	problems := Verify(dir)
 	if len(problems) != 0 {
 		t.Fatalf("a 0755 pool directory must be remediated, not reported: %v", problems)
 	}
@@ -71,7 +71,7 @@ func TestVerifySensitiveFilePermissionsRemediatesDirectory(t *testing.T) {
 		t.Fatalf("pool directory mode = %o, want 700", info.Mode().Perm())
 	}
 	// Idempotent: a second audit on the tightened tree is clean.
-	if problems := verifySensitiveFilePermissions(dir); len(problems) != 0 {
+	if problems := Verify(dir); len(problems) != 0 {
 		t.Fatalf("tightened tree must be clean, got %v", problems)
 	}
 }

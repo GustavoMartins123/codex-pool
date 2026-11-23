@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codex-pool-proxy/internal/compaction"
 )
 
 const compactionTrigger = "compaction_trigger"
@@ -26,7 +28,7 @@ func compactHTTPResponse(resp *http.Response, cancel context.CancelFunc) error {
 	}
 
 	reader := newIdleTimeoutReader(resp.Body, compactIdleTimeout, cancel)
-	body, err := readCompactResponse(reader)
+	body, err := compaction.ReadResponse(reader)
 	reader.Close()
 	if err != nil {
 		return fmt.Errorf("compaction response: %w", err)

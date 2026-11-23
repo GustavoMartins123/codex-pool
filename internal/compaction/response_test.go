@@ -1,4 +1,4 @@
-package main
+package compaction
 
 import (
 	"bytes"
@@ -77,7 +77,7 @@ func TestReadCompactResponse(t *testing.T) {
 				if split {
 					reader = iotest.OneByteReader(reader)
 				}
-				got, err := readCompactResponse(reader)
+				got, err := ReadResponse(reader)
 				if err != nil {
 					t.Fatalf("split=%v: %v", split, err)
 				}
@@ -118,7 +118,7 @@ func TestReadCompactResponseErrors(t *testing.T) {
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got, err := readCompactResponse(strings.NewReader(input)); err == nil || got != nil {
+			if got, err := ReadResponse(strings.NewReader(input)); err == nil || got != nil {
 				t.Fatalf("got %s, error %v; want nil payload and error", got, err)
 			}
 		})
@@ -126,7 +126,7 @@ func TestReadCompactResponseErrors(t *testing.T) {
 
 	t.Run("reader failure after terminal", func(t *testing.T) {
 		failure := errors.New("read failed")
-		_, err := readCompactResponse(io.MultiReader(strings.NewReader(terminal), iotest.ErrReader(failure)))
+		_, err := ReadResponse(io.MultiReader(strings.NewReader(terminal), iotest.ErrReader(failure)))
 		if !errors.Is(err, failure) {
 			t.Fatalf("error = %v; want %v", err, failure)
 		}
@@ -137,11 +137,11 @@ func TestReadCompactResponseLimit(t *testing.T) {
 	terminal := "\n\ndata: {\"type\":\"response.completed\",\"response\":{}}\n\n"
 	input := append([]byte(":"), bytes.Repeat([]byte("x"), compactResponseLimit-len(terminal)-1)...)
 	input = append(input, terminal...)
-	if _, err := readCompactResponse(bytes.NewReader(input)); err != nil {
+	if _, err := ReadResponse(bytes.NewReader(input)); err != nil {
 		t.Fatalf("exact limit: %v", err)
 	}
 	reader := bytes.NewReader(append(input, 'x', 'x'))
-	if got, err := readCompactResponse(reader); err == nil || got != nil {
+	if got, err := ReadResponse(reader); err == nil || got != nil {
 		t.Fatalf("over limit: got %s, error %v", got, err)
 	}
 	if reader.Len() != 1 {

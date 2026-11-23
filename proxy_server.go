@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/fsperm"
+	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/transport"
 	"golang.org/x/net/http2"
@@ -127,7 +129,7 @@ func prepareProxyStartup(cfg *config) (bool, error) {
 		return false, fmt.Errorf("credential vault: %w", err)
 	}
 	cfg.vault = vault
-	if problems := verifySensitiveFilePermissions(cfg.poolDir); len(problems) > 0 {
+	if problems := fsperm.Verify(cfg.poolDir); len(problems) > 0 {
 		return false, fmt.Errorf("credential vault: %d path(s) holding upstream credentials are group/world accessible, refusing to start:\n  %s\nFix with: chmod 0600 <file> (or chown to the pool user), then restart.",
 			len(problems), strings.Join(problems, "\n  "))
 	}
@@ -268,7 +270,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		MaxIdleConnsPerHost:   50,
 	}
 	_ = http2.ConfigureTransport(standardTransport)
-	antigravityTransport := cloneAntigravityHTTP11Transport(standardTransport)
+	antigravityTransport := transport.CloneAntigravityHTTP11(standardTransport)
 
 	// Anthropic traffic defaults to the Node.js 24.x uTLS profile used by Claude
 	// Code. Other providers retain their existing transports.
@@ -380,9 +382,9 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 			return nil, errors.New("invalid CODEX_REQUEST_PACE_MS: malformed or out-of-range integer")
 		}
 	}
-	var pacer *requestPacer
+	var pacer *pacing.Pacer
 	if paceMs > 0 {
-		pacer = newRequestPacer(time.Duration(paceMs) * time.Millisecond)
+		pacer = pacing.New(time.Duration(paceMs) * time.Millisecond)
 	}
 
 	trafficShadow, err := newTrafficShadowRuntime(store.db, cfg.experiments.Traffic)
@@ -471,7 +473,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 
 	// Background cleanup for request pacer (every 5 minutes)
 	if pacer != nil {
-		pacer.startCleanup(shutdownCtx)
+		pacer.StartCleanup(shutdownCtx)
 	}
 
 	// Start file watcher for hot-reload of pool directory and config.

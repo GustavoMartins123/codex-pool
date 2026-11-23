@@ -257,7 +257,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 
 				// Pace requests per session to avoid burst patterns.
 				sessionID := h.claudeIdentity.SessionHeader(in, userID)
-				h.pacer.wait(sessionID)
+				h.pacer.Wait(sessionID)
 
 				acc.mu.Lock()
 				accUUID := acc.claude.UUID
