@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 )
 
@@ -26,12 +27,12 @@ func TestIsWebSocketUpgradeRequest(t *testing.T) {
 	}
 	req.Header.Set("Connection", "keep-alive, Upgrade")
 	req.Header.Set("Upgrade", "websocket")
-	if !isWebSocketUpgradeRequest(req) {
+	if !httpwire.IsWebSocketUpgradeRequest(req) {
 		t.Fatalf("expected websocket upgrade request")
 	}
 
 	req.Header.Set("Upgrade", "h2c")
-	if isWebSocketUpgradeRequest(req) {
+	if httpwire.IsWebSocketUpgradeRequest(req) {
 		t.Fatalf("unexpected websocket upgrade detection for non-websocket upgrade")
 	}
 }
@@ -52,7 +53,7 @@ func TestRealtimeCallAndSidebandUseSamePooledAccount(t *testing.T) {
 			w.Header().Set("Content-Type", "application/sdp")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte("v=0\r\n"))
-		case isWebSocketUpgradeRequest(r) && r.URL.Path == "/v1/realtime" && r.URL.Query().Get("call_id") == "rtc_pool_test":
+		case httpwire.IsWebSocketUpgradeRequest(r) && r.URL.Path == "/v1/realtime" && r.URL.Query().Get("call_id") == "rtc_pool_test":
 			sidebandAccount <- r.Header.Get("ChatGPT-Account-ID")
 			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
@@ -228,7 +229,7 @@ func TestProxyWebSocketPoolRewritesAuthAndPinsSession(t *testing.T) {
 		if !strings.EqualFold(got.upgrade, "websocket") {
 			t.Fatalf("upstream Upgrade = %q, want websocket", got.upgrade)
 		}
-		if !headerContainsToken(http.Header{"Connection": []string{got.connection}}, "Connection", "Upgrade") {
+		if !httpwire.HeaderContainsToken(http.Header{"Connection": []string{got.connection}}, "Connection", "Upgrade") {
 			t.Fatalf("upstream Connection header missing Upgrade token: %q", got.connection)
 		}
 	case <-time.After(2 * time.Second):

@@ -16,6 +16,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -150,7 +151,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	}
 
 	// Build upstream headers: clone client headers, replace auth.
-	upstreamHeaders := cloneHeader(r.Header)
+	upstreamHeaders := httpwire.CloneHeader(r.Header)
 	upstreamHeaders.Del("Authorization")
 	upstreamHeaders.Del("ChatGPT-Account-ID")
 	upstreamHeaders.Del("X-Api-Key")
@@ -349,7 +350,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 		}
 	}
 
-	upstreamHeaders := cloneHeader(r.Header)
+	upstreamHeaders := httpwire.CloneHeader(r.Header)
 	removeConflictingProxyHeaders(upstreamHeaders)
 	if providerType == AccountTypeClaude && upstreamHeaders.Get("anthropic-version") == "" {
 		upstreamHeaders.Set("anthropic-version", claudecode.AnthropicVersion)

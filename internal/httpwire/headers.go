@@ -1,4 +1,5 @@
-package main
+// Package httpwire provides HTTP header and request body plumbing for the proxy.
+package httpwire
 
 import (
 	"net/http"
@@ -7,7 +8,7 @@ import (
 	"strings"
 )
 
-func cloneHeader(h http.Header) http.Header {
+func CloneHeader(h http.Header) http.Header {
 	out := make(http.Header, len(h))
 	for k, vv := range h {
 		cpy := make([]string, len(vv))
@@ -17,14 +18,14 @@ func cloneHeader(h http.Header) http.Header {
 	return out
 }
 
-func debugHeaderSummary(h http.Header) []string {
+func DebugHeaderSummary(h http.Header) []string {
 	headers := make([]string, 0, len(h))
 	for name, values := range h {
 		value := ""
 		if len(values) > 0 {
 			value = values[0]
 		}
-		if isSensitiveHeader(name) {
+		if IsSensitiveHeader(name) {
 			value = "<redacted>"
 		} else if len(value) > 80 {
 			value = value[:80]
@@ -35,7 +36,7 @@ func debugHeaderSummary(h http.Header) []string {
 	return headers
 }
 
-func isSensitiveHeader(name string) bool {
+func IsSensitiveHeader(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	switch lower {
 	case "authorization", "proxy-authorization", "cookie", "set-cookie",
@@ -53,7 +54,7 @@ func isSensitiveHeader(name string) bool {
 	return strings.HasSuffix(lower, "-key")
 }
 
-func copyHeader(dst, src http.Header) {
+func CopyHeader(dst, src http.Header) {
 	for k, vv := range src {
 		dst.Del(k)
 		for _, v := range vv {
@@ -62,8 +63,8 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-// removeHopByHopHeaders strips headers that must not be forwarded by proxies.
-func removeHopByHopHeaders(h http.Header) {
+// RemoveHopByHopHeaders strips headers that must not be forwarded by proxies.
+func RemoveHopByHopHeaders(h http.Header) {
 	// Strip any headers listed in the Connection header first.
 	if c := h.Get("Connection"); c != "" {
 		for _, f := range strings.Split(c, ",") {
@@ -89,7 +90,7 @@ func removeHopByHopHeaders(h http.Header) {
 	}
 }
 
-func headerContainsToken(h http.Header, name, token string) bool {
+func HeaderContainsToken(h http.Header, name, token string) bool {
 	for _, value := range h.Values(name) {
 		for _, part := range strings.Split(value, ",") {
 			if strings.EqualFold(strings.TrimSpace(part), token) {
@@ -100,10 +101,10 @@ func headerContainsToken(h http.Header, name, token string) bool {
 	return false
 }
 
-func isWebSocketUpgradeRequest(r *http.Request) bool {
+func IsWebSocketUpgradeRequest(r *http.Request) bool {
 	if r == nil {
 		return false
 	}
-	return headerContainsToken(r.Header, "Connection", "Upgrade") &&
+	return HeaderContainsToken(r.Header, "Connection", "Upgrade") &&
 		strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }

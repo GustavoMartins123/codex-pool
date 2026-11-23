@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode"
 
+	"codex-pool-proxy/internal/httpwire"
+
 	"golang.org/x/sync/errgroup"
 )
 
@@ -354,8 +356,8 @@ func (s *nativeContext) send(ctx context.Context, owner contextAccount, clientIP
 		if err != nil {
 			return nil, errContextUnavailable
 		}
-		req.Header = cloneHeader(headers)
-		removeHopByHopHeaders(req.Header)
+		req.Header = httpwire.CloneHeader(headers)
+		httpwire.RemoveHopByHopHeaders(req.Header)
 		removeConflictingProxyHeaders(req.Header)
 		for _, key := range []string{"Authorization", "ChatGPT-Account-ID", "X-Api-Key", "X-Goog-Api-Key", "Cookie", "Content-Length", "Content-Encoding"} {
 			req.Header.Del(key)

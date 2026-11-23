@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/credstore"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/logredact"
 )
 
@@ -65,7 +66,7 @@ func TestInvariantNoCredentialsReachTheLog(t *testing.T) {
 	hdr.Set("Www-Authenticate", "Bearer "+accessMarker)
 	hdr.Set("X-Provider-Session-Token", apiKeyMarker)
 	hdr.Set("Content-Type", "application/json")
-	_ = debugHeaderSummary(hdr)
+	_ = httpwire.DebugHeaderSummary(hdr)
 
 	// 3. Direct log calls with raw marker values, which is what any future
 	// careless call site looks like.
@@ -407,12 +408,12 @@ func TestIsSensitiveHeaderCoversProviderInventedNames(t *testing.T) {
 		"X-Provider-Session-Token", "anthropic-session-id", "X-Custom-Key",
 		"Openai-Organization-Secret", "x-grok-refresh-token", "X-Antigravity-Api-Key",
 	} {
-		if !isSensitiveHeader(name) {
+		if !httpwire.IsSensitiveHeader(name) {
 			t.Errorf("%s must be treated as sensitive", name)
 		}
 	}
 	for _, name := range []string{"User-Agent", "Content-Type", "Accept", "X-Request-Id"} {
-		if isSensitiveHeader(name) {
+		if httpwire.IsSensitiveHeader(name) {
 			t.Errorf("%s must not be treated as sensitive", name)
 		}
 	}

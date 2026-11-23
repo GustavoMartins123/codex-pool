@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
@@ -29,7 +30,7 @@ func TestDebugHeaderSummaryRedactsCredentials(t *testing.T) {
 		"User-Agent":        []string{"Codex Desktop"},
 	}
 
-	got := strings.Join(debugHeaderSummary(headers), " ")
+	got := strings.Join(httpwire.DebugHeaderSummary(headers), " ")
 	for _, secret := range []string{"secret-token", "secret-cookie", "secret-attestation"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("debug header summary leaked %q: %s", secret, got)

@@ -15,6 +15,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 	"github.com/google/uuid"
 )
@@ -155,8 +156,8 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		outReq.Host = targetBase.Host
-		outReq.Header = cloneHeader(in.Header)
-		removeHopByHopHeaders(outReq.Header)
+		outReq.Header = httpwire.CloneHeader(in.Header)
+		httpwire.RemoveHopByHopHeaders(outReq.Header)
 		removeConflictingProxyHeaders(outReq.Header)
 		// A client echo minted by another account is a proxy-chain-only
 		// contradiction upstream never sees from real Codex; strip it before
@@ -373,7 +374,7 @@ func (h *proxyHandler) tryOnceWithAccountSlot(
 		}
 
 		if h.cfg.debug.Load() {
-			log.Printf("[%s] outgoing headers (%s): %v", reqID, provider.Type(), debugHeaderSummary(outReq.Header))
+			log.Printf("[%s] outgoing headers (%s): %v", reqID, provider.Type(), httpwire.DebugHeaderSummary(outReq.Header))
 		}
 
 		// Keep the original User-Agent from the client - don't override it

@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/jsonvalue"
 )
 
@@ -50,7 +51,7 @@ func testAuthenticatedTransportIsolation(t *testing.T, recovering bool) {
 		return data
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isWebSocketUpgradeRequest(r) {
+		if httpwire.IsWebSocketUpgradeRequest(r) {
 			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
 				t.Error(err)

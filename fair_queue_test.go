@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 )
 
@@ -151,7 +152,7 @@ func TestFairQueueDefaultAllowsEightConcurrentRequestsPerPrincipal(t *testing.T)
 func TestIdleWebSocketDoesNotHoldFairQueueCapacity(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isWebSocketUpgradeRequest(r) {
+		if httpwire.IsWebSocketUpgradeRequest(r) {
 			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
 				return

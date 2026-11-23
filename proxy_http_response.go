@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -78,8 +79,8 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 	acc.mu.Unlock()
 
 	// Prepare response headers.
-	copyHeader(w.Header(), resp.Header)
-	removeHopByHopHeaders(w.Header())
+	httpwire.CopyHeader(w.Header(), resp.Header)
+	httpwire.RemoveHopByHopHeaders(w.Header())
 	h.replaceUsageHeaders(w.Header())
 
 	// Complete the catalog and set the order used by the Codex picker.

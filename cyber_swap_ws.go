@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -1269,7 +1270,7 @@ func (h *proxyHandler) dialSwappedUpstream(
 		return nil, nil, nil, fmt.Errorf("swap account %s has empty access token", acc.ID)
 	}
 
-	headers := cloneHeader(opts.InitialUpstreamHeaders)
+	headers := httpwire.CloneHeader(opts.InitialUpstreamHeaders)
 	headers.Del("Authorization")
 	headers.Del("ChatGPT-Account-ID")
 	headers.Del("X-Api-Key")
@@ -1321,8 +1322,8 @@ func dialUpstreamWebSocketWithSubprotocols(
 		wsURL.Scheme = "ws"
 	}
 
-	dialHeaders := cloneHeader(upstreamHeaders)
-	removeHopByHopHeaders(dialHeaders)
+	dialHeaders := httpwire.CloneHeader(upstreamHeaders)
+	httpwire.RemoveHopByHopHeaders(dialHeaders)
 	for _, key := range []string{
 		"Sec-WebSocket-Key",
 		"Sec-WebSocket-Version",

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 )
 
@@ -20,7 +21,7 @@ func TestAuthenticatedWebSocketRevocationStopsNextTurn(t *testing.T) {
 			t.Setenv("POOL_JWT_SECRET", "test-secret")
 			var calls atomic.Int32
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !isWebSocketUpgradeRequest(r) {
+				if !httpwire.IsWebSocketUpgradeRequest(r) {
 					calls.Add(1)
 					io.WriteString(w, `{"output":[]}`)
 					return

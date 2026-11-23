@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 	"go.etcd.io/bbolt"
 )
@@ -260,7 +261,7 @@ func TestGrantAuthenticatedHTTPAndWebSocketTurns(t *testing.T) {
 	t.Setenv("POOL_JWT_SECRET", "test-secret")
 	var httpCalls, frames atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isWebSocketUpgradeRequest(r) {
+		if httpwire.IsWebSocketUpgradeRequest(r) {
 			conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 			if err != nil {
 				return
