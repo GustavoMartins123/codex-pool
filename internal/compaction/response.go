@@ -1,4 +1,5 @@
-package main
+// Package compaction builds the compact view of a streamed response.
+package compaction
 
 import (
 	"bytes"
@@ -13,7 +14,7 @@ import (
 
 const compactResponseLimit = 16 << 20
 
-func readCompactResponse(r io.Reader) ([]byte, error) {
+func ReadResponse(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, compactResponseLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("read compact response: %w", err)
