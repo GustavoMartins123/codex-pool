@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/claudecode"
+	"codex-pool-proxy/internal/requestlog"
 )
 
 func TestOpencodeGoLoadAccount(t *testing.T) {
@@ -716,7 +717,7 @@ func TestOpencodeGoLiveProbe(t *testing.T) {
 		req.Header.Set("X-Api-Key", generateClaudePoolToken("opencode-go-live-secret", "live-user"))
 		rr := httptest.NewRecorder()
 
-		h.proxyRequest(rr, req, "live-go", systemProxyRuntime())
+		h.proxyRequest(rr, req, "live-go", requestlog.System())
 
 		if rr.Code != http.StatusOK {
 			t.Fatalf("live Go request (stream=%v) status=%d body=%s", stream, rr.Code, rr.Body.String())
@@ -744,7 +745,7 @@ func TestOpencodeGoLiveProbe(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(authHeader, authValue)
 		rr := httptest.NewRecorder()
-		h.proxyRequest(rr, req, "live-go-"+path, systemProxyRuntime())
+		h.proxyRequest(rr, req, "live-go-"+path, requestlog.System())
 		if rr.Code != http.StatusOK {
 			t.Fatalf("live Go %s status=%d body=%s", path, rr.Code, rr.Body.String())
 		}

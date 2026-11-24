@@ -19,6 +19,7 @@ import (
 	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -31,9 +32,9 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	originID string,
 	provider ProviderDriver,
 	targetBase *url.URL,
-	rt proxyRuntime,
+	rt requestlog.Runtime,
 ) {
-	start := rt.now()
+	start := rt.Now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
 	if !h.enforcePolicy(w, admission, func() error {
@@ -225,7 +226,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		if termination.Side == "" {
 			termination = classifyWebSocketTermination(swap.err)
 		}
-		duration := rt.now().Sub(start)
+		duration := rt.Now().Sub(start)
 		h.recordWebSocketTermination(reqID, finalAcc.ID, termination, duration)
 		if swap.err != nil {
 			h.recent.add(swap.err.Error())
@@ -241,7 +242,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		// A handoff already pinned the conversation to the reconnect target.
 		h.applyWebSocketStatusEffects(reqID, finalAcc, userID, conversationID, swap.swapped || swap.handedOff, refreshFailed, swap.statusCode)
 		if h.cfg.debug.Load() {
-			rt.logRequest(r.Context(), reqID, "websocket proxy completed",
+			rt.LogRequest(r.Context(), reqID, "websocket proxy completed",
 				slog.Int("status", swap.statusCode), slog.String("account", finalAcc.ID), slog.String("user_id", userID),
 				slog.String("origin_id", originID), slog.Int64("duration_ms", duration.Milliseconds()), slog.Bool("cyber_swapped", swap.swapped))
 		}
@@ -264,7 +265,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 		Registry:                    h.webSocketRegistry(),
 	})
 	statusCode, err := relay.statusCode, relay.err
-	duration := rt.now().Sub(start)
+	duration := rt.Now().Sub(start)
 	h.recordWebSocketTermination(reqID, acc.ID, relay.termination, duration)
 
 	if err != nil {
@@ -283,7 +284,7 @@ func (h *proxyHandler) proxyRequestWebSocket(
 	h.applyWebSocketStatusEffects(reqID, acc, userID, conversationID, cyberPinned, refreshFailed, statusCode)
 
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "websocket proxy completed",
+		rt.LogRequest(r.Context(), reqID, "websocket proxy completed",
 			slog.Int("status", statusCode), slog.String("account", acc.ID), slog.String("user_id", userID),
 			slog.String("origin_id", originID), slog.Int64("duration_ms", duration.Milliseconds()))
 	}
@@ -332,7 +333,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	provider ProviderDriver,
 	targetBase *url.URL,
 	start time.Time,
-	rt proxyRuntime,
+	rt requestlog.Runtime,
 ) {
 	outURL := new(url.URL)
 	*outURL = *r.URL
@@ -394,7 +395,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 	relayOpts.Registry = h.webSocketRegistry()
 	relay := relayWebSocket(w, r, outURL, upstreamHeaders, relayOpts)
 	statusCode, err := relay.statusCode, relay.err
-	duration := rt.now().Sub(start)
+	duration := rt.Now().Sub(start)
 	h.recordWebSocketTermination(reqID, "passthrough", relay.termination, duration)
 
 	if err != nil {
@@ -409,7 +410,7 @@ func (h *proxyHandler) proxyPassthroughWebSocket(
 		h.metrics.inc(strconv.Itoa(statusCode), "passthrough")
 	}
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "websocket passthrough completed",
+		rt.LogRequest(r.Context(), reqID, "websocket passthrough completed",
 			slog.Int("status", statusCode), slog.Int64("duration_ms", duration.Milliseconds()))
 	}
 }

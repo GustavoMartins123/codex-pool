@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/requestlog"
 )
 
 func TestProxyRuntimeDrivesRequestLogsAndLatency(t *testing.T) {
@@ -31,9 +32,9 @@ func TestProxyRuntimeDrivesRequestLogsAndLatency(t *testing.T) {
 	var output bytes.Buffer
 	routes := &proxyRoutes{
 		proxyHandler: handler,
-		runtime: proxyRuntime{
-			now:    func() time.Time { return now },
-			logger: slog.New(logredact.NewTextHandler(&output)),
+		runtime: requestlog.Runtime{
+			Now:    func() time.Time { return now },
+			Logger: slog.New(logredact.NewTextHandler(&output)),
 		},
 	}
 	app := routes.newHTTPApp()

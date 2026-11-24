@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/requestlog"
 )
 
 const preflightResponse = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_preflight\",\"status\":\"completed\",\"output\":[]}}\n\n"
@@ -91,7 +93,7 @@ func TestPreflightAdmissionCancellation(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.proxyRequest(httptest.NewRecorder(), req, "cancel-admission", systemProxyRuntime())
+		h.proxyRequest(httptest.NewRecorder(), req, "cancel-admission", requestlog.System())
 	}()
 	defer func() { <-h.largeReplayBodies; <-done }()
 	cancel()
@@ -257,7 +259,7 @@ func BenchmarkProxyRequestPreflight(b *testing.B) {
 				reply.Body = io.NopCloser(strings.NewReader(response))
 				return reply, nil
 			}))
-			rt := systemProxyRuntime()
+			rt := requestlog.System()
 			b.ReportAllocs()
 			b.SetBytes(int64(len(body)))
 			b.ResetTimer()

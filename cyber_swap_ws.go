@@ -17,6 +17,7 @@ import (
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
 	"github.com/coder/websocket"
 )
@@ -24,7 +25,7 @@ import (
 // codexCyberSwapOptions configures the cyber-aware Codex websocket relay.
 type codexCyberSwapOptions struct {
 	ReqID                       string
-	Runtime                     proxyRuntime
+	Runtime                     requestlog.Runtime
 	RequestPath                 string
 	Provider                    ProviderDriver
 	InitialAccount              *Account

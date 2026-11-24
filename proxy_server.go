@@ -17,6 +17,7 @@ import (
 	"codex-pool-proxy/internal/fsperm"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/transport"
 	"golang.org/x/net/http2"
 )
@@ -485,7 +486,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	app.release = append(app.release, watcher.close)
 	codexProvider.fingerprint.startUpdater(shutdownCtx)
 
-	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
+	routes := &proxyRoutes{proxyHandler: h, runtime: requestlog.System()}
 	srv := &http.Server{
 		Addr:              cfg.listenAddr,
 		Handler:           routes.newHTTPApp(),

@@ -20,6 +20,7 @@ import (
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
 	"go.etcd.io/bbolt"
 )
@@ -346,7 +347,7 @@ func trafficShadowFromRequest(r *http.Request) (trafficShadowIdentity, bool) {
 	return shadow, ok
 }
 
-func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt proxyRuntime) {
+func (h *proxyHandler) maybeStartShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt requestlog.Runtime) {
 	_, internalShadow := trafficShadowFromRequest(r)
 	if h == nil || assignment == nil || !assignment.Rule.Shadow || assignment.Variant == "canary" ||
 		internalShadow {
@@ -540,7 +541,7 @@ func (h *proxyHandler) markShadowAccountExclusions(exclude map[string]bool, acco
 // principal allowlists, daily budget, inflight cap, its own deadline, a
 // "-traffic-shadow" request id for separate accounting, and — unless
 // detach_from_client is set — cancellation together with the client request.
-func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt proxyRuntime) {
+func (h *proxyHandler) startTrafficShadow(r *http.Request, body []byte, assignment *experimentAssignment, principal, reqID string, rt requestlog.Runtime) {
 	shadowBody := requestjson.RewriteModel(body, assignment.Rule.Candidate)
 	if shadowBody == nil {
 		return

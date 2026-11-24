@@ -17,6 +17,7 @@ import (
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -40,7 +41,7 @@ type proxyHTTPResponse struct {
 	compact              bool
 	attempt              int
 	attempts             int
-	runtime              proxyRuntime
+	runtime              requestlog.Runtime
 	startedAt            time.Time
 
 	primaryUsedPct   float64
@@ -327,9 +328,9 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), acc.ID)
 
 	if h.cfg.debug.Load() {
-		opts.runtime.logRequest(r.Context(), opts.requestID, "proxy request completed",
+		opts.runtime.LogRequest(r.Context(), opts.requestID, "proxy request completed",
 			slog.Int("status", resp.StatusCode), slog.String("account", acc.ID),
-			slog.Int64("duration_ms", opts.runtime.now().Sub(opts.startedAt).Milliseconds()))
+			slog.Int64("duration_ms", opts.runtime.Now().Sub(opts.startedAt).Milliseconds()))
 	}
 	return false
 }
