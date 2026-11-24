@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/wire"
@@ -730,7 +731,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				prepareResponsesObject(upstreamObject)
 				changed = true
 			} else {
-				changed = stripHostedMCPFromResponsesRequest(upstreamObject)
+				changed = hostedmcp.StripFromRequest(upstreamObject)
 			}
 			// Retain the original envelope for revalidation on each account attempt.
 			r = r.WithContext(context.WithValue(r.Context(), contextFrameKey{}, upstreamObject))

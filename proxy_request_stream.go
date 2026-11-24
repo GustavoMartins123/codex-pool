@@ -18,6 +18,8 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -100,7 +102,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	refreshFailed := false
 	if !h.cfg.disableRefresh && h.needsRefresh(acc) {
 		if err := h.refreshAccount(ctx, acc); err != nil {
-			if isRateLimitError(err) {
+			if errclass.IsRateLimit(err) {
 				h.applyRateLimit(acc, nil)
 			} else {
 				refreshFailed = true
@@ -326,7 +328,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	isSSE := provider.DetectsSSE(r.URL.Path, respContentType)
 	var codexJSON bool
 	if !isSSE && provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) {
-		response, err := filterHostedMCPNonStreamingResponse(resp)
+		response, err := hostedmcp.FilterNonStreamingResponse(resp)
 		if err != nil {
 			http.Error(w, "hosted MCP response filtering error", http.StatusBadGateway)
 			return
@@ -396,7 +398,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 		interceptWriter := &sseInterceptWriter{
 			w: writer,
 			callback: func(data []byte) {
-				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+				if provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 					if h.pinConversationToCyberAccess(conversationID, accountType, requiredPlan, clientIP, acc.ID, reqID) {
 						cyberPinned = true
 						cancel()
@@ -469,7 +471,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 			writer = &sseInterceptWriter{w: writer, onEvent: suppressor.onEvent}
 		}
 		if provider.WireFormat() == WireResponses {
-			writer = &hostedMCPResponseFilterWriter{w: writer}
+			writer = &hostedmcp.ResponseFilterWriter{W: writer}
 		}
 		interceptWriter.w = writer
 		writer = interceptWriter
@@ -533,7 +535,7 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	respSample := sampleBuf.Bytes()
 	if h.cfg.logBodies && len(respSample) > 0 {
 		if provider.WireFormat() == WireResponses {
-			respSample = filterHostedMCPResponseSample(respSample, isSSE)
+			respSample = hostedmcp.FilterResponseSample(respSample, isSSE)
 		}
 		log.Printf("[%s] response body sample (%d bytes): %s", reqID, len(respSample), safeText(respSample))
 	}
@@ -676,7 +678,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 		defer fw.stop()
 	}
 	if isSSE && providerType == AccountTypeCodex {
-		writer = &hostedMCPResponseFilterWriter{w: writer}
+		writer = &hostedmcp.ResponseFilterWriter{W: writer}
 	}
 
 	// Wrap response body with idle timeout to kill zombie SSE connections.

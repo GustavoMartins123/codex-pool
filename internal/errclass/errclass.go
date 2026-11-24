@@ -1,4 +1,5 @@
-package main
+// Package errclass classifies upstream HTTP failures for the retry loop.
+package errclass
 
 import (
 	"bytes"
@@ -7,85 +8,85 @@ import (
 	"strings"
 )
 
-// ErrorClass categorises an upstream HTTP response or error so the retry loop
+// Class categorises an upstream HTTP response or error so the retry loop
 // can decide what to do: retry on another account, back off, give up, etc.
-type ErrorClass int
+type Class int
 
 const (
-	// ErrorClassNone means no error — the request succeeded.
-	ErrorClassNone ErrorClass = iota
+	// None means no error — the request succeeded.
+	None Class = iota
 
-	// ErrorClassTransient covers temporary server-side failures (408, 500-504).
+	// Transient covers temporary server-side failures (408, 500-504).
 	// Action: retry immediately on the next account.
-	ErrorClassTransient
+	Transient
 
-	// ErrorClassRateLimit means 429 Too Many Requests.
+	// RateLimit means 429 Too Many Requests.
 	// Action: exponential backoff on the account, then try another.
-	ErrorClassRateLimit
+	RateLimit
 
-	// ErrorClassAuth covers 401/403 — token expired or revoked.
+	// Auth covers 401/403 — token expired or revoked.
 	// Action: refresh token, retry same account once; if still failing, rotate.
-	ErrorClassAuth
+	Auth
 
-	// ErrorClassPayment means 402 — subscription lapsed, workspace deactivated.
+	// Payment means 402 — subscription lapsed, workspace deactivated.
 	// Action: mark account dead, rotate.
-	ErrorClassPayment
+	Payment
 
-	// ErrorClassNotFound means 404 — model not available on this account.
+	// NotFound means 404 — model not available on this account.
 	// Action: rotate to another account (don't penalise heavily).
-	ErrorClassNotFound
+	NotFound
 
-	// ErrorClassInvalid means 400 — the request itself is bad.
+	// Invalid means 400 — the request itself is bad.
 	// Action: return error to client, do NOT retry.
-	ErrorClassInvalid
+	Invalid
 
-	// ErrorClassFatal is a catch-all for non-retryable errors we don't have
+	// Fatal is a catch-all for non-retryable errors we don't have
 	// a specific category for. Action: return error to client.
-	ErrorClassFatal
+	Fatal
 )
 
-// classifyStatus maps an HTTP status code to an ErrorClass.
-func classifyStatus(statusCode int) ErrorClass {
+// Classify maps an HTTP status code to a Class.
+func Classify(statusCode int) Class {
 	switch {
 	case statusCode >= 200 && statusCode < 400:
-		return ErrorClassNone
+		return None
 
 	case statusCode == http.StatusBadRequest: // 400
-		return ErrorClassInvalid
+		return Invalid
 
 	case statusCode == http.StatusUnauthorized, // 401
 		statusCode == http.StatusForbidden: // 403
-		return ErrorClassAuth
+		return Auth
 
 	case statusCode == http.StatusPaymentRequired: // 402
-		return ErrorClassPayment
+		return Payment
 
 	case statusCode == http.StatusNotFound: // 404
-		return ErrorClassNotFound
+		return NotFound
 
 	case statusCode == http.StatusRequestTimeout: // 408
-		return ErrorClassTransient
+		return Transient
 
 	case statusCode == 524: // Cloudflare timeout — origin didn't respond in time
-		return ErrorClassTransient
+		return Transient
 
 	case statusCode == http.StatusTooManyRequests: // 429
-		return ErrorClassRateLimit
+		return RateLimit
 
 	case statusCode == 529: // Anthropic overloaded — retry elsewhere without cooling down the account
-		return ErrorClassTransient
+		return Transient
 
 	case statusCode >= 500 && statusCode <= 599:
-		return ErrorClassTransient
+		return Transient
 
 	default:
-		return ErrorClassFatal
+		return Fatal
 	}
 }
 
-// isDeactivatedWorkspace checks the body for signs that the account is
+// IsDeactivatedWorkspace checks the body for signs that the account is
 // permanently dead (deactivated workspace, cancelled subscription, etc.).
-func isDeactivatedWorkspace(body []byte) bool {
+func IsDeactivatedWorkspace(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "deactivated_workspace") ||
 		strings.Contains(s, "subscription") ||
@@ -93,9 +94,9 @@ func isDeactivatedWorkspace(body []byte) bool {
 		strings.Contains(s, "payment_required")
 }
 
-// isClaudeOrganizationDisabled checks for Anthropic responses that indicate
+// IsClaudeOrganizationDisabled checks for Anthropic responses that indicate
 // the org behind a Claude OAuth token has been disabled permanently.
-func isClaudeOrganizationDisabled(body []byte) bool {
+func IsClaudeOrganizationDisabled(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "organization has been disabled") ||
 		strings.Contains(s, "organization is disabled") ||
@@ -104,10 +105,10 @@ func isClaudeOrganizationDisabled(body []byte) bool {
 		strings.Contains(s, "oauth authentication is currently not allowed")
 }
 
-// isCloudflareChallenge detects Cloudflare bot-mitigation responses that return
+// IsCloudflareChallenge detects Cloudflare bot-mitigation responses that return
 // 403 with an HTML challenge page. These are transient (not auth failures) and
 // should not penalize accounts.
-func isCloudflareChallenge(body []byte, headers http.Header) bool {
+func IsCloudflareChallenge(body []byte, headers http.Header) bool {
 	if headers.Get("Cf-Mitigated") == "challenge" {
 		return true
 	}
@@ -117,7 +118,7 @@ func isCloudflareChallenge(body []byte, headers http.Header) bool {
 	return false
 }
 
-func isCyberPolicyError(body []byte) bool {
+func IsCyberPolicy(body []byte) bool {
 	// Only match the upstream's actual error envelope. Naive substring
 	// matching trips on any assistant output that happens to contain the
 	// literal phrase "cyber_policy" — e.g. an assistant explaining this
@@ -146,7 +147,7 @@ func isCyberPolicyError(body []byte) bool {
 		env.Error.Code == "cyber_policy" || env.Error.Type == "cyber_policy"
 }
 
-func isCodexModelUnavailableError(body []byte) bool {
+func IsCodexModelUnavailable(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "model_not_found") ||
 		strings.Contains(s, "model not found") ||
@@ -157,23 +158,23 @@ func isCodexModelUnavailableError(body []byte) bool {
 		strings.Contains(s, "does not have access to model")
 }
 
-// isCodexItemReferenceError detects the upstream 404 for input items that
+// IsCodexItemReference detects the upstream 404 for input items that
 // reference previously stored responses ("Item with id 'rs_...' not found.
 // Items are not persisted when `store` is set to false."). The pool must
 // forward store=false, so these references can never resolve; the failure
 // belongs to the request payload, not to the account, and must not rotate
 // accounts or feed the circuit breaker.
-func isCodexItemReferenceError(body []byte) bool {
+func IsCodexItemReference(body []byte) bool {
 	s := strings.ToLower(string(body))
 	return strings.Contains(s, "item with id") && strings.Contains(s, "not found") ||
 		strings.Contains(s, "items are not persisted")
 }
 
 // Retryable returns true if this class should be retried on another account.
-func (c ErrorClass) Retryable() bool {
+func (c Class) Retryable() bool {
 	switch c {
-	case ErrorClassTransient, ErrorClassRateLimit, ErrorClassAuth,
-		ErrorClassPayment, ErrorClassNotFound:
+	case Transient, RateLimit, Auth,
+		Payment, NotFound:
 		return true
 	default:
 		return false
@@ -181,30 +182,30 @@ func (c ErrorClass) Retryable() bool {
 }
 
 // String returns a human-readable label.
-func (c ErrorClass) String() string {
+func (c Class) String() string {
 	switch c {
-	case ErrorClassNone:
+	case None:
 		return "none"
-	case ErrorClassTransient:
+	case Transient:
 		return "transient"
-	case ErrorClassRateLimit:
+	case RateLimit:
 		return "rate_limit"
-	case ErrorClassAuth:
+	case Auth:
 		return "auth"
-	case ErrorClassPayment:
+	case Payment:
 		return "payment"
-	case ErrorClassNotFound:
+	case NotFound:
 		return "not_found"
-	case ErrorClassInvalid:
+	case Invalid:
 		return "invalid"
-	case ErrorClassFatal:
+	case Fatal:
 		return "fatal"
 	default:
 		return "unknown"
 	}
 }
 
-func isRateLimitError(err error) bool {
+func IsRateLimit(err error) bool {
 	if err == nil {
 		return false
 	}

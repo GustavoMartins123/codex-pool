@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/routing"
@@ -596,7 +598,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			_ = s.h.contextHandoff.RecordAssistantText(conversationScopedKey(s.owner, turn.conversationID), AccountTypeCodex, turn.assistantText.String())
 		}
 	}
-	filtered, _, drop, changed := filterHostedMCPResponseJSON(data)
+	filtered, _, drop, changed := hostedmcp.FilterResponseJSON(data)
 	if drop {
 		return []byte{}, nil
 	}
@@ -623,7 +625,7 @@ func (s *codexRelayState) inspectUpstream(data []byte) ([]byte, error) {
 			return nil, &reconnectPendingErr{next: cand, conversationID: turn.conversationID, reason: "account quota exhausted"}
 		}
 	}
-	if !isCyberPolicyError(data) {
+	if !errclass.IsCyberPolicy(data) {
 		s.observeTurnEvent(turn, data)
 		// An error before response.created rejects the request outright: no
 		// terminal event follows, and a turn left pending would block every
@@ -678,7 +680,7 @@ func (s *codexRelayState) inspectClient(data []byte) ([]byte, error) {
 
 	data = applyModelAliasToJSONFrame(s.h, s.opts.ReqID, data)
 	data = applyEffortCapToJSONFrame(s.h, s.opts.ReqID, s.opts.UserID, s.opts.ClientIP, data)
-	filtered, changed, err := filterHostedMCPRequestJSON(data)
+	filtered, changed, err := hostedmcp.FilterRequestJSON(data)
 	if err != nil {
 		return nil, err
 	}
@@ -1178,7 +1180,7 @@ type cyberPolicyHTTPSuppressor struct {
 }
 
 func (c *cyberPolicyHTTPSuppressor) onEvent(eventData []byte) (drop bool, terminate bool) {
-	if !isCyberPolicyError(eventData) {
+	if !errclass.IsCyberPolicy(eventData) {
 		return false, false
 	}
 	log.Printf("[%s] cyber_policy SSE event from account %s; pinning conversation, forwarding error", c.reqID, c.accountID)

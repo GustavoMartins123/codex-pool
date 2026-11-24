@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -541,7 +542,7 @@ func (l *jsonLex) copyToolsArray(out io.Writer) error {
 			return err
 		}
 		removeLexTemp(f)
-		if typ, _ := tool["type"].(string); strings.TrimSpace(typ) == hostedMCPToolType {
+		if typ, _ := tool["type"].(string); strings.TrimSpace(typ) == hostedmcp.ToolType {
 			first = false
 			continue
 		}
@@ -664,7 +665,7 @@ func (l *jsonLex) copyFilteredArrayAfterOpen(out io.Writer) error {
 func (l *jsonLex) spoolValueAndCheckMCP() (*os.File, bool, error) {
 	f, typ, err := l.spoolValueType()
 	typ = strings.TrimSpace(typ)
-	return f, typ != hostedMCPToolType && !isHostedMCPItemType(typ), err
+	return f, typ != hostedmcp.ToolType && !hostedmcp.IsItemType(typ), err
 }
 
 func (l *jsonLex) spoolValueType() (*os.File, string, error) {

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/errclass"
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/wire"
@@ -118,7 +120,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		}
 	}
 	if opts.provider.WireFormat() == WireResponses && isCodexResponsesPath(r.URL.Path) && !opts.isSSE {
-		response, err := filterHostedMCPNonStreamingResponse(resp)
+		response, err := hostedmcp.FilterNonStreamingResponse(resp)
 		if err != nil {
 			resp.Body.Close()
 			http.Error(w, err.Error(), http.StatusBadGateway)
@@ -171,7 +173,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 
 		bufWriter := wire.NewResponsesBuffer(opts.model)
 		inspectWriter := h.wrapBufferedSSEWithCyberDetector(bufWriter, opts.accountType, acc, opts.conversationID, opts.requiredPlan, opts.originIP, opts.requestID, &opts.cyberPinned)
-		inspectWriter = &hostedMCPResponseFilterWriter{w: inspectWriter}
+		inspectWriter = &hostedmcp.ResponseFilterWriter{W: inspectWriter}
 		readErr := copyBufferedProxySSE(inspectWriter, resp.Body)
 
 		if h.shouldRetryBufferedSSEForCyberPolicy(opts.cyberPinned, opts.attempt, opts.attempts, acc, opts.requestID, "responses") {
@@ -196,7 +198,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		bufWriter := wire.NewResponsesToAnthropicBuffer(opts.model, wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: opts.requestID})
 		var responseWriter io.Writer = bufWriter
 		if opts.provider.WireFormat() == WireResponses {
-			responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
+			responseWriter = &hostedmcp.ResponseFilterWriter{W: responseWriter}
 		}
 
 		if err := copyBufferedProxySSE(responseWriter, resp.Body); err != nil {
@@ -219,7 +221,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		inspectWriter := h.wrapBufferedSSEWithCyberDetector(bufWriter, opts.accountType, acc, opts.conversationID, opts.requiredPlan, opts.originIP, opts.requestID, &opts.cyberPinned)
 		var rawImageStream bytes.Buffer
 		if opts.provider.WireFormat() == WireResponses {
-			inspectWriter = &hostedMCPResponseFilterWriter{w: io.MultiWriter(inspectWriter, &rawImageStream)}
+			inspectWriter = &hostedmcp.ResponseFilterWriter{W: io.MultiWriter(inspectWriter, &rawImageStream)}
 		} else {
 			inspectWriter = io.MultiWriter(inspectWriter, &rawImageStream)
 		}
@@ -250,7 +252,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		bufWriter := wire.NewResponsesToOpenAICompletionsBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: opts.requestID})
 		var responseWriter io.Writer = bufWriter
 		if opts.provider.WireFormat() == WireResponses {
-			responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
+			responseWriter = &hostedmcp.ResponseFilterWriter{W: responseWriter}
 		}
 
 		if err := copyBufferedProxySSE(responseWriter, resp.Body); err != nil {
@@ -274,7 +276,7 @@ func (h *proxyHandler) writeProxyHTTPResponse(
 		bufWriter := wire.NewResponsesToOpenAIChatBuffer(wire.StreamOptions{OnEvent: usageCallback, Debug: h.cfg.debug.Load(), RequestID: opts.requestID})
 		var responseWriter io.Writer = bufWriter
 		if opts.provider.WireFormat() == WireResponses {
-			responseWriter = &hostedMCPResponseFilterWriter{w: responseWriter}
+			responseWriter = &hostedmcp.ResponseFilterWriter{W: responseWriter}
 		}
 
 		if err := copyBufferedProxySSE(responseWriter, resp.Body); err != nil {
@@ -351,7 +353,7 @@ func (opts *proxyHTTPResponse) translatedSSEUsage(h *proxyHandler) func([]byte) 
 		if sampleBuf != nil {
 			sampleBuf.Write(data)
 		}
-		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 			if h.pinConversationToCyberAccess(opts.conversationID, opts.accountType, opts.requiredPlan, opts.originIP, acc.ID, opts.requestID) {
 				opts.cyberPinned = true
 			}
@@ -469,7 +471,7 @@ func (h *proxyHandler) writeProxyHTTPBody(
 	var claudeAccum *RequestUsage
 
 	usageCallback := func(data []byte) {
-		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && isCyberPolicyError(data) {
+		if opts.provider.WireFormat() == WireResponses && !acc.codex.CyberAccess && errclass.IsCyberPolicy(data) {
 			if h.pinConversationToCyberAccess(opts.conversationID, opts.accountType, opts.requiredPlan, opts.originIP, acc.ID, opts.requestID) {
 				opts.cyberPinned = true
 				cancel()
@@ -557,7 +559,7 @@ func (h *proxyHandler) writeProxyHTTPBody(
 			writer = &sseInterceptWriter{w: writer, onEvent: suppressor.onEvent}
 		}
 		if opts.provider.WireFormat() == WireResponses {
-			writer = &hostedMCPResponseFilterWriter{w: writer}
+			writer = &hostedmcp.ResponseFilterWriter{W: writer}
 		}
 		// Inspect received bytes even if translation or filtering stops on a write error.
 		writer = &sseInterceptWriter{w: writer, callback: usageCallback}
@@ -624,7 +626,7 @@ func (h *proxyHandler) writeProxyHTTPBody(
 	}
 	if h.cfg.logBodies && len(respSample) > 0 {
 		if opts.provider.WireFormat() == WireResponses {
-			respSample = filterHostedMCPResponseSample(respSample, opts.isSSE)
+			respSample = hostedmcp.FilterResponseSample(respSample, opts.isSSE)
 		}
 		log.Printf("[%s] response body sample (%d bytes): %s", opts.requestID, len(respSample), safeText(respSample))
 	}

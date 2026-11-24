@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/wire"
 )
 
@@ -88,7 +89,7 @@ func prepareResponsesObject(obj map[string]any) {
 			},
 		}
 	}
-	stripHostedMCPFromResponsesRequest(obj)
+	hostedmcp.StripFromRequest(obj)
 }
 
 func prepareCodexSchemasInBody(obj map[string]any) {
