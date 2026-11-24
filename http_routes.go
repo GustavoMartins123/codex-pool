@@ -8,6 +8,7 @@ import (
 
 	"codex-pool-proxy/internal/httpapi"
 	"codex-pool-proxy/internal/ids"
+	"codex-pool-proxy/internal/requestlog"
 	"go.etcd.io/bbolt"
 )
 
@@ -15,7 +16,7 @@ type httpRouteRegister func(string, http.HandlerFunc)
 
 type proxyRoutes struct {
 	*proxyHandler
-	runtime proxyRuntime
+	runtime requestlog.Runtime
 }
 
 // subtree registers the bare path explicitly because ServeMux otherwise
@@ -56,7 +57,7 @@ func (h *proxyRoutes) newHTTPApp() *httpapi.App {
 func (h *proxyRoutes) logIncomingRequest(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.cfg != nil && h.cfg.debug.Load() {
-			h.runtime.logRequest(r.Context(), w.Header().Get(httpapi.RequestIDHeader), "incoming request",
+			h.runtime.LogRequest(r.Context(), w.Header().Get(httpapi.RequestIDHeader), "incoming request",
 				slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		}
 		next(w, r)

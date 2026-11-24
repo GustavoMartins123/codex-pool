@@ -18,6 +18,7 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 	"github.com/klauspost/compress/zstd"
@@ -1727,7 +1728,7 @@ func TestServeHTTPCodexAppsMCPDoesNotRequirePoolToken(t *testing.T) {
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/wham/apps", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	h.proxyRequest(rr, req, "test", systemProxyRuntime())
+	h.proxyRequest(rr, req, "test", requestlog.System())
 	if rr.Code == http.StatusUnauthorized {
 		t.Fatalf("proxyRequest returned 401 for codex_apps MCP: %s", rr.Body.String())
 	}

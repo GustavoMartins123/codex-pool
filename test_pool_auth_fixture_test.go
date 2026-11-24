@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/clientip"
+	"codex-pool-proxy/internal/requestlog"
 	"go.etcd.io/bbolt"
 )
 
 var testPoolCredentialMu sync.Mutex
 
 func testProxyHTTPApp(h *proxyHandler) http.Handler {
-	routes := &proxyRoutes{proxyHandler: h, runtime: systemProxyRuntime()}
+	routes := &proxyRoutes{proxyHandler: h, runtime: requestlog.System()}
 	return routes.newHTTPApp()
 }
 
@@ -55,7 +56,7 @@ func testPoolProxyRequest(t *testing.T, h *proxyHandler, w http.ResponseWriter, 
 		t.Fatal(err)
 	}
 	r = clientip.With(r, testResolvedClientIP(t, h.ipAccess.Snapshot(), r))
-	h.proxyRequest(w, r, requestID, systemProxyRuntime())
+	h.proxyRequest(w, r, requestID, requestlog.System())
 }
 
 func ensureTestPassport(t *testing.T, h *proxyHandler) error {

@@ -19,11 +19,12 @@ import (
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/wire"
 )
 
-func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqID string, rt proxyRuntime) {
-	start := rt.now()
+func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqID string, rt requestlog.Runtime) {
+	start := rt.Now()
 	authHeader := r.Header.Get("Authorization")
 
 	// codex_apps MCP and other noop paths must never require a pool token.
@@ -51,7 +52,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 		return
 	}
 	if userID != "" && h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "pool user request",
+		rt.LogRequest(r.Context(), reqID, "pool user request",
 			slog.String("credential_kind", credentialKind), slog.String("user_id", userID))
 	}
 
@@ -72,7 +73,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			return
 		}
 		if h.cfg.debug.Load() {
-			rt.logRequest(r.Context(), reqID, "provider passthrough request", slog.String("provider", string(providerType)))
+			rt.LogRequest(r.Context(), reqID, "provider passthrough request", slog.String("provider", string(providerType)))
 		}
 		h.proxyPassthrough(w, r, reqID, providerType, start, rt)
 		return
@@ -222,7 +223,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 				}
 				return model
 			}
-			spoolStarted := rt.now()
+			spoolStarted := rt.Now()
 			spooled, spoolErr := streamCodexResponsesRequest(r.Body, h.cfg.maxSpoolBodyBytes, rewriteModel)
 			if spoolErr != nil {
 				status := http.StatusBadRequest
@@ -272,7 +273,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			r.Header.Del("Content-Length")
 			r.Header.Set("Content-Type", "application/json")
 			log.Printf("[%s] disk-streaming Responses request: bytes=%d model=%s provider=%s transform_ms=%d",
-				reqID, spooled.Size, spooled.Model, accountType, rt.now().Sub(spoolStarted).Milliseconds())
+				reqID, spooled.Size, spooled.Model, accountType, rt.Now().Sub(spoolStarted).Milliseconds())
 			h.proxyRequestStreamed(w, r, reqID, userID, originID, provider, targetBase, rt)
 			return
 		}
@@ -756,7 +757,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	}
 
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "proxy request prepared",
+		rt.LogRequest(r.Context(), reqID, "proxy request prepared",
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.String("provider", string(accountType)),

@@ -180,7 +180,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 		trace := &RouteTrace{
 			RequestID:      reqID,
 			Transition:     h.transitionForTrace(userID, conversationID, accountType, w.Header()),
-			Timestamp:      rt.now().UTC(),
+			Timestamp:      rt.Now().UTC(),
 			Policy:         selection.Policy,
 			Selected:       RouteTarget{Provider: string(accountType), Model: requestedModel},
 			Score:          selection.Score,
@@ -219,7 +219,7 @@ func (h *proxyHandler) dispatchProxyHTTP(
 			respondPolicyError(w, policyBlocked)
 			return
 		}
-		attemptEnded := rt.now()
+		attemptEnded := rt.Now()
 		reqDuration := attemptEnded.Sub(start)
 		trace.DurationMs = float64(reqDuration.Milliseconds())
 		if resp != nil {
@@ -255,8 +255,8 @@ func (h *proxyHandler) dispatchProxyHTTP(
 			// Don't retry if client already disconnected — context is dead,
 			// every subsequent tryOnce will also fail instantly.
 			if ctx.Err() != nil {
-				rt.logRequest(ctx, reqID, "proxy request interrupted",
-					slog.String("account", acc.ID), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()),
+				rt.LogRequest(ctx, reqID, "proxy request interrupted",
+					slog.String("account", acc.ID), slog.Int64("duration_ms", rt.Now().Sub(start).Milliseconds()),
 					slog.String("error", ctx.Err().Error()))
 				break
 			}

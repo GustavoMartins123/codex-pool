@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/ctxstore"
 )
 
 const spoolTestSession = "123e4567-e89b-12d3-a456-426614174000"
@@ -69,7 +71,7 @@ func TestContextSpoolExpand(t *testing.T) {
 	s := contextTestService(t, "http://localhost", a, b)
 	ownerA, _, _ := contextIdentity(a)
 	ownerB, _, _ := contextIdentity(b)
-	token, err := s.store.pack("principal", spoolTestSession, []contextResult{
+	token, err := s.store.Pack("principal", spoolTestSession, []ctxstore.Result{
 		{Account: ownerA, Value: json.RawMessage(`{"encrypted_output":"native-a","images":[{"data":"aW1hZ2U=","mime_type":"image/png","detail":"high"}]}`)},
 		{Account: ownerB, Value: json.RawMessage(`{"encrypted_output":"native-b"}`)},
 	})
@@ -90,7 +92,7 @@ func TestContextSpoolExpand(t *testing.T) {
 			t.Fatalf("missing expanded or preserved content %q", want[:min(len(want), 80)])
 		}
 	}
-	if strings.Contains(body, contextEnvelopePrefix) || strings.Contains(body, "filtered") || !json.Valid([]byte(body)) {
+	if strings.Contains(body, ctxstore.EnvelopePrefix) || strings.Contains(body, "filtered") || !json.Valid([]byte(body)) {
 		t.Fatal("envelope or MCP item leaked, or invalid JSON")
 	}
 	if spooled.Size != int64(len(body)) || spooled.Size == oldSize {
@@ -135,7 +137,7 @@ func TestContextSpoolExpansionBudget(t *testing.T) {
 	a := contextTestAccount("a", "user-a")
 	s := contextTestService(t, "http://localhost", a)
 	owner, _, _ := contextIdentity(a)
-	token, err := s.store.pack("principal", spoolTestSession, []contextResult{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
+	token, err := s.store.Pack("principal", spoolTestSession, []ctxstore.Result{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,15 +156,15 @@ func TestContextSpoolEscapedPrefix(t *testing.T) {
 	a := contextTestAccount("a", "user-a")
 	s := contextTestService(t, "http://localhost", a)
 	owner, _, _ := contextIdentity(a)
-	token, err := s.store.pack("principal", spoolTestSession, []contextResult{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
+	token, err := s.store.Pack("principal", spoolTestSession, []ctxstore.Result{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var escaped strings.Builder
-	for _, char := range contextEnvelopePrefix {
+	for _, char := range ctxstore.EnvelopePrefix {
 		fmt.Fprintf(&escaped, `\u%04x`, char)
 	}
-	escaped.WriteString(strings.TrimPrefix(token, contextEnvelopePrefix))
+	escaped.WriteString(strings.TrimPrefix(token, ctxstore.EnvelopePrefix))
 	spooled := contextTestSpool(t, `{"input":[{"output":[{"encrypted_content":"`+escaped.String()+`","type":"encrypted_content"}],"type":"function_call_output"}],"client_metadata":{"session_id":"`+spoolTestSession+`"}}`)
 	if err := s.prepareSpool("principal", "", spooled); err != nil {
 		t.Fatal(err)
@@ -206,20 +208,20 @@ func TestContextSpoolFailureAtomic(t *testing.T) {
 	for _, scenario := range []string{"malformed", "wrong-session", "missing-session", "wrong-scope", "changed-source", "blocked-ip"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
-	t.Setenv("TMPDIR", dir)
-	t.Setenv("TMP", dir)
-	t.Setenv("TEMP", dir)
+			t.Setenv("TMPDIR", dir)
+			t.Setenv("TMP", dir)
+			t.Setenv("TEMP", dir)
 			a := contextTestAccount("a", "user-a")
 			s := contextTestService(t, "http://localhost", a)
 			owner, _, _ := contextIdentity(a)
-			token, err := s.store.pack("principal", spoolTestSession, []contextResult{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
+			token, err := s.store.Pack("principal", spoolTestSession, []ctxstore.Result{{Account: owner, Value: json.RawMessage(`{"encrypted_output":"native"}`)}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			badToken, session, scope := token, spoolTestSession, "principal"
 			switch scenario {
 			case "malformed":
-				badToken = contextEnvelopePrefix + "invalid"
+				badToken = ctxstore.EnvelopePrefix + "invalid"
 			case "wrong-session":
 				session = "223e4567-e89b-12d3-a456-426614174000"
 			case "missing-session":

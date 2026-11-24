@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/ctxstore"
 )
 
 func TestContextStreamedReplay(t *testing.T) {
@@ -36,7 +38,7 @@ func TestContextStreamedReplay(t *testing.T) {
 				if parts[0].(map[string]any)["encrypted_content"] != "native-history" {
 					t.Errorf("context envelope was not expanded: %v", parts)
 				}
-				stored, err := s.store.lookup("stream-user", session)
+				stored, err := s.store.Lookup("stream-user", session)
 				if err != nil || stored == nil || len(stored.Participants) != 2 {
 					t.Errorf("streamed dispatch not durably recorded before send: %v %v", stored, err)
 				}
@@ -53,7 +55,7 @@ func TestContextStreamedReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			envelope, err := s.store.pack("stream-user", session, []contextResult{{Account: identity, Value: json.RawMessage(`{"encrypted_output":"native-history"}`)}})
+			envelope, err := s.store.Pack("stream-user", session, []ctxstore.Result{{Account: identity, Value: json.RawMessage(`{"encrypted_output":"native-history"}`)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +105,7 @@ func TestContextStreamedReplay(t *testing.T) {
 			a.mu.Lock()
 			a.Disabled = false
 			a.mu.Unlock()
-			send(strings.Replace(body, envelope, contextEnvelopePrefix+"invalid", 1), http.StatusBadRequest, 1)
+			send(strings.Replace(body, envelope, ctxstore.EnvelopePrefix+"invalid", 1), http.StatusBadRequest, 1)
 			send(body, http.StatusOK, 2)
 		})
 	}

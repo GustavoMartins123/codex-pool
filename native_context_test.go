@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/ctxstore"
 	"go.etcd.io/bbolt"
 )
 
@@ -31,7 +32,7 @@ func contextTestService(t *testing.T, baseURL string, accounts ...*Account) *nat
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	store, err := newNativeContextStore(db)
+	store, err := ctxstore.New(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestContextIngestMetadata(t *testing.T) {
 	if err := s.recordDispatch("principal", obj, a, ""); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := s.store.lookup("principal", session)
+	stored, err := s.store.Lookup("principal", session)
 	if err != nil || stored == nil {
 		t.Fatalf("non-Lite history dispatch was not recorded: %v", err)
 	}

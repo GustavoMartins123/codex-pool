@@ -22,16 +22,17 @@ import (
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/requestjson"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
 	"codex-pool-proxy/internal/wire"
 )
 
-func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider ProviderDriver, targetBase *url.URL, rt proxyRuntime) {
+func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Request, reqID, userID, originID string, provider ProviderDriver, targetBase *url.URL, rt requestlog.Runtime) {
 	if policyAdmissionFromRequest(r).hasTokenBudget() {
 		respondPolicyError(w, unboundedPolicyRequest())
 		return
 	}
-	start := rt.now()
+	start := rt.Now()
 	accountType := provider.Type()
 	admission := policyAdmissionFromRequest(r)
 	if !h.enforcePolicy(w, admission, func() error { return admission.CheckProvider(accountType) }) {
@@ -565,13 +566,13 @@ func (h *proxyHandler) proxyRequestStreamed(w http.ResponseWriter, r *http.Reque
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), acc.ID)
 
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "streamed proxy request completed",
+		rt.LogRequest(r.Context(), reqID, "streamed proxy request completed",
 			slog.Int("status", resp.StatusCode), slog.String("account", acc.ID),
-			slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
+			slog.Int64("duration_ms", rt.Now().Sub(start).Milliseconds()))
 	}
 }
 
-func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider ProviderDriver, targetBase *url.URL, start time.Time, rt proxyRuntime) {
+func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, provider ProviderDriver, targetBase *url.URL, start time.Time, rt requestlog.Runtime) {
 	timeout := clientOrDefaultTimeout(r, h.cfg.requestTimeout, h.cfg.streamTimeout, nil)
 
 	ctx := r.Context()
@@ -710,7 +711,7 @@ func (h *proxyHandler) proxyPassthroughStreamed(w http.ResponseWriter, r *http.R
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), "passthrough")
 
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "streamed proxy passthrough completed",
-			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
+		rt.LogRequest(r.Context(), reqID, "streamed proxy passthrough completed",
+			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.Now().Sub(start).Milliseconds()))
 	}
 }

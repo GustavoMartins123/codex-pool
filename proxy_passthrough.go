@@ -18,12 +18,13 @@ import (
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/wire"
 )
 
 // proxyPassthrough handles requests where the user provides their own credentials.
 // The request is proxied directly to the upstream without using pool accounts.
-func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, start time.Time, rt proxyRuntime) {
+func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, reqID string, providerType AccountType, start time.Time, rt requestlog.Runtime) {
 	h.metrics.incPassport("passthrough_requests", string(providerType))
 	provider := h.registry.ForType(providerType)
 	if provider == nil {
@@ -343,7 +344,7 @@ func (h *proxyHandler) proxyPassthrough(w http.ResponseWriter, r *http.Request, 
 	h.metrics.inc(strconv.Itoa(resp.StatusCode), "passthrough")
 
 	if h.cfg.debug.Load() {
-		rt.logRequest(r.Context(), reqID, "proxy passthrough completed",
-			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.now().Sub(start).Milliseconds()))
+		rt.LogRequest(r.Context(), reqID, "proxy passthrough completed",
+			slog.Int("status", resp.StatusCode), slog.Int64("duration_ms", rt.Now().Sub(start).Milliseconds()))
 	}
 }
