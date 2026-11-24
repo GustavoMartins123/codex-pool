@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"codex-pool-proxy/internal/ctxstore"
 )
 
 // A JSON escape can use six bytes per token character. The envelope's base64
 // encoding uses another 4/3, plus a small allowance for authentication overhead.
-const contextSpoolTokenLimit = contextEnvelopeLimit*8 + 1024
+const contextSpoolTokenLimit = ctxstore.EnvelopeLimit*8 + 1024
 
 type contextSpoolKey struct{}
 
@@ -148,11 +150,11 @@ func (r *contextSpoolRewrite) part(lex *jsonLex, out io.Writer) error {
 				}
 				return probe.copyValue(io.Discard)
 			}
-			capture := &jsonStringCapture{limit: 6*len(contextEnvelopePrefix) + 2}
+			capture := &jsonStringCapture{limit: 6*len(ctxstore.EnvelopePrefix) + 2}
 			if _, err := probe.copyString(capture, 0); err != nil {
 				return err
 			}
-			own = capture.hasPrefix(contextEnvelopePrefix)
+			own = capture.hasPrefix(ctxstore.EnvelopePrefix)
 			return nil
 		})
 		if err != nil {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/ctxstore"
 	"codex-pool-proxy/internal/fsperm"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
@@ -439,7 +440,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		passport.mu.RUnlock()
 	}
 	if store != nil {
-		contextStore, err := newNativeContextStore(store.db)
+		contextStore, err := ctxstore.New(store.db)
 		if err != nil {
 			return nil, fmt.Errorf("initialize native context store: %w", err)
 		}

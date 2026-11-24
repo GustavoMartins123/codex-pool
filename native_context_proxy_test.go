@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/ctxstore"
 )
 
 const contextProxySession = "123e4567-e89b-12d3-a456-426614174000"
@@ -62,7 +64,7 @@ func contextProxyCall(t *testing.T, proxy *httptest.Server, method, path, princi
 
 func assertContextParticipant(t *testing.T, h *proxyHandler, alias string) {
 	t.Helper()
-	stored, err := h.nativeContext.store.lookup("context-user", contextProxySession)
+	stored, err := h.nativeContext.store.Lookup("context-user", contextProxySession)
 	if err != nil || stored == nil {
 		t.Errorf("dispatch preceded durable context session: %v", err)
 		return
@@ -147,7 +149,7 @@ func TestNativeContextHTTPRoundTrip(t *testing.T) {
 			t.Fatalf("native request %d %s", status, body)
 		}
 		var envelope map[string]string
-		if json.Unmarshal(body, &envelope) != nil || !strings.HasPrefix(envelope["encrypted_output"], contextEnvelopePrefix) {
+		if json.Unmarshal(body, &envelope) != nil || !strings.HasPrefix(envelope["encrypted_output"], ctxstore.EnvelopePrefix) {
 			t.Fatalf("missing envelope %s", body)
 		}
 		status, body = contextProxyCall(t, proxy, http.MethodPost, "/v1/responses", "context-user", contextProxyInference(envelope["encrypted_output"]), inferenceHeaders)
@@ -157,7 +159,7 @@ func TestNativeContextHTTPRoundTrip(t *testing.T) {
 		mu.Lock()
 		got := string(inferenceBodies[len(inferenceBodies)-1])
 		mu.Unlock()
-		if strings.Contains(got, contextEnvelopePrefix) || !strings.Contains(got, "native-a") || !strings.Contains(got, contextProxySession) {
+		if strings.Contains(got, ctxstore.EnvelopePrefix) || !strings.Contains(got, "native-a") || !strings.Contains(got, contextProxySession) {
 			t.Fatalf("replay or metadata lost: %s", got)
 		}
 		if strings.Contains(path, "/history/") && !strings.Contains(got, "native-b") {
@@ -209,7 +211,7 @@ func TestNativeContextPassthrough(t *testing.T) {
 			t.Fatalf("passthrough status=%d body=%s", status, got)
 		}
 	}
-	stored, err := h.nativeContext.store.lookup("supplied-user", contextProxySession)
+	stored, err := h.nativeContext.store.Lookup("supplied-user", contextProxySession)
 	if err != nil || stored != nil {
 		t.Fatalf("passthrough acquired pooled ownership: %v %v", stored, err)
 	}
@@ -310,7 +312,7 @@ func TestNativeContextHTTPRefresh(t *testing.T) {
 				mu.Unlock()
 				assertContextParticipant(t, h, "a")
 				data, _ := io.ReadAll(r.Body)
-				if !bytes.Contains(data, []byte("native-a")) || bytes.Contains(data, []byte(contextEnvelopePrefix)) {
+				if !bytes.Contains(data, []byte("native-a")) || bytes.Contains(data, []byte(ctxstore.EnvelopePrefix)) {
 					t.Errorf("invalid retry body %s", data)
 				}
 				if count == 1 {

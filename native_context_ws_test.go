@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/ctxstore"
 	"codex-pool-proxy/internal/httpwire"
 	"github.com/coder/websocket"
 )
@@ -68,7 +69,7 @@ func TestNativeContextWSSwap(t *testing.T) {
 						assertContextParticipant(t, h, alias)
 					}
 					if isA && count == 1 {
-						if !bytes.Contains(frame, []byte("native-a")) || bytes.Contains(frame, []byte(contextEnvelopePrefix)) {
+						if !bytes.Contains(frame, []byte("native-a")) || bytes.Contains(frame, []byte(ctxstore.EnvelopePrefix)) {
 							t.Errorf("unexpanded upstream frame %s", frame)
 						}
 						if revoke {
@@ -139,7 +140,7 @@ func TestNativeContextWSSwap(t *testing.T) {
 			if !bytes.Contains(result, []byte("response.completed")) {
 				t.Fatalf("completion %s", result)
 			}
-			stored, err := h.nativeContext.store.lookup("context-user", contextProxySession)
+			stored, err := h.nativeContext.store.Lookup("context-user", contextProxySession)
 			if err != nil || stored == nil {
 				t.Fatalf("stored session=%v err=%v", stored, err)
 			}
@@ -154,7 +155,7 @@ func TestNativeContextWSSwap(t *testing.T) {
 			if len(seenA) != 1 || len(seenB) != 1 || len(stored.Participants) != 2 {
 				t.Fatalf("swap dispatches a=%d b=%d participants=%v", len(seenA), len(seenB), stored.Participants)
 			}
-			if !bytes.Contains(seenB[0], []byte("native-a")) || bytes.Contains(seenB[0], []byte(contextEnvelopePrefix)) || bytes.Contains(seenB[0], []byte("previous_response_id")) {
+			if !bytes.Contains(seenB[0], []byte("native-a")) || bytes.Contains(seenB[0], []byte(ctxstore.EnvelopePrefix)) || bytes.Contains(seenB[0], []byte("previous_response_id")) {
 				t.Fatalf("invalid swapped wire %s", seenB[0])
 			}
 		})

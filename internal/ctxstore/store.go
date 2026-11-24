@@ -1,4 +1,5 @@
-package main
+// Package ctxstore persists native context sessions and envelopes.
+package ctxstore
 
 import (
 	"crypto/aes"
@@ -20,38 +21,38 @@ const (
 	bucketContextPrincipals = "native_context_principals"
 	contextKeyName          = "envelope_key"
 	contextKeySize          = 32
-	contextParticipantLimit = 32
-	contextEnvelopeLimit    = 64 << 20
-	contextEnvelopePrefix   = "codex-pool-context-v1:"
+	ParticipantLimit        = 32
+	EnvelopeLimit           = 64 << 20
+	EnvelopePrefix          = "codex-pool-context-v1:"
 )
 
-type contextAccount struct {
+type Account struct {
 	Alias    string `json:"alias"`
 	Identity string `json:"identity"`
 }
 
-type contextSession struct {
-	Owner        contextAccount   `json:"owner"`
-	Participants []contextAccount `json:"participants"`
+type Session struct {
+	Owner        Account   `json:"owner"`
+	Participants []Account `json:"participants"`
 }
 
-type contextResult struct {
-	Account contextAccount  `json:"account"`
+type Result struct {
+	Account Account         `json:"account"`
 	Value   json.RawMessage `json:"value"`
 }
 
 type savedContextSession struct {
-	contextSession
+	Session
 	// Remember renamed aliases even when their physical identity was deduplicated.
 	Aliases map[string]string `json:"aliases"`
 }
 
-type nativeContextStore struct {
+type Store struct {
 	db   *bbolt.DB
 	aead cipher.AEAD
 }
 
-func newNativeContextStore(db *bbolt.DB) (*nativeContextStore, error) {
+func New(db *bbolt.DB) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("native context store requires a database")
 	}
@@ -96,7 +97,7 @@ func newNativeContextStore(db *bbolt.DB) (*nativeContextStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &nativeContextStore{db: db, aead: aead}, nil
+	return &Store{db: db, aead: aead}, nil
 }
 
 func contextTuple(scope, session string) ([]byte, error) {
@@ -107,7 +108,7 @@ func contextTuple(scope, session string) ([]byte, error) {
 	return json.Marshal([2]string{scope, session})
 }
 
-func (s *nativeContextStore) claim(scope, session string) error {
+func (s *Store) Claim(scope, session string) error {
 	if scope == "" || session == "" || !utf8.ValidString(scope) || !utf8.ValidString(session) {
 		return errors.New("invalid context principal or session")
 	}
@@ -125,18 +126,18 @@ func (s *nativeContextStore) claim(scope, session string) error {
 	})
 }
 
-func (s *nativeContextStore) lookup(scope, session string) (*contextSession, error) {
+func (s *Store) Lookup(scope, session string) (*Session, error) {
 	key, err := contextTuple(scope, session)
 	if err != nil {
 		return nil, err
 	}
-	var result *contextSession
+	var result *Session
 	err = s.db.View(func(tx *bbolt.Tx) error {
 		data := tx.Bucket([]byte(bucketContextSessions)).Get(key)
 		if data == nil {
 			return nil
 		}
-		result = new(contextSession)
+		result = new(Session)
 		return json.Unmarshal(data, result)
 	})
 	if err != nil {
@@ -145,7 +146,7 @@ func (s *nativeContextStore) lookup(scope, session string) (*contextSession, err
 	return result, nil
 }
 
-func (s *nativeContextStore) record(scope, session string, account contextAccount) (*contextSession, error) {
+func (s *Store) Record(scope, session string, account Account) (*Session, error) {
 	key, err := contextTuple(scope, session)
 	if err != nil {
 		return nil, err
@@ -172,7 +173,7 @@ func (s *nativeContextStore) record(scope, session string, account contextAccoun
 			}
 		}
 		if !known {
-			if len(saved.Participants) >= contextParticipantLimit {
+			if len(saved.Participants) >= ParticipantLimit {
 				return errors.New("native context participant limit exceeded")
 			}
 			saved.Participants = append(saved.Participants, account)
@@ -191,15 +192,15 @@ func (s *nativeContextStore) record(scope, session string, account contextAccoun
 	if err != nil {
 		return nil, err
 	}
-	return &saved.contextSession, nil
+	return &saved.Session, nil
 }
 
-func (s *nativeContextStore) pack(scope, session string, sources []contextResult) (string, error) {
+func (s *Store) Pack(scope, session string, sources []Result) (string, error) {
 	tuple, err := contextTuple(scope, session)
 	if err != nil {
 		return "", err
 	}
-	remaining := contextEnvelopeLimit
+	remaining := EnvelopeLimit
 	for _, source := range sources {
 		if len(source.Value) > remaining {
 			return "", errors.New("native context envelope limit exceeded")
@@ -210,7 +211,7 @@ func (s *nativeContextStore) pack(scope, session string, sources []contextResult
 	if err != nil {
 		return "", err
 	}
-	if len(plaintext) > contextEnvelopeLimit {
+	if len(plaintext) > EnvelopeLimit {
 		return "", errors.New("native context envelope limit exceeded")
 	}
 
@@ -218,21 +219,21 @@ func (s *nativeContextStore) pack(scope, session string, sources []contextResult
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	aad := append([]byte(contextEnvelopePrefix), tuple...)
+	aad := append([]byte(EnvelopePrefix), tuple...)
 	payload := s.aead.Seal(nonce, nonce, plaintext, aad)
-	return contextEnvelopePrefix + base64.RawURLEncoding.EncodeToString(payload), nil
+	return EnvelopePrefix + base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
-func (s *nativeContextStore) unpack(scope, session, encoded string) ([]contextResult, error) {
+func (s *Store) Unpack(scope, session, encoded string) ([]Result, error) {
 	tuple, err := contextTuple(scope, session)
 	if err != nil {
 		return nil, err
 	}
-	if !strings.HasPrefix(encoded, contextEnvelopePrefix) {
+	if !strings.HasPrefix(encoded, EnvelopePrefix) {
 		return nil, errors.New("invalid native context envelope version")
 	}
-	body := strings.TrimPrefix(encoded, contextEnvelopePrefix)
-	maxPayload := contextEnvelopeLimit + s.aead.NonceSize() + s.aead.Overhead()
+	body := strings.TrimPrefix(encoded, EnvelopePrefix)
+	maxPayload := EnvelopeLimit + s.aead.NonceSize() + s.aead.Overhead()
 	// Bound the encoded input before base64 allocates a decoded buffer.
 	if len(body) > base64.RawURLEncoding.EncodedLen(maxPayload) {
 		return nil, errors.New("native context envelope limit exceeded")
@@ -247,13 +248,13 @@ func (s *nativeContextStore) unpack(scope, session, encoded string) ([]contextRe
 	if len(payload) < s.aead.NonceSize()+s.aead.Overhead() {
 		return nil, errors.New("native context envelope is truncated")
 	}
-	aad := append([]byte(contextEnvelopePrefix), tuple...)
+	aad := append([]byte(EnvelopePrefix), tuple...)
 	nonce := payload[:s.aead.NonceSize()]
 	plaintext, err := s.aead.Open(nil, nonce, payload[s.aead.NonceSize():], aad)
 	if err != nil {
 		return nil, fmt.Errorf("authenticate native context envelope: %w", err)
 	}
-	var sources []contextResult
+	var sources []Result
 	if err := json.Unmarshal(plaintext, &sources); err != nil {
 		return nil, fmt.Errorf("decode native context results: %w", err)
 	}

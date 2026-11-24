@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"codex-pool-proxy/internal/ctxstore"
 	"codex-pool-proxy/internal/httpwire"
 
 	"golang.org/x/sync/errgroup"
@@ -40,7 +41,7 @@ type nativeContextProvider interface {
 }
 
 type nativeContext struct {
-	store     *nativeContextStore
+	store     *ctxstore.Store
 	pool      *poolState
 	provider  nativeContextProvider
 	transport http.RoundTripper
@@ -130,7 +131,7 @@ func contextScope(userID string) string {
 }
 
 // A workspace ID alone does not distinguish two users logged into the same workspace.
-func contextIdentity(acc *Account) (contextAccount, *Account, error) {
+func contextIdentity(acc *Account) (ctxstore.Account, *Account, error) {
 	acc.mu.Lock()
 	snapshot := &Account{Type: acc.Type, ID: acc.ID, AccessToken: acc.AccessToken, IDToken: acc.IDToken, codex: codexAccountState{AccountID: acc.codex.AccountID, IDTokenChatGPTAccountID: acc.codex.IDTokenChatGPTAccountID, Cookies: make(map[string]string, len(acc.codex.Cookies))}, Dead: acc.Dead, Disabled: acc.Disabled, AllowedSourceIPs: append([]string(nil), acc.AllowedSourceIPs...)}
 	for key, value := range acc.codex.Cookies {
@@ -165,14 +166,14 @@ func contextIdentity(acc *Account) (contextAccount, *Account, error) {
 		}
 	}
 	if snapshot.Type != AccountTypeCodex || accountID == "" || user == "" || snapshot.AccessToken == "" || snapshot.Dead || snapshot.Disabled {
-		return contextAccount{}, nil, errContextUnavailable
+		return ctxstore.Account{}, nil, errContextUnavailable
 	}
 	identity, _ := json.Marshal([]string{accountID, user})
 	digest := sha256.Sum256(identity)
-	return contextAccount{Alias: snapshot.ID, Identity: hex.EncodeToString(digest[:])}, snapshot, nil
+	return ctxstore.Account{Alias: snapshot.ID, Identity: hex.EncodeToString(digest[:])}, snapshot, nil
 }
 
-func (s *nativeContext) credentials(owner contextAccount, clientIP string) (*Account, *Account, error) {
+func (s *nativeContext) credentials(owner ctxstore.Account, clientIP string) (*Account, *Account, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil, errContextUnavailable
 	}
@@ -203,10 +204,10 @@ func (s *nativeContext) recordDispatch(scope string, obj map[string]any, acc *Ac
 		}
 		return nil
 	}
-	if err := s.store.claim(scope, session); err != nil {
+	if err := s.store.Claim(scope, session); err != nil {
 		return errContextUnavailable
 	}
-	stored, err := s.store.lookup(scope, session)
+	stored, err := s.store.Lookup(scope, session)
 	if err != nil {
 		return errContextUnavailable
 	}
@@ -220,21 +221,21 @@ func (s *nativeContext) recordDispatch(scope string, obj map[string]any, acc *Ac
 	if _, _, err := s.credentials(identity, clientIP); err != nil {
 		return err
 	}
-	_, err = s.store.record(scope, session, identity)
+	_, err = s.store.Record(scope, session, identity)
 	if err != nil {
 		return errContextUnavailable
 	}
 	return nil
 }
 
-func (s *nativeContext) owner(scope, session, clientIP string) (*contextSession, error) {
+func (s *nativeContext) owner(scope, session, clientIP string) (*ctxstore.Session, error) {
 	if s == nil || s.store == nil || scope == "" {
 		return nil, errContextUnavailable
 	}
-	if err := s.store.claim(scope, session); err != nil {
+	if err := s.store.Claim(scope, session); err != nil {
 		return nil, errContextUnavailable
 	}
-	stored, err := s.store.lookup(scope, session)
+	stored, err := s.store.Lookup(scope, session)
 	if err != nil {
 		return nil, errContextUnavailable
 	}
@@ -246,7 +247,7 @@ func (s *nativeContext) owner(scope, session, clientIP string) (*contextSession,
 		if err != nil || !accountAllowsClientIPLocked(snapshot, clientIP) {
 			continue
 		}
-		stored, err = s.store.record(scope, session, owner)
+		stored, err = s.store.Record(scope, session, owner)
 		if err != nil {
 			return nil, errContextUnavailable
 		}
@@ -289,7 +290,7 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 	if err != nil {
 		return nil, err
 	}
-	owners := []contextAccount{stored.Owner}
+	owners := []ctxstore.Account{stored.Owner}
 	path = nativeContextPath(path)
 	if strings.HasPrefix(path, "/alpha/history/") {
 		owners = stored.Participants
@@ -298,7 +299,7 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 	defer cancel()
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(contextConcurrency)
-	results := make([]contextResult, len(owners))
+	results := make([]ctxstore.Result, len(owners))
 	for i, owner := range owners {
 		group.Go(func() error {
 			value, err := s.send(ctx, owner, clientIP, path, headers, body)
@@ -309,7 +310,7 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 				}
 				return errContextUnavailable
 			}
-			results[i] = contextResult{Account: owner, Value: value}
+			results[i] = ctxstore.Result{Account: owner, Value: value}
 			return nil
 		})
 	}
@@ -328,14 +329,14 @@ func (s *nativeContext) relay(ctx context.Context, scope, clientIP, path string,
 			return nil, errContextUnavailable
 		}
 	}
-	encoded, err := s.store.pack(scope, session, results)
+	encoded, err := s.store.Pack(scope, session, results)
 	if err != nil {
 		return nil, errContextUnavailable
 	}
 	return json.Marshal(map[string]string{"encrypted_output": encoded})
 }
 
-func (s *nativeContext) send(ctx context.Context, owner contextAccount, clientIP, path string, headers http.Header, body []byte) (json.RawMessage, error) {
+func (s *nativeContext) send(ctx context.Context, owner ctxstore.Account, clientIP, path string, headers http.Header, body []byte) (json.RawMessage, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		acc, snapshot, err := s.credentials(owner, clientIP)
 		if err != nil {
@@ -407,15 +408,15 @@ func (s *nativeContext) expand(scope, clientIP string, obj map[string]any) (bool
 		for _, rawPart := range output {
 			part, _ := rawPart.(map[string]any)
 			token, _ := part["encrypted_content"].(string)
-			if part["type"] != "encrypted_content" || !strings.HasPrefix(token, contextEnvelopePrefix) {
+			if part["type"] != "encrypted_content" || !strings.HasPrefix(token, ctxstore.EnvelopePrefix) {
 				parts = append(parts, rawPart)
 				continue
 			}
 			if s == nil || s.store == nil || contextSessionID(obj) == "" {
 				return false, errContextResult
 			}
-			results, err := s.store.unpack(scope, contextSessionID(obj), token)
-			if err != nil || len(results) == 0 || len(results) > contextParticipantLimit {
+			results, err := s.store.Unpack(scope, contextSessionID(obj), token)
+			if err != nil || len(results) == 0 || len(results) > ctxstore.ParticipantLimit {
 				return false, errContextResult
 			}
 			for _, result := range results {
