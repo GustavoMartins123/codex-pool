@@ -14,7 +14,7 @@ const make = (overrides: Partial<AccountStats>) => ({ ...base, ...overrides }) a
 const ids = (accounts: AccountStats[]) => accounts.map((account) => account.id);
 
 const accounts = [
-  make({ id: "b", type: "claude", plan_type: "pro", api_cost_estimate: 14 }),
+  make({ id: "b", type: "claude", plan_type: "pro", subscription_cost_monthly: 20, api_cost_estimate: 14 }),
   make({ id: "c", type: "antigravity", plan_type: "free-tier", api_cost_estimate: 35 }),
   make({ id: "a", type: "antigravity", plan_type: "g1-pro-tier", api_cost_estimate: 0.4 }),
   make({ id: "d", type: "aistudio", plan_type: "", api_cost_estimate: 0 }),
@@ -29,9 +29,9 @@ it("sorts by provider, breaking ties by account id", () => {
   expect(ids(sortAccounts(accounts, { key: "provider", direction: "desc" }))).toEqual(["b", "a", "c", "d"]);
 });
 
-it("sorts by plan and keeps accounts without a plan last in both directions", () => {
-  expect(ids(sortAccounts(accounts, { key: "plan", direction: "asc" }))).toEqual(["c", "a", "b", "d"]);
-  expect(ids(sortAccounts(accounts, { key: "plan", direction: "desc" }))).toEqual(["b", "a", "c", "d"]);
+it("sorts by plan price, most expensive first, and keeps accounts without a plan last in both directions", () => {
+  expect(ids(sortAccounts(accounts, { key: "plan", direction: "asc" }))).toEqual(["b", "a", "c", "d"]);
+  expect(ids(sortAccounts(accounts, { key: "plan", direction: "desc" }))).toEqual(["c", "a", "b", "d"]);
 });
 
 it("sorts by account id and by API value numerically", () => {
