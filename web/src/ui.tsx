@@ -305,6 +305,16 @@ export function providerDisplay(provider: string) {
   return { label: label || "Unknown", color: "#9c967f", dither: "grey" as DitherColor, glyph: "·" };
 }
 
+const ACCOUNT_EMAIL_LABELS: Record<string, string> = {
+  codex: "ChatGPT account",
+  antigravity: "Google account",
+};
+
+// accountEmailLabel names the sign-in identity behind an account's email.
+export function accountEmailLabel(provider: string) {
+  return ACCOUNT_EMAIL_LABELS[provider] ?? "Account email";
+}
+
 
 export function EmptyChart({ label }: { label: string }) {
   return <div className="empty-chart"><span>{label}</span><i aria-hidden="true" /></div>;

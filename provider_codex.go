@@ -108,6 +108,7 @@ func (p *CodexProvider) LoadAccount(name, path string, data []byte) (*Account, e
 		acc.codex.AccountID = acc.codex.IDTokenChatGPTAccountID
 	}
 	acc.PlanType = claims.PlanType
+	acc.Email = strings.TrimSpace(claims.Email)
 	if aj.PlanType != "" {
 		acc.PlanType = account.NormalizeCodexPlanType(aj.PlanType)
 	}
@@ -217,6 +218,9 @@ func (p *CodexProvider) RefreshToken(ctx context.Context, acc *Account, transpor
 		}
 		if claims.PlanType != "" {
 			acc.PlanType = claims.PlanType
+		}
+		if email := strings.TrimSpace(claims.Email); email != "" {
+			acc.Email = email
 		}
 	}
 	acc.LastRefresh = time.Now().UTC()
