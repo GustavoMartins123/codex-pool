@@ -323,8 +323,7 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	claims := parseCodexClaims(tokens.IDToken)
-	accountID, err := h.saveContribution(r, AccountTypeCodex, claims.ChatGPTAccountID, map[string]any{"tokens": map[string]any{"id_token": tokens.IDToken, "access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "account_id": claims.ChatGPTAccountID}, "added_at": time.Now().UTC().Format(time.RFC3339Nano)})
+	accountID, err := h.saveCodexContribution(r, tokens)
 	if err != nil {
 		respondPolicyError(w, err)
 		return
@@ -339,6 +338,42 @@ func (h *proxyHandler) handleCodexExchange(w http.ResponseWriter, r *http.Reques
 		"success":    true,
 		"account_id": accountID,
 	})
+}
+
+// saveCodexContribution registers a Codex login as one workspace member.
+func (h *proxyHandler) saveCodexContribution(r *http.Request, tokens *CodexTokenResponse) (string, error) {
+	claims := parseCodexClaims(tokens.IDToken)
+	return h.saveContributionIdentity(r, AccountTypeCodex, h.codexContributionIdentity(claims), map[string]any{"tokens": map[string]any{"id_token": tokens.IDToken, "access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "account_id": claims.ChatGPTAccountID}, "added_at": time.Now().UTC().Format(time.RFC3339Nano)})
+}
+
+// codexContributionIdentity scopes a Codex login to its user within the
+// workspace. Accounts registered before that carry only the shared workspace
+// ID; one of them is a different member's account, not a duplicate, when its
+// own token names another user.
+func (h *proxyHandler) codexContributionIdentity(claims codexJWTClaims) contributionIdentity {
+	ident := contributionIdentity{Value: claims.contributionIdentity(), Legacy: claims.ChatGPTAccountID}
+	user := claims.userKey()
+	if user == "" || claims.ChatGPTAccountID == "" || h.pool == nil {
+		return ident
+	}
+	for _, acc := range h.pool.allAccounts() {
+		if acc.Type != AccountTypeCodex {
+			continue
+		}
+		acc.mu.Lock()
+		existing := parseCodexClaims(acc.IDToken)
+		acc.mu.Unlock()
+		if existing.ChatGPTAccountID != claims.ChatGPTAccountID {
+			continue
+		}
+		if other := existing.userKey(); other != "" && other != user {
+			if ident.Distinct == nil {
+				ident.Distinct = make(map[string]bool)
+			}
+			ident.Distinct[acc.ID] = true
+		}
+	}
+	return ident
 }
 
 // replaceCodexAccountCredentials overwrites an existing codex account's auth
