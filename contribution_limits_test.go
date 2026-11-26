@@ -60,12 +60,12 @@ func TestContributionAccountLimitAndExpiredPendingRemainClosed(t *testing.T) {
 	attachContributionFixture(t, h, "alice")
 	for i := range contributionAccountsPerPrincipal {
 		identity := fmt.Sprintf("key-%d", i)
-		if _, err := h.persistContribution("alice", AccountTypeKimi, identity, func(string) error { return errors.New("interrupted") }); err == nil {
+		if _, err := h.persistContribution("alice", AccountTypeKimi, contributionIdentity{Value: identity}, func(string) error { return errors.New("interrupted") }); err == nil {
 			t.Fatal("failure swallowed")
 		}
 	}
 	called := false
-	if _, err := h.persistContribution("alice", AccountTypeKimi, "overflow", func(string) error { called = true; return nil }); err == nil || called {
+	if _, err := h.persistContribution("alice", AccountTypeKimi, contributionIdentity{Value: "overflow"}, func(string) error { called = true; return nil }); err == nil || called {
 		t.Fatal("account limit bypassed")
 	}
 	if err := h.passport.db.Update(func(tx *bbolt.Tx) error {
@@ -82,10 +82,10 @@ func TestContributionAccountLimitAndExpiredPendingRemainClosed(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.persistContribution("alice", AccountTypeKimi, "key-0", func(string) error { called = true; return nil }); err == nil || called {
+	if _, err := h.persistContribution("alice", AccountTypeKimi, contributionIdentity{Value: "key-0"}, func(string) error { called = true; return nil }); err == nil || called {
 		t.Fatal("expired pending resumed")
 	}
-	if _, err := h.persistContribution("alice", AccountTypeKimi, "new", func(path string) error { return h.cfg.vault.writeAccountFile(path, []byte(`{"api_key":"new"}`)) }); err != nil {
+	if _, err := h.persistContribution("alice", AccountTypeKimi, contributionIdentity{Value: "new"}, func(path string) error { return h.cfg.vault.writeAccountFile(path, []byte(`{"api_key":"new"}`)) }); err != nil {
 		t.Fatal("expired pending blocked capacity", err)
 	}
 }

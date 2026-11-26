@@ -34,7 +34,22 @@ func (p *PassportStore) contributionActorAllowed(actor string) bool {
 	return pr != nil && pr.Status == PrincipalActive && (pr.ExpiresAt == nil || pr.ExpiresAt.After(time.Now())) && (pr.Kind == PrincipalOperator || pr.Kind == PrincipalMember && pr.CanContribute)
 }
 
-func (h *proxyHandler) persistContribution(actor string, provider AccountType, identity string, write func(string) error) (string, error) {
+// contributionIdentity is the provider account a contribution registers.
+// Legacy is the identity an earlier scheme recorded for the same account; a
+// resource registered under it still counts as this account unless its ID is
+// in Distinct, which callers fill with resources proven to be someone else.
+type contributionIdentity struct {
+	Value    string
+	Legacy   string
+	Distinct map[string]bool
+}
+
+func contributionFingerprint(provider AccountType, identity string) string {
+	hash := sha256.Sum256([]byte(string(provider) + "|" + identity))
+	return hex.EncodeToString(hash[:])
+}
+
+func (h *proxyHandler) persistContribution(actor string, provider AccountType, ident contributionIdentity, write func(string) error) (string, error) {
 	if h.passport == nil || h.cfg == nil || !h.passport.contributionActorAllowed(actor) {
 		return "", errors.New("account contribution is not authorized")
 	}
@@ -45,11 +60,14 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(identity) == "" {
+	if strings.TrimSpace(ident.Value) == "" {
 		return "", errors.New("provider account identity is required")
 	}
-	hash := sha256.Sum256([]byte(string(provider) + "|" + identity))
-	fingerprint := hex.EncodeToString(hash[:])
+	fingerprint := contributionFingerprint(provider, ident.Value)
+	legacyFingerprint := ""
+	if strings.TrimSpace(ident.Legacy) != "" && ident.Legacy != ident.Value {
+		legacyFingerprint = contributionFingerprint(provider, ident.Legacy)
+	}
 	id := dir + "_" + fingerprint[:24]
 	ref := filepath.Join(dir, id+".json")
 	path := filepath.Join(h.cfg.poolDir, ref)
@@ -74,7 +92,7 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 			if existing.OwnerID == actor && existing.WithdrawnAt == nil && (existing.Status == "active" || existing.Status == "pending" && existing.PendingExpiresAt != nil && existing.PendingExpiresAt.After(time.Now())) {
 				count++
 			}
-			if existing.Provider == provider && existing.Identity == fingerprint && string(k) != key {
+			if existing.Provider == provider && string(k) != key && (existing.Identity == fingerprint || legacyFingerprint != "" && existing.Identity == legacyFingerprint && !ident.Distinct[existing.ID]) {
 				return &policyError{Status: 409, Code: "account_duplicate", Message: "provider account already registered"}
 			}
 			return nil
@@ -162,11 +180,15 @@ func (h *proxyHandler) persistContribution(actor string, provider AccountType, i
 }
 
 func (h *proxyHandler) saveContribution(r *http.Request, provider AccountType, identity string, payload any) (string, error) {
+	return h.saveContributionIdentity(r, provider, contributionIdentity{Value: identity}, payload)
+}
+
+func (h *proxyHandler) saveContributionIdentity(r *http.Request, provider AccountType, ident contributionIdentity, payload any) (string, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	return h.persistContribution(providerContributionActor(r), provider, identity, func(path string) error { return h.cfg.vault.writeAccountFile(path, data) })
+	return h.persistContribution(providerContributionActor(r), provider, ident, func(path string) error { return h.cfg.vault.writeAccountFile(path, data) })
 }
 
 func (h *proxyHandler) handleContributionPolicy(w http.ResponseWriter, r *http.Request) {
