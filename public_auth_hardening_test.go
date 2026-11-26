@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/bruteforce"
 )
 
 func TestPasskeyIssuanceRateLimitAndMethods(t *testing.T) {
@@ -79,8 +81,8 @@ func TestRecoveryPasswordWorkBusyDoesNotCountAsFailure(t *testing.T) {
 			<-passport.passwordWork
 		}
 	})
-	tracker := newBruteForceTracker()
-	t.Cleanup(tracker.stop)
+	tracker := bruteforce.New()
+	t.Cleanup(tracker.Stop)
 	h := &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker}
 	request := httptest.NewRequest(http.MethodPost, "/api/auth/recover", strings.NewReader(`{"token":"`+link.Token+`","password":"valid replacement password"}`))
 	request.RemoteAddr = "192.0.2.3:1234"
@@ -89,10 +91,12 @@ func TestRecoveryPasswordWorkBusyDoesNotCountAsFailure(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("busy recovery = %d, want 503: %s", response.Code, response.Body.String())
 	}
-	tracker.mu.Lock()
-	_, counted := tracker.attempts["192.0.2.3"]
-	tracker.mu.Unlock()
-	if counted {
+	// One more failure than the busy request could have counted would ban
+	// the peer; staying unbanned proves the busy request counted none.
+	for i := 0; i < bruteforce.MaxAttempts-1; i++ {
+		tracker.RecordFailure("192.0.2.3")
+	}
+	if tracker.IsBanned("192.0.2.3") {
 		t.Fatal("password capacity exhaustion counted as bad credential")
 	}
 }

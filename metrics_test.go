@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/fsnotify/fsnotify"
 	"fmt"
-	"path/filepath"
+	"github.com/fsnotify/fsnotify"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -183,7 +183,6 @@ func TestComputeCyberPolicyStatsHealthSignals(t *testing.T) {
 	}
 }
 
-
 func TestMetricsBoundedSamplesAndModels(t *testing.T) {
 	m := newMetrics()
 
@@ -207,28 +206,6 @@ func TestMetricsBoundedSamplesAndModels(t *testing.T) {
 	if modelCount > maxTrackedMetricModels {
 		t.Fatalf("expected modelRequests bounded to %d, got %d", maxTrackedMetricModels, modelCount)
 	}
-}
-
-func TestBruteForceTrackerBoundedAndSafeStop(t *testing.T) {
-	bf := newBruteForceTracker()
-	defer bf.stop()
-
-	// Fill with more than maxTrackedBruteForceIPs.
-	for i := 0; i < maxTrackedBruteForceIPs+500; i++ {
-		bf.recordFailure(fmt.Sprintf("192.168.%d.%d", (i>>8)&255, i&255))
-	}
-
-	bf.mu.Lock()
-	count := len(bf.attempts)
-	bf.mu.Unlock()
-
-	if count > maxTrackedBruteForceIPs {
-		t.Fatalf("expected brute force attempts bounded to <= %d, got %d", maxTrackedBruteForceIPs, count)
-	}
-
-	// Multiple calls to stop() must not panic.
-	bf.stop()
-	bf.stop()
 }
 
 func TestPoolWatcherCloseStopsDebounceTimers(t *testing.T) {

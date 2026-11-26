@@ -10,6 +10,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"go.etcd.io/bbolt"
+
+	"codex-pool-proxy/internal/bruteforce"
 )
 
 func appAuthHandler(t *testing.T) *proxyHandler {
@@ -124,7 +126,7 @@ func TestAppLoginUsesWebsiteCredentialsWithoutBrowserSession(t *testing.T) {
 
 func TestAppAndWebsiteShareLoginRateLimit(t *testing.T) {
 	h := appAuthHandler(t)
-	for i := 0; i < bruteForceMaxAttempts; i++ {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
 		path := "/api/auth/login"
 		if i%2 == 0 {
 			path = "/api/auth/token"

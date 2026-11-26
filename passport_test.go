@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+
+	"codex-pool-proxy/internal/bruteforce"
 )
 
 func testUsageStore(t *testing.T) *usageStore {
@@ -249,8 +251,8 @@ func TestMemberRecoveryRateLimitsRepeatedFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker := newBruteForceTracker()
-	t.Cleanup(tracker.stop)
+	tracker := bruteforce.New()
+	t.Cleanup(tracker.Stop)
 	h := &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker, metrics: newMetrics()}
 
 	body := func(token string) *http.Request {
@@ -258,7 +260,7 @@ func TestMemberRecoveryRateLimitsRepeatedFailures(t *testing.T) {
 		request.Header.Set("Content-Type", "application/json")
 		return request
 	}
-	for i := 0; i < bruteForceMaxAttempts; i++ {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
 		recorder := httptest.NewRecorder()
 		h.handleMemberRecovery(recorder, body(fmt.Sprintf("wrong-token-%d", i)))
 		if recorder.Code != http.StatusBadRequest {
@@ -670,8 +672,8 @@ func newLoginBruteForceHandler(t *testing.T) *proxyHandler {
 	if _, _, _, err := passport.redeemMemberLink(onboarding.Token, "correct horse battery"); err != nil {
 		t.Fatal(err)
 	}
-	tracker := newBruteForceTracker()
-	t.Cleanup(tracker.stop)
+	tracker := bruteforce.New()
+	t.Cleanup(tracker.Stop)
 	return &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker}
 }
 
@@ -684,7 +686,7 @@ func loginRequest(body string) *http.Request {
 func TestLoginRateLimitsRepeatedFailures(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
 	wrong := `{"email":"brute@example.com","password":"wrong password"}`
-	for i := 0; i < bruteForceMaxAttempts; i++ {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, loginRequest(wrong))
 		if recorder.Code != http.StatusUnauthorized {
@@ -704,7 +706,7 @@ func TestLoginBusyIsNotAFailedAttempt(t *testing.T) {
 		h.passport.passwordWork <- struct{}{}
 	}
 	correct := `{"email":"brute@example.com","password":"correct horse battery"}`
-	for i := 0; i < bruteForceMaxAttempts+1; i++ {
+	for i := 0; i < bruteforce.MaxAttempts+1; i++ {
 		busy := httptest.NewRecorder()
 		h.ServeHTTP(busy, loginRequest(correct))
 		if busy.Code != http.StatusServiceUnavailable || busy.Header().Get("Retry-After") == "" {
@@ -753,8 +755,8 @@ func TestLoginFloodIsThrottledBeforeArgon2(t *testing.T) {
 
 func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
-	h.accountLocks = newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration)
-	t.Cleanup(h.accountLocks.stop)
+	h.accountLocks = bruteforce.NewWithPolicy(accountLockMaxFailures, accountLockDuration)
+	t.Cleanup(h.accountLocks.Stop)
 	attempt := func(login, password string, network int) int {
 		request := loginRequest(fmt.Sprintf(`{"email":%q,"password":%q}`, login, password))
 		request.RemoteAddr = fmt.Sprintf("198.51.%d.1:4242", network)
@@ -764,7 +766,7 @@ func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
 	}
 	// Each network stays below its own IP ban; only the account limit trips.
 	for i := 0; i < accountLockMaxFailures; i++ {
-		if code := attempt("Brute@Example.com", "wrong password", i/(bruteForceMaxAttempts-1)); code != http.StatusUnauthorized {
+		if code := attempt("Brute@Example.com", "wrong password", i/(bruteforce.MaxAttempts-1)); code != http.StatusUnauthorized {
 			t.Fatalf("distributed failure %d status = %d, want 401", i, code)
 		}
 	}
@@ -772,7 +774,7 @@ func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
 		t.Fatalf("correct password on a locked account status = %d, want 429", code)
 	}
 	for i := 0; i < accountLockMaxFailures; i++ {
-		attempt("nobody@example.com", "wrong password", 50+i/(bruteForceMaxAttempts-1))
+		attempt("nobody@example.com", "wrong password", 50+i/(bruteforce.MaxAttempts-1))
 	}
 	if code := attempt("nobody@example.com", "wrong password", 98); code != http.StatusTooManyRequests {
 		t.Fatalf("unknown login status = %d, want 429 so lockouts do not reveal which accounts exist", code)
@@ -781,7 +783,7 @@ func TestLoginLocksAccountAcrossNetworks(t *testing.T) {
 
 func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	h := newLoginBruteForceHandler(t)
-	for i := 0; i < bruteForceMaxAttempts-1; i++ {
+	for i := 0; i < bruteforce.MaxAttempts-1; i++ {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
 		if recorder.Code != http.StatusUnauthorized {
@@ -793,7 +795,7 @@ func TestLoginRateLimitClearsOnSuccess(t *testing.T) {
 	if ok.Code != http.StatusOK {
 		t.Fatalf("valid login status = %d body=%s", ok.Code, ok.Body.String())
 	}
-	for i := 0; i < bruteForceMaxAttempts-1; i++ {
+	for i := 0; i < bruteforce.MaxAttempts-1; i++ {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, loginRequest(`{"email":"brute@example.com","password":"wrong password"}`))
 		if recorder.Code != http.StatusUnauthorized {
@@ -904,8 +906,8 @@ func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracker := newBruteForceTracker()
-	t.Cleanup(tracker.stop)
+	tracker := bruteforce.New()
+	t.Cleanup(tracker.Stop)
 	h := &proxyHandler{cfg: &config{}, passport: passport, bruteForce: tracker, metrics: newMetrics()}
 
 	body := func(token string) *http.Request {
@@ -913,7 +915,7 @@ func TestJoinRateLimitsRepeatedFailures(t *testing.T) {
 		request.Header.Set("Content-Type", "application/json")
 		return request
 	}
-	for i := 0; i < bruteForceMaxAttempts; i++ {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
 		recorder := httptest.NewRecorder()
 		h.handleJoin(recorder, body(fmt.Sprintf("wrong-token-%d", i)))
 		if recorder.Code != http.StatusNotFound {

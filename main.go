@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/errclass"
@@ -74,8 +75,8 @@ type proxyHandler struct {
 	pricing              *pricing.PricingData
 	aliases              *modelAliases
 	effortCap            *effortCap
-	bruteForce           *bruteForceTracker
-	accountLocks         *bruteForceTracker
+	bruteForce           *bruteforce.Tracker
+	accountLocks         *bruteforce.Tracker
 	passkeyIssueMu       sync.Mutex
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics

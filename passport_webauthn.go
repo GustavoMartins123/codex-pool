@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/clientip"
 	"github.com/go-webauthn/webauthn/protocol"
 	wa "github.com/go-webauthn/webauthn/webauthn"
@@ -54,7 +55,7 @@ func (h *proxyHandler) allowPasskeyChallenge(ip string) bool {
 }
 
 func (h *proxyHandler) allowPasswordAttempt(ip string) bool {
-	return h.allowPasskeyIssue("password:"+bruteForceKey(ip), passwordAttemptLimit)
+	return h.allowPasskeyIssue("password:"+bruteforce.Key(ip), passwordAttemptLimit)
 }
 
 func (h *proxyHandler) allowPasskeyRegistration(principalID string) bool {
@@ -68,13 +69,13 @@ func (h *proxyHandler) allowPasskeyIssue(key string, limit int) bool {
 	if h.passkeyIssues == nil {
 		h.passkeyIssues = make(map[string]passkeyIssueWindow)
 	}
-	if _, exists := h.passkeyIssues[key]; !exists && len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
+	if _, exists := h.passkeyIssues[key]; !exists && len(h.passkeyIssues) >= bruteforce.MaxTrackedClients {
 		for key, window := range h.passkeyIssues {
 			if !now.Before(window.until) {
 				delete(h.passkeyIssues, key)
 			}
 		}
-		if len(h.passkeyIssues) >= maxTrackedBruteForceIPs {
+		if len(h.passkeyIssues) >= bruteforce.MaxTrackedClients {
 			return false
 		}
 	}
@@ -479,7 +480,7 @@ func (h *proxyHandler) handleWebAuthnLoginBegin(w http.ResponseWriter, r *http.R
 		return
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}

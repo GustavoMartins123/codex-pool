@@ -17,20 +17,20 @@ func (h *proxyHandler) checkMetricsAuth(w http.ResponseWriter, r *http.Request) 
 		// shares the brute-force ban: refuse banned peers before comparing and
 		// count every wrong guess.
 		ip := clientip.Get(r)
-		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 			http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 			return false
 		}
 		token, ok := strings.CutPrefix(authorization, "Bearer ")
 		if !ok || h.cfg == nil || h.cfg.metricsToken == "" || !secureSecretEquals(token, h.cfg.metricsToken) {
 			if h.bruteForce != nil {
-				h.bruteForce.recordFailure(ip)
+				h.bruteForce.RecordFailure(ip)
 			}
 			http.Error(w, "invalid metrics credential", http.StatusForbidden)
 			return false
 		}
 		if h.bruteForce != nil {
-			h.bruteForce.recordSuccess(ip)
+			h.bruteForce.RecordSuccess(ip)
 		}
 		return true
 	}

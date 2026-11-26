@@ -1,61 +1,27 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/clientip"
 	"go.etcd.io/bbolt"
 )
 
-func newTestBruteForceTracker(t *testing.T) *bruteForceTracker {
+func newTestBruteForceTracker(t *testing.T) *bruteforce.Tracker {
 	t.Helper()
-	tracker := newBruteForceTracker()
-	t.Cleanup(tracker.stop)
+	tracker := bruteforce.New()
+	t.Cleanup(tracker.Stop)
 	return tracker
 }
 
-func banForTest(tracker *bruteForceTracker, ip string) {
-	for i := 0; i < bruteForceMaxAttempts; i++ {
-		tracker.recordFailure(ip)
-	}
-}
-
-func TestBruteForceFloodKeepsActiveBans(t *testing.T) {
-	tracker := newTestBruteForceTracker(t)
-	banForTest(tracker, "198.51.100.7")
-	for i := 0; len(tracker.attempts) < maxTrackedBruteForceIPs; i++ {
-		tracker.recordFailure(fmt.Sprintf("10.%d.%d.%d", i>>16&255, i>>8&255, i&255))
-	}
-	for i := 0; i < 64; i++ {
-		tracker.recordFailure(fmt.Sprintf("172.16.%d.%d", i>>8&255, i&255))
-	}
-	if !tracker.isBanned("198.51.100.7") {
-		t.Fatal("flooding the tracker with fresh addresses lifted an active ban")
-	}
-	if len(tracker.attempts) > maxTrackedBruteForceIPs {
-		t.Fatalf("tracked %d addresses, limit %d", len(tracker.attempts), maxTrackedBruteForceIPs)
-	}
-}
-
-func TestBruteForceGroupsIPv6By64(t *testing.T) {
-	tracker := newTestBruteForceTracker(t)
-	for i := 1; i <= bruteForceMaxAttempts; i++ {
-		tracker.recordFailure(fmt.Sprintf("2001:db8:0:1::%x", i))
-	}
-	if !tracker.isBanned("2001:db8:0:1:ffff:ffff:ffff:ffff") {
-		t.Fatal("rotating addresses inside one /64 avoided the ban")
-	}
-	if tracker.isBanned("2001:db8:0:2::1") {
-		t.Fatal("ban leaked into a neighbouring /64")
-	}
-	banForTest(tracker, "::ffff:203.0.113.9")
-	if !tracker.isBanned("203.0.113.9") || tracker.isBanned("203.0.113.10") {
-		t.Fatal("IPv4-mapped addresses must share the IPv4 key and nothing else")
+func banForTest(tracker *bruteforce.Tracker, ip string) {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
+		tracker.RecordFailure(ip)
 	}
 }
 
@@ -74,7 +40,7 @@ func TestAdminTokenRefusedFromBannedPeer(t *testing.T) {
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429", rr.Code)
 	}
-	if !tracker.isBanned(clientip.Get(req)) {
+	if !tracker.IsBanned(clientip.Get(req)) {
 		t.Fatal("a correct guess from a banned peer cleared the ban")
 	}
 
@@ -91,25 +57,25 @@ func TestBruteForceBansSurviveRestartWithoutRawAddresses(t *testing.T) {
 	passport, _ := newNonceTestPassport(t)
 	store := passportBanStore{passport: passport, namespace: "ip"}
 	first := newTestBruteForceTracker(t)
-	if err := first.persistBans(store, time.Now()); err != nil {
+	if err := first.PersistBans(store, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	banForTest(first, "198.51.100.7")
 	banForTest(first, "2001:db8:0:1::5")
 
 	expired := store.Key("203.0.113.1")
-	if err := store.SaveBan(expired, time.Now().Add(-2*bruteForceBanDuration)); err != nil {
+	if err := store.SaveBan(expired, time.Now().Add(-2*bruteforce.BanDuration)); err != nil {
 		t.Fatal(err)
 	}
 
 	restarted := newTestBruteForceTracker(t)
-	if err := restarted.persistBans(store, time.Now()); err != nil {
+	if err := restarted.PersistBans(store, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if !restarted.isBanned("198.51.100.7") || !restarted.isBanned("2001:db8:0:1::ffff") {
+	if !restarted.IsBanned("198.51.100.7") || !restarted.IsBanned("2001:db8:0:1::ffff") {
 		t.Fatal("bans were lost across a restart")
 	}
-	if restarted.isBanned("198.51.100.8") {
+	if restarted.IsBanned("198.51.100.8") {
 		t.Fatal("restart banned an unrelated address")
 	}
 	bans, err := store.LoadBans()
@@ -130,7 +96,7 @@ func TestBruteForceBansSurviveRestartWithoutRawAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restarted.recordSuccess("198.51.100.7")
+	restarted.RecordSuccess("198.51.100.7")
 	if bans, _ := store.LoadBans(); len(bans) != 1 {
 		t.Fatalf("lifting a ban left %d persisted bans, want 1", len(bans))
 	}

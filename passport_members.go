@@ -546,7 +546,7 @@ func (h *proxyHandler) handleMemberRecoveryStatus(w http.ResponseWriter, r *http
 	}
 	// Rate limit: banned IPs are refused, but status probes never count as
 	// failures themselves (a stale link must not lock its owner out).
-	if ip := clientip.Get(r); h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if ip := clientip.Get(r); h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
@@ -585,7 +585,7 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
@@ -608,13 +608,13 @@ func (h *proxyHandler) handleMemberRecovery(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if h.bruteForce != nil {
-			h.bruteForce.recordFailure(ip)
+			h.bruteForce.RecordFailure(ip)
 		}
 		respondJSONError(w, http.StatusBadRequest, "This recovery link is unavailable.")
 		return
 	}
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(ip)
+		h.bruteForce.RecordSuccess(ip)
 	}
 	setSessionCookies(w, sessionToken, csrf)
 	respondJSON(w, map[string]any{"principal": publicPrincipal(principal)})

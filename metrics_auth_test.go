@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/bruteforce"
 )
 
 func TestMetricsCredentialOnlyAuthorizesMetricsAndFailsClosed(t *testing.T) {
@@ -55,7 +57,7 @@ func TestMetricsCredentialGuessesAreBanned(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	for i := 0; i < bruteForceMaxAttempts; i++ {
+	for i := 0; i < bruteforce.MaxAttempts; i++ {
 		if code := scrape("wrong"); code != http.StatusForbidden {
 			t.Fatalf("guess %d status = %d, want 403", i, code)
 		}

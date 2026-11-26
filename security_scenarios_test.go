@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
@@ -443,22 +444,22 @@ func TestSecurityClientIPHeaderSpoofing(t *testing.T) {
 	}
 
 	// 4. Untrusted client cannot evade brute-force tracking by rotating headers
-	bf := newBruteForceTracker()
-	defer bf.stop()
+	bf := bruteforce.New()
+	defer bf.Stop()
 
 	// Attacker makes 5 failed attempts from 203.0.113.50 with rotating spoofed XFF headers
 	for i := 0; i < 5; i++ {
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("185.220.101.%d", i))
-		bf.recordFailure(testResolvedClientIP(t, policy, req))
+		bf.RecordFailure(testResolvedClientIP(t, policy, req))
 	}
 	// Attacker's real IP 203.0.113.50 is banned!
-	if !bf.isBanned("203.0.113.50") {
+	if !bf.IsBanned("203.0.113.50") {
 		t.Fatal("attacker real IP 203.0.113.50 should have been banned despite rotating XFF headers")
 	}
 
 	// Victim IP cannot be framed by untrusted peer sending spoofed headers
 	victimIP := "192.0.2.100"
-	if bf.isBanned(victimIP) {
+	if bf.IsBanned(victimIP) {
 		t.Fatalf("victim IP %s was framed and banned!", victimIP)
 	}
 
