@@ -96,7 +96,7 @@ func TestContributionPendingSurvivesFailureAndCanResume(t *testing.T) {
 	base, _ := url.Parse("https://provider.example")
 	h := &proxyHandler{cfg: &config{poolDir: t.TempDir()}, registry: NewProviderRegistry(nil, nil, nil, NewKimiProvider(base))}
 	attachContributionFixture(t, h, "alice")
-	_, err := h.persistContribution("alice", AccountTypeKimi, "key", func(path string) error {
+	_, err := h.persistContribution("alice", AccountTypeKimi, contributionIdentity{Value: "key"}, func(path string) error {
 		if err := h.cfg.vault.writeAccountFile(path, []byte(`{"api_key":"key"}`)); err != nil {
 			return err
 		}

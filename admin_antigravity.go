@@ -597,7 +597,7 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		h.antigravityOAuth.mu.Unlock()
 		return target.ID, nil
 	}
-	accountID, err = h.persistContribution(session.ActorID, AccountTypeAntigravity, email, func(path string) error {
+	accountID, err = h.persistContribution(session.ActorID, AccountTypeAntigravity, contributionIdentity{Value: email}, func(path string) error {
 		account.File = path
 		account.ID = strings.TrimSuffix(filepath.Base(path), ".json")
 		h.pool.antigravity.models.ReplaceAccount(account.ID, snapshot)

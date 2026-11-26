@@ -465,12 +465,18 @@ func parseCodexClaims(idToken string) codexJWTClaims {
 	if acc, ok := payload["chatgpt_account_id"].(string); ok {
 		out.ChatGPTAccountID = acc
 	}
+	out.Subject, _ = payload["sub"].(string)
+	out.Email, _ = payload["email"].(string)
 	if auth, ok := payload["https://api.openai.com/auth"].(map[string]any); ok {
 		if acc, ok := auth["chatgpt_account_id"].(string); ok && acc != "" {
 			out.ChatGPTAccountID = acc
 		}
 		if plan, ok := auth["chatgpt_plan_type"].(string); ok {
 			out.PlanType = account.NormalizeCodexPlanType(plan)
+		}
+		out.ChatGPTUserID, _ = auth["chatgpt_user_id"].(string)
+		if out.ChatGPTUserID == "" {
+			out.ChatGPTUserID, _ = auth["user_id"].(string)
 		}
 	}
 	if out.PlanType == "" {
@@ -480,7 +486,37 @@ func parseCodexClaims(idToken string) codexJWTClaims {
 }
 
 type codexJWTClaims struct {
-	ExpiresAt        time.Time
+	ExpiresAt time.Time
+	// ChatGPTAccountID names the ChatGPT workspace, which every member of a
+	// Team or Business workspace shares; it does not identify the user.
 	ChatGPTAccountID string
+	ChatGPTUserID    string
+	Subject          string
+	Email            string
 	PlanType         string
+}
+
+// userKey identifies the ChatGPT user behind the token, independent of the
+// workspace it is scoped to. It is empty when the token names no user.
+func (c codexJWTClaims) userKey() string {
+	if id := strings.TrimSpace(c.ChatGPTUserID); id != "" {
+		return id
+	}
+	if sub := strings.TrimSpace(c.Subject); sub != "" {
+		return sub
+	}
+	return strings.ToLower(strings.TrimSpace(c.Email))
+}
+
+// contributionIdentity is the provider account a Codex login registers: one
+// user inside one workspace. Tokens that name no user fall back to the
+// workspace alone, the identity earlier releases recorded.
+func (c codexJWTClaims) contributionIdentity() string {
+	if c.ChatGPTAccountID == "" {
+		return ""
+	}
+	if user := c.userKey(); user != "" {
+		return c.ChatGPTAccountID + "|user:" + user
+	}
+	return c.ChatGPTAccountID
 }
