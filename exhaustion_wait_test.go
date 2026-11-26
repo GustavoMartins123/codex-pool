@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func exhaustedCodexAccount(id string, primary float64, resetIn time.Duration) *Account {
@@ -97,7 +99,7 @@ func TestProxyHoldsRequestForUsageWindowReset(t *testing.T) {
 	account := exhaustedCodexAccount("acct_ex", 0.96, time.Second)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.exhaustionWait = 2 * time.Second
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	// Simulate the periodic usage poll observing the window reset shortly
 	// after the request arrives.
@@ -139,7 +141,7 @@ func TestProxyStillFailsFastWhenExhaustionWaitDisabled(t *testing.T) {
 
 	account := exhaustedCodexAccount("acct_ex", 0.96, time.Hour)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	payload := `{"model":"gpt-5.5","stream":true,"input":[{"role":"user","content":"hi"}]}`
 	req, _ := http.NewRequest(http.MethodPost, fx.server.URL+"/v1/responses", strings.NewReader(payload))

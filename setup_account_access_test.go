@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func TestFreshSetupCredentialsRequireAccountGrant(t *testing.T) {
@@ -37,7 +39,7 @@ func TestFreshSetupCredentialsRequireAccountGrant(t *testing.T) {
 			pool.accountAuthority = p
 			base, _ := url.Parse("https://upstream.example")
 			calls := 0
-			h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, passport: p, pool: pool, aliases: newModelAliases(nil),
+			h := &proxyHandler{passportConfig: resolvePassportConfig(ConfigFile{}), cfg: &config{maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20, disableRefresh: true}, passport: p, pool: pool, aliases: modelalias.New(nil),
 				registry: NewProviderRegistry(NewCodexProvider(base, base, base), NewClaudeProvider(base), nil), metrics: newMetrics(), recent: newRecentErrors(5),
 				requestQueue: newFairQueue(), contextHandoff: newConversationHandoffStore(),
 				transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

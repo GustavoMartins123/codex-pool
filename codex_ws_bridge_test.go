@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/modelalias"
 )
 
 // codexBridgeFixture is a Codex websocket proxy with a ChatGPT upstream that
@@ -75,7 +76,7 @@ func newCodexBridgeFixture(t *testing.T) *codexBridgeFixture {
 	h := fx.proxy.handler
 	qwenBase := mustParse(qwen.URL + "/compatible-mode/v1")
 	h.cfg.qwenBase, h.cfg.maxAttempts, h.cfg.maxInMemoryBodyBytes = qwenBase, 1, 1<<20
-	h.aliases = newModelAliases(nil)
+	h.aliases = modelalias.New(nil)
 	h.registry = NewProviderRegistry(NewCodexProvider(upURL, upURL, upURL), NewClaudeProvider(upURL), NewGeminiProvider(upURL, upURL), NewQwenProvider(qwenBase), NewAIStudioProvider(upURL))
 	return fx
 }

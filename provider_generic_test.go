@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -113,7 +114,7 @@ func TestGenericProviderParticipatesInProxyRouting(t *testing.T) {
 		transport: transport,
 		metrics:   newMetrics(),
 		recent:    newRecentErrors(5),
-		aliases:   newModelAliases(nil),
+		aliases:   modelalias.New(nil),
 	}
 	handler.pool.registry = handler.registry
 	body := `{"model":"local-vllm/qwen","stream":true,"messages":[{"role":"user","content":"hi"}]}`

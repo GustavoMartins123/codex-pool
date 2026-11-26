@@ -16,6 +16,7 @@ import (
 	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/ctxstore"
 	"codex-pool-proxy/internal/fsperm"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/requestlog"
@@ -407,7 +408,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
 		pricing:              prices,
-		aliases:              newModelAliases(cfg.modelAliases),
+		aliases:              modelalias.New(cfg.modelAliases),
 		effortCap:            newEffortCap(cfg.maxReasoningEffortByUser, cfg.maxReasoningEffortByOrigin),
 		bruteForce:           bruteforce.New(),
 		accountLocks:         bruteforce.NewWithPolicy(accountLockMaxFailures, accountLockDuration),

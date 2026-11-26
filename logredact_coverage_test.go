@@ -17,6 +17,7 @@ import (
 	"codex-pool-proxy/internal/credstore"
 	"codex-pool-proxy/internal/httpwire"
 	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/modelalias"
 )
 
 // captureLogRedirects the standard logger into a buffer through the
@@ -141,7 +142,7 @@ func TestUpstreamAuthFailureDoesNotLeakHeadersOrBody(t *testing.T) {
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.disableRefresh = true
 	fx.handler.cfg.maxAttempts = 1
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	req, _ := http.NewRequest(http.MethodPost, fx.server.URL+"/v1/responses",
 		strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[{"role":"user","content":"hi"}]}`))
@@ -204,7 +205,7 @@ func TestUpstreamPaymentBodyIsRedacted(t *testing.T) {
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.disableRefresh = true
 	fx.handler.cfg.maxAttempts = 1
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	req, _ := http.NewRequest(http.MethodPost, fx.server.URL+"/v1/responses",
 		strings.NewReader(`{"model":"gpt-5.5","stream":false,"input":[{"role":"user","content":"hi"}]}`))
@@ -264,7 +265,7 @@ func TestUpstreamAuthFailureAfterFailedRefreshIsRedacted(t *testing.T) {
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.disableRefresh = false
 	fx.handler.cfg.maxAttempts = 1
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	req, _ := http.NewRequest(http.MethodPost, fx.server.URL+"/v1/responses",
 		strings.NewReader(`{"model":"claude-sonnet-4-5","stream":false,"input":[{"role":"user","content":"hi"}]}`))

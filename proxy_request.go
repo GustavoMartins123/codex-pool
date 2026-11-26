@@ -18,6 +18,7 @@ import (
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/hostedmcp"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/wire"
@@ -212,7 +213,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			defer releaseSpool()
 			rewriteModel := func(model string) string {
 				model = strings.TrimSpace(model)
-				if resolved, ok := h.aliases.resolve(model); ok {
+				if resolved, ok := h.aliases.Resolve(model); ok {
 					model = resolved
 				}
 				if base, _, hasSuffix := parseThinkingSuffix(model); hasSuffix {
@@ -387,7 +388,7 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 
 	// Resolve model aliases before routing.
 	if requestedModel != "" {
-		requestedModel, bodyBytes = applyModelAlias(h.aliases, requestedModel, bodyBytes, h.cfg.debug.Load(), reqID)
+		requestedModel, bodyBytes = modelalias.Apply(h.aliases, requestedModel, bodyBytes, h.cfg.debug.Load(), reqID)
 	}
 	routingProfile, routedModel, routedBody, routingErr := resolveRequestRouting(h.pool, r, requestedModel, bodyBytes)
 	if routingErr != nil {

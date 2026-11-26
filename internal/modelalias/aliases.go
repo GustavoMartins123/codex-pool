@@ -1,4 +1,5 @@
-package main
+// Package modelalias maps client-facing model names to upstream model IDs.
+package modelalias
 
 import (
 	"log"
@@ -8,9 +9,9 @@ import (
 	"codex-pool-proxy/internal/requestjson"
 )
 
-// defaultModelAliases are always registered unless overridden by config.toml
+// defaults are always registered unless overridden by config.toml
 // [model_aliases]. Keys are matched case-insensitively at resolve time.
-var defaultModelAliases = map[string]string{
+var defaults = map[string]string{
 	"sonnet": "claude-sonnet-5-5",
 	"opus":   "claude-opus-5-5",
 	// GPT-5.6 series short name → Sol (default variant).
@@ -24,15 +25,16 @@ var defaultModelAliases = map[string]string{
 	"gpt-5.6-luna[1m]":  "gpt-5.6-luna",
 }
 
-// modelAliases manages model name aliases. Thread-safe for hot-reload.
-type modelAliases struct {
+// Aliases manages model name aliases. It is safe for concurrent use and
+// hot-reload.
+type Aliases struct {
 	mu      sync.RWMutex
 	aliases map[string]string // short name -> full upstream model name
 }
 
-func mergeModelAliases(cfg map[string]string) map[string]string {
-	out := make(map[string]string, len(defaultModelAliases)+len(cfg))
-	for k, v := range defaultModelAliases {
+func merge(cfg map[string]string) map[string]string {
+	out := make(map[string]string, len(defaults)+len(cfg))
+	for k, v := range defaults {
 		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
 			continue
 		}
@@ -48,14 +50,15 @@ func mergeModelAliases(cfg map[string]string) map[string]string {
 	return out
 }
 
-func newModelAliases(cfg map[string]string) *modelAliases {
-	return &modelAliases{aliases: mergeModelAliases(cfg)}
+// New returns the built-in aliases overlaid with cfg, which may be nil.
+func New(cfg map[string]string) *Aliases {
+	return &Aliases{aliases: merge(cfg)}
 }
 
-// resolve returns the upstream model name for a given alias, or the
+// Resolve returns the upstream model name for a given alias, or the
 // original name if no alias is defined. The second return value indicates
 // whether an alias was applied.
-func (m *modelAliases) resolve(model string) (string, bool) {
+func (m *Aliases) Resolve(model string) (string, bool) {
 	if m == nil || model == "" {
 		return model, false
 	}
@@ -67,18 +70,18 @@ func (m *modelAliases) resolve(model string) (string, bool) {
 	return model, false
 }
 
-// reload replaces the alias map (used by hot-reload). Always re-applies
+// Reload replaces the alias map (used by hot-reload). Always re-applies
 // built-in defaults, then overlays cfg (which may be nil).
-func (m *modelAliases) reload(cfg map[string]string) {
+func (m *Aliases) Reload(cfg map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.aliases = mergeModelAliases(cfg)
+	m.aliases = merge(cfg)
 }
 
-// applyModelAlias resolves the model alias and rewrites the body if needed.
-// Uses requestjson.RewriteModel.
-func applyModelAlias(aliases *modelAliases, model string, body []byte, debug bool, reqID string) (string, []byte) {
-	resolved, aliased := aliases.resolve(model)
+// Apply resolves the model alias and rewrites the body's model field when an
+// alias applies, using requestjson.RewriteModel.
+func Apply(aliases *Aliases, model string, body []byte, debug bool, reqID string) (string, []byte) {
+	resolved, aliased := aliases.Resolve(model)
 	if !aliased {
 		return model, body
 	}

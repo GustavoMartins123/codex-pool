@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func rejectExpiredToken(w http.ResponseWriter) {
@@ -90,7 +92,7 @@ func TestStreamedPoolAuthRecovery(t *testing.T) {
 				fx.handler.cfg.maxSpoolBodyBytes = 1 << 20
 				fx.handler.cfg.maxAttempts = 1
 				fx.handler.refreshTransport = http.DefaultTransport
-				fx.handler.aliases = newModelAliases(nil)
+				fx.handler.aliases = modelalias.New(nil)
 				payload := `{"model":"gpt-5.5","stream":true,"input":[{"role":"user","content":"` + strings.Repeat("x", 4096) + `"}]}`
 				req, _ := http.NewRequest(http.MethodPost, fx.server.URL+"/v1/responses", strings.NewReader(payload))
 				req.Header.Set("Authorization", "Bearer "+generateClaudePoolToken("test-secret", "test-user"))

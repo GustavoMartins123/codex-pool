@@ -926,7 +926,7 @@ func applyModelAliasToJSONFrame(h *proxyHandler, reqID string, data []byte) []by
 	if model == "" {
 		return data
 	}
-	resolved, ok := h.aliases.resolve(model)
+	resolved, ok := h.aliases.Resolve(model)
 	if !ok || resolved == model {
 		return data
 	}

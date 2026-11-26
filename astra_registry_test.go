@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -16,7 +17,7 @@ func TestAstraRegistry(t *testing.T) {
 	if !ok || variant.ContextWindow != 1000000 || variant.MaxTokens != 128000 || !variant.Reasoning || !variant.WebSearch {
 		t.Fatalf("Astra 1M catalog metadata = %+v, present=%v", variant, ok)
 	}
-	if resolved, aliased := newModelAliases(nil).resolve("gpt-6-astra[1m]"); !aliased || resolved != "gpt-6-astra" {
+	if resolved, aliased := modelalias.New(nil).Resolve("gpt-6-astra[1m]"); !aliased || resolved != "gpt-6-astra" {
 		t.Fatalf("Astra 1M alias = %q, aliased=%v", resolved, aliased)
 	}
 	found := false

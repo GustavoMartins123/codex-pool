@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func TestClaudeResponsesHTTPToolRoundTrip(t *testing.T) {
@@ -93,7 +95,7 @@ func TestClaudeResponsesHTTPToolRoundTrip(t *testing.T) {
 			defer upstream.Close()
 			base, _ := url.Parse(upstream.URL)
 			fx := newCodexProxyFixture(t, base, []*Account{{ID: "synthetic", Type: AccountTypeClaude, PlanType: "max", AccessToken: "sk-ant-api-synthetic"}})
-			fx.handler.aliases = newModelAliases(nil)
+			fx.handler.aliases = modelalias.New(nil)
 			input := []any{map[string]any{"role": "user", "content": "Look up 7"}}
 			payload := map[string]any{"model": "claude-sonnet-5-5", "input": input, "stream": streaming, "tools": []any{map[string]any{"type": "function", "name": "lookup", "parameters": map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "integer"}}}}}, "tool_choice": map[string]any{"type": "function", "name": "lookup"}, "parallel_tool_calls": false}
 			send := func() map[string]any {
