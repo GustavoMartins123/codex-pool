@@ -15,10 +15,12 @@ import (
 	"syscall"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/clientip"
 	"codex-pool-proxy/internal/errclass"
 	"codex-pool-proxy/internal/logredact"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/routing"
@@ -72,10 +74,10 @@ type proxyHandler struct {
 	analyticsStore       costAnalyticsRepository
 	duckAnalytics        *DuckAnalytics
 	pricing              *pricing.PricingData
-	aliases              *modelAliases
+	aliases              *modelalias.Aliases
 	effortCap            *effortCap
-	bruteForce           *bruteForceTracker
-	accountLocks         *bruteForceTracker
+	bruteForce           *bruteforce.Tracker
+	accountLocks         *bruteforce.Tracker
 	passkeyIssueMu       sync.Mutex
 	passkeyIssues        map[string]passkeyIssueWindow
 	metrics              *metrics

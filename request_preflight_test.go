@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/requestlog"
 )
 
@@ -162,7 +163,7 @@ func TestPreflightOriginalIntent(t *testing.T) {
 				}
 				return preflightReply(), nil
 			}))
-			h.aliases = newModelAliases(map[string]string{"fast-model": "gpt-5.5"})
+			h.aliases = modelalias.New(map[string]string{"fast-model": "gpt-5.5"})
 			path := tc.path
 			if path == "" {
 				path = "/v1/responses"

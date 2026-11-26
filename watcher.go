@@ -233,7 +233,7 @@ func (pw *poolWatcher) reloadConfigCandidate() error {
 		h.experiments.Configure(cfg.Experiments)
 	}
 	if h.aliases != nil {
-		h.aliases.reload(cfg.ModelAliases)
+		h.aliases.Reload(cfg.ModelAliases)
 	}
 	if h.effortCap != nil {
 		h.effortCap.reload(cfg.MaxReasoningEffortByUser, cfg.MaxReasoningEffortByOrigin)

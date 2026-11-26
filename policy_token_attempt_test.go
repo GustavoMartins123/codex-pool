@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 const testTokenCeiling int64 = 1128000
@@ -153,7 +155,7 @@ func TestBudgetedProxyStreamsAndRejectsInsufficientHeadroomBeforeUpstream(t *tes
 	h.store = testUsageStore(t)
 	h.passport = nil
 	testPoolIdentity(t, h, "policy-user")
-	h.aliases = newModelAliases(nil)
+	h.aliases = modelalias.New(nil)
 	h.cfg.maxAttempts = 1
 	setPrincipalBudget(t, h.passport, "policy-user", PolicyLimits{DailyTokens: testTokenCeiling, TokenReservation: 1})
 	request := func() int {

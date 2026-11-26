@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"codex-pool-proxy/internal/jsonvalue"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/routing"
 )
 
@@ -23,7 +24,7 @@ func qwenTestHandler(t *testing.T, transport http.RoundTripper, accounts ...*Acc
 		cfg:       &config{poolDir: t.TempDir(), qwenBase: base, qwenPlanBase: mustParse(defaultQwenPlanBase), maxAttempts: 1, maxInMemoryBodyBytes: 1 << 20},
 		pool:      newPoolState(accounts, false),
 		registry:  NewProviderRegistry(NewCodexProvider(other, other, nil), NewClaudeProvider(other), NewGeminiProvider(other, other), NewQwenProvider(base), NewOpencodeGoProvider(other)),
-		transport: transport, metrics: newMetrics(), recent: newRecentErrors(5), aliases: newModelAliases(nil),
+		transport: transport, metrics: newMetrics(), recent: newRecentErrors(5), aliases: modelalias.New(nil),
 	}
 }
 

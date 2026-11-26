@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/modelalias"
 	"github.com/coder/websocket"
 	"go.etcd.io/bbolt"
 )
@@ -52,7 +53,7 @@ func TestPrivateAccountAuthenticatedStreamAndWebSocketWithdrawal(t *testing.T) {
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	h := fx.handler
 	h.cfg.maxAttempts = 1
-	h.aliases = newModelAliases(nil)
+	h.aliases = modelalias.New(nil)
 	addTestPassportOperator(t, h.passport, "alice")
 	addTestPassportOperator(t, h.passport, "bob")
 	if err := h.passport.initializeAccountAuthority(nil); err != nil {

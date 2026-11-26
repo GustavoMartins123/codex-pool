@@ -367,7 +367,7 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return
 	}
@@ -394,14 +394,14 @@ func (h *proxyHandler) handleJoin(w http.ResponseWriter, r *http.Request) {
 	pr, session, csrf, err := h.passport.redeemJoin(q.Token)
 	if err != nil {
 		if h.bruteForce != nil {
-			h.bruteForce.recordFailure(ip)
+			h.bruteForce.RecordFailure(ip)
 		}
 		h.metrics.incPassport("join_redemptions", "failed")
 		respondJSONError(w, 404, "this pass is unavailable")
 		return
 	}
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(ip)
+		h.bruteForce.RecordSuccess(ip)
 	}
 	h.metrics.incPassport("join_redemptions", "succeeded")
 	setSessionCookies(w, session, csrf)

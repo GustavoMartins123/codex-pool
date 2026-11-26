@@ -13,8 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"codex-pool-proxy/internal/bruteforce"
 	"codex-pool-proxy/internal/ctxstore"
 	"codex-pool-proxy/internal/fsperm"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/pacing"
 	"codex-pool-proxy/internal/pricing"
 	"codex-pool-proxy/internal/requestlog"
@@ -406,10 +408,10 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		analyticsStore:       duckAnalytics,
 		duckAnalytics:        duckAnalytics,
 		pricing:              prices,
-		aliases:              newModelAliases(cfg.modelAliases),
+		aliases:              modelalias.New(cfg.modelAliases),
 		effortCap:            newEffortCap(cfg.maxReasoningEffortByUser, cfg.maxReasoningEffortByOrigin),
-		bruteForce:           newBruteForceTracker(),
-		accountLocks:         newBruteForceTrackerWithPolicy(accountLockMaxFailures, accountLockDuration),
+		bruteForce:           bruteforce.New(),
+		accountLocks:         bruteforce.NewWithPolicy(accountLockMaxFailures, accountLockDuration),
 		metrics:              newMetrics(),
 		routeTraces:          newRouteTraceStore(2048),
 		contextHandoff:       newConversationHandoffStore(),
@@ -427,7 +429,7 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 	h.poolAuto.registry = registry
 	claudeProvider.identity = &h.claudeIdentity
 	opencodeGoProvider.identity = &h.claudeIdentity
-	app.release = append(app.release, h.bruteForce.stop, h.accountLocks.stop)
+	app.release = append(app.release, h.bruteForce.Stop, h.accountLocks.Stop)
 	if passport != nil && h.effortCap != nil {
 		passport.mu.RLock()
 		for _, pr := range passport.principals {
@@ -447,10 +449,10 @@ func buildProxyServer(parent context.Context, cfg *config) (_ *proxyServer, err 
 		}
 		h.nativeContext = &nativeContext{store: contextStore, pool: pool, provider: registry.ForType(AccountTypeCodex), transport: h.transport, refresh: h.refreshAccountAfterAuthFailure}
 	}
-	if err := h.bruteForce.persistBans(passportBanStore{passport: passport, namespace: "ip"}, time.Now()); err != nil {
+	if err := h.bruteForce.PersistBans(passportBanStore{passport: passport, namespace: "ip"}, time.Now()); err != nil {
 		return nil, fmt.Errorf("restore brute-force bans: %w", err)
 	}
-	if err := h.accountLocks.persistBans(passportBanStore{passport: passport, namespace: "account"}, time.Now()); err != nil {
+	if err := h.accountLocks.PersistBans(passportBanStore{passport: passport, namespace: "account"}, time.Now()); err != nil {
 		return nil, fmt.Errorf("restore account sign-in locks: %w", err)
 	}
 	h.startUsagePoller(shutdownCtx)

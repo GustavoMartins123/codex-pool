@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func TestConfigExplicitMissingFileFailsStartup(t *testing.T) {
@@ -79,7 +81,7 @@ func TestConfigReloadRejectsWholeCandidate(t *testing.T) {
 	for _, bad := range []string{"[routing]\ndefault_profile='typo'", "ip_access_allow=['bad']", "trusted_proxies=['bad']", "[experiments.traffic]\nenabled=true", "[client_policies.test.limits]\ndaily_requests=-1"} {
 		t.Run(bad, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
-			h := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false), aliases: newModelAliases(map[string]string{"probe": "previous"})}
+			h := &proxyHandler{cfg: &config{}, pool: newPoolState(nil, false), aliases: modelalias.New(map[string]string{"probe": "previous"})}
 			h.cfg.setHotReloadable(.7, RoutingConfigFile{}, map[string]ClientPolicy{"old": {}}, ExperimentsConfig{})
 			h.ipAccess.Install(testIPAccessSettings(t, []string{"192.0.2.0/24"}, nil, []string{"198.51.100.1"}))
 			content := "debug=true\ntier_threshold=.2\n" + bad

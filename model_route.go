@@ -162,7 +162,7 @@ func (h *proxyHandler) applyStreamedModelRoute(r *http.Request, provider Provide
 	}
 
 	requestedModel := strings.TrimSpace(model)
-	if resolved, aliased := h.aliases.resolve(requestedModel); aliased {
+	if resolved, aliased := h.aliases.Resolve(requestedModel); aliased {
 		if h.cfg != nil && h.cfg.debug.Load() {
 			log.Printf("[%s] streamed model alias: %s -> %s", reqID, requestedModel, resolved)
 		}

@@ -17,6 +17,7 @@ import (
 
 	"codex-pool-proxy/internal/claudecode"
 	"codex-pool-proxy/internal/httpwire"
+	"codex-pool-proxy/internal/modelalias"
 	"codex-pool-proxy/internal/requestjson"
 	"codex-pool-proxy/internal/requestlog"
 	"codex-pool-proxy/internal/routing"
@@ -320,7 +321,7 @@ func TestOversizedCodexBackendAPIResponsesStillHitsCodexPath(t *testing.T) {
 		registry:  registry,
 		metrics:   newMetrics(),
 		recent:    newRecentErrors(5),
-		aliases:   newModelAliases(nil),
+		aliases:   modelalias.New(nil),
 	}
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()
@@ -408,7 +409,7 @@ func TestOversizedResponsesModelRoutesAwayFromChatGPT(t *testing.T) {
 		registry:  registry,
 		metrics:   newMetrics(),
 		recent:    newRecentErrors(5),
-		aliases:   newModelAliases(nil),
+		aliases:   modelalias.New(nil),
 	}
 	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
 	defer proxy.Close()

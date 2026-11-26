@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"go.etcd.io/bbolt"
+
+	"codex-pool-proxy/internal/modelalias"
 )
 
 func TestUsageWaitRejectsResetOutsideBudget(t *testing.T) {
@@ -68,7 +70,7 @@ func TestQuotaErrorDoesNotExposeForeignAccountReset(t *testing.T) {
 	fx := newCodexProxyFixture(t, base, []*Account{owned, foreign})
 	h := fx.handler
 	h.cfg.exhaustionWait = 50 * time.Millisecond
-	h.aliases = newModelAliases(nil)
+	h.aliases = modelalias.New(nil)
 	addTestPassportOperator(t, h.passport, "alice")
 	addTestPassportOperator(t, h.passport, "bob")
 	if err := h.passport.initializeAccountAuthority(nil); err != nil {
@@ -116,7 +118,7 @@ func TestClaudeExhaustedQuotaReturnsErrorWithoutHolding(t *testing.T) {
 	syncUsageCooldown(account)
 	fx := newCodexProxyFixture(t, base, []*Account{account})
 	fx.handler.cfg.exhaustionWait = 100 * time.Millisecond
-	fx.handler.aliases = newModelAliases(nil)
+	fx.handler.aliases = modelalias.New(nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

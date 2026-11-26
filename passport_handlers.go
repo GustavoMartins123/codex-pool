@@ -14,6 +14,14 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+// Password sign-in is also limited per targeted account, so an attacker
+// spread across many networks still gets only a few guesses per window.
+// Passkey sign-in does not consult this lock and stays available.
+const (
+	accountLockMaxFailures = 10
+	accountLockDuration    = 15 * time.Minute
+)
+
 type clientCredentialView struct {
 	ID         string       `json:"id"`
 	Label      string       `json:"label"`
@@ -152,7 +160,7 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		return nil
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		h.metrics.incPassport("sign_in_outcomes", "banned")
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return nil
@@ -172,7 +180,7 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 		return nil
 	}
 	account := h.passport.loginThrottleKey(q.Email)
-	if h.accountLocks != nil && h.accountLocks.isBanned(account) {
+	if h.accountLocks != nil && h.accountLocks.IsBanned(account) {
 		h.metrics.incPassport("sign_in_outcomes", "account_locked")
 		w.Header().Set("Retry-After", strconv.Itoa(int(accountLockDuration/time.Second)))
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts for this account; try again later or sign in with a passkey")
@@ -189,20 +197,20 @@ func (h *proxyHandler) passwordLoginPrincipal(w http.ResponseWriter, r *http.Req
 	}
 	if err != nil {
 		if h.accountLocks != nil {
-			h.accountLocks.recordFailure(account)
+			h.accountLocks.RecordFailure(account)
 		}
 		h.passwordLoginFailed(w, r)
 		return nil
 	}
 	if h.accountLocks != nil {
-		h.accountLocks.recordSuccess(account)
+		h.accountLocks.RecordSuccess(account)
 	}
 	return pr
 }
 
 func (h *proxyHandler) passwordLoginFailed(w http.ResponseWriter, r *http.Request) {
 	if h.bruteForce != nil {
-		h.bruteForce.recordFailure(clientip.Get(r))
+		h.bruteForce.RecordFailure(clientip.Get(r))
 	}
 	h.metrics.incPassport("sign_in_outcomes", "failed")
 	respondJSONError(w, 401, "email or password is incorrect")
@@ -210,7 +218,7 @@ func (h *proxyHandler) passwordLoginFailed(w http.ResponseWriter, r *http.Reques
 
 func (h *proxyHandler) passwordLoginSucceeded(r *http.Request) {
 	if h.bruteForce != nil {
-		h.bruteForce.recordSuccess(clientip.Get(r))
+		h.bruteForce.RecordSuccess(clientip.Get(r))
 	}
 	h.metrics.incPassport("sign_in_outcomes", "succeeded")
 }

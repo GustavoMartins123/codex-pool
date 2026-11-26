@@ -1,4 +1,6 @@
-package main
+// Package bruteforce tracks failed authentication attempts per client and
+// bans clients that exceed the failure budget.
+package bruteforce
 
 import (
 	"log"
@@ -8,17 +10,11 @@ import (
 )
 
 const (
-	bruteForceMaxAttempts = 5
-	bruteForceBanDuration = 30 * time.Minute
-	bruteForceCleanup     = 10 * time.Minute
-)
-
-// Password sign-in is also limited per targeted account, so an attacker
-// spread across many networks still gets only a few guesses per window.
-// Passkey sign-in does not consult this lock and stays available.
-const (
-	accountLockMaxFailures = 10
-	accountLockDuration    = 15 * time.Minute
+	// MaxAttempts is the default failure budget before a client is banned.
+	MaxAttempts = 5
+	// BanDuration is how long a default ban lasts.
+	BanDuration     = 30 * time.Minute
+	cleanupInterval = 10 * time.Minute
 )
 
 type attemptRecord struct {
@@ -27,11 +23,12 @@ type attemptRecord struct {
 	bannedAt time.Time
 }
 
-// bruteForceTracker tracks failed authentication attempts per IP address
-// and bans IPs after too many failures.
-const maxTrackedBruteForceIPs = 16384
+// MaxTrackedClients caps how many clients a tracker remembers at once.
+const MaxTrackedClients = 16384
 
-type bruteForceTracker struct {
+// Tracker tracks failed authentication attempts per client and bans clients
+// after too many failures.
+type Tracker struct {
 	mu          sync.Mutex
 	attempts    map[string]*attemptRecord
 	stopCh      chan struct{}
@@ -40,24 +37,27 @@ type bruteForceTracker struct {
 	banDuration time.Duration
 	// store, when set, keeps active bans across restarts. Client keys pass
 	// through store.Key, so memory and disk only hold salted digests.
-	store bruteForceBanStore
+	store BanStore
 }
 
-// bruteForceBanStore persists a tracker's active bans. Ban events are rare,
+// BanStore persists a tracker's active bans. Ban events are rare,
 // so the tracker calls it while holding its lock to keep writes ordered.
-type bruteForceBanStore interface {
+type BanStore interface {
 	Key(client string) string
 	SaveBan(key string, bannedAt time.Time) error
 	DeleteBans(keys []string) error
 	LoadBans() (map[string]time.Time, error)
 }
 
-func newBruteForceTracker() *bruteForceTracker {
-	return newBruteForceTrackerWithPolicy(bruteForceMaxAttempts, bruteForceBanDuration)
+// New returns a tracker with the default failure budget and ban duration.
+func New() *Tracker {
+	return NewWithPolicy(MaxAttempts, BanDuration)
 }
 
-func newBruteForceTrackerWithPolicy(maxAttempts int, banDuration time.Duration) *bruteForceTracker {
-	t := &bruteForceTracker{
+// NewWithPolicy returns a tracker that bans a client after maxAttempts
+// failures for banDuration. Call Stop to end its cleanup goroutine.
+func NewWithPolicy(maxAttempts int, banDuration time.Duration) *Tracker {
+	t := &Tracker{
 		attempts:    make(map[string]*attemptRecord),
 		stopCh:      make(chan struct{}),
 		maxAttempts: maxAttempts,
@@ -67,9 +67,9 @@ func newBruteForceTrackerWithPolicy(maxAttempts int, banDuration time.Duration) 
 	return t
 }
 
-// persistBans restores the active bans held by store and records later bans
+// PersistBans restores the active bans held by store and records later bans
 // there, so a restart does not hand an attacker a fresh set of guesses.
-func (t *bruteForceTracker) persistBans(store bruteForceBanStore, now time.Time) error {
+func (t *Tracker) PersistBans(store BanStore, now time.Time) error {
 	bans, err := store.LoadBans()
 	if err != nil {
 		return err
@@ -89,8 +89,8 @@ func (t *bruteForceTracker) persistBans(store bruteForceBanStore, now time.Time)
 	return nil
 }
 
-func (t *bruteForceTracker) keyLocked(client string) string {
-	key := bruteForceKey(client)
+func (t *Tracker) keyLocked(client string) string {
+	key := Key(client)
 	if t.store != nil {
 		return t.store.Key(key)
 	}
@@ -99,7 +99,7 @@ func (t *bruteForceTracker) keyLocked(client string) string {
 
 // forgetLocked drops expired or evicted bans from the store. A failure only
 // leaves a stale record that the next load discards as expired.
-func (t *bruteForceTracker) forgetLocked(keys []string) {
+func (t *Tracker) forgetLocked(keys []string) {
 	if t.store == nil || len(keys) == 0 {
 		return
 	}
@@ -108,10 +108,10 @@ func (t *bruteForceTracker) forgetLocked(keys []string) {
 	}
 }
 
-// bruteForceKey groups IPv6 clients by their /64 prefix, the smallest block a
+// Key groups IPv6 clients by their /64 prefix, the smallest block a
 // single host commonly controls, so rotating addresses inside it does not
 // reset the failure count. IPv4 and IPv4-mapped addresses keep one key each.
-func bruteForceKey(ip string) string {
+func Key(ip string) string {
 	addr, err := netip.ParseAddr(ip)
 	if err != nil {
 		return ip
@@ -127,8 +127,8 @@ func bruteForceKey(ip string) string {
 	return prefix.String()
 }
 
-// isBanned returns true if the IP is currently banned.
-func (t *bruteForceTracker) isBanned(ip string) bool {
+// IsBanned reports whether if the IP is currently banned.
+func (t *Tracker) IsBanned(ip string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := t.keyLocked(ip)
@@ -148,17 +148,17 @@ func (t *bruteForceTracker) isBanned(ip string) bool {
 	return true
 }
 
-// recordFailure increments the failure count for an IP. Returns true if
+// RecordFailure increments the failure count for an IP. Returns true if
 // the IP is now banned (just crossed the threshold).
-func (t *bruteForceTracker) recordFailure(ip string) bool {
+func (t *Tracker) RecordFailure(ip string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := t.keyLocked(ip)
 	rec, ok := t.attempts[key]
 	if !ok {
-		if len(t.attempts) >= maxTrackedBruteForceIPs {
+		if len(t.attempts) >= MaxTrackedClients {
 			t.cleanupLocked(time.Now())
-			if len(t.attempts) >= maxTrackedBruteForceIPs {
+			if len(t.attempts) >= MaxTrackedClients {
 				t.evictLocked()
 			}
 		}
@@ -186,7 +186,7 @@ func (t *bruteForceTracker) recordFailure(ip string) bool {
 // evictLocked frees one slot. Active bans survive while any unbanned record
 // remains, so flooding the table from fresh addresses cannot lift a ban: the
 // oldest unbanned record goes first, otherwise the ban closest to expiry.
-func (t *bruteForceTracker) evictLocked() {
+func (t *Tracker) evictLocked() {
 	var victim string
 	var victimAt time.Time
 	victimBanned := true
@@ -206,8 +206,8 @@ func (t *bruteForceTracker) evictLocked() {
 	}
 }
 
-// recordSuccess clears the failure count for an IP.
-func (t *bruteForceTracker) recordSuccess(ip string) {
+// RecordSuccess clears the failure count for an IP.
+func (t *Tracker) RecordSuccess(ip string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	key := t.keyLocked(ip)
@@ -217,8 +217,8 @@ func (t *bruteForceTracker) recordSuccess(ip string) {
 	delete(t.attempts, key)
 }
 
-func (t *bruteForceTracker) cleanupLoop() {
-	ticker := time.NewTicker(bruteForceCleanup)
+func (t *Tracker) cleanupLoop() {
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -230,13 +230,13 @@ func (t *bruteForceTracker) cleanupLoop() {
 	}
 }
 
-func (t *bruteForceTracker) cleanup() {
+func (t *Tracker) cleanup() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.cleanupLocked(time.Now())
 }
 
-func (t *bruteForceTracker) cleanupLocked(now time.Time) {
+func (t *Tracker) cleanupLocked(now time.Time) {
 	var expired []string
 	for key, rec := range t.attempts {
 		if !rec.bannedAt.IsZero() && now.Sub(rec.bannedAt) > t.banDuration {
@@ -250,9 +250,9 @@ func (t *bruteForceTracker) cleanupLocked(now time.Time) {
 	t.forgetLocked(expired)
 }
 
-func (t *bruteForceTracker) stop() {
+// Stop ends the tracker's cleanup goroutine. It is safe to call more than once.
+func (t *Tracker) Stop() {
 	t.stopOnce.Do(func() {
 		close(t.stopCh)
 	})
 }
-

@@ -201,13 +201,13 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	// from guessing the token.
 	if h.cfg != nil && h.cfg.adminToken != "" && r.Header.Get("X-Admin-Token") != "" {
 		ip := clientip.Get(r)
-		if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+		if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 			respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 			return false
 		}
 		if secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
 			if h.bruteForce != nil {
-				h.bruteForce.recordSuccess(ip)
+				h.bruteForce.RecordSuccess(ip)
 			}
 			*r = *r.WithContext(context.WithValue(r.Context(), providerContributionActorKey{}, "break-glass"))
 			return true
@@ -228,7 +228,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 		}
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		respondJSONError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
 		return false
 	}
@@ -248,7 +248,7 @@ func (h *proxyHandler) checkAdminAuth(w http.ResponseWriter, r *http.Request) bo
 	}
 
 	if h.bruteForce != nil {
-		h.bruteForce.recordFailure(ip)
+		h.bruteForce.RecordFailure(ip)
 	}
 	respondJSONError(w, http.StatusUnauthorized, "invalid admin token")
 	return false
@@ -267,18 +267,18 @@ func (h *proxyHandler) checkMemberOrAdminAuth(w http.ResponseWriter, r *http.Req
 		}
 	}
 	ip := clientip.Get(r)
-	if h.bruteForce != nil && h.bruteForce.isBanned(ip) {
+	if h.bruteForce != nil && h.bruteForce.IsBanned(ip) {
 		http.Error(w, "too many failed attempts, try again later", http.StatusTooManyRequests)
 		return false
 	}
 	if h.cfg.adminToken != "" && secureSecretEquals(r.Header.Get("X-Admin-Token"), h.cfg.adminToken) {
 		if h.bruteForce != nil {
-			h.bruteForce.recordSuccess(ip)
+			h.bruteForce.RecordSuccess(ip)
 		}
 		return true
 	}
 	if h.bruteForce != nil {
-		h.bruteForce.recordFailure(ip)
+		h.bruteForce.RecordFailure(ip)
 	}
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 	return false
