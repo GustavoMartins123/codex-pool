@@ -67,20 +67,40 @@ function compareValues(a: string | number, b: string | number) {
   return typeof a === "number" && typeof b === "number" ? a - b : collator.compare(String(a), String(b));
 }
 
+// Plan names rank tiers the price table cannot tell apart: Antigravity reports
+// every tier at $0, and unknown plans have no price at all.
+const PLAN_TIERS: [RegExp, number][] = [[/ultra/, 5], [/max|20x|enterprise/, 4], [/pro/, 3], [/team|business/, 2], [/plus|standard|lite/, 1]];
+
+function planPrice(account: AccountStats): [number, number, number] {
+  const plan = (account.plan_type || "").toLowerCase();
+  if (!plan) return [0, 0, 0];
+  if (plan.includes("free")) return [1, 0, 0];
+  return [2, account.subscription_cost_monthly || 0, PLAN_TIERS.find(([pattern]) => pattern.test(plan))?.[1] ?? 0];
+}
+
+// byPlanPriceDesc orders paid plans from the most expensive down, then free
+// plans, then accounts that report no plan.
+function byPlanPriceDesc(left: AccountStats, right: AccountStats) {
+  const a = planPrice(left);
+  const b = planPrice(right);
+  return b[0] - a[0] || b[1] - a[1] || b[2] - a[2];
+}
+
 // Accounts without a value for the column stay at the bottom in both directions.
+// Ties keep providers together and list each group's most expensive plan first.
 export function sortAccounts(accounts: AccountStats[], sort: AccountSort | null, displayID: (account: AccountStats) => string = (account) => account.id): AccountStats[] {
   if (!sort) return accounts;
   const sign = sort.direction === "asc" ? 1 : -1;
   return accounts
     .map((account) => ({ account, id: displayID(account), value: sortValue(account, sort.key, displayID(account)) }))
     .sort((left, right) => {
+      const tie = () => collator.compare(providerDisplay(left.account.type).label, providerDisplay(right.account.type).label) || byPlanPriceDesc(left.account, right.account) || collator.compare(left.id, right.id);
       if (left.value === null || right.value === null) {
-        if (left.value === right.value) return collator.compare(left.id, right.id);
+        if (left.value === right.value) return tie();
         return left.value === null ? 1 : -1;
       }
-      const primary = compareValues(left.value, right.value) * sign;
-      if (primary !== 0) return primary;
-      return collator.compare(providerDisplay(left.account.type).label, providerDisplay(right.account.type).label) || collator.compare(left.id, right.id);
+      const primary = (sort.key === "plan" ? byPlanPriceDesc(left.account, right.account) : compareValues(left.value, right.value)) * sign;
+      return primary || tie();
     })
     .map((entry) => entry.account);
 }

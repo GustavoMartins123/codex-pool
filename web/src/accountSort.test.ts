@@ -14,7 +14,7 @@ const make = (overrides: Partial<AccountStats>) => ({ ...base, ...overrides }) a
 const ids = (accounts: AccountStats[]) => accounts.map((account) => account.id);
 
 const accounts = [
-  make({ id: "b", type: "claude", plan_type: "pro", api_cost_estimate: 14 }),
+  make({ id: "b", type: "claude", plan_type: "pro", subscription_cost_monthly: 20, api_cost_estimate: 14 }),
   make({ id: "c", type: "antigravity", plan_type: "free-tier", api_cost_estimate: 35 }),
   make({ id: "a", type: "antigravity", plan_type: "g1-pro-tier", api_cost_estimate: 0.4 }),
   make({ id: "d", type: "aistudio", plan_type: "", api_cost_estimate: 0 }),
@@ -29,9 +29,35 @@ it("sorts by provider, breaking ties by account id", () => {
   expect(ids(sortAccounts(accounts, { key: "provider", direction: "desc" }))).toEqual(["b", "a", "c", "d"]);
 });
 
-it("sorts by plan and keeps accounts without a plan last in both directions", () => {
-  expect(ids(sortAccounts(accounts, { key: "plan", direction: "asc" }))).toEqual(["c", "a", "b", "d"]);
-  expect(ids(sortAccounts(accounts, { key: "plan", direction: "desc" }))).toEqual(["b", "a", "c", "d"]);
+it("sorts by plan price, most expensive first, and keeps accounts without a plan last in both directions", () => {
+  expect(ids(sortAccounts(accounts, { key: "plan", direction: "asc" }))).toEqual(["b", "a", "c", "d"]);
+  expect(ids(sortAccounts(accounts, { key: "plan", direction: "desc" }))).toEqual(["c", "a", "b", "d"]);
+});
+
+it("lists each group's plans from the most expensive down to free in both directions", () => {
+  const pool = [
+    make({ id: "codex_1f", type: "codex", plan_type: "free", subscription_cost_monthly: 0 }),
+    make({ id: "codex_2c", type: "codex", plan_type: "plus", subscription_cost_monthly: 20 }),
+    make({ id: "codex_3a", type: "codex", plan_type: "pro", subscription_cost_monthly: 200 }),
+    make({ id: "codex_4e", type: "codex", plan_type: "team", subscription_cost_monthly: 25 }),
+    make({ id: "codex_5b", type: "codex", plan_type: "prolite", subscription_cost_monthly: 100 }),
+    make({ id: "ag_1", type: "antigravity", plan_type: "free-tier" }),
+    make({ id: "ag_2", type: "antigravity", plan_type: "g1-pro-tier" }),
+    make({ id: "ag_3", type: "antigravity", plan_type: "g1-ultra-tier" }),
+  ];
+  const codex = ["codex_3a", "codex_5b", "codex_4e", "codex_2c", "codex_1f"];
+  const antigravity = ["ag_3", "ag_2", "ag_1"];
+  expect(ids(sortAccounts(pool, { key: "provider", direction: "asc" }))).toEqual([...antigravity, ...codex]);
+  expect(ids(sortAccounts(pool, { key: "provider", direction: "desc" }))).toEqual([...codex, ...antigravity]);
+});
+
+it("breaks ties in other columns by provider, then by the most expensive plan", () => {
+  const pool = [
+    make({ id: "x", type: "codex", plan_type: "plus", subscription_cost_monthly: 20, status: "healthy" }),
+    make({ id: "y", type: "codex", plan_type: "pro", subscription_cost_monthly: 200, status: "healthy" }),
+    make({ id: "z", type: "codex", plan_type: "free", status: "cooldown" }),
+  ];
+  expect(ids(sortAccounts(pool, { key: "state", direction: "desc" }))).toEqual(["y", "x", "z"]);
 });
 
 it("sorts by account id and by API value numerically", () => {
