@@ -399,10 +399,16 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	if existingIdentity == "" {
 		existingIdentity = target.codex.IDTokenChatGPTAccountID
 	}
+	existingUser := parseCodexClaims(target.IDToken).userKey()
 	authFile := target.File
 	target.mu.Unlock()
 	if newClaims.ChatGPTAccountID != "" && existingIdentity != "" && newClaims.ChatGPTAccountID != existingIdentity {
 		return fmt.Errorf("signed-in account (%s) does not match pool account %s", newClaims.ChatGPTAccountID, accountID)
+	}
+	// Workspace members share the account ID, so it alone cannot tell a
+	// teammate's login from the account's own user.
+	if newUser := newClaims.userKey(); newUser != "" && existingUser != "" && newUser != existingUser {
+		return fmt.Errorf("signed-in user does not match pool account %s", accountID)
 	}
 
 	raw, err := target.vault.readAccountFile(authFile)
