@@ -6,7 +6,7 @@ import { Sparkline } from "../charts";
 import { type AccountStats, type AdminAccount, type PoolStats, type Provider } from "../types";
 import { type AccountSort, type AccountSortKey, loadStoredAccountSort, nextAccountSort, parseAccountSort, sortAccounts, storeAccountSort } from "../accountSort";
 import { queryValue, updateURL } from "../navigation";
-import { AccountQuotaWindows, AccountResetWindows, Instrument, QuotaFamilyBreakdown, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, focusedQuotaAccount, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay } from "../ui";
+import { AccountQuotaWindows, AccountResetWindows, Instrument, QuotaFamilyBreakdown, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, focusedQuotaAccount, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay, accountEmailLabel } from "../ui";
 import { type CSSProperties, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
@@ -432,7 +432,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                     {!selectedAdmin.can_manage && <p>You have use access. Account management remains with the owner.</p>}
                     {selectedAdmin.can_manage && <AccountGovernance key={`${selectedAccount.type}:${selectedAdmin.id}`} provider={selectedAccount.type} id={selectedAdmin.id} onChanged={onAccountsChanged} />}
                     {selectedAdmin.can_manage && selectedAccount.type === "qwen" && <QwenCreditManager key={`qwen-credits:${selectedAdmin.id}`} id={selectedAdmin.id} onChanged={onAccountsChanged} />}
-                    {selectedAdmin.email && <p className="account-identity-hint">Google account: {selectedAdmin.email}{selectedAccount.type === "antigravity" && selectedVerificationURL ? " · finish the phone verification on this account, then relogin" : ""}</p>}
+                    {selectedAdmin.email && <p className="account-identity-hint">{accountEmailLabel(selectedAccount.type)}: {selectedAdmin.email}{selectedAccount.type === "antigravity" && selectedVerificationURL ? " · finish the phone verification on this account, then relogin" : ""}</p>}
                     {selectedAdmin.can_manage && <div className="operator-actions">
                       {toggleAction && <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? "confirm" : ""} onClick={() => perform(toggleAction)}>{isArmedAccountAction(action, selectedAdmin.id, toggleAction) ? `Confirm ${selectedAdmin.disabled ? "enable" : "disable"}` : selectedAdmin.disabled ? "Enable account" : "Disable account"}</button>}
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
