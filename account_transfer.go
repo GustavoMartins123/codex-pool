@@ -159,7 +159,7 @@ func (h *proxyHandler) exportAccounts(actor string) accountsExport {
 	}
 	for _, acc := range h.pool.allAccounts() {
 		dir, ok := accountExportProviders[acc.Type]
-		if !ok || h.passport.authorizeAccount(actor, acc, "manage") != nil {
+		if !ok || !h.exportableAccount(actor, acc, h.passport.accountResourceOf(acc)) {
 			continue
 		}
 		acc.mu.Lock()
@@ -192,6 +192,22 @@ func (h *proxyHandler) exportAccounts(actor string) accountsExport {
 		return accountsExport{}
 	}
 	return out
+}
+
+// exportableAccount reports whether the actor may put the account on an
+// export: the accounts it manages and, for the break-glass credential, the
+// private accounts of operators. That credential stands in for the operator
+// role and the export holds no secret. A member's private account is never
+// exported.
+func (h *proxyHandler) exportableAccount(actor string, acc *Account, resource *accountResource) bool {
+	if h.passport.authorizeAccount(actor, acc, "manage") == nil {
+		return true
+	}
+	if actor != "break-glass" || resource == nil {
+		return false
+	}
+	owner := h.passport.principal(resource.OwnerID)
+	return owner != nil && owner.Kind == PrincipalOperator
 }
 
 // importAccounts creates a waiting account for each entry of an export. An

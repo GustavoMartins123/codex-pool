@@ -59,16 +59,21 @@ func seededTransferHandler(t *testing.T) *proxyHandler {
 		"tokens":  map[string]any{"access_token": "private-access-secret", "refresh_token": "private-refresh-secret"},
 		"cookies": map[string]any{"__cf_bm": "cookie-secret"},
 	})
+	writeTestAccountFile(t, h, "codex/codex_theirs.json", map[string]any{
+		"tokens": map[string]any{"access_token": "theirs-access-secret", "refresh_token": "theirs-refresh-secret"},
+	})
 	writeTestAccountFile(t, h, "codex/codex_waiting.json", map[string]any{"placeholder": true, "email": "waiting@example.com"})
 	writeTestAccountFile(t, h, "antigravity/antigravity_person.json", map[string]any{
 		"access_token": "antigravity-access-secret", "refresh_token": "antigravity-refresh-secret", "project_id": "project-secret",
 		"email": "person@example.com", "plan_type": "pro", "added_at": "2026-10-02T00:00:00Z",
 	})
 	writeTestAccountFile(t, h, "kimi/kimi_key.json", map[string]any{"api_key": "kimi-key-secret"})
+	addTestPassportOperator(t, h.passport, "another-operator")
 	if err := h.reloadAccounts(); err != nil {
 		t.Fatal(err)
 	}
 	registerTestAccount(t, h, testAccountByID(t, h, "codex_live"), "operator", true)
+	registerTestAccount(t, h, testAccountByID(t, h, "codex_theirs"), "another-operator", false)
 	registerTestAccount(t, h, testAccountByID(t, h, "codex_dead"), "operator", true)
 	registerTestAccount(t, h, testAccountByID(t, h, "codex_private"), "member", false)
 	registerTestAccount(t, h, testAccountByID(t, h, "codex_waiting"), "operator", true)
@@ -122,7 +127,7 @@ func TestAccountsExportCarriesNoCredentials(t *testing.T) {
 	body := response.Body.String()
 	for _, secret := range []string{
 		"codex-access-secret", "codex-refresh-secret", "dead-access-secret", "dead-refresh-secret",
-		"private-access-secret", "private-refresh-secret", "cookie-secret", "antigravity-access-secret",
+		"private-access-secret", "private-refresh-secret", "cookie-secret", "theirs-access-secret", "theirs-refresh-secret", "antigravity-access-secret",
 		"antigravity-refresh-secret", "project-secret", "kimi-key-secret", "waiting@example.com",
 		"stale-reason", "auth_error", "pool" + string(os.PathSeparator),
 	} {
@@ -190,6 +195,23 @@ func TestAccountsExportRequiresAnOperator(t *testing.T) {
 	h.ServeHTTP(breakGlass, request)
 	if breakGlass.Code != http.StatusOK || !strings.Contains(breakGlass.Body.String(), `"signature"`) {
 		t.Fatalf("break-glass status=%d body=%s", breakGlass.Code, breakGlass.Body.String())
+	}
+	// The break-glass credential stands in for the operator role: it also
+	// exports an operator's private account, but never a member's.
+	var breakGlassFile accountsExport
+	if err := json.Unmarshal(breakGlass.Body.Bytes(), &breakGlassFile); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := exportedAccountNames(breakGlassFile.Accounts), []string{"antigravity/antigravity_person", "codex/codex_live", "codex/codex_theirs"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("break-glass exported %v, want %v", got, want)
+	}
+	if err := verifyAccountsExport(breakGlassFile, transferTestSecret); err != nil {
+		t.Fatalf("the break-glass export is not signed: %v", err)
+	}
+	for _, secret := range []string{"private-refresh-secret", "theirs-refresh-secret", "waiting@example.com"} {
+		if strings.Contains(breakGlass.Body.String(), secret) {
+			t.Fatalf("the break-glass export carries %q", secret)
+		}
 	}
 
 	h.passportConfig = passportConfig{}
