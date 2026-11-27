@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -354,8 +355,12 @@ func TestAccountsImportCreatesWaitingAccounts(t *testing.T) {
 		t.Fatalf("the waiting account file is not sealed by the vault: %s", onDisk)
 	}
 	info, err := os.Stat(waiting)
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("waiting account mode=%v err=%v", info.Mode().Perm(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows reports no Unix permission bits for a file.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("waiting account mode=%v", info.Mode().Perm())
 	}
 	plaintext, err := target.cfg.vault.readAccountFile(waiting)
 	if err != nil {
