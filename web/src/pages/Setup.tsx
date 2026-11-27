@@ -125,6 +125,16 @@ export function SetupPage() {
       powershell: `irm "${base}/setup/pi/${nonce("pi")}?shell=powershell" | iex`,
       manual: [{ file: "pi models.json", url: `${base}/config/pi/${nonce("pi")}` }],
     },
+    openbot: {
+      name: "OpenBot",
+      install: "# Desktop app: https://github.com/nightly-labs/openbot\n# OpenBot runs the Codex CLI of this computer:\nnpm install -g @openai/codex    # or: brew install codex",
+      oneliner: `curl -sL "${base}/setup/codex/${nonce("codex")}" | bash`,
+      powershell: `irm "${base}/setup/codex/${nonce("codex")}?shell=powershell" | iex`,
+      manual: [
+        { file: "~/.codex/auth.json", url: `${base}/config/codex/${nonce("codex")}`, note: "OpenBot starts the Codex CLI of this computer and reads its ~/.codex folder, so the Codex setup connects OpenBot too. It is the same one-time link as in the Codex tab. Then open OpenBot > Settings > Providers and select Refresh." },
+        { file: "OpenBot > Settings > Providers > ChatGPT > Environment", body: `OPENAI_BASE_URL=${base}\nOPENAI_API_KEY=<access_token>`, note: "To keep your own Codex sign-in and route only OpenBot: add both variables in OpenBot and save. <access_token> is the access_token of the Codex config fetch above." },
+      ],
+    },
   };
   const sdkTools: Record<string, { name: string; summary: string; examples: { label: string; code: string }[] }> = {
     anthropic: {
