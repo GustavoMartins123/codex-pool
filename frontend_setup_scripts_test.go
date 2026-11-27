@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -159,6 +160,194 @@ func TestCodexSetupPreservesModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCodexSetupRejectedLinkKeepsExistingAuth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	step := codexCredentialStep(t)
+	const previous = `{"OPENAI_API_KEY":"previous-pool-jwt","tokens":{"access_token":"previous-pool-jwt"}}`
+
+	for _, tc := range []struct {
+		name   string
+		reply  fakeCurlReply
+		reason string
+	}{
+		{"revoked link", fakeCurlReply{status: "404", body: `{"error":"invalid or revoked token"}`}, "invalid or revoked token"},
+		{"disabled user", fakeCurlReply{status: "403", body: `{"error":"user disabled"}`}, "user disabled"},
+		{"unreachable pool", fakeCurlReply{status: "000", exit: 7}, ""},
+		{"error body with success status", fakeCurlReply{status: "200", body: `{"error":"invalid or revoked token"}`}, "invalid or revoked token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, authFile := newCodexHomeWithAuth(t, previous, 1)
+			output, err := runCodexCredentialStep(t, home, step, tc.reply)
+			if err == nil {
+				t.Fatalf("a rejected link must stop the setup:\n%s", output)
+			}
+			if got := mustReadFile(t, authFile); string(got) != previous {
+				t.Fatalf("rejected link replaced auth.json:\n%s", got)
+			}
+			for _, want := range []string{"Nothing was changed", "run a newly generated link"} {
+				if !strings.Contains(output, want) {
+					t.Fatalf("setup must tell the user %q:\n%s", want, output)
+				}
+			}
+			if tc.reason != "" && !strings.Contains(output, tc.reason) {
+				t.Fatalf("setup must show the pool reason %q:\n%s", tc.reason, output)
+			}
+			backups, globErr := filepath.Glob(authFile + ".bak.*")
+			if globErr != nil || len(backups) != 1 {
+				t.Fatalf("a rejected link must not add backups, got %v (err=%v)", backups, globErr)
+			}
+			if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(authFile), ".auth.json.*")); len(leftovers) != 0 {
+				t.Fatalf("rejected download left temp files behind: %v", leftovers)
+			}
+		})
+	}
+}
+
+func TestCodexSetupInstallsCredentialAndKeepsItWhenLinkIsReplayed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	step := codexCredentialStep(t)
+	const previous = `{"OPENAI_API_KEY":"previous-pool-jwt","tokens":{"access_token":"previous-pool-jwt"}}`
+	const fetched = `{"OPENAI_API_KEY":"new-pool-jwt","tokens":{"id_token":"id","access_token":"new-pool-jwt","refresh_token":"refresh","account_id":"acct"},"last_refresh":"2026-11-27T12:00:00Z"}`
+	home, authFile := newCodexHomeWithAuth(t, previous, 1)
+
+	output, err := runCodexCredentialStep(t, home, step, fakeCurlReply{status: "200", body: fetched})
+	if err != nil {
+		t.Fatalf("fetch: %v\n%s", err, output)
+	}
+	if got := mustReadFile(t, authFile); string(got) != fetched {
+		t.Fatalf("fetched credential was not installed:\n%s", got)
+	}
+	if info, statErr := os.Stat(authFile); statErr != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("auth.json mode must stay private: %v (err=%v)", info, statErr)
+	}
+	backups, globErr := filepath.Glob(authFile + ".bak.*")
+	if globErr != nil || len(backups) != 2 {
+		t.Fatalf("expected the seeded and the new backup, got %v (err=%v)", backups, globErr)
+	}
+	var backedUp []string
+	for _, backup := range backups {
+		backedUp = append(backedUp, string(mustReadFile(t, backup)))
+	}
+	if !slices.Contains(backedUp, previous) {
+		t.Fatalf("no backup holds the previous credential: %q", backedUp)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(filepath.Dir(authFile), ".auth.json.*")); len(leftovers) != 0 {
+		t.Fatalf("install left temp files behind: %v", leftovers)
+	}
+
+	// The link is single-use: running the same command again gets an error body.
+	output, err = runCodexCredentialStep(t, home, step, fakeCurlReply{status: "404", body: `{"error":"invalid or revoked token"}`})
+	if err == nil {
+		t.Fatalf("replayed link must stop the setup:\n%s", output)
+	}
+	if got := mustReadFile(t, authFile); string(got) != fetched {
+		t.Fatalf("replayed link replaced the working credential:\n%s", got)
+	}
+}
+
+func TestCodexSetupInstallsCredentialWithoutPreviousAuth(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script semantics are verified on Linux and CI")
+	}
+	step := codexCredentialStep(t)
+	const fetched = `{"OPENAI_API_KEY":"new-pool-jwt","tokens":{"id_token":"id","access_token":"new-pool-jwt","refresh_token":"refresh","account_id":"acct"},"last_refresh":"2026-11-27T12:00:00Z"}`
+	home, authFile := newCodexHomeWithAuth(t, "", 0)
+
+	output, err := runCodexCredentialStep(t, home, step, fakeCurlReply{status: "200", body: fetched})
+	if err != nil {
+		t.Fatalf("fetch: %v\n%s", err, output)
+	}
+	if got := mustReadFile(t, authFile); string(got) != fetched {
+		t.Fatalf("fetched credential was not installed:\n%s", got)
+	}
+	if backups, globErr := filepath.Glob(authFile + ".bak.*"); globErr != nil || len(backups) != 0 {
+		t.Fatalf("no previous auth.json means no backup, got %v (err=%v)", backups, globErr)
+	}
+}
+
+type fakeCurlReply struct {
+	status string
+	body   string
+	exit   int
+}
+
+func codexCredentialStep(t *testing.T) string {
+	t.Helper()
+	h := &proxyHandler{}
+	rr := httptest.NewRecorder()
+	h.serveCodexSetupScript(rr, httptest.NewRequest(http.MethodGet, "http://example.com/setup/codex/token", nil))
+	body := rr.Body.String()
+	start := strings.Index(body, `echo "1. Fetching credentials..."`)
+	end := strings.Index(body, `echo "2. Fetching model catalog..."`)
+	if start < 0 || end <= start {
+		t.Fatal("credential step missing")
+	}
+	return body[start:end]
+}
+
+func newCodexHomeWithAuth(t *testing.T, auth string, seededBackups int) (home, authFile string) {
+	t.Helper()
+	home = t.TempDir()
+	authFile = filepath.Join(home, "auth.json")
+	if auth != "" {
+		if err := os.WriteFile(authFile, []byte(auth), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range seededBackups {
+		if err := os.WriteFile(fmt.Sprintf("%s.bak.%d", authFile, i), []byte(`{"seeded":true}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home, authFile
+}
+
+func runCodexCredentialStep(t *testing.T, home, step string, reply fakeCurlReply) (string, error) {
+	t.Helper()
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fakeCurl := `#!/bin/sh
+out=""; fmt=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    -w) fmt="$2"; shift ;;
+  esac
+  shift
+done
+[ -z "$out" ] || printf '%s' "$FAKE_CURL_BODY" > "$out"
+[ -z "$fmt" ] || printf '%s' "$(printf '%s' "$fmt" | sed "s/%{http_code}/$FAKE_CURL_STATUS/")"
+exit "${FAKE_CURL_EXIT:-0}"
+`
+	if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(fakeCurl), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-euo", "pipefail")
+	cmd.Stdin = strings.NewReader(step)
+	cmd.Env = append(os.Environ(),
+		"HOME="+home,
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+		"AUTH_DIR="+home,
+		"AUTH_FILE="+filepath.Join(home, "auth.json"),
+		"BASE_URL=http://example.com",
+		"TOKEN=consumed-nonce",
+		"STAMP=test",
+		"FAKE_CURL_STATUS="+reply.status,
+		"FAKE_CURL_BODY="+reply.body,
+	)
+	if reply.exit != 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("FAKE_CURL_EXIT=%d", reply.exit))
+	}
+	output, err := cmd.CombinedOutput()
+	return string(output), err
 }
 
 func TestCodexSetupInstallsRestoreHelper(t *testing.T) {
