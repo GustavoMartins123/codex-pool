@@ -171,6 +171,8 @@ export interface TokenPlanCredits {
   source: "manual" | "alibaba-api" | "alibaba-console";
 }
 
+export type AccountsImportResult = { imported: string[]; skipped: string[]; invalid: string[] };
+
 export interface PoolStats {
   total_accounts: number;
   active_accounts: number;
@@ -366,6 +368,7 @@ export interface AdminAccount {
   dead: boolean;
   needs_login?: boolean;
   auth_error?: string;
+  awaiting_login?: boolean;
   needs_verification?: boolean;
   health_blocked?: boolean;
   verification_url?: string;

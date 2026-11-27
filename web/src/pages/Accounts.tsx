@@ -1,4 +1,4 @@
-import { consumeResetCredit, deleteAccount, mutateAccount, reloadAccounts, verifyAccount, verifyAllAccounts, type AccountVerifyResult } from "../api";
+import { consumeResetCredit, deleteAccount, exportAccounts, importAccounts, mutateAccount, reloadAccounts, verifyAccount, verifyAllAccounts, type AccountVerifyResult } from "../api";
 import { AccountContribution } from "../components/AccountContribution";
 import { AccountGovernance } from "../components/AccountGovernance";
 import { QwenCreditBalance, QwenCreditManager } from "../components/QwenTokenPlan";
@@ -7,7 +7,7 @@ import { type AccountStats, type AdminAccount, type PoolStats, type Provider } f
 import { type AccountSort, type AccountSortKey, loadStoredAccountSort, nextAccountSort, parseAccountSort, sortAccounts, storeAccountSort } from "../accountSort";
 import { queryValue, updateURL } from "../navigation";
 import { AccountQuotaWindows, AccountResetWindows, Instrument, QuotaFamilyBreakdown, ResetCreditExpirations, SignalSkeleton, WeeklyPace, accountThroughput, classNames, compact, focusedQuotaAccount, formatAPIValue, formatAdmission, formatTokens, money, providerDisplay, accountEmailLabel } from "../ui";
-import { type CSSProperties, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ChangeEvent, type CSSProperties, type UIEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type AccountAction = "enable" | "disable" | "resurrect" | "refresh" | "consume-reset" | "delete";
 
@@ -29,10 +29,11 @@ export function isArmedAccountAction(action: ArmedAccountAction, accountID: stri
 }
 
 
-export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
+export function Accounts({ stats, adminAccounts, onAccountsChanged, operator = false }: {
   stats: PoolStats | null;
   adminAccounts: AdminAccount[];
   onAccountsChanged: () => Promise<void>;
+  operator?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(() => queryValue("account"));
   const [query, setQuery] = useState("");
@@ -46,6 +47,9 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [verifying, setVerifying] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInput = useRef<HTMLInputElement | null>(null);
   const [verifyResults, setVerifyResults] = useState<Record<string, AccountVerifyResult>>({});
   const inspectorRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -257,6 +261,38 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
     }
   };
 
+  const exportAccountList = async () => {
+    setExporting(true);
+    setMessage(null);
+    try {
+      await exportAccounts();
+      setMessage({ tone: "success", text: "Account list exported. It holds no credential, and only a pool with this pool's signing secret can import it." });
+    } catch (cause) {
+      setMessage({ tone: "error", text: cause instanceof Error ? cause.message : "Export failed" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const importAccountList = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setMessage(null);
+    try {
+      const result = await importAccounts(file);
+      const summary = [`${result.imported.length} imported, waiting for sign-in`, `${result.skipped.length} already present`];
+      if (result.invalid.length > 0) summary.push(`${result.invalid.length} rejected`);
+      setMessage({ tone: result.invalid.length > 0 ? "error" : "success", text: summary.join(" · ") });
+      await onAccountsChanged().catch(() => {});
+    } catch (cause) {
+      setMessage({ tone: "error", text: cause instanceof Error ? cause.message : "Import failed" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const verifyAccess = async (accountID: string) => {
     setVerifying(accountID);
     try {
@@ -301,6 +337,9 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
         <h1>Accounts</h1>
         <div className="account-title-actions">
           <button className="contribute-button" onClick={() => { setReloginAccountID(null); setReloginProvider("codex"); setContributing(true); }}>Add pool account</button>
+          {operator && <button className="operator-badge" disabled={busy || exporting || importing} onClick={exportAccountList} title="Download the list of sign-in accounts without any credential. Another pool with the same signing secret can import it.">{exporting ? "Exporting…" : "Export accounts"}</button>}
+          {operator && <button className="operator-badge" disabled={busy || exporting || importing} onClick={() => importInput.current?.click()} title="Add every account of an exported list as waiting for its sign-in. Accounts already present are left alone.">{importing ? "Importing…" : "Import accounts"}</button>}
+          <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={importAccountList} aria-label="Account list to import" />
           <button className="operator-badge" disabled={busy} onClick={reloadPool}>{busy ? "Reloading…" : "Reload pool"}</button>
           {canVerifyAll && <button className="operator-badge" disabled={busy || verifying !== null} onClick={verifyAll} title="Probe every manageable account for bans or lost access. No generation cost.">{verifying === "all" ? "Verifying…" : "Verify all accounts"}</button>}
         </div>
@@ -371,9 +410,9 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                 <div className="inspector-provider" style={{ color: providerDisplay(selectedAccount.type).color }}>{providerDisplay(selectedAccount.type).label} · {selectedAccount.plan_type}</div>
                 {(selectedAdmin?.needs_login || selectedAccount.status === "needs_login") && (
                   <div className="inspector-alert" role="alert">
-                    <b>Credentials rejected — relogin required</b>
-                    {(selectedAdmin?.auth_error || selectedAccount.auth_error) && <span>{selectedAdmin?.auth_error || selectedAccount.auth_error}</span>}
-                    <small>{selectedAdmin?.can_manage ? "The access token can keep serving requests, but this account will go offline when it expires. Use Relogin account below to restore it." : "The account owner needs to sign in again to restore this account."}</small>
+                    <b>{selectedAdmin?.awaiting_login ? "Imported without credentials — sign in to activate" : "Credentials rejected — relogin required"}</b>
+                    {!selectedAdmin?.awaiting_login && (selectedAdmin?.auth_error || selectedAccount.auth_error) && <span>{selectedAdmin?.auth_error || selectedAccount.auth_error}</span>}
+                    <small>{selectedAdmin?.can_manage ? (selectedAdmin.awaiting_login ? "This account holds no credential and never serves requests. Use Sign in below with the account it lists." : "The access token can keep serving requests, but this account will go offline when it expires. Use Relogin account below to restore it.") : "The account owner needs to sign in again to restore this account."}</small>
                   </div>
                 )}
                 <div className="account-admission">Added {formatAdmission(selectedAccount.account_added_at)} · Spend {money.format(selectedAccount.subscription_spend)}</div>
@@ -438,7 +477,7 @@ export function Accounts({ stats, adminAccounts, onAccountsChanged }: {
                       <button disabled={busy || !selectedAdmin.dead} className={isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "confirm" : ""} onClick={() => perform("resurrect")}>{isArmedAccountAction(action, selectedAdmin.id, "resurrect") ? "Confirm restore" : "Restore offline account"}</button>
                       <button disabled={busy} className={isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "confirm" : ""} onClick={() => perform("refresh")}>{isArmedAccountAction(action, selectedAdmin.id, "refresh") ? "Confirm refresh" : "Refresh credentials"}</button>
                       {selectedAccount.type === "antigravity" && selectedVerificationURL && <a className="verification-link" href={selectedVerificationURL} target="_blank" rel="noreferrer" title={selectedAdmin.email ? `Google verification pinned to ${selectedAdmin.email}. If that account is not signed in here, Google will ask for its password instead of reusing another account in the browser.` : "Open the Google verification flow."}>{selectedAdmin.email ? `Verify ${selectedAdmin.email}` : "Open Google verification"}</a>}
-                      {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
+                      {(selectedAccount.type === "codex" || selectedAccount.type === "claude" || selectedAccount.type === "antigravity") && <button disabled={busy} onClick={() => { setReloginAccountID(selectedAdmin.id); setReloginProvider(selectedAccount.type === "antigravity" ? "antigravity" : selectedAccount.type === "claude" ? "claude" : "codex"); setContributing(true); }}>{selectedAdmin.awaiting_login ? "Sign in" : selectedAccount.type === "antigravity" ? "Relogin / revalidate" : "Relogin account"}</button>}
                       {selectedAdmin.can_verify && <button disabled={busy || verifying !== null} onClick={() => verifyAccess(selectedAdmin.id)} title="Probe the provider for bans or lost access. No generation cost.">{verifying === selectedAdmin.id ? "Verifying…" : "Verify access"}</button>}
                       <button disabled={busy} className={classNames("danger-action", isArmedAccountAction(action, selectedAdmin.id, "delete") && "confirm")} onClick={() => perform("delete")} title="Permanently removes the credential, access grants and stored usage for this account.">{isArmedAccountAction(action, selectedAdmin.id, "delete") ? "Confirm delete" : "Delete account"}</button>
                     </div>}
