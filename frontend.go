@@ -839,11 +839,23 @@ mkdir -p "$AUTH_DIR"
 STAMP=$(date +%%Y%%m%%d-%%H%%M%%S)
 
 echo "1. Fetching credentials..."
+# The link is one-time and expires. Install the download only when the pool
+# returned a credential, so a rejected link never replaces a working
+# auth.json with the pool's error body.
+AUTH_TMP=$(mktemp "$AUTH_DIR/.auth.json.XXXXXX")
+AUTH_STATUS=$(curl -sL --connect-timeout 10 --max-time 120 -o "$AUTH_TMP" -w '%%{http_code}' "$BASE_URL/config/codex/$TOKEN") || AUTH_STATUS="000"
+if [ "$AUTH_STATUS" != "200" ] || ! grep -Eq '"access_token"[[:space:]]*:[[:space:]]*"[^"]+"' "$AUTH_TMP"; then
+    sed -n 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/codex-pool rejected this setup link: \1/p' "$AUTH_TMP" | head -n 1 >&2
+    echo "codex-pool did not return a credential (HTTP $AUTH_STATUS). Nothing was changed." >&2
+    echo "The link works once and expires after 10 minutes. Open Codex Pool > Set up a client, select this client, and run a newly generated link." >&2
+    rm -f "$AUTH_TMP"
+    exit 1
+fi
 if [ -f "$AUTH_FILE" ]; then
     cp "$AUTH_FILE" "$AUTH_FILE.bak.$STAMP"
     chmod 600 "$AUTH_FILE.bak.$STAMP" 2>/dev/null || true
 fi
-curl -sL "$BASE_URL/config/codex/$TOKEN" -o "$AUTH_FILE"
+mv "$AUTH_TMP" "$AUTH_FILE"
 chmod 600 "$AUTH_FILE"
 
 echo "2. Fetching model catalog..."
