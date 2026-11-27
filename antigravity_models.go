@@ -1094,7 +1094,7 @@ func (h *proxyHandler) startAntigravityModelPoller(ctx context.Context) {
 			return
 		}
 		for _, account := range h.pool.allAccounts() {
-			if account.Type != AccountTypeAntigravity {
+			if account.Type != AccountTypeAntigravity || isPlaceholderAccount(account) {
 				continue
 			}
 			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

@@ -379,7 +379,7 @@ func accountHasDaybreak(models map[string]DiscoveredModel) bool {
 func (h *proxyHandler) startProviderModelPoller(ctx context.Context) {
 	syncAll := func() {
 		for _, account := range h.pool.allAccounts() {
-			if _, ok := providerModelsURL(h.registry.ForType(account.Type)); !ok {
+			if _, ok := providerModelsURL(h.registry.ForType(account.Type)); !ok || isPlaceholderAccount(account) {
 				continue
 			}
 			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

@@ -271,6 +271,10 @@ func (h *proxyHandler) handleAccountVerify(w http.ResponseWriter, r *http.Reques
 		respondJSONError(w, http.StatusServiceUnavailable, fmt.Sprintf("%s provider is not configured", target.Type))
 		return
 	}
+	if isPlaceholderAccount(target) {
+		respondJSONError(w, http.StatusBadRequest, "account has no credentials: sign in before verifying it")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	result := h.verifyAccountAccess(ctx, target)
@@ -282,7 +286,7 @@ func (h *proxyHandler) handleAccountVerifyBatch(w http.ResponseWriter, r *http.R
 	actor := providerContributionActor(r)
 	results := make([]accountVerifyResult, 0)
 	for _, account := range h.pool.allAccounts() {
-		if !accountVerifySupported(account.Type) {
+		if !accountVerifySupported(account.Type) || isPlaceholderAccount(account) {
 			continue
 		}
 		if h.passport != nil && h.passport.authorizeAccount(actor, account, "manage") != nil {

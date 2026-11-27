@@ -71,11 +71,15 @@ func primaryUsageBlocksRoutingLocked(a *Account, primaryUsed float64) bool {
 	return primaryUsed >= primaryHardExcludeThreshold
 }
 
+// accountHealthBlockedLocked reports whether the account must stay out of
+// every selection besides Dead and Disabled. An account imported without
+// credentials is blocked here too: it cannot authenticate upstream until its
+// first sign-in.
 func accountHealthBlockedLocked(a *Account) bool {
 	if a == nil {
 		return false
 	}
-	return a.NeedsVerification || strings.TrimSpace(a.HealthError) != "" || strings.TrimSpace(a.VerificationURL) != ""
+	return a.placeholder || a.NeedsVerification || strings.TrimSpace(a.HealthError) != "" || strings.TrimSpace(a.VerificationURL) != ""
 }
 
 func accountAvailableForRoutingLocked(rt *antigravityRuntime, a *Account, now time.Time) bool {

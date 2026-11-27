@@ -366,7 +366,7 @@ func (h *proxyHandler) claudeReloginTarget(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		account.mu.Lock()
-		oauth := strings.HasPrefix(account.AccessToken, "sk-ant-oat") || account.RefreshToken != ""
+		oauth := strings.HasPrefix(account.AccessToken, "sk-ant-oat") || account.RefreshToken != "" || isPlaceholderAccountLocked(account)
 		account.mu.Unlock()
 		if !oauth {
 			respondJSONError(w, http.StatusBadRequest, "Claude relogin requires an OAuth account")
@@ -549,12 +549,18 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	if existingUUID == "" {
 		existingUUID, _ = root["account_uuid"].(string)
 	}
-	if existingUUID == "" || uuid == "" || uuid != existingUUID {
+	// An account imported without credentials has no identity yet: its first
+	// sign-in is what claims it. Every other account must match its own UUID.
+	if uuid == "" || existingUUID == "" && !isPlaceholderAccountLocked(target) || existingUUID != "" && uuid != existingUUID {
 		return fmt.Errorf("signed-in Claude account does not match the existing pool account")
 	}
 	oauth, ok := root["claudeAiOauth"].(map[string]any)
 	if !ok {
-		return fmt.Errorf("Claude OAuth credentials are missing from the account file")
+		if !isPlaceholderAccountLocked(target) {
+			return fmt.Errorf("Claude OAuth credentials are missing from the account file")
+		}
+		oauth = map[string]any{}
+		root["claudeAiOauth"] = oauth
 	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(time.Duration(tokens.ExpiresIn) * time.Second)
@@ -567,6 +573,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	delete(root, "dead")
 	delete(root, "needs_login")
 	delete(root, "auth_error")
+	delete(root, placeholderAccountMarker)
 	if err := target.vault.atomicWriteJSON(target.File, root); err != nil {
 		return err
 	}
@@ -578,6 +585,7 @@ func replaceClaudeAccountCredentials(target *Account, tokens *ClaudeTokenRespons
 	target.Dead = false
 	target.NeedsLogin = false
 	target.AuthError = ""
+	target.placeholder = false
 	target.RefreshBlocked = false
 	log.Printf("claude relogin: replaced credentials for account %s", target.ID)
 	return nil

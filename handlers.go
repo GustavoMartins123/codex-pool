@@ -273,6 +273,7 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.Dead = loaded.Dead
 	existing.NeedsLogin = loaded.NeedsLogin
 	existing.AuthError = loaded.AuthError
+	existing.placeholder = loaded.placeholder
 	existing.AllowedSourceIPs = loaded.AllowedSourceIPs
 	existing.claude.UUID = loaded.claude.UUID
 	existing.codex.CyberAccess = loaded.codex.CyberAccess

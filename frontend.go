@@ -2924,7 +2924,7 @@ func (h *proxyHandler) handleDailyBreakdown(w http.ResponseWriter, r *http.Reque
 
 	accounts := h.pool.allAccounts()
 	for _, acc := range accounts {
-		if acc.Type != AccountTypeCodex || acc.Dead {
+		if acc.Type != AccountTypeCodex || acc.Dead || isPlaceholderAccount(acc) {
 			continue
 		}
 

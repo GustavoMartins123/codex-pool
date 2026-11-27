@@ -65,7 +65,11 @@ type Account struct {
 	NeedsLogin bool
 	// AuthError keeps the last permanent credential rejection reason for
 	// operator surfaces; it is only meaningful while NeedsLogin is set.
-	AuthError         string
+	AuthError string
+	// placeholder marks an account imported without credentials. It waits for
+	// its first sign-in and is never routed. It is not part of the serialized
+	// account shape: only loadPlaceholderAccount sets it.
+	placeholder       bool
 	AddedAt           time.Time
 	Usage             UsageSnapshot
 	Penalty           float64
@@ -379,6 +383,9 @@ func loadPool(dir string, registry *ProviderRegistry, vault credentialVault) ([]
 			acc, err := provider.LoadAccount(e.Name(), path, data)
 			if err != nil {
 				return nil, err
+			}
+			if acc == nil {
+				acc = loadPlaceholderAccount(e.Name(), path, accountType, data)
 			}
 			if acc != nil {
 				acc.vault = vault

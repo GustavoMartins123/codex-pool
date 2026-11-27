@@ -279,6 +279,11 @@ func saveAntigravityAccount(rt *antigravityRuntime, acc *Account) error {
 	}
 	root["model_rate_limits"] = cooldowns
 	persistAccountAddedAt(root, acc)
+	if strings.TrimSpace(acc.AccessToken) != "" {
+		delete(root, placeholderAccountMarker)
+		delete(root, "needs_login")
+		delete(root, "auth_error")
+	}
 	acc.mu.Unlock()
 	if snapshot, ok := rt.models.AccountSnapshot(acc.ID); ok {
 		root["model_snapshot"] = snapshot

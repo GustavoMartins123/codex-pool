@@ -68,8 +68,12 @@ type Facts struct {
 	NeedsVerification  bool // NeedsVerification || VerificationURL set
 	HealthError        bool
 	CredentialsExpired bool
-	RateLimited        bool // RateLimitUntil in the future
-	UsageExhausted     bool // >= primary/secondary hard-exclude thresholds
+	// Placeholder marks an account imported without credentials. It derives
+	// like NeedsLogin but cannot route, unlike a rejected refresh whose access
+	// token still serves.
+	Placeholder    bool
+	RateLimited    bool // RateLimitUntil in the future
+	UsageExhausted bool // >= primary/secondary hard-exclude thresholds
 }
 
 // Derive maps facts onto the unified state. Precedence follows removal

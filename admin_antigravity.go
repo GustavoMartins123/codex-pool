@@ -563,9 +563,6 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		return fail(fmt.Errorf("model discovery failed: %w", err))
 	}
 	if session.ReloginAccountID != "" {
-		if accountID != session.ReloginAccountID {
-			return fail(fmt.Errorf("signed-in Antigravity account does not match pool account %s", session.ReloginAccountID))
-		}
 		var target *Account
 		for _, candidate := range h.pool.allAccounts() {
 			if candidate.Type == AccountTypeAntigravity && candidate.ID == session.ReloginAccountID {
@@ -575,6 +572,9 @@ func (h *proxyHandler) completeAntigravityOAuth(ctx context.Context, session *an
 		}
 		if target == nil {
 			return fail(fmt.Errorf("Antigravity account %q not found", session.ReloginAccountID))
+		}
+		if !antigravityReloginMatchesTarget(target, accountID, email) {
+			return fail(fmt.Errorf("signed-in Antigravity account does not match pool account %s", session.ReloginAccountID))
 		}
 		quotaLimited, err := h.validateAntigravityRelogin(ctx, target, account, provider, snapshot)
 		if err != nil {
@@ -630,6 +630,9 @@ func (h *proxyHandler) replaceAntigravityAccountCredentials(target *Account, tok
 	target.ExpiresAt = expiresAt
 	target.LastRefresh = now
 	target.Dead = false
+	target.NeedsLogin = false
+	target.AuthError = ""
+	target.placeholder = false
 	target.NeedsVerification = false
 	target.VerificationURL = ""
 	target.HealthError = ""
@@ -838,6 +841,24 @@ func (h *proxyHandler) checkAntigravityPlan(ctx context.Context, account *Accoun
 }
 
 var antigravityAccountIDPattern = regexp.MustCompile(`[^a-z0-9._-]+`)
+
+// antigravityReloginMatchesTarget reports whether a finished sign-in belongs
+// to the account its relogin session was bound to. Accounts contributed
+// through Passport are named by a fingerprint of the email instead of the
+// email itself, so the recorded email is the identity both naming schemes
+// share. An account imported without credentials carries that email too.
+func antigravityReloginMatchesTarget(target *Account, signedInID, email string) bool {
+	if target == nil {
+		return false
+	}
+	if signedInID == target.ID {
+		return true
+	}
+	target.mu.Lock()
+	defer target.mu.Unlock()
+	recorded := strings.TrimSpace(target.Email)
+	return recorded != "" && strings.EqualFold(recorded, strings.TrimSpace(email))
+}
 
 func safeAntigravityAccountID(email string) string {
 	id := antigravityAccountIDPattern.ReplaceAllString(strings.ToLower(strings.TrimSpace(email)), "-")
