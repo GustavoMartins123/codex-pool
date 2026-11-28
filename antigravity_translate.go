@@ -64,18 +64,38 @@ func shouldRouteAntigravityModel(rt *antigravityRuntime, model string) bool {
 	return isAntigravityModel(rt, model)
 }
 
+// antigravityTieredModel maps a client's model id to the Antigravity catalog
+// id. The Antigravity CLI sends the base model with the tier as a thinking
+// level (gemini-4-neon plus thinkingLevel XHIGH for gemini-4-neon-xhigh) and
+// names preview builds (gemini-3.1-flash-lite-preview for
+// gemini-3.1-flash-lite). Without the mapping the id is not an Antigravity
+// model and the request falls through to a provider with no accounts. Models
+// already in the catalog, or with no known variant, are returned unchanged.
 func antigravityTieredModel(rt *antigravityRuntime, model string, body []byte) string {
 	model = strings.TrimSpace(model)
 	if model == "" || rt == nil || rt.models == nil || isAntigravityModel(rt, model) {
 		return model
 	}
-	level := geminiThinkingLevel(body)
-	if level == "" {
-		return model
+	// Gemini SDK clients also name preview builds, such as the Antigravity
+	// CLI's safety monitors asking for gemini-3.1-flash-lite-preview while the
+	// catalog lists gemini-3.1-flash-lite. A tiered id is preferred so the
+	// requested thinking level is kept.
+	bases := []string{model}
+	if base := strings.TrimSuffix(model, "-preview"); base != model && base != "" {
+		bases = append(bases, base)
 	}
-	candidate := model + "-" + strings.ToLower(level)
-	if isAntigravityModel(rt, candidate) {
-		return candidate
+	level := strings.ToLower(geminiThinkingLevel(body))
+	var candidates []string
+	for _, base := range bases {
+		if level != "" {
+			candidates = append(candidates, base+"-"+level)
+		}
+	}
+	candidates = append(candidates, bases[1:]...)
+	for _, candidate := range candidates {
+		if isAntigravityModel(rt, candidate) {
+			return candidate
+		}
 	}
 	return model
 }
