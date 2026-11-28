@@ -403,6 +403,38 @@ func TestAntigravityCompactionUsesNormalAndEmergencyRetention(t *testing.T) {
 	}
 }
 
+func TestAntigravityCompactionDoesNotDuplicateSnakeCaseSystemInstruction(t *testing.T) {
+	body, err := json.Marshal(map[string]any{
+		"system_instruction": map[string]any{"parts": []any{map[string]any{"text": "SNAKE-SYSTEM"}}},
+		"contents": []any{
+			map[string]any{"role": "user", "parts": []any{map[string]any{"text": strings.Repeat("old-", 800_000)}}},
+			map[string]any{"role": "model", "parts": []any{map[string]any{"text": "ok"}}},
+			map[string]any{"role": "user", "parts": []any{map[string]any{"text": "latest question"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/v1beta/models/gemini-3.8-flash-high:streamGenerateContent"
+	compacted, didCompact, err := compactAntigravityRequestBodyWithRecentTokens(newAntigravityRuntime(), path, body, antigravityEmergencyRecentTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !didCompact {
+		t.Fatal("compaction did not run")
+	}
+	var root map[string]any
+	if err := json.Unmarshal(compacted, &root); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := root["system_instruction"]; ok {
+		t.Fatal("compacted body carries both systemInstruction and system_instruction")
+	}
+	if !strings.Contains(contextText(jsonvalue.Map(root["systemInstruction"])["parts"]), "SNAKE-SYSTEM") {
+		t.Fatal("snake_case system instruction was lost during compaction")
+	}
+}
+
 func TestAntigravityToolResultTruncationPreservesCallPair(t *testing.T) {
 	messages := []Message{
 		{Role: "assistant", Parts: []MessagePart{{Type: "tool_call", ToolID: "call_bulky", ToolName: "lookup", Arguments: "{}"}}},

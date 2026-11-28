@@ -163,6 +163,44 @@ func TestClientRequestToGeminiRejectsUnknownFormat(t *testing.T) {
 	}
 }
 
+func TestClientRequestToGeminiCanonicalizesSnakeCaseSystemInstruction(t *testing.T) {
+	root := map[string]any{
+		"system_instruction": map[string]any{"parts": []any{map[string]any{"text": "be terse"}}},
+		"contents":           []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	}
+	gemini, _, err := ClientRequestToGemini(root, FormatGemini, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := gemini["system_instruction"]; ok {
+		t.Fatal("snake_case system_instruction was forwarded")
+	}
+	parts := jsonvalue.Slice(jsonvalue.Map(gemini["systemInstruction"])["parts"])
+	if len(parts) != 1 || jsonvalue.String(jsonvalue.Map(parts[0])["text"]) != "be terse" {
+		t.Fatalf("systemInstruction = %#v", gemini["systemInstruction"])
+	}
+	if _, ok := root["system_instruction"]; !ok {
+		t.Fatal("client request was mutated")
+	}
+}
+
+func TestClientRequestToGeminiKeepsBothSystemSpellingsAsSent(t *testing.T) {
+	root := map[string]any{
+		"systemInstruction":  map[string]any{"parts": []any{map[string]any{"text": "camel"}}},
+		"system_instruction": map[string]any{"parts": []any{map[string]any{"text": "snake"}}},
+		"contents":           []any{map[string]any{"role": "user", "parts": []any{map[string]any{"text": "hi"}}}},
+	}
+	gemini, _, err := ClientRequestToGemini(root, FormatGemini, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, camel := gemini["systemInstruction"]
+	_, snake := gemini["system_instruction"]
+	if !camel || !snake {
+		t.Fatalf("both spellings should pass through unchanged: camel=%v snake=%v", camel, snake)
+	}
+}
+
 func TestCleanAntigravitySchemaOrdersHintsStably(t *testing.T) {
 	const want = "No extra properties allowed (format: date) (minLength: 2) (Accepts: string | number) ((nullable))"
 	for range 50 {
