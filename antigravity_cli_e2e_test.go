@@ -31,6 +31,7 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		Models: map[string]AntigravityModelInfo{
 			"gemini-3.8-flash-high": {ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash (High)"},
 			"gemini-pro-agent":      {ID: "gemini-pro-agent", DisplayName: "Gemini 3.1 Pro (High)"},
+			"gemini-4-neon-xhigh":   {ID: "gemini-4-neon-xhigh", DisplayName: "Gemini 4 Neon (XHigh)"},
 		},
 	})
 
@@ -203,4 +204,53 @@ func TestAntigravityCLISmokeChain(t *testing.T) {
 		t.Fatalf("upstream calls = %v", upstreamCalls)
 	}
 	mu.Unlock()
+
+	// 6. agy sends the base model and carries the tier as a thinking level.
+	tiered := `{"contents":[{"role":"user","parts":[{"text":"Reply with exactly: pool-ok"}]}],"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"XHIGH"}}}`
+	resp = post("/v1beta/models/gemini-4-neon:streamGenerateContent?alt=sse", apiKey, tiered)
+	tieredBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("base model with thinking level status = %d body=%s", resp.StatusCode, tieredBody)
+	}
+	mu.Lock()
+	if upstreamModel != "gemini-4-neon-xhigh" {
+		t.Fatalf("gemini-4-neon with thinkingLevel XHIGH resolved upstream to %q, want gemini-4-neon-xhigh", upstreamModel)
+	}
+	mu.Unlock()
+}
+
+func TestAntigravityTieredModelResolvesThinkingLevel(t *testing.T) {
+	rt := newAntigravityRuntime()
+	rt.models.ReplaceAccount("acct", AntigravityAccountSnapshot{
+		FetchedAt: time.Now(),
+		Models: map[string]AntigravityModelInfo{
+			"gemini-4-neon-high":  {ID: "gemini-4-neon-high"},
+			"gemini-4-neon-xhigh": {ID: "gemini-4-neon-xhigh"},
+		},
+	})
+	withLevel := func(level string) []byte {
+		return []byte(`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"` + level + `"}}}`)
+	}
+	cases := []struct {
+		name, model string
+		body        []byte
+		want        string
+	}{
+		{"base plus level", "gemini-4-neon", withLevel("XHIGH"), "gemini-4-neon-xhigh"},
+		{"code assist envelope", "gemini-4-neon", []byte(`{"request":{"generationConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}}}}`), "gemini-4-neon-high"},
+		{"prefixed base", "antigravity/gemini-4-neon", withLevel("HIGH"), "antigravity/gemini-4-neon-high"},
+		{"already tiered", "gemini-4-neon-high", withLevel("XHIGH"), "gemini-4-neon-high"},
+		{"unknown tier", "gemini-4-neon", withLevel("LOW"), "gemini-4-neon"},
+		{"no thinking level", "gemini-4-neon", []byte(`{"contents":[]}`), "gemini-4-neon"},
+		{"other provider model", "gpt-6.2-astra", withLevel("HIGH"), "gpt-6.2-astra"},
+	}
+	for _, c := range cases {
+		if got := antigravityTieredModel(rt, c.model, c.body); got != c.want {
+			t.Errorf("%s: antigravityTieredModel(%q) = %q, want %q", c.name, c.model, got, c.want)
+		}
+	}
+	if got := antigravityTieredModel(nil, "gemini-4-neon", withLevel("XHIGH")); got != "gemini-4-neon" {
+		t.Errorf("nil runtime changed the model to %q", got)
+	}
 }
