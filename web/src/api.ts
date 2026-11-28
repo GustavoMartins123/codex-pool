@@ -1,5 +1,5 @@
 import type { AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON } from "@simplewebauthn/browser";
-import type { AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, RecentError, SignalAnalytics, TokenPlanCredits } from "./types";
+import type { AccountsImportResult, AdminAccount, MyAccount, ClientCredential, ConsolePrincipal, GuestPass, ModelCatalog, PasskeyCredential, PassportAuditEntry, PassportPrincipal, PassportUsagePoint, PoolStats, RecentError, SignalAnalytics, TokenPlanCredits } from "./types";
 
 import { validCompatibility } from "./compatibility";
 
@@ -493,6 +493,25 @@ export async function exchangeAntigravityOAuth(sessionID: string, value: string,
 export async function reloadAccounts() {
   const response = await fetch("/admin/reload", { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken() } });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+}
+
+export async function exportAccounts(): Promise<void> {
+  const response = await fetch("/admin/accounts/export", { credentials: "same-origin", cache: "no-store" });
+  if (!response.ok) await decode(response);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `codex-pool-accounts-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function importAccounts(file: Blob): Promise<AccountsImportResult> {
+  return decode<AccountsImportResult>(await fetch("/admin/accounts/import", {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() }, body: await file.text(),
+  }));
 }
 
 export async function loadMyAccounts(): Promise<MyAccount[]> {

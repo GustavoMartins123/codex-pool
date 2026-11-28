@@ -64,6 +64,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		Dead                    bool        `json:"dead"`
 		NeedsLogin              bool        `json:"needs_login,omitempty"`
 		AuthError               string      `json:"auth_error,omitempty"`
+		AwaitingLogin           bool        `json:"awaiting_login,omitempty"`
 		NeedsVerification       bool        `json:"needs_verification,omitempty"`
 		HealthBlocked           bool        `json:"health_blocked,omitempty"`
 		VerificationURL         string      `json:"verification_url,omitempty"`
@@ -102,6 +103,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 		dead := a.Dead
 		needsLogin := a.NeedsLogin
 		authError := a.AuthError
+		awaitingLogin := isPlaceholderAccountLocked(a)
 		needsVerification := a.NeedsVerification
 		healthBlocked := accountHealthBlockedLocked(a)
 		verificationURL := a.VerificationURL
@@ -141,6 +143,7 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 			Dead:                    dead,
 			NeedsLogin:              needsLogin,
 			AuthError:               authError,
+			AwaitingLogin:           awaitingLogin,
 			NeedsVerification:       needsVerification,
 			HealthBlocked:           healthBlocked,
 			VerificationURL:         verificationURL,
@@ -163,11 +166,11 @@ func (h *proxyHandler) serveAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	h.pool.mu.RUnlock()
 
-	// Mark highest-scoring non-dead account per type as primary
+	// Mark highest-scoring usable account per type as primary
 	highestScore := make(map[AccountType]float64)
 	highestIdx := make(map[AccountType]int)
 	for i, r := range out {
-		if !r.Dead && !r.Disabled && r.Score > highestScore[r.Type] {
+		if !r.Dead && !r.Disabled && !r.HealthBlocked && r.Score > highestScore[r.Type] {
 			highestScore[r.Type] = r.Score
 			highestIdx[r.Type] = i
 		}
@@ -273,6 +276,7 @@ func copyAccountFileState(existing, loaded *Account) {
 	existing.Dead = loaded.Dead
 	existing.NeedsLogin = loaded.NeedsLogin
 	existing.AuthError = loaded.AuthError
+	existing.placeholder = loaded.placeholder
 	existing.AllowedSourceIPs = loaded.AllowedSourceIPs
 	existing.claude.UUID = loaded.claude.UUID
 	existing.codex.CyberAccess = loaded.codex.CyberAccess

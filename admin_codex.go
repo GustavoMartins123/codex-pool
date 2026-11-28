@@ -431,6 +431,7 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	delete(existing, "last_refresh")
 	delete(existing, "needs_login")
 	delete(existing, "auth_error")
+	delete(existing, placeholderAccountMarker)
 
 	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
@@ -443,6 +444,7 @@ func (h *proxyHandler) replaceCodexAccountCredentials(accountID string, tokens *
 	target.mu.Lock()
 	target.NeedsLogin = false
 	target.AuthError = ""
+	target.placeholder = false
 	target.mu.Unlock()
 
 	log.Printf("codex relogin: replaced credentials for account %s (%s)", accountID, authFile)

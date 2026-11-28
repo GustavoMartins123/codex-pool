@@ -64,7 +64,8 @@ func (h *proxyHandler) pollUpstreamUsage() {
 	for i, a := range accs {
 		// Stagger requests to avoid rate limiting
 		// Usage polling should not sleep minutes between accounts; refreshAccount already rate limits OAuth.
-		if i > 0 {
+		// An account waiting for its sign-in is skipped below, so it does not stagger either.
+		if i > 0 && !isPlaceholderAccount(a) {
 			time.Sleep(500 * time.Millisecond)
 		}
 		if a == nil {

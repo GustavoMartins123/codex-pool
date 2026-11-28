@@ -85,6 +85,8 @@ func (h *proxyHandler) handleAdminReload(w http.ResponseWriter, r *http.Request)
 func (h *proxyRoutes) registerAdminAccountRoutes(register httpRouteRegister) {
 	register("/admin/accounts", h.adminRoute(http.MethodGet, h.serveAccounts))
 	register("/admin/accounts/verify", h.adminRoute(http.MethodPost, h.handleAccountVerifyBatch))
+	register("/admin/accounts/export", h.adminRoute(http.MethodGet, h.handleAccountsExport))
+	register("/admin/accounts/import", h.adminRoute(http.MethodPost, h.handleAccountsImport))
 
 	accountAction := func(
 		suffix string,

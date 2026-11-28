@@ -25,6 +25,7 @@ func accountStateFactsLocked(rt *antigravityRuntime, a *Account, now time.Time) 
 		NeedsVerification:  a.NeedsVerification || strings.TrimSpace(a.VerificationURL) != "",
 		HealthError:        strings.TrimSpace(a.HealthError) != "",
 		CredentialsExpired: !a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now),
+		Placeholder:        a.placeholder,
 		RateLimited:        accountCoolingDownLocked(a, now),
 		UsageExhausted:     accountUsageExhaustedLocked(rt, a),
 	}
@@ -106,10 +107,12 @@ func accountStateSnapshotLocked(rt *antigravityRuntime, a *Account, now time.Tim
 		// Fresh transition not yet observed by the sweep.
 		history = append(history, accountstate.Transition{From: a.LifecycleState, To: state, Reason: facts.Reason(), Actor: "system", At: now.UTC()})
 	}
+	// A waiting placeholder derives the needs-login state, which stays
+	// routable while an access token still serves. Without any token it is not.
 	return accountStateSnapshot{
 		State:       state,
 		Reason:      facts.Reason(),
-		Routable:    accountstate.Routable(state),
+		Routable:    accountstate.Routable(state) && !facts.Placeholder,
 		Transitions: history,
 	}
 }

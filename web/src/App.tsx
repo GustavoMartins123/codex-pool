@@ -163,6 +163,7 @@ export function App() {
                 <Accounts
                   stats={data.stats}
                   adminAccounts={data.accounts}
+                  operator={passport.kind === "operator"}
                   onAccountsChanged={async () => {
                     if (!await refresh()) throw new Error("Unable to refresh pool accounts");
                   }}
