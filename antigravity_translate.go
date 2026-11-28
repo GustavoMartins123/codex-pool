@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -208,29 +209,55 @@ func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamM
 }
 
 func antigravitySessionID(request map[string]any) string {
-	seed := ""
-	if contents, ok := request["contents"].([]any); ok {
-		for _, content := range contents {
-			entry, _ := content.(map[string]any)
-			if entry["role"] != "user" {
-				continue
-			}
-			parts, _ := entry["parts"].([]any)
-			for _, part := range parts {
-				if text, _ := part.(map[string]any)["text"].(string); text != "" {
-					seed = text
-					break
-				}
-			}
-			if seed != "" {
-				break
-			}
-		}
-	}
+	seed := firstGeminiUserText(request)
 	if seed == "" {
 		seed = uuid.NewString()
 	}
 	return antigravitySessionIDFromSeed(seed)
+}
+
+// firstGeminiUserText returns the first text part of the first user turn. It
+// stays the same for every turn of one conversation, which is why it seeds the
+// upstream session and the derived conversation id.
+func firstGeminiUserText(request map[string]any) string {
+	contents, _ := request["contents"].([]any)
+	for _, content := range contents {
+		entry, _ := content.(map[string]any)
+		if entry["role"] != "user" {
+			continue
+		}
+		parts, _ := entry["parts"].([]any)
+		for _, part := range parts {
+			if text, _ := jsonvalue.Map(part)["text"].(string); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// derivedGeminiConversationID gives native Gemini requests that carry no
+// conversation id one derived from the caller and the first user turn. Gemini
+// SDK clients such as the Antigravity CLI send no session id in the body or
+// headers, so without it every turn picked a new account. The upstream session
+// id is already seeded from the same first turn, so this scopes account
+// pinning, context handoff and signature replay no wider than before.
+func derivedGeminiConversationID(path, userID string, object map[string]any) string {
+	if !strings.Contains(path, "/v1beta/models/") && !strings.HasPrefix(path, "/v1internal:") {
+		return ""
+	}
+	request := object
+	if inner := jsonvalue.Map(object["request"]); inner != nil {
+		if _, ok := inner["contents"]; ok {
+			request = inner
+		}
+	}
+	seed := firstGeminiUserText(request)
+	if seed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(userID + "\x00" + seed))
+	return "gemini-first-turn:" + hex.EncodeToString(sum[:16])
 }
 
 func isAntigravitySessionID(id string) bool {
