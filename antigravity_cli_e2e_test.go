@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -225,8 +226,12 @@ func TestAntigravityTieredModelResolvesThinkingLevel(t *testing.T) {
 	rt.models.ReplaceAccount("acct", AntigravityAccountSnapshot{
 		FetchedAt: time.Now(),
 		Models: map[string]AntigravityModelInfo{
-			"gemini-4-neon-high":  {ID: "gemini-4-neon-high"},
-			"gemini-4-neon-xhigh": {ID: "gemini-4-neon-xhigh"},
+			"gemini-4-neon-high":     {ID: "gemini-4-neon-high"},
+			"gemini-4-neon-xhigh":    {ID: "gemini-4-neon-xhigh"},
+			"gemini-3.1-flash-lite":  {ID: "gemini-3.1-flash-lite"},
+			"gemini-3.8-flash-low":   {ID: "gemini-3.8-flash-low"},
+			"gemini-3.8-flash-high":  {ID: "gemini-3.8-flash-high"},
+			"gemini-3.9-pro-preview": {ID: "gemini-3.9-pro-preview"},
 		},
 	})
 	withLevel := func(level string) []byte {
@@ -244,6 +249,11 @@ func TestAntigravityTieredModelResolvesThinkingLevel(t *testing.T) {
 		{"unknown tier", "gemini-4-neon", withLevel("LOW"), "gemini-4-neon"},
 		{"no thinking level", "gemini-4-neon", []byte(`{"contents":[]}`), "gemini-4-neon"},
 		{"other provider model", "gpt-6.2-astra", withLevel("HIGH"), "gpt-6.2-astra"},
+		{"preview build", "gemini-3.1-flash-lite-preview", []byte(`{"contents":[]}`), "gemini-3.1-flash-lite"},
+		{"preview build with unknown tier", "gemini-3.1-flash-lite-preview", withLevel("MINIMAL"), "gemini-3.1-flash-lite"},
+		{"preview build keeps known tier", "gemini-3.8-flash-preview", withLevel("LOW"), "gemini-3.8-flash-low"},
+		{"catalog preview id unchanged", "gemini-3.9-pro-preview", withLevel("HIGH"), "gemini-3.9-pro-preview"},
+		{"unknown preview unchanged", "gemini-9-preview", withLevel("HIGH"), "gemini-9-preview"},
 	}
 	for _, c := range cases {
 		if got := antigravityTieredModel(rt, c.model, c.body); got != c.want {
@@ -252,5 +262,142 @@ func TestAntigravityTieredModelResolvesThinkingLevel(t *testing.T) {
 	}
 	if got := antigravityTieredModel(nil, "gemini-4-neon", withLevel("XHIGH")); got != "gemini-4-neon" {
 		t.Errorf("nil runtime changed the model to %q", got)
+	}
+}
+
+func TestDerivedGeminiConversationIDFollowsTheFirstUserTurn(t *testing.T) {
+	turn := func(texts ...string) map[string]any {
+		contents := make([]any, 0, len(texts))
+		for i, text := range texts {
+			role := "user"
+			if i%2 == 1 {
+				role = "model"
+			}
+			contents = append(contents, map[string]any{"role": role, "parts": []any{map[string]any{"text": text}}})
+		}
+		return map[string]any{"contents": contents}
+	}
+	const path = "/v1beta/models/gemini-4-neon:streamGenerateContent"
+	first := derivedGeminiConversationID(path, "user-a", turn("fix the build"))
+	if first == "" {
+		t.Fatal("no conversation id derived for a native Gemini request")
+	}
+	if later := derivedGeminiConversationID(path, "user-a", turn("fix the build", "done", "now run the tests")); later != first {
+		t.Fatalf("later turn of the same conversation derived %q, want %q", later, first)
+	}
+	envelope := map[string]any{"model": "gemini-4-neon", "request": turn("fix the build")}
+	if got := derivedGeminiConversationID("/v1internal:streamGenerateContent", "user-a", envelope); got != first {
+		t.Fatalf("Code Assist envelope derived %q, want %q", got, first)
+	}
+	if other := derivedGeminiConversationID(path, "user-b", turn("fix the build")); other == first {
+		t.Fatal("two callers with the same first turn share a conversation id")
+	}
+	if other := derivedGeminiConversationID(path, "user-a", turn("write the docs")); other == first {
+		t.Fatal("two conversations with different first turns share a conversation id")
+	}
+	if got := derivedGeminiConversationID("/v1/chat/completions", "user-a", turn("fix the build")); got != "" {
+		t.Fatalf("non-Gemini path derived %q", got)
+	}
+	if got := derivedGeminiConversationID(path, "user-a", map[string]any{"contents": []any{}}); got != "" {
+		t.Fatalf("request without a user turn derived %q", got)
+	}
+}
+
+// TestAntigravityCLIConversationStaysOnItsAccount reproduces the Antigravity
+// CLI, which sends no conversation id: a later turn must stay on the account
+// that served the first one even when another account now scores higher.
+func TestAntigravityCLIConversationStaysOnItsAccount(t *testing.T) {
+	t.Setenv("POOL_AUTH_ENCRYPTION_KEY", "test-passport-encryption-key")
+	const jwtSecret = "agy-pin-secret"
+	rt := newAntigravityRuntime()
+	for _, id := range []string{"agy-pin-a", "agy-pin-b"} {
+		rt.models.ReplaceAccount(id, AntigravityAccountSnapshot{
+			FetchedAt: time.Now(),
+			Models:    map[string]AntigravityModelInfo{"gemini-4-neon-xhigh": {ID: "gemini-4-neon-xhigh"}},
+		})
+	}
+
+	var mu sync.Mutex
+	var served []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		served = append(served, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"response":{"responseId":"anti-1","candidates":[{"content":{"role":"model","parts":[{"text":"pool-ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}}`+"\n\n")
+	}))
+	defer upstream.Close()
+
+	store := testUsageStore(t)
+	passport, err := newPassportStore(store.db)
+	if err != nil {
+		t.Fatalf("newPassportStore: %v", err)
+	}
+	principal, _, client, _, err := passport.createGuest("operator", "agy pin tester", "A", nil)
+	if err != nil {
+		t.Fatalf("createGuest: %v", err)
+	}
+	apiKey := generateGeminiAPIKey(jwtSecret, &PoolUser{ID: principal.ID + "-c-" + client.ID, Email: "agy@pool.local", PlanType: "pro", CreatedAt: time.Now()})
+
+	upstreamBase, _ := url.Parse(upstream.URL)
+	accountA := &Account{Type: AccountTypeAntigravity, ID: "agy-pin-a", AccessToken: "token-a", google: googleAccountState{ProjectID: "proj-a"}, PlanType: "pro"}
+	accountB := &Account{Type: AccountTypeAntigravity, ID: "agy-pin-b", AccessToken: "token-b", google: googleAccountState{ProjectID: "proj-b"}, PlanType: "pro"}
+	h := &proxyHandler{
+		passportConfig: passportConfig{jwtSecret: jwtSecret},
+		cfg:            &config{requestTimeout: 5 * time.Second, streamTimeout: 5 * time.Second, maxInMemoryBodyBytes: 4 << 20, maxAttempts: 1, disableRefresh: true},
+		transport:      http.DefaultTransport,
+		pool:           newPoolState([]*Account{accountA, accountB}, false),
+		registry:       NewProviderRegistry(NewCodexProvider(upstreamBase, upstreamBase, nil), NewClaudeProvider(upstreamBase), NewGeminiProvider(upstreamBase, upstreamBase), NewAntigravityProvider(upstreamBase, upstreamBase)),
+		metrics:        newMetrics(),
+		recent:         newRecentErrors(5),
+		passport:       passport,
+	}
+	h.pool.antigravity = rt
+	proxy := httptest.NewServer(testPoolAuthenticatedHandler(t, h))
+	defer proxy.Close()
+
+	send := func(body string) string {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+"/v1beta/models/gemini-4-neon:streamGenerateContent?alt=sse", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-api-key", apiKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d body=%s", resp.StatusCode, respBody)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return served[len(served)-1]
+	}
+	const level = `"generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"XHIGH"}}`
+	first := send(`{"contents":[{"role":"user","parts":[{"text":"refactor the parser"}]}],` + level + `}`)
+
+	// Make the serving account the worst candidate by score. Without a pin the
+	// next turn would move to the other account.
+	servedAccount, otherAccount := accountA, accountB
+	if first == "Bearer token-b" {
+		servedAccount, otherAccount = accountB, accountA
+	}
+	atomic.StoreInt64(&servedAccount.Inflight, 1000)
+	defer atomic.StoreInt64(&servedAccount.Inflight, 0)
+
+	second := send(`{"contents":[{"role":"user","parts":[{"text":"refactor the parser"}]},{"role":"model","parts":[{"text":"done"}]},{"role":"user","parts":[{"text":"now add tests"}]}],` + level + `}`)
+	if second != first {
+		t.Fatalf("second turn moved from %q to %q (other account %s)", first, second, otherAccount.ID)
+	}
+
+	// A different conversation is free to use the better-scored account.
+	third := send(`{"contents":[{"role":"user","parts":[{"text":"write the release notes"}]}],` + level + `}`)
+	if third != "Bearer "+otherAccount.AccessToken {
+		t.Fatalf("new conversation used %q, want the higher-scored %s", third, otherAccount.ID)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,18 +65,38 @@ func shouldRouteAntigravityModel(rt *antigravityRuntime, model string) bool {
 	return isAntigravityModel(rt, model)
 }
 
+// antigravityTieredModel maps a client's model id to the Antigravity catalog
+// id. The Antigravity CLI sends the base model with the tier as a thinking
+// level (gemini-4-neon plus thinkingLevel XHIGH for gemini-4-neon-xhigh) and
+// names preview builds (gemini-3.1-flash-lite-preview for
+// gemini-3.1-flash-lite). Without the mapping the id is not an Antigravity
+// model and the request falls through to a provider with no accounts. Models
+// already in the catalog, or with no known variant, are returned unchanged.
 func antigravityTieredModel(rt *antigravityRuntime, model string, body []byte) string {
 	model = strings.TrimSpace(model)
 	if model == "" || rt == nil || rt.models == nil || isAntigravityModel(rt, model) {
 		return model
 	}
-	level := geminiThinkingLevel(body)
-	if level == "" {
-		return model
+	// Gemini SDK clients also name preview builds, such as the Antigravity
+	// CLI's safety monitors asking for gemini-3.1-flash-lite-preview while the
+	// catalog lists gemini-3.1-flash-lite. A tiered id is preferred so the
+	// requested thinking level is kept.
+	bases := []string{model}
+	if base := strings.TrimSuffix(model, "-preview"); base != model && base != "" {
+		bases = append(bases, base)
 	}
-	candidate := model + "-" + strings.ToLower(level)
-	if isAntigravityModel(rt, candidate) {
-		return candidate
+	level := strings.ToLower(geminiThinkingLevel(body))
+	var candidates []string
+	for _, base := range bases {
+		if level != "" {
+			candidates = append(candidates, base+"-"+level)
+		}
+	}
+	candidates = append(candidates, bases[1:]...)
+	for _, candidate := range candidates {
+		if isAntigravityModel(rt, candidate) {
+			return candidate
+		}
 	}
 	return model
 }
@@ -188,29 +209,55 @@ func prepareGeminiNativeRequest(path string, body []byte, publicModel, upstreamM
 }
 
 func antigravitySessionID(request map[string]any) string {
-	seed := ""
-	if contents, ok := request["contents"].([]any); ok {
-		for _, content := range contents {
-			entry, _ := content.(map[string]any)
-			if entry["role"] != "user" {
-				continue
-			}
-			parts, _ := entry["parts"].([]any)
-			for _, part := range parts {
-				if text, _ := part.(map[string]any)["text"].(string); text != "" {
-					seed = text
-					break
-				}
-			}
-			if seed != "" {
-				break
-			}
-		}
-	}
+	seed := firstGeminiUserText(request)
 	if seed == "" {
 		seed = uuid.NewString()
 	}
 	return antigravitySessionIDFromSeed(seed)
+}
+
+// firstGeminiUserText returns the first text part of the first user turn. It
+// stays the same for every turn of one conversation, which is why it seeds the
+// upstream session and the derived conversation id.
+func firstGeminiUserText(request map[string]any) string {
+	contents, _ := request["contents"].([]any)
+	for _, content := range contents {
+		entry, _ := content.(map[string]any)
+		if entry["role"] != "user" {
+			continue
+		}
+		parts, _ := entry["parts"].([]any)
+		for _, part := range parts {
+			if text, _ := jsonvalue.Map(part)["text"].(string); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// derivedGeminiConversationID gives native Gemini requests that carry no
+// conversation id one derived from the caller and the first user turn. Gemini
+// SDK clients such as the Antigravity CLI send no session id in the body or
+// headers, so without it every turn picked a new account. The upstream session
+// id is already seeded from the same first turn, so this scopes account
+// pinning, context handoff and signature replay no wider than before.
+func derivedGeminiConversationID(path, userID string, object map[string]any) string {
+	if !strings.Contains(path, "/v1beta/models/") && !strings.HasPrefix(path, "/v1internal:") {
+		return ""
+	}
+	request := object
+	if inner := jsonvalue.Map(object["request"]); inner != nil {
+		if _, ok := inner["contents"]; ok {
+			request = inner
+		}
+	}
+	seed := firstGeminiUserText(request)
+	if seed == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(userID + "\x00" + seed))
+	return "gemini-first-turn:" + hex.EncodeToString(sum[:16])
 }
 
 func isAntigravitySessionID(id string) bool {

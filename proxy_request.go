@@ -364,6 +364,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 			}
 		}
 	}
+	if conversationID == "" {
+		conversationID = derivedGeminiConversationID(r.URL.Path, userID, originalObject)
+	}
 	// Traffic-experiment legs run in their own conversation namespace: they
 	// may never pin, rewrite handoff state, or append assistant history to
 	// the production conversation.
