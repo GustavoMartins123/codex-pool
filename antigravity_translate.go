@@ -64,6 +64,46 @@ func shouldRouteAntigravityModel(rt *antigravityRuntime, model string) bool {
 	return isAntigravityModel(rt, model)
 }
 
+func antigravityTieredModel(rt *antigravityRuntime, model string, body []byte) string {
+	model = strings.TrimSpace(model)
+	if model == "" || rt == nil || rt.models == nil || isAntigravityModel(rt, model) {
+		return model
+	}
+	level := geminiThinkingLevel(body)
+	if level == "" {
+		return model
+	}
+	candidate := model + "-" + strings.ToLower(level)
+	if isAntigravityModel(rt, candidate) {
+		return candidate
+	}
+	return model
+}
+
+// geminiThinkingLevel reads generationConfig.thinkingConfig.thinkingLevel from
+// a raw generateContent body or the Code Assist {request:{...}} envelope.
+func geminiThinkingLevel(body []byte) string {
+	var root map[string]any
+	if len(body) == 0 || json.Unmarshal(body, &root) != nil {
+		return ""
+	}
+	for _, request := range []map[string]any{root, jsonvalue.Map(root["request"])} {
+		if request == nil {
+			continue
+		}
+		for _, configKey := range []string{"generationConfig", "generation_config"} {
+			config := jsonvalue.Map(request[configKey])
+			for _, thinkingKey := range []string{"thinkingConfig", "thinking_config"} {
+				thinking := jsonvalue.Map(config[thinkingKey])
+				if level := strings.TrimSpace(jsonvalue.FirstString(thinking, "thinkingLevel", "thinking_level")); level != "" {
+					return level
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func antigravityModelFromGeminiPath(path string) string {
 	marker := "/v1beta/models/"
 	index := strings.Index(path, marker)
