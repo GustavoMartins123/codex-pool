@@ -35,6 +35,7 @@ func ClientRequestToGemini(root map[string]any, format RequestFormat, model stri
 	case FormatGemini:
 		gemini = unwrapGeminiClientRequest(root)
 		delete(gemini, "model")
+		canonicalizeGeminiSystemInstruction(gemini)
 	case FormatOpenAI:
 		gemini, err = antigravityChatToGemini(root)
 	case FormatClaude:
@@ -74,6 +75,22 @@ func unwrapGeminiClientRequest(root map[string]any) map[string]any {
 		}
 	}
 	return cloneMap(root)
+}
+
+// canonicalizeGeminiSystemInstruction renames the proto field name
+// system_instruction to its JSON name so later rewrites (context handoff,
+// compaction, token estimates) see the instruction. A request that already
+// carries both spellings is left as sent: merging would guess at intent.
+func canonicalizeGeminiSystemInstruction(request map[string]any) {
+	snake, ok := request["system_instruction"]
+	if !ok {
+		return
+	}
+	if _, hasCamel := request["systemInstruction"]; hasCamel {
+		return
+	}
+	request["systemInstruction"] = snake
+	delete(request, "system_instruction")
 }
 
 func cloneMap(input map[string]any) map[string]any {
