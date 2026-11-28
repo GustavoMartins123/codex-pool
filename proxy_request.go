@@ -385,6 +385,9 @@ func (h *proxyHandler) proxyRequest(w http.ResponseWriter, r *http.Request, reqI
 	if requestedModel == "" {
 		requestedModel = antigravityModelFromGeminiPath(r.URL.Path)
 	}
+	if h.pool != nil {
+		requestedModel = antigravityTieredModel(h.pool.antigravity, requestedModel, bodyBytes)
+	}
 
 	// Resolve model aliases before routing.
 	if requestedModel != "" {
