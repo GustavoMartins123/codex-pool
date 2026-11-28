@@ -394,7 +394,12 @@ func normalizeMessageList(object map[string]any, claude bool) []Message {
 
 func normalizeGeminiContext(object map[string]any) []Message {
 	var messages []Message
-	if instruction, ok := object["systemInstruction"].(map[string]any); ok {
+	instruction, ok := object["systemInstruction"].(map[string]any)
+	if !ok {
+		// Gemini accepts the proto field name as well as the JSON name.
+		instruction, ok = object["system_instruction"].(map[string]any)
+	}
+	if ok {
 		if text := contextText(instruction["parts"]); text != "" {
 			messages = append(messages, Message{Role: "system", Parts: []MessagePart{{Type: "text", Text: text}}})
 		}
@@ -1285,6 +1290,10 @@ func renderGeminiContext(object map[string]any, messages []Message) {
 	}
 	if len(system) > 0 {
 		object["systemInstruction"] = map[string]any{"parts": system}
+		// normalizeGeminiContext already folded a snake_case instruction into
+		// the system messages; keeping it would send the field twice, which
+		// protobuf JSON parsers reject as a duplicate field.
+		delete(object, "system_instruction")
 	}
 	object["contents"] = contents
 }
